@@ -1,0 +1,56 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai_ifc_ollama
+    restart: unless-stopped
+    ports:
+      - "11450:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=1
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    runtime: nvidia
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list > /dev/null && nvidia-smi > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - ai-ifc-network
+
+  web:
+    build: .
+    container_name: ai_ifc_vor_generator
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      DOCUMENTS_PATH: /app/data/perechen_kr.xlsx
+      UPLOAD_FOLDER: /app/uploads
+      OUTPUT_FOLDER: /app/outputs
+      SESSIONS_FILE: /app/outputs/sessions.json
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-1024}
+      NVIDIA_VISIBLE_DEVICES: "1"
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    runtime: nvidia
+    ports:
+      - "127.0.0.1:6001:6000"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+    networks:
+      - ai-ifc-network
+
+networks:
+  ai-ifc-network:
+    driver: bridge
+
+volumes:
+  ollama_data:

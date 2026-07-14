@@ -1,0 +1,1 @@
+ai-blueprint-to-ifc/models/yolo_walls_obb.pt filter=lfs diff=lfs merge=lfs -text

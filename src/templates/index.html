@@ -1,0 +1,2351 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Обработка IFC файлов</title>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f0f4f8;
+            color: #1a202c;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        
+        header {
+            background: white;
+            border-radius: 16px;
+            padding: 24px 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        header h1 { font-size: 28px; font-weight: 600; color: #2d3748; }
+        header p { color: #718096; margin-top: 4px; }
+        
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 24px;
+            background: white;
+            padding: 6px;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        .tab-btn {
+            padding: 10px 24px;
+            border: none;
+            background: transparent;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: #718096;
+        }
+        .tab-btn:hover { background: #f7fafc; }
+        .tab-btn.active { background: #2b6cb0; color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 28px 32px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            transition: opacity 0.3s;
+        }
+        .card.disabled { opacity: 0.5; pointer-events: none; }
+        .card .step-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .card .step-number {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            background: #ebf4ff;
+            color: #2b6cb0;
+            border-radius: 50%;
+            font-size: 14px;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+        .card .step-number.done { background: #48bb78; color: white; }
+        
+        .upload-area {
+            border: 2px dashed #cbd5e0;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #f7fafc;
+        }
+        .upload-area:hover { border-color: #4299e1; background: #ebf8ff; }
+        .upload-area.dragover { border-color: #4299e1; background: #ebf8ff; }
+        .upload-area .icon { font-size: 48px; margin-bottom: 12px; }
+        .upload-area .text { font-size: 16px; color: #2d3748; }
+        .upload-area .hint { font-size: 14px; color: #a0aec0; margin-top: 4px; }
+        
+        .progress-wrap {
+            margin: 16px 0;
+            background: #edf2f7;
+            border-radius: 8px;
+            overflow: hidden;
+            height: 12px;
+            position: relative;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4299e1, #48bb78, #4299e1);
+            background-size: 200% 100%;
+            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+            width: 0%;
+            border-radius: 8px;
+            position: relative;
+            animation: shimmer 2s linear infinite;
+        }
+        .progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(
+                90deg,
+                rgba(255,255,255,0) 0%,
+                rgba(255,255,255,0.3) 50%,
+                rgba(255,255,255,0) 100%
+            );
+            background-size: 200% 100%;
+            animation: shimmer 1.5s ease-in-out infinite;
+        }
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+        .progress-text {
+            font-size: 14px;
+            color: #718096;
+            margin-top: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .progress-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #4299e1;
+            border-radius: 50%;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.2); }
+        }
+        
+        .table-wrap {
+            overflow: auto;
+            max-height: 500px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            margin: 12px 0;
+        }
+        .table-wrap table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .table-wrap th {
+            position: sticky;
+            top: 0;
+            background: #f7fafc;
+            padding: 10px 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #4a5568;
+            border-bottom: 2px solid #e2e8f0;
+            z-index: 2;
+        }
+        .table-wrap td {
+            padding: 8px 12px;
+            border-bottom: 1px solid #f0f4f8;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            position: relative;
+        }
+        .table-wrap td:hover {
+            overflow: visible !important;
+            white-space: normal !important;
+            word-break: break-all;
+            background: #ffffff;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 100;
+            max-width: 500px;
+        }
+        .table-wrap tr:hover td { background: #ebf8ff; }
+        
+        .group-header {
+            background: #edf2f7 !important;
+            cursor: pointer;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        .group-header:hover { background: #e2e8f0 !important; }
+        .group-header td { font-weight: 600; padding: 10px 12px; border-bottom: 2px solid #cbd5e0; }
+        .group-row { transition: background 0.2s; }
+        .group-row.hidden-row { display: none; }
+        .group-arrow { 
+            display: inline-block; 
+            transition: transform 0.2s; 
+            font-size: 12px;
+            margin-right: 4px;
+        }
+        .group-arrow.expanded { transform: rotate(90deg); }
+        .group-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #2b6cb0;
+            color: white;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 6px;
+        }
+        .group-checkbox { width: 16px; height: 16px; cursor: pointer; margin-left: 4px; }
+        
+        .ifc-group-header {
+            background: #e8f0fe !important;
+        }
+        
+        .btn {
+            padding: 10px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-primary { background: #2b6cb0; color: white; }
+        .btn-primary:hover:not(:disabled) { background: #2c5282; }
+        .btn-success { background: #48bb78; color: white; }
+        .btn-success:hover:not(:disabled) { background: #38a169; }
+        .btn-danger { background: #fc8181; color: white; }
+        .btn-danger:hover:not(:disabled) { background: #f56565; }
+        .btn-secondary { background: #edf2f7; color: #2d3748; }
+        .btn-secondary:hover:not(:disabled) { background: #e2e8f0; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+        .btn-xs { padding: 2px 8px; font-size: 11px; }
+        
+        .flex { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+        .flex-between { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+        .mt-12 { margin-top: 12px; }
+        .mt-20 { margin-top: 20px; }
+        .mb-12 { margin-bottom: 12px; }
+        .gap-8 { gap: 8px; }
+        .gap-4 { gap: 4px; }
+        
+        .file-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: #f7fafc;
+            border-radius: 8px;
+            margin: 12px 0;
+        }
+        .file-info .name { flex: 1; font-weight: 500; word-break: break-all; }
+        .file-info .remove { 
+            cursor: pointer; color: #fc8181; font-size: 18px; 
+            background: none; border: none; padding: 0 4px;
+        }
+        .file-info .remove:hover { color: #f56565; }
+        
+        .session-item {
+            padding: 16px 20px;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .session-item:hover { background: #f7fafc; border-color: #bee3f8; }
+        .session-item .top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .session-item .id { font-family: monospace; font-size: 14px; color: #4a5568; }
+        .session-item .status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .status-processing { background: #bee3f8; color: #2b6cb0; }
+        .status-completed { background: #c6f6d5; color: #276749; }
+        .status-error { background: #fed7d7; color: #9b2c2c; }
+        .status-waiting { background: #fefcbf; color: #975a16; }
+        .session-item .info { margin-top: 8px; font-size: 14px; color: #718096; }
+        .session-item .actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+        
+        .toast-container {
+            position: fixed; top: 20px; right: 20px; z-index: 2000;
+        }
+        .toast {
+            padding: 12px 20px; border-radius: 8px; margin-bottom: 8px;
+            color: white; font-weight: 500;
+            animation: slideIn 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            max-width: 400px;
+        }
+        .toast-success { background: #48bb78; }
+        .toast-error { background: #fc8181; }
+        .toast-info { background: #4299e1; }
+        .toast-warning { background: #ed8936; }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .spinner {
+            display: inline-block;
+            width: 18px; height: 18px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        .row-checkbox { width: 16px; height: 16px; cursor: pointer; }
+        
+        select, input[type="number"] {
+            padding: 8px 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+        }
+        select:focus, input[type="number"]:focus {
+            outline: none;
+            border-color: #4299e1;
+            box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.2);
+        }
+        
+        .part-select {
+            padding: 4px 8px;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            font-size: 12px;
+            background: white;
+            min-width: 130px;
+        }
+        
+        .material-select {
+            padding: 4px 8px;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            font-size: 12px;
+            background: white;
+            min-width: 120px;
+        }
+        
+        .params-row {
+            display: flex;
+            align-items: flex-end;
+            gap: 24px;
+            flex-wrap: wrap;
+            padding: 16px 0;
+            border-top: 1px solid #e2e8f0;
+        }
+        .params-row label {
+            font-weight: 500;
+            display: block;
+            margin-bottom: 4px;
+            font-size: 14px;
+            color: #4a5568;
+        }
+        .params-row .hint { font-size: 12px; color: #a0aec0; margin-top: 2px; }
+        
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 3000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: white;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 1100px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-header h3 { font-size: 18px; color: #2d3748; }
+        .modal-close {
+            background: none; border: none;
+            font-size: 24px; cursor: pointer;
+            color: #718096; padding: 4px 8px;
+            border-radius: 4px;
+        }
+        .modal-close:hover { background: #f7fafc; color: #2d3748; }
+        .modal-body { padding: 20px 24px; overflow: auto; flex: 1; }
+        .modal-body .table-wrap { max-height: 60vh; }
+        .preview-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            background: #fefcbf;
+            color: #975a16;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+        
+        .viewer3d-container {
+            width: 100%;
+            height: 500px;
+            position: relative;
+            background: #f0f4f8;
+        }
+        .viewer3d-container canvas {
+            display: block;
+        }
+        .viewer3d-loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #718096;
+            font-size: 16px;
+        }
+        .viewer3d-toolbar {
+            padding: 12px 24px;
+            border-top: 1px solid #e2e8f0;
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        @media (max-width: 768px) {
+            .card { padding: 16px; }
+            header { padding: 16px; }
+            .tabs { flex-wrap: wrap; }
+            .tab-btn { flex: 1; text-align: center; padding: 8px 12px; font-size: 13px; }
+            .params-row { flex-direction: column; gap: 12px; }
+            .viewer3d-container { height: 350px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏗️ Определение видов работ для конструктивных элементов</h1>
+        </header>
+        
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('process')">🔄 Обработка</button>
+            <button class="tab-btn" onclick="switchTab('history')">📚 История</button>
+        </div>
+        
+        <div class="tab-content active" id="processTab">
+            <div class="card" id="step0">
+                <div class="step-title">
+                    <span class="step-number" id="step0Number">1</span>
+                    Загрузка файла с элементами конструктивных решений
+                </div>
+                
+                <div class="upload-area" id="uploadArea">
+                    <input type="file" id="fileInput" accept=".ifc,.pdf" hidden>
+                    <div class="icon">📁</div>
+                    <div class="text">Нажмите или перетащите файл</div>
+                    <div class="hint">Поддерживаются файлы .ifc и .pdf</div>
+                </div>
+                
+                <div id="fileInfo" style="display:none;" class="file-info">
+                    <span>📄</span>
+                    <span class="name" id="fileName"></span>
+                    <button class="remove" onclick="resetUpload()">✕</button>
+                </div>
+                
+                <div class="progress-wrap" id="uploadProgressWrap" style="display:none;">
+                    <div class="progress-bar" id="uploadProgressBar"></div>
+                </div>
+                <div class="progress-text" id="uploadProgressText"></div>
+                
+                <button class="btn btn-primary mt-12" id="uploadBtn" onclick="uploadFile()" disabled>
+                    Загрузить и обработать
+                </button>
+            </div>
+            
+            <div class="card disabled" id="step1">
+                <div class="step-title">
+                    <span class="step-number" id="step1Number">2</span>
+                    Выбор строк и параметров обработки
+                </div>
+                
+                <div class="flex-between mb-12">
+                    <span id="previewInfo">Загружено: 0 строк</span>
+                    <div class="flex gap-8">
+                        <button class="btn btn-sm btn-secondary" onclick="selectAllRows()">Выбрать все</button>
+                        <button class="btn btn-sm btn-secondary" onclick="deselectAllRows()">Снять все</button>
+                        <button class="btn btn-sm btn-secondary" onclick="autoGroupRows()" id="autoGroupBtn">📑 Авто-группировка</button>
+                        <button class="btn btn-sm btn-secondary" onclick="groupByIfcType()" id="groupByIfcBtn">📑 По типу IFC</button>
+                        <button class="btn btn-sm btn-secondary" onclick="ungroupRows()" style="display:none;" id="ungroupBtn">📄 Без групп</button>
+                        <select id="globalPartSelect" onchange="setGlobalPart()" style="max-width:200px;">
+                            <option value="">Часть здания для выбранных...</option>
+                            <option value="Надземная">Надземная</option>
+                            <option value="Подземная">Подземная</option>
+                            <option value="Цоколь">Цоколь</option>
+                        </select>
+                        <select id="globalMaterialSelect" onchange="setGlobalMaterial()" style="max-width:200px;">
+                            <option value="">Материал для выбранных...</option>
+                            <option value="-">Не указан (-)</option>
+                            <option value="Бетон">Бетон</option>
+                            <option value="Цемент">Цемент</option>
+                            <option value="Кирпич">Кирпич</option>
+                            <option value="Дерево">Дерево</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="table-wrap" id="previewTableWrap">
+                    <table>
+                        <thead id="previewHead"></thead>
+                        <tbody id="previewBody"></tbody>
+                    </table>
+                </div>
+                
+                <div class="flex gap-8 mt-12" id="blueprintButtons" style="display:none;">
+                    <button class="btn btn-secondary" onclick="showBlueprintImage()">📐 Посмотреть на чертеже</button>
+                    <button class="btn btn-secondary" onclick="showMaterialsLegend()">🎨 Условные обозначения</button>
+                </div>
+                
+                <div class="params-row mt-20">
+                    <div>
+                        <label for="buildingHeight">Высота здания (м):</label>
+                        <input type="number" id="buildingHeight" value="56" step="0.5" min="1" max="10000" style="max-width:150px;">
+                        <div class="hint">От 1 до 10000 м</div>
+                    </div>
+                    <button class="btn btn-primary" id="selectRowsBtn" onclick="confirmRowSelection()" disabled>
+                        🚀 Запустить обработку (<span id="selectedCount">0</span>)
+                    </button>
+                </div>
+                
+                <div class="progress-wrap mt-12" id="processingProgressWrap" style="display:none;">
+                    <div class="progress-bar" id="processingProgressBar"></div>
+                </div>
+                <div class="progress-text" id="processingProgressText"></div>
+            </div>
+            
+            <div class="card" id="resultsCard" style="display:none;">
+                <div class="step-title">
+                    <span class="step-number done">✓</span>
+                    Результаты обработки
+                </div>
+                <div id="resultsFiles"></div>
+                <div class="flex mt-12">
+                    <button class="btn btn-success" id="downloadAllBtn" onclick="downloadAll()">📥 Скачать все файлы</button>
+                    <button class="btn btn-secondary" onclick="startNewSession()">🔄 Новая сессия</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="tab-content" id="historyTab">
+            <div class="card">
+                <div class="flex-between">
+                    <h3>📋 История сессий</h3>
+                    <button class="btn btn-sm btn-secondary" onclick="loadHistory()">🔄 Обновить</button>
+                </div>
+                <div id="sessionsList" style="margin-top:16px;">Загрузка...</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Модальное окно предпросмотра файлов -->
+    <div class="modal-overlay" id="previewModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="previewModalTitle">Предпросмотр файла</h3>
+                <button class="modal-close" onclick="closePreview()">✕</button>
+            </div>
+            <div class="modal-body">
+                <p id="previewModalInfo" style="margin-bottom:12px; color:#718096;"></p>
+                <div class="table-wrap" id="previewModalTableWrap">
+                    <table>
+                        <thead id="previewModalHead"></thead>
+                        <tbody id="previewModalBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="modal-overlay" id="blueprintImageModal">
+        <div class="modal" style="max-width:1400px;">
+            <div class="modal-header">
+                <h3>Чертёж с отмеченными элементами</h3>
+                <button class="modal-close" onclick="closeBlueprintImage()">✕</button>
+            </div>
+            <div class="modal-body" style="text-align:center;">
+                <div id="blueprintImageLoading" style="padding:40px;color:#718096;">Загрузка изображения...</div>
+                <img id="blueprintImageContent" style="display:none;max-width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);" alt="Чертёж с отмеченными элементами">
+            </div>
+        </div>
+    </div>
+    
+    <div class="modal-overlay" id="materialsLegendModal">
+        <div class="modal" style="max-width:700px;">
+            <div class="modal-header">
+                <h3>Условные обозначения материалов</h3>
+                <button class="modal-close" onclick="closeMaterialsLegend()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div id="materialsLegendLoading" style="padding:40px;color:#718096;text-align:center;">Загрузка...</div>
+                <div id="materialsLegendContent" style="display:none;"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Модальное окно 3D просмотра -->
+    <div class="modal-overlay" id="viewer3dModal">
+        <div class="modal" style="max-width:900px;">
+            <div class="modal-header">
+                <h3 id="viewer3dTitle">🧊 3D просмотр модели</h3>
+                <button class="modal-close" onclick="close3DViewer()">✕</button>
+            </div>
+            <div class="viewer3d-container" id="viewer3dContainer">
+                <div class="viewer3d-loading" id="viewer3dLoading">Загрузка 3D модели...</div>
+            </div>
+            <div class="viewer3d-toolbar">
+                <button class="btn btn-sm btn-secondary" onclick="reset3DView()">🔄 Сбросить вид</button>
+                <button class="btn btn-sm btn-secondary" onclick="toggleWireframe()">📐 Каркас</button>
+                <button class="btn btn-sm btn-secondary" onclick="toggleAxes()">📏 Оси</button>
+                <button class="btn btn-sm btn-primary" id="downloadGlbBtn">📥 Скачать GLB</button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="toast-container" id="toastContainer"></div>
+    
+<script>
+    // ========== Глобальные переменные ==========
+    let currentSessionId = null;
+    let currentStatusInterval = null;
+    let selectedRows = new Set();
+    let allRowIndices = [];
+    let rowParts = {};
+    let rowMaterials = {};
+    let isGrouped = false;
+    let groupMode = null;
+    let groupIndexMap = {};
+    let viewer3d = null;
+    let pollingGeneration = 0;
+    
+    const API_BASE = '/ifc-vor/api';
+    
+    // ========== Вкладки ==========
+    function switchTab(tab) {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        const btn = document.querySelector(`.tab-btn[onclick*="${tab}"]`);
+        if (btn) btn.classList.add('active');
+        document.getElementById(tab + 'Tab').classList.add('active');
+        if (tab === 'history') loadHistory();
+    }
+    
+    function showToast(message, type = 'info') {
+        const container = document.getElementById('toastContainer');
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.textContent = message;
+        container.appendChild(toast);
+        setTimeout(() => toast.remove(), 5000);
+    }
+    
+    // ========== Загрузка IFC ==========
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    let selectedFile = null;
+    
+    uploadArea.addEventListener('click', () => fileInput.click());
+    uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        if (e.dataTransfer.files.length) {
+            const file = e.dataTransfer.files[0];
+            if (file.name.toLowerCase().endsWith('.ifc') || file.name.toLowerCase().endsWith('.pdf')) handleFileSelect(file);
+            else showToast('Поддерживаются файлы .ifc и .pdf', 'error');
+        }
+    });
+    
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length) handleFileSelect(e.target.files[0]);
+    });
+    
+    function handleFileSelect(file) {
+        selectedFile = file;
+        document.getElementById('fileName').textContent = file.name;
+        document.getElementById('fileInfo').style.display = 'flex';
+        document.getElementById('uploadBtn').disabled = false;
+        showToast(`Выбран файл: ${file.name}`, 'info');
+    }
+    
+    function resetUpload() {
+        selectedFile = null;
+        document.getElementById('fileInfo').style.display = 'none';
+        document.getElementById('uploadBtn').disabled = true;
+        fileInput.value = '';
+        document.getElementById('uploadProgressWrap').style.display = 'none';
+        document.getElementById('uploadProgressBar').style.width = '0%';
+        document.getElementById('uploadProgressText').textContent = '';
+    }
+    
+    async function uploadFile() {
+        if (!selectedFile) return;
+        const btn = document.getElementById('uploadBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Загрузка...';
+        
+        const progressWrap = document.getElementById('uploadProgressWrap');
+        const progressBar = document.getElementById('uploadProgressBar');
+        const progressText = document.getElementById('uploadProgressText');
+        progressWrap.style.display = 'block';
+        
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        
+        try {
+            const response = await fetch(`${API_BASE}/upload_ifc`, { method: 'POST', body: formData });
+            if (!response.ok) {
+                const errorText = await response.text();
+                let error;
+                try { error = JSON.parse(errorText); } catch { error = { detail: errorText || 'Ошибка загрузки' }; }
+                throw new Error(error.detail || 'Ошибка загрузки');
+            }
+            const data = await response.json();
+            currentSessionId = data.sessionId;
+            
+            startStatusPolling(currentSessionId);
+            showToast('Файл загружен, начата обработка', 'success');
+            btn.innerHTML = '⏳ Обработка...';
+        } catch (e) {
+            console.error('Upload error:', e);
+            showToast(e.message, 'error');
+            btn.disabled = false;
+            btn.innerHTML = 'Загрузить и обработать';
+            progressWrap.style.display = 'none';
+        }
+    }
+    
+    function startStatusPolling(sessionId) {
+        if (currentStatusInterval) { clearInterval(currentStatusInterval); currentStatusInterval = null; }
+        const gen = ++pollingGeneration;
+        
+        currentStatusInterval = setInterval(async () => {
+            // Если начался новый опрос — этот callback устарел, ничего не делаем
+            if (gen !== pollingGeneration) return;
+            try {
+                const response = await fetch(`${API_BASE}/session/${sessionId}/status`);
+                if (gen !== pollingGeneration) return; // проверка после await
+                if (!response.ok) {
+                    if (response.status === 404) { clearInterval(currentStatusInterval); currentStatusInterval = null; showToast('Сессия не найдена', 'error'); return; }
+                    throw new Error('Ошибка получения статуса');
+                }
+                const data = await response.json();
+                if (gen !== pollingGeneration) return; // проверка после await
+                
+                const progressBar = document.getElementById('uploadProgressBar');
+                const progressText = document.getElementById('uploadProgressText');
+                progressBar.style.width = data.progress + '%';
+                
+                const isProcessing = data.status === 'processing' || data.status === 'ifc_processing' || data.status === 'pdf_processing';
+                const dotHtml = isProcessing && data.progress < 100 ? '<span class="progress-dot"></span>' : '';
+                progressText.innerHTML = dotHtml + (data.progressMessage || `Обработка: ${data.progress}%`);
+                
+                if (data.status === 'selecting_rows') { clearInterval(currentStatusInterval); currentStatusInterval = null; onIfcProcessed(sessionId); }
+                else if (data.status === 'error') { clearInterval(currentStatusInterval); currentStatusInterval = null; showToast('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'error'); document.getElementById('uploadBtn').disabled = false; document.getElementById('uploadBtn').innerHTML = 'Загрузить и обработать'; }
+                else if (data.status === 'completed') { clearInterval(currentStatusInterval); currentStatusInterval = null; onProcessingComplete(sessionId); }
+            } catch (e) { console.error('Status polling error:', e); }
+        }, 1000);
+    }
+    
+    async function onIfcProcessed(sessionId) {
+        document.getElementById('uploadBtn').innerHTML = '✅ Обработано';
+
+        // Включаем шаг 2 ДО загрузки preview, чтобы он не остался
+        // заблокированным, если запрос preview или renderPreview выбросит ошибку
+        document.getElementById('step1').classList.remove('disabled');
+        document.getElementById('step1Number').textContent = '1';
+
+        try {
+            // Запрос preview с ретраями — на случай если Excel-файл ещё
+            // не успел записаться на диск к моменту готовности сессии
+            let preview_data = null;
+            let lastError = null;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                try {
+                    const response = await fetch(`${API_BASE}/session/${sessionId}/preview`);
+                    if (!response.ok) {
+                        let detail = 'Ошибка загрузки данных';
+                        try { const err = await response.json(); detail = err.detail || detail; } catch {}
+                        throw new Error(detail);
+                    }
+                    preview_data = await response.json();
+                    break;
+                } catch (e) {
+                    lastError = e;
+                    if (attempt < 2) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+                }
+            }
+
+            if (!preview_data) throw lastError || new Error('Не удалось загрузить данные предпросмотра');
+
+            renderPreview(preview_data);
+
+            if (preview_data.buildingHeight) {
+                document.getElementById('buildingHeight').value = preview_data.buildingHeight;
+            }
+
+            // Показываем кнопки чертежа для PDF-сессий
+            const blueprintBtns = document.getElementById('blueprintButtons');
+            if (preview_data.sourceType === 'pdf' && (preview_data.hasBlueprintImage || preview_data.hasMaterialsMd)) {
+                blueprintBtns.style.display = 'flex';
+            } else {
+                blueprintBtns.style.display = 'none';
+            }
+
+            showToast(`Загружено ${preview_data.totalRows} строк. Выберите строки, укажите часть здания и высоту`, 'success');
+        } catch (e) {
+            console.error('onIfcProcessed error:', e);
+            showToast(e.message, 'error');
+            // Даже при ошибке шаг 2 остаётся разблокированным (класс disabled
+            // уже снят выше), чтобы пользователь видел состояние интерфейса
+            document.getElementById('previewBody').innerHTML =
+                `<tr><td colspan="99" style="text-align:center;padding:24px;color:#fc8181;">
+                Не удалось загрузить данные: ${e.message}.<br>Попробуйте загрузить файл заново.</td></tr>`;
+        }
+    }
+    
+    function renderPreview(data) {
+        window._previewData = data;
+        const head = document.getElementById('previewHead');
+        const body = document.getElementById('previewBody');
+        
+        const typeFloorIdx = data.headers.indexOf('Тип_этажа');
+        const materialIdx = data.headers.indexOf('Материал');
+        
+        const filteredHeaders = data.headers.filter(h => h !== 'Материал');
+        
+        head.innerHTML = '<tr>' +
+            '<th style="width:40px;">✓</th>' +
+            '<th style="width:160px;">Часть здания</th>' +
+            '<th style="width:130px;">Материал</th>' +
+            filteredHeaders.map(h => `<th>${h}</th>`).join('') +
+            '</tr>';
+        
+        body.innerHTML = '';
+        allRowIndices = [];
+        selectedRows.clear();
+        rowParts = {};
+        rowMaterials = {};
+        isGrouped = false;
+        groupMode = null;
+        groupIndexMap = {};
+        
+        data.rows.forEach((row, index) => {
+            allRowIndices.push(index);
+            
+            let defaultPart = 'Надземная';
+            if (typeFloorIdx !== -1 && row[typeFloorIdx] && row[typeFloorIdx] !== '-') {
+                const rawValue = row[typeFloorIdx].trim();
+                const partMap = {
+                    'надземная': 'Надземная', 'надземный': 'Надземная',
+                    'подземная': 'Подземная', 'подземный': 'Подземная',
+                    'цоколь': 'Цоколь', 'цокольный': 'Цоколь',
+                    'кровля': 'Надземная', 'технический': 'Надземная',
+                    'мансардный': 'Надземная', 'мансарда': 'Надземная'
+                };
+                defaultPart = partMap[rawValue.toLowerCase()] || 'Надземная';
+            }
+            if (data.savedTypes && data.savedTypes[index]) {
+                defaultPart = data.savedTypes[index];
+            }
+            rowParts[index] = defaultPart;
+            
+            let defaultMaterial = '-';
+            if (materialIdx !== -1 && row[materialIdx] && row[materialIdx] !== '-') {
+                const rawMaterial = row[materialIdx].toLowerCase().trim();
+                
+                const materialMap = {
+                    'бетон': 'Бетон',
+                    'железобетон': 'Бетон',
+                    'цемент': 'Цемент',
+                    'кирпич': 'Кирпич',
+                    'дерево': 'Дерево',
+                    'древесина': 'Дерево'
+                };
+                
+                let found = false;
+                for (const [key, value] of Object.entries(materialMap)) {
+                    if (rawMaterial.includes(key)) {
+                        defaultMaterial = value;
+                        found = true;
+                        break;
+                    }
+                }
+                
+                if (!found && row[materialIdx] !== '-') {
+                    defaultMaterial = row[materialIdx].trim();
+                }
+            }
+            rowMaterials[index] = defaultMaterial;
+            
+            const filteredRow = row.filter((_, colIdx) => data.headers[colIdx] !== 'Материал');
+            
+            const tr = document.createElement('tr');
+            tr.dataset.rowIndex = index;
+            
+            const standardOptions = ['-', 'Бетон', 'Цемент', 'Кирпич', 'Дерево'];
+            let materialOptions = [...standardOptions];
+            
+            if (!standardOptions.includes(defaultMaterial) && defaultMaterial !== '-') {
+                materialOptions.push(defaultMaterial);
+            }
+            
+            const materialSelect = `<select class="material-select" data-index="${index}" onchange="updateRowMaterial(${index}, this.value)" style="width:120px;">
+                ${materialOptions.map(opt => 
+                    `<option value="${opt}" ${defaultMaterial === opt ? 'selected' : ''}>${opt}</option>`
+                ).join('')}
+            </select>`;
+            
+            tr.innerHTML = `
+                <td style="text-align:center;">
+                    <input type="checkbox" class="row-checkbox" data-index="${index}" onchange="toggleRowSelection(${index})">
+                </td>
+                <td>
+                    <select class="part-select" data-index="${index}" onchange="updateRowPart(${index}, this.value)">
+                        <option value="Надземная" ${defaultPart === 'Надземная' ? 'selected' : ''}>Надземная</option>
+                        <option value="Подземная" ${defaultPart === 'Подземная' ? 'selected' : ''}>Подземная</option>
+                        <option value="Цоколь" ${defaultPart === 'Цоколь' ? 'selected' : ''}>Цоколь</option>
+                    </select>
+                </td>
+                <td>
+                    ${materialSelect}
+                </td>
+                ${filteredRow.map(cell => `<td title="${cell}">${cell}</td>`).join('')}
+            `;
+            body.appendChild(tr);
+        });
+        
+        document.getElementById('previewInfo').textContent = `Загружено: ${data.totalRows} строк`;
+        document.getElementById('selectedCount').textContent = '0';
+        document.getElementById('selectRowsBtn').disabled = true;
+        document.getElementById('autoGroupBtn').style.display = 'inline-block';
+        document.getElementById('groupByIfcBtn').style.display = 'inline-block';
+        document.getElementById('ungroupBtn').style.display = 'none';
+    }
+    
+    // ========== Функции работы с материалами ==========
+    function updateRowMaterial(index, value) { 
+        rowMaterials[index] = value; 
+    }
+    
+    function setGlobalMaterial() {
+        const select = document.getElementById('globalMaterialSelect');
+        const material = select.value;
+        if (!material) return;
+        
+        if (isGrouped && groupMode === 'smart') {
+            Object.keys(groupIndexMap).forEach(groupId => {
+                const indices = groupIndexMap[groupId];
+                const firstIndex = indices[0];
+                
+                if (selectedRows.has(firstIndex)) {
+                    setGroupMaterial(groupId, material);
+                }
+            });
+        } else {
+            // IFC-режим или обычный: применяем к выбранным строкам
+            selectedRows.forEach(index => {
+                rowMaterials[index] = material;
+                const ms = document.querySelector(`.material-select[data-index="${index}"]`);
+                if (ms) {
+                    if (!Array.from(ms.options).some(opt => opt.value === material)) {
+                        const option = new Option(material, material);
+                        ms.add(option);
+                    }
+                    ms.value = material;
+                }
+            });
+        }
+        
+        showToast(`Материал "${material}" назначен для выбранных`, 'info');
+        select.value = '';
+    }
+    
+    function setGroupMaterial(groupId, material) {
+        if (!material) return;
+        const indices = groupIndexMap[groupId];
+        if (!indices) return;
+        
+        indices.forEach(index => {
+            rowMaterials[index] = material;
+            const materialSelect = document.querySelector(`.material-select[data-index="${index}"]`);
+            if (materialSelect) {
+                if (!Array.from(materialSelect.options).some(opt => opt.value === material)) {
+                    const option = new Option(material, material);
+                    materialSelect.add(option);
+                }
+                materialSelect.value = material;
+            }
+        });
+        
+        const groupHeader = document.querySelector(`tr.group-header[data-group-id="${groupId}"]`);
+        if (groupHeader) {
+            const groupMaterialSelect = groupHeader.querySelector('.material-select');
+            if (groupMaterialSelect) {
+                if (!Array.from(groupMaterialSelect.options).some(opt => opt.value === material)) {
+                    const option = new Option(material, material);
+                    groupMaterialSelect.add(option);
+                }
+                groupMaterialSelect.value = material;
+            }
+        }
+        
+        showToast(`Материал "${material}" назначен для группы (${indices.length} шт.)`, 'info');
+    }
+    
+    // ========== Группировка Smart ==========
+    function cleanElementName(name) {
+        if (!name) return '';
+        const lastColon = name.lastIndexOf(':');
+        if (lastColon !== -1) {
+            const afterColon = name.substring(lastColon + 1).trim();
+            if (/^\d+$/.test(afterColon)) {
+                return name.substring(0, lastColon).trim();
+            }
+        }
+        return name.trim();
+    }
+
+    function autoGroupRows() {
+        const data = window._previewData;
+        if (!data) return;
+
+        const headers = data.headers;
+        const body = document.getElementById('previewBody');
+        const rows = Array.from(body.querySelectorAll('tr'));
+
+        groupIndexMap = {};
+        selectedRows.clear();
+        isGrouped = true;
+        groupMode = 'smart';
+
+        const filteredHeaders = data.headers.filter(h => h !== 'Материал');
+        
+        const possibleGroupCols = ['Имя', 'Длина_Width_мм'];
+        const groupIndices = [];
+        possibleGroupCols.forEach(colName => {
+            const idx = filteredHeaders.indexOf(colName);
+            if (idx !== -1) groupIndices.push(idx);
+        });
+
+        const sumIndices = [];
+        filteredHeaders.forEach((h, i) => {
+            if (/площадь|объем|объём/i.test(h)) {
+                sumIndices.push(i);
+            }
+        });
+
+        const nameIdx = filteredHeaders.indexOf('Имя');
+
+        const groups = {};
+
+        rows.forEach(tr => {
+            const tds = tr.querySelectorAll('td');
+            
+            const partSelect = tds[1]?.querySelector('select');
+            const buildingPart = partSelect ? partSelect.value : 'Надземная';
+            
+            const materialSelect = tds[2]?.querySelector('select');
+            const buildingMaterial = materialSelect ? materialSelect.value : '-';
+
+            const keyParts = [buildingPart, buildingMaterial];
+            groupIndices.forEach(i => {
+                let val = tds[i + 3] ? tds[i + 3].textContent.trim() : '';
+                if (i === nameIdx) {
+                    val = cleanElementName(val);
+                }
+                keyParts.push(val);
+            });
+
+            const key = keyParts.join('|||');
+
+            if (!groups[key]) {
+                groups[key] = {
+                    rows: [],
+                    indices: [],
+                    keyParts: keyParts,
+                    buildingPart: buildingPart,
+                    buildingMaterial: buildingMaterial,
+                    sumValues: {}
+                };
+            }
+            groups[key].rows.push(tr);
+            groups[key].indices.push(parseInt(tr.dataset.rowIndex));
+
+            sumIndices.forEach(si => {
+                const td = tds[si + 3];
+                const val = td ? parseFloat(td.textContent.trim()) : 0;
+                if (!isNaN(val)) {
+                    groups[key].sumValues[si] = (groups[key].sumValues[si] || 0) + val;
+                }
+            });
+        });
+
+        body.innerHTML = '';
+
+        const groupKeys = Object.keys(groups).sort((a, b) => {
+            const aVal = groups[a].keyParts[0] || '';
+            const bVal = groups[b].keyParts[0] || '';
+            return aVal.localeCompare(bVal);
+        });
+
+        let groupCounter = 0;
+
+        groupKeys.forEach(key => {
+            const group = groups[key];
+            const buildingPart = group.buildingPart;
+            const buildingMaterial = group.buildingMaterial;
+            const groupRows = group.rows;
+            const groupIndicesArr = group.indices;
+            const groupId = 'g' + (groupCounter++);
+            const count = groupRows.length;
+
+            if (count === 1) {
+                const tr = groupRows[0];
+                tr.classList.remove('hidden-row', 'group-row');
+                body.appendChild(tr);
+                return;
+            }
+
+            groupIndexMap[groupId] = groupIndicesArr;
+
+            groupIndicesArr.forEach(index => {
+                rowMaterials[index] = buildingMaterial;
+            });
+
+            const rep = groupRows[0];
+            const repTds = rep.querySelectorAll('td');
+            const firstIndex = groupIndicesArr[0];
+
+            const groupTr = document.createElement('tr');
+            groupTr.className = 'group-header';
+            groupTr.dataset.groupId = groupId;
+            groupTr.onclick = function(e) {
+                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON') return;
+                toggleGroup(groupId);
+            };
+
+            const allValues = [];
+            filteredHeaders.forEach((h, i) => {
+                let val;
+                if (sumIndices.includes(i) && group.sumValues[i] !== undefined) {
+                    val = Number(group.sumValues[i].toFixed(3));
+                } else if (i === nameIdx) {
+                    const td = repTds[i + 3];
+                    val = td ? cleanElementName(td.textContent.trim()) : '';
+                } else {
+                    const td = repTds[i + 3];
+                    val = td ? td.textContent.trim() : '';
+                }
+                allValues.push(val);
+            });
+
+            const materialOptions = ['-', 'Бетон', 'Цемент', 'Кирпич', 'Дерево'];
+            if (!materialOptions.includes(buildingMaterial) && buildingMaterial !== '-') {
+                materialOptions.push(buildingMaterial);
+            }
+
+            groupTr.innerHTML = `
+                <td style="text-align:center;">
+                    <span class="group-arrow" id="${groupId}_arrow">▶</span>
+                    <input type="checkbox" class="group-checkbox" data-group-id="${groupId}" 
+                        data-first-index="${firstIndex}">
+                </td>
+                <td>
+                    <select class="part-select" style="width:130px;" 
+                            onchange="event.stopPropagation(); setGroupPart('${groupId}', this.value)">
+                        <option value="">Выбрать...</option>
+                        <option value="Надземная" ${buildingPart === 'Надземная' ? 'selected' : ''}>Надземная</option>
+                        <option value="Подземная" ${buildingPart === 'Подземная' ? 'selected' : ''}>Подземная</option>
+                        <option value="Цоколь" ${buildingPart === 'Цоколь' ? 'selected' : ''}>Цоколь</option>
+                    </select>
+                </td>
+                <td>
+                    <select class="material-select" style="width:120px;" 
+                            onchange="event.stopPropagation(); setGroupMaterial('${groupId}', this.value)">
+                        ${materialOptions.map(opt => 
+                            `<option value="${opt}" ${buildingMaterial === opt ? 'selected' : ''}>${opt}</option>`
+                        ).join('')}
+                    </select>
+                </td>
+                ${allValues.map(v => `<td title="${v}">${v}</td>`).join('')}
+            `;
+
+            const typeRuIdx = filteredHeaders.indexOf('Тип (RU)');
+            const badgeTd = typeRuIdx !== -1 
+                ? groupTr.querySelectorAll('td')[typeRuIdx + 3]
+                : groupTr.querySelectorAll('td')[3];
+            if (badgeTd) {
+                badgeTd.innerHTML = `${badgeTd.textContent} <span class="group-badge">×${count}</span>`;
+            }
+
+            body.appendChild(groupTr);
+
+            const groupCb = groupTr.querySelector('.group-checkbox');
+            if (groupCb) {
+                groupCb.addEventListener('change', function(e) {
+                    e.stopPropagation();
+                    toggleGroupSelection(groupId, this.checked);
+                });
+            }
+
+            groupRows.forEach(tr => {
+                tr.classList.add('group-row', 'hidden-row');
+                tr.dataset.group = groupId;
+                
+                const hiddenMaterialSelect = tr.querySelector('.material-select');
+                if (hiddenMaterialSelect) {
+                    if (!Array.from(hiddenMaterialSelect.options).some(opt => opt.value === buildingMaterial)) {
+                        const option = new Option(buildingMaterial, buildingMaterial);
+                        hiddenMaterialSelect.add(option);
+                    }
+                    hiddenMaterialSelect.value = buildingMaterial;
+                }
+                
+                const cb = tr.querySelector('.row-checkbox');
+                if (cb) {
+                    cb.style.display = 'none';
+                    cb.checked = false;
+                }
+                body.appendChild(tr);
+            });
+        });
+
+        document.getElementById('autoGroupBtn').style.display = 'none';
+        document.getElementById('groupByIfcBtn').style.display = 'none';
+        document.getElementById('ungroupBtn').style.display = 'inline-block';
+        updateSelectionUI();
+
+        const multiGroups = Object.values(groups).filter(g => g.rows.length > 1).length;
+        showToast(`Сгруппировано: ${groupKeys.length} групп (${multiGroups} с повторами, всего ${rows.length} строк)`, 'info');
+    }
+    
+    // ========== Группировка по IFC типу ==========
+    function groupByIfcType() {
+        const data = window._previewData;
+        if (!data) return;
+
+        const headers = data.headers;
+        const body = document.getElementById('previewBody');
+        const rows = Array.from(body.querySelectorAll('tr'));
+
+        groupIndexMap = {};
+        selectedRows.clear();
+        isGrouped = true;
+        groupMode = 'ifc';
+
+        const ifcTypeIdx = data.headers.indexOf('Тип элемента');
+        if (ifcTypeIdx === -1) {
+            showToast('Колонка "Тип элемента" не найдена', 'error');
+            return;
+        }
+
+        const filteredHeaders = data.headers.filter(h => h !== 'Материал');
+        const ifcTypeFilteredIdx = filteredHeaders.indexOf('Тип элемента');
+
+        const groups = {};
+
+        rows.forEach(tr => {
+            const tds = tr.querySelectorAll('td');
+            const ifcType = tds[ifcTypeFilteredIdx + 3] ? tds[ifcTypeFilteredIdx + 3].textContent.trim() : 'Неизвестный';
+
+            if (!groups[ifcType]) {
+                groups[ifcType] = {
+                    rows: [],
+                    indices: [],
+                    ifcType: ifcType
+                };
+            }
+            groups[ifcType].rows.push(tr);
+            groups[ifcType].indices.push(parseInt(tr.dataset.rowIndex));
+        });
+
+        body.innerHTML = '';
+
+        const groupKeys = Object.keys(groups).sort();
+        let groupCounter = 0;
+
+        groupKeys.forEach(ifcType => {
+            const group = groups[ifcType];
+            const groupRows = group.rows;
+            const groupIndicesArr = group.indices;
+            const groupId = 'ifc_' + (groupCounter++);
+            const count = groupRows.length;
+
+            groupIndexMap[groupId] = groupIndicesArr;
+
+            const groupTr = document.createElement('tr');
+            groupTr.className = 'group-header ifc-group-header';
+            groupTr.dataset.groupId = groupId;
+            groupTr.onclick = function(e) {
+                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON') return;
+                toggleGroup(groupId);
+            };
+
+            const firstTds = groupRows[0].querySelectorAll('td');
+            const firstPartSelect = firstTds[1]?.querySelector('select');
+            const firstPart = firstPartSelect ? firstPartSelect.value : 'Надземная';
+            const firstMaterialSelect = firstTds[2]?.querySelector('select');
+            const firstMaterial = firstMaterialSelect ? firstMaterialSelect.value : '-';
+
+            const totalCols = 3 + filteredHeaders.length;
+
+            groupTr.innerHTML = `
+                <td style="text-align:center;">
+                    <span class="group-arrow" id="${groupId}_arrow">▶</span>
+                    <input type="checkbox" class="group-checkbox" data-group-id="${groupId}">
+                </td>
+                <td colspan="${totalCols - 1}" style="font-weight:700; color:#2b6cb0;">
+                    📦 ${ifcType} <span class="group-badge">×${count}</span>
+                    <span style="font-size:11px; color:#718096; margin-left:12px;">
+                        Пример: ${firstPart} | ${firstMaterial}
+                    </span>
+                </td>
+            `;
+
+            body.appendChild(groupTr);
+
+            const groupCb = groupTr.querySelector('.group-checkbox');
+            if (groupCb) {
+                groupCb.addEventListener('change', function(e) {
+                    e.stopPropagation();
+                    toggleGroupSelection(groupId, this.checked);
+                });
+            }
+
+            groupRows.forEach(tr => {
+                tr.classList.add('group-row', 'hidden-row');
+                tr.dataset.group = groupId;
+                
+                const cb = tr.querySelector('.row-checkbox');
+                if (cb) {
+                    cb.style.display = '';
+                    cb.checked = false;
+                }
+                
+                const partSelect = tr.querySelector('.part-select');
+                if (partSelect) {
+                    partSelect.disabled = false;
+                    partSelect.style.opacity = '1';
+                }
+                
+                const materialSelect = tr.querySelector('.material-select');
+                if (materialSelect) {
+                    materialSelect.disabled = false;
+                    materialSelect.style.opacity = '1';
+                }
+                
+                body.appendChild(tr);
+            });
+        });
+
+        document.getElementById('autoGroupBtn').style.display = 'none';
+        document.getElementById('groupByIfcBtn').style.display = 'none';
+        document.getElementById('ungroupBtn').style.display = 'inline-block';
+        updateSelectionUI();
+
+        showToast(`Сгруппировано по IFC: ${groupKeys.length} типов (всего ${rows.length} строк)`, 'info');
+    }
+    
+    function toggleGroup(groupId) {
+        const rows = document.querySelectorAll(`.group-row[data-group="${groupId}"]`);
+        const arrow = document.getElementById(groupId + '_arrow');
+        const isHidden = rows[0]?.classList.contains('hidden-row');
+        
+        rows.forEach(row => row.classList.toggle('hidden-row', !isHidden));
+        
+        if (arrow) {
+            arrow.classList.toggle('expanded', !isHidden);
+            arrow.textContent = !isHidden ? '▼' : '▶';
+        }
+    }
+    
+    function toggleGroupSelection(groupId, checked) {
+        const indices = groupIndexMap[groupId];
+        if (!indices || indices.length === 0) return;
+        
+        if (groupMode === 'smart') {
+            // Smart-режим: выбираем только первый элемент группы
+            const firstIndex = indices[0];
+            
+            if (checked) {
+                selectedRows.add(firstIndex);
+            } else {
+                selectedRows.delete(firstIndex);
+            }
+            
+            const hiddenRows = document.querySelectorAll(`.group-row[data-group="${groupId}"]`);
+            hiddenRows.forEach(row => {
+                const cb = row.querySelector('.row-checkbox');
+                if (cb) cb.checked = checked;
+            });
+        } else if (groupMode === 'ifc') {
+            // IFC-режим: выбираем все элементы группы
+            const hiddenRows = document.querySelectorAll(`.group-row[data-group="${groupId}"]`);
+            hiddenRows.forEach(row => {
+                const cb = row.querySelector('.row-checkbox');
+                const index = parseInt(row.dataset.rowIndex);
+                if (cb) {
+                    cb.checked = checked;
+                }
+                if (checked) {
+                    selectedRows.add(index);
+                } else {
+                    selectedRows.delete(index);
+                }
+            });
+        }
+        
+        updateSelectionUI();
+    }
+    
+    function toggleRowSelection(index) {
+        if (isGrouped && groupMode === 'smart') {
+            for (const [groupId, indices] of Object.entries(groupIndexMap)) {
+                if (indices.includes(index)) {
+                    const firstIndex = indices[0];
+                    const cb = document.querySelector(`.group-checkbox[data-group-id="${groupId}"]`);
+                    if (cb) {
+                        cb.checked = !cb.checked;
+                        toggleGroupSelection(groupId, cb.checked);
+                    }
+                    return;
+                }
+            }
+            return;
+        }
+        
+        // IFC-режим или обычный: прямой выбор строки
+        const cb = document.querySelector(`.row-checkbox[data-index="${index}"]`);
+        if (!cb) return;
+        
+        if (cb.checked) {
+            selectedRows.add(index);
+        } else {
+            selectedRows.delete(index);
+        }
+        updateSelectionUI();
+    }
+    
+    function setGroupPart(groupId, part) {
+        if (!part) return;
+        const indices = groupIndexMap[groupId];
+        if (!indices) return;
+        
+        indices.forEach(index => {
+            rowParts[index] = part;
+            const partSelect = document.querySelector(`.part-select[data-index="${index}"]`);
+            if (partSelect) partSelect.value = part;
+        });
+        
+        showToast(`Часть "${part}" назначена для группы (${indices.length} шт.)`, 'info');
+    }
+    
+    function ungroupRows() {
+        const data = window._previewData;
+        if (!data) return;
+        
+        groupIndexMap = {};
+        groupMode = null;
+        isGrouped = false;
+        
+        const body = document.getElementById('previewBody');
+        body.innerHTML = '';
+        
+        const typeFloorIdx = data.headers.indexOf('Тип_этажа');
+        const filteredHeaders = data.headers.filter(h => h !== 'Материал');
+        
+        data.rows.forEach((row, index) => {
+            let defaultPart = 'Надземная';
+            if (typeFloorIdx !== -1 && row[typeFloorIdx]) {
+                defaultPart = row[typeFloorIdx];
+            }
+            if (rowParts[index]) {
+                defaultPart = rowParts[index];
+            }
+            
+            let defaultMaterial = rowMaterials[index] || '-';
+            
+            const standardOptions = ['-', 'Бетон', 'Цемент', 'Кирпич', 'Дерево'];
+            let materialOptions = [...standardOptions];
+            if (!standardOptions.includes(defaultMaterial) && defaultMaterial !== '-') {
+                materialOptions.push(defaultMaterial);
+            }
+            
+            const materialSelect = `<select class="material-select" data-index="${index}" onchange="updateRowMaterial(${index}, this.value)" style="width:120px;">
+                ${materialOptions.map(opt => 
+                    `<option value="${opt}" ${defaultMaterial === opt ? 'selected' : ''}>${opt}</option>`
+                ).join('')}
+            </select>`;
+            
+            const filteredRow = row.filter((_, colIdx) => data.headers[colIdx] !== 'Материал');
+            
+            const tr = document.createElement('tr');
+            tr.dataset.rowIndex = index;
+            tr.innerHTML = `
+                <td style="text-align:center;">
+                    <input type="checkbox" class="row-checkbox" data-index="${index}" 
+                           onchange="toggleRowSelection(${index})"
+                           ${selectedRows.has(index) ? 'checked' : ''}>
+                </td>
+                <td>
+                    <select class="part-select" data-index="${index}" onchange="updateRowPart(${index}, this.value)">
+                        <option value="Надземная" ${defaultPart === 'Надземная' ? 'selected' : ''}>Надземная</option>
+                        <option value="Подземная" ${defaultPart === 'Подземная' ? 'selected' : ''}>Подземная</option>
+                        <option value="Цоколь" ${defaultPart === 'Цоколь' ? 'selected' : ''}>Цоколь</option>
+                    </select>
+                </td>
+                <td>
+                    ${materialSelect}
+                </td>
+                ${filteredRow.map(cell => `<td title="${cell}">${cell}</td>`).join('')}
+            `;
+            body.appendChild(tr);
+        });
+        
+        document.getElementById('autoGroupBtn').style.display = 'inline-block';
+        document.getElementById('groupByIfcBtn').style.display = 'inline-block';
+        document.getElementById('ungroupBtn').style.display = 'none';
+        updateSelectionUI();
+        showToast('Группировка снята', 'info');
+    }
+    
+    function updateRowPart(index, value) { rowParts[index] = value; }
+    
+    function setGlobalPart() {
+        const select = document.getElementById('globalPartSelect');
+        const part = select.value;
+        if (!part) return;
+        
+        if (isGrouped && groupMode === 'smart') {
+            Object.keys(groupIndexMap).forEach(groupId => setGroupPart(groupId, part));
+        } else {
+            selectedRows.forEach(index => {
+                rowParts[index] = part;
+                const ps = document.querySelector(`.part-select[data-index="${index}"]`);
+                if (ps) ps.value = part;
+            });
+        }
+        
+        showToast(`Часть "${part}" назначена для выбранных`, 'info');
+        select.value = '';
+    }
+    
+    function selectAllRows() {
+        if (groupMode === 'ifc') {
+            // IFC-режим: выбираем все строки
+            document.querySelectorAll('.row-checkbox').forEach(cb => {
+                cb.checked = true;
+                selectedRows.add(parseInt(cb.dataset.index));
+            });
+            document.querySelectorAll('.group-checkbox').forEach(cb => {
+                cb.checked = false;
+            });
+        } else if (isGrouped && groupMode === 'smart') {
+            // Smart-режим: выбираем все группы (первые элементы)
+            Object.keys(groupIndexMap).forEach(groupId => {
+                const indices = groupIndexMap[groupId];
+                if (indices && indices.length > 0) {
+                    const firstIndex = indices[0];
+                    selectedRows.add(firstIndex);
+                    
+                    // Отмечаем чекбокс группы
+                    const groupCb = document.querySelector(`.group-checkbox[data-group-id="${groupId}"]`);
+                    if (groupCb) groupCb.checked = true;
+                    
+                    // Отмечаем скрытые чекбоксы строк
+                    indices.forEach(index => {
+                        const cb = document.querySelector(`.row-checkbox[data-index="${index}"]`);
+                        if (cb) cb.checked = true;
+                    });
+                }
+            });
+            // Также выбираем одиночные строки (не в группах)
+            document.querySelectorAll('.row-checkbox').forEach(cb => {
+                const tr = cb.closest('tr');
+                if (tr && !tr.classList.contains('group-row') && !tr.classList.contains('group-header')) {
+                    cb.checked = true;
+                    selectedRows.add(parseInt(cb.dataset.index));
+                }
+            });
+        } else {
+            // Обычный режим: выбираем все строки
+            document.querySelectorAll('.row-checkbox').forEach(cb => {
+                cb.checked = true;
+                selectedRows.add(parseInt(cb.dataset.index));
+            });
+        }
+        updateSelectionUI();
+    }
+    
+    function deselectAllRows() {
+        selectedRows.clear();
+        
+        document.querySelectorAll('.group-checkbox').forEach(cb => {
+            cb.checked = false;
+        });
+        
+        document.querySelectorAll('.row-checkbox').forEach(cb => {
+            cb.checked = false;
+        });
+        
+        updateSelectionUI();
+    }
+    
+    function updateSelectionUI() {
+        document.getElementById('selectedCount').textContent = selectedRows.size;
+        document.getElementById('selectRowsBtn').disabled = selectedRows.size === 0;
+    }
+    
+    // ========== Запуск обработки ==========
+    async function confirmRowSelection() {
+        if (selectedRows.size === 0) { showToast('Выберите хотя бы одну строку', 'warning'); return; }
+        
+        let missingParts = [];
+        selectedRows.forEach(index => { if (!rowParts[index]) missingParts.push(parseInt(index) + 1); });
+        if (missingParts.length > 0) { showToast(`Укажите часть здания для строк: ${missingParts.join(', ')}`, 'warning'); return; }
+        
+        const height = parseFloat(document.getElementById('buildingHeight').value);
+        if (!height || height <= 0) { showToast('Введите корректную высоту здания', 'warning'); return; }
+        if (height > 10000) { showToast('Слишком большая высота здания', 'warning'); return; }
+        
+        const btn = document.getElementById('selectRowsBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Запуск...';
+        
+        const selectedRowParts = {};
+        const selectedRowMaterials = {};
+
+        if (isGrouped && groupMode === 'smart') {
+            for (const [groupId, indices] of Object.entries(groupIndexMap)) {
+                const firstIndex = indices[0];
+                if (selectedRows.has(firstIndex)) {
+                    const part = rowParts[firstIndex] || 'Надземная';
+                    const material = rowMaterials[firstIndex] || '-';
+                    
+                    indices.forEach(index => {
+                        selectedRowParts[index] = part;
+                        selectedRowMaterials[index] = material;
+                    });
+                }
+            }
+        } else {
+            selectedRows.forEach(index => { 
+                selectedRowParts[index] = rowParts[index] || 'Надземная';
+                selectedRowMaterials[index] = rowMaterials[index] || '-';
+            });
+        }
+        
+        const groupedData = {};
+        if (isGrouped) {
+            const filteredHeaders = window._previewData.headers.filter(h => h !== 'Материал');
+            
+            for (const [groupId, indices] of Object.entries(groupIndexMap)) {
+                const firstIndex = indices[0];
+                if (selectedRows.has(firstIndex)) {
+                    const groupHeader = document.querySelector(`tr.group-header[data-group-id="${groupId}"]`);
+                    if (groupHeader) {
+                        const tds = groupHeader.querySelectorAll('td');
+                        const rowData = {};
+                        
+                        if (groupMode === 'smart') {
+                            filteredHeaders.forEach((h, i) => {
+                                const td = tds[i + 3];
+                                rowData[h] = td ? td.textContent.trim() : '';
+                            });
+                        }
+                        
+                        groupedData[firstIndex] = {
+                            count: indices.length,
+                            data: rowData
+                        };
+                    }
+                }
+            }
+        }
+        
+        document.getElementById('processingProgressWrap').style.display = 'block';
+        document.getElementById('processingProgressBar').style.width = '0%';
+        document.getElementById('processingProgressText').textContent = 'Запуск обработки...';
+        
+        try {
+            const response = await fetch(`${API_BASE}/session/${currentSessionId}/select_rows`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    rowIndices: Array.from(selectedRows),
+                    allRows: selectedRows.size === allRowIndices.length,
+                    rowTypes: selectedRowParts,
+                    rowMaterials: selectedRowMaterials,
+                    buildingHeight: height,
+                    groupedData: groupedData
+                })
+            });
+            
+            if (!response.ok) { const error = await response.json(); throw new Error(error.detail || 'Ошибка'); }
+            const data = await response.json();
+            showToast(`Выбрано ${data.selectedRows} строк, высота ${height}м. Обработка запущена`, 'success');
+            btn.innerHTML = '✅ Обработка запущена';
+            startProcessingPolling(currentSessionId);
+        } catch (e) {
+            showToast(e.message, 'error');
+            btn.disabled = false;
+            btn.innerHTML = `🚀 Запустить обработку (<span id="selectedCount">${selectedRows.size}</span>)`;
+            document.getElementById('processingProgressWrap').style.display = 'none';
+        }
+    }
+    
+    function startProcessingPolling(sessionId) {
+        if (currentStatusInterval) { clearInterval(currentStatusInterval); currentStatusInterval = null; }
+        const gen = ++pollingGeneration;
+        currentStatusInterval = setInterval(async () => {
+            if (gen !== pollingGeneration) return;
+            try {
+                const response = await fetch(`${API_BASE}/session/${sessionId}/status`);
+                if (gen !== pollingGeneration) return;
+                if (!response.ok) throw new Error('Ошибка');
+                const data = await response.json();
+                if (gen !== pollingGeneration) return;
+                
+                const progressBar = document.getElementById('processingProgressBar');
+                const progressText = document.getElementById('processingProgressText');
+                progressBar.style.width = data.progress + '%';
+                progressText.textContent = data.progressMessage || `Обработка: ${data.progress}%`;
+                
+                if (data.status === 'completed') { clearInterval(currentStatusInterval); currentStatusInterval = null; onProcessingComplete(sessionId); }
+                else if (data.status === 'error') {
+                    clearInterval(currentStatusInterval); currentStatusInterval = null;
+                    showToast('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'error');
+                    document.getElementById('selectRowsBtn').disabled = false;
+                    document.getElementById('selectRowsBtn').innerHTML = `🚀 Запустить обработку (<span id="selectedCount">${selectedRows.size}</span>)`;
+                }
+            } catch (e) { console.error('Polling error:', e); }
+        }, 2000);
+    }
+    
+    async function onProcessingComplete(sessionId) {
+        document.getElementById('processingProgressBar').style.width = '100%';
+        document.getElementById('processingProgressText').textContent = 'Обработка завершена';
+        try {
+            const response = await fetch(`${API_BASE}/session/${sessionId}`);
+            if (!response.ok) throw new Error('Ошибка загрузки');
+            const data = await response.json();
+            renderResults(data.files || []);
+            document.getElementById('resultsCard').style.display = 'block';
+            showToast('Обработка завершена!', 'success');
+        } catch (e) { showToast(e.message, 'error'); }
+    }
+    
+    function renderResults(files) {
+        const container = document.getElementById('resultsFiles');
+        if (!files || files.length === 0) {
+            container.innerHTML = '<p style="color:#718096;">Нет файлов для скачивания</p>';
+            return;
+        }
+        container.innerHTML = files.map(f => {
+            const ext = f.filename.split('.').pop().toLowerCase();
+            const canPreview = ['xlsx', 'csv', 'json'].includes(ext);
+            const isGlb = ext === 'glb';
+            return `
+                <div class="file-info">
+                    <span>${isGlb ? '🧊' : '📄'}</span>
+                    <span class="name">${f.filename}</span>
+                    <span style="color:#718096;font-size:13px;">${(f.size / 1024).toFixed(1)} KB</span>
+                    ${isGlb ? `<button class="btn btn-sm btn-secondary" onclick="previewGlbFile('${f.filename}')">👁️ 3D просмотр</button>` : ''}
+                    ${canPreview ? `<button class="btn btn-sm btn-secondary" onclick="previewResultFile('${f.filename}')">👁️ Просмотр</button>` : ''}
+                    <a href="${API_BASE}/session/${currentSessionId}/download/${f.filename}" class="btn btn-sm btn-primary" download>Скачать</a>
+                </div>
+            `;
+        }).join('');
+    }
+    
+    function previewResultFile(filename) {
+        const overlay = document.getElementById('previewModal');
+        const title = document.getElementById('previewModalTitle');
+        const info = document.getElementById('previewModalInfo');
+        const head = document.getElementById('previewModalHead');
+        const body = document.getElementById('previewModalBody');
+        
+        title.textContent = filename;
+        info.textContent = 'Загрузка...';
+        head.innerHTML = '';
+        body.innerHTML = '';
+        overlay.classList.add('active');
+        
+        fetch(`${API_BASE}/session/${currentSessionId}/preview_result/${encodeURIComponent(filename)}`)
+            .then(r => r.ok ? r.json() : Promise.reject(r))
+            .then(data => {
+                info.innerHTML = data.isPreview 
+                    ? `Показаны первые ${data.previewRows} строк из ${data.totalRows} <span class="preview-badge">Предпросмотр</span>`
+                    : `Всего строк: ${data.totalRows}`;
+                head.innerHTML = '<tr>' + data.headers.map(h => `<th>${h}</th>`).join('') + '</tr>';
+                body.innerHTML = data.rows.map(row => 
+                    '<tr>' + row.map(cell => `<td title="${cell}">${cell}</td>`).join('') + '</tr>'
+                ).join('');
+            })
+            .catch(e => {
+                info.textContent = 'Ошибка загрузки';
+                info.style.color = '#fc8181';
+            });
+    }
+    
+    function closePreview() { document.getElementById('previewModal').classList.remove('active'); }
+
+    // ========== Чертёж и условные обозначения ==========
+    function showBlueprintImage() {
+        if (!currentSessionId) { showToast('Нет активной сессии', 'warning'); return; }
+        const overlay = document.getElementById('blueprintImageModal');
+        const loading = document.getElementById('blueprintImageLoading');
+        const img = document.getElementById('blueprintImageContent');
+        loading.style.display = 'block';
+        img.style.display = 'none';
+        overlay.classList.add('active');
+        img.onload = () => { loading.style.display = 'none'; img.style.display = 'inline-block'; };
+        img.onerror = () => { loading.textContent = 'Ошибка загрузки изображения'; loading.style.color = '#fc8181'; };
+        img.src = `${API_BASE}/session/${currentSessionId}/blueprint_image`;
+    }
+    
+    function closeBlueprintImage() {
+        document.getElementById('blueprintImageModal').classList.remove('active');
+        document.getElementById('blueprintImageContent').src = '';
+    }
+    
+    async function showMaterialsLegend() {
+        if (!currentSessionId) { showToast('Нет активной сессии', 'warning'); return; }
+        const overlay = document.getElementById('materialsLegendModal');
+        const loading = document.getElementById('materialsLegendLoading');
+        const content = document.getElementById('materialsLegendContent');
+        loading.style.display = 'block';
+        content.style.display = 'none';
+        overlay.classList.add('active');
+        try {
+            const response = await fetch(`${API_BASE}/session/${currentSessionId}/materials_md`);
+            if (!response.ok) { const err = await response.json(); throw new Error(err.detail || 'Ошибка'); }
+            const data = await response.json();
+            // Рендерим markdown-таблицу как HTML
+            content.innerHTML = renderMarkdownTable(data.markdown);
+            loading.style.display = 'none';
+            content.style.display = 'block';
+        } catch (e) {
+            loading.textContent = 'Ошибка: ' + e.message;
+            loading.style.color = '#fc8181';
+        }
+    }
+    
+    function closeMaterialsLegend() {
+        document.getElementById('materialsLegendModal').classList.remove('active');
+    }
+    
+    function renderMarkdownTable(md) {
+        const lines = md.trim().split('\n').filter(l => l.trim());
+        if (lines.length < 2) return '<p>' + md + '</p>';
+        // Первая строка — заголовок, вторая — разделитель (| --- |)
+        const parseRow = (line) => {
+            return line.split('|').map(c => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length);
+        };
+        const headers = parseRow(lines[0]);
+        const bodyRows = lines.slice(2).map(parseRow);
+        let html = '<table style="width:100%;border-collapse:collapse;font-size:14px;">';
+        html += '<thead><tr>' + headers.map(h => '<th style="padding:10px 12px;text-align:left;border-bottom:2px solid #e2e8f0;background:#f7fafc;font-weight:600;color:#4a5568;">' + h + '</th>').join('') + '</tr></thead>';
+        html += '<tbody>' + bodyRows.map(row => 
+            '<tr>' + row.map(cell => '<td style="padding:8px 12px;border-bottom:1px solid #f0f4f8;">' + cell + '</td>').join('') + '</tr>'
+        ).join('') + '</tbody>';
+        html += '</table>';
+        return html;
+
+    }
+    
+
+    
+    // ========== 3D просмотр GLB ==========
+    async function previewGlbFile(filename) {
+        const overlay = document.getElementById('viewer3dModal');
+        const title = document.getElementById('viewer3dTitle');
+        const loading = document.getElementById('viewer3dLoading');
+        const downloadBtn = document.getElementById('downloadGlbBtn');
+        const container = document.getElementById('viewer3dContainer');
+        
+        title.textContent = '🧊 ' + filename;
+        overlay.classList.add('active');
+        loading.style.display = 'block';
+        loading.textContent = 'Загрузка 3D модели...';
+        loading.style.color = '#718096'; // Сбрасываем красный цвет ошибки, если был
+        
+        downloadBtn.onclick = () => {
+            window.open(`${API_BASE}/session/${currentSessionId}/download/${filename}`, '_blank');
+        };
+
+        // ВАЖНО: Сначала очищаем старый вьювер, если он есть, и чистим переменную
+        if (viewer3d) {
+            if (viewer3d._resizeHandler) {
+                window.removeEventListener('resize', viewer3d._resizeHandler);
+            }
+            try { viewer3d.renderer.dispose(); } catch(e) {} // Защита от повторных ошибок
+            viewer3d = null;
+        }
+        
+        try {
+            // Динамический импорт Three.js
+            const THREE = await import('three');
+            const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+            const { OrbitControls } = await import('three/addons/controls/OrbitControls.js');
+            
+            // Полностью очищаем контейнер и возвращаем лоадер
+            container.innerHTML = '';
+            container.appendChild(loading);
+            
+            // --- 1. СЦЕНА ---
+            const scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf0f4f8);
+            
+            // --- 2. ОСВЕЩЕНИЕ ---
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8); 
+            scene.add(ambientLight);
+            
+            const dirLight1 = new THREE.DirectionalLight(0xffffff, 1.5);
+            dirLight1.position.set(10, 30, 20);
+            scene.add(dirLight1);
+            
+            const dirLight2 = new THREE.DirectionalLight(0xffffff, 0.6);
+            dirLight2.position.set(-20, 10, -10);
+            scene.add(dirLight2);
+            
+            // --- 3. КАМЕРА И РЕНДЕРЕР ---
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            
+            const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000000); 
+            camera.position.set(50, 50, 50);
+            
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+            
+            // --- 4. КОНТРОЛЫ ---
+            const controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.1;
+            controls.target.set(0, 0, 0);
+            
+            // --- 5. ЗАГРУЗКА МОДЕЛИ ---
+            const loader = new GLTFLoader();
+            const url = `${API_BASE}/session/${currentSessionId}/download/${filename}`;
+            
+            // Создаем промис для безопасной обработки асинхронной загрузки
+            await new Promise((resolve, reject) => {
+                loader.load(url, 
+                    (gltf) => {
+                        loading.style.display = 'none';
+                        
+                        const modelGroup = new THREE.Group();
+                        modelGroup.add(gltf.scene);
+                        scene.add(modelGroup);
+                        
+                        const box = new THREE.Box3().setFromObject(gltf.scene);
+                        const center = box.getCenter(new THREE.Vector3());
+                        const size = box.getSize(new THREE.Vector3());
+                        
+                        const maxDim = Math.max(size.x, size.y, size.z);
+                        if (maxDim === 0) {
+                            loading.textContent = '⚠️ Модель пустая или повреждена';
+                            loading.style.display = 'block';
+                            reject(new Error('Empty model'));
+                            return;
+                        }
+
+                        // --- ЦЕНТРИРОВАНИЕ ---
+                        modelGroup.position.set(-center.x, -center.y, -center.z);
+                        controls.target.set(0, 0, 0);
+                        
+                        const distance = maxDim * 2.0;
+                        camera.position.set(distance * 0.8, distance * 0.8, distance * 0.8);
+                        camera.lookAt(0, 0, 0);
+                        controls.update();
+
+                        // --- СЕТКА ---
+                        const gridSize = Math.max(maxDim * 0.6, 10); 
+                        const gridHelper = new THREE.GridHelper(gridSize * 2, 20, 0x888888, 0xcccccc);
+                        scene.add(gridHelper);
+                        
+                        // --- ОСИ ---
+                        const axesHelper = new THREE.AxesHelper(gridSize * 1.5);
+                        axesHelper.visible = false;
+                        scene.add(axesHelper);
+                        
+                        // Сохраняем всё в глобальный объект
+                        viewer3d = {
+                            scene, camera, renderer, controls, 
+                            model: modelGroup,
+                            wireframe: false,
+                            axesHelper: axesHelper,
+                            gridHelper: gridHelper,
+                            originalMaterials: [],
+                            _THREE: THREE
+                        };
+                        
+                        // Обработчик ресайза
+                        const resizeHandler = () => {
+                            if (!viewer3d) return;
+                            const w = container.clientWidth;
+                            const h = container.clientHeight;
+                            camera.aspect = w / h;
+                            camera.updateProjectionMatrix();
+                            renderer.setSize(w, h);
+                        };
+                        window.addEventListener('resize', resizeHandler);
+                        viewer3d._resizeHandler = resizeHandler;
+
+                        showToast('3D модель загружена!', 'success');
+                        resolve();
+                    },
+                    (xhr) => {
+                        const percent = Math.round((xhr.loaded / xhr.total) * 100);
+                        if (xhr.total > 0) {
+                            loading.textContent = `Загрузка... ${percent}%`;
+                        }
+                    },
+                    (error) => {
+                        console.error('Ошибка загрузки GLB:', error);
+                        loading.textContent = '❌ Ошибка загрузки файла';
+                        loading.style.color = '#e53e3e';
+                        showToast('Ошибка загрузки 3D модели', 'error');
+                        reject(error);
+                    }
+                );
+            });
+
+            // --- 6. АНИМАЦИЯ (запускаем только если вьювер создан) ---
+            function animate() {
+                if (!viewer3d) return;
+                requestAnimationFrame(animate);
+                controls.update();
+                renderer.render(scene, camera);
+            }
+            animate();
+            
+        } catch (e) {
+            // В случае любой ошибки (включая ошибки импорта и загрузки), мы просто показываем сообщение
+            // и НЕ пытаемся чистить viewer3d, так как он гарантированно null (мы очистили его в самом начале)
+            console.error('Three.js error:', e);
+            if (loading) {
+                loading.textContent = '❌ Ошибка: ' + (e.message || 'Неизвестная ошибка');
+                loading.style.color = '#e53e3e';
+            }
+            showToast('Ошибка 3D просмотра', 'error');
+        }
+    }
+    
+    function close3DViewer() {
+        if (viewer3d) {
+            if (viewer3d._resizeHandler) {
+                window.removeEventListener('resize', viewer3d._resizeHandler);
+            }
+            try { viewer3d.renderer.dispose(); } catch(e) {}
+            viewer3d = null;
+        }
+        document.getElementById('viewer3dModal').classList.remove('active');
+    }
+    
+    function reset3DView() {
+        if (!viewer3d) return;
+        // Используем THREE из сохраненного объекта, так как глобального THREE нет
+        const box = new viewer3d._THREE.Box3().setFromObject(viewer3d.model);
+        const center = box.getCenter(new viewer3d._THREE.Vector3());
+        const size = box.getSize(new viewer3d._THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const distance = maxDim * 2.0;
+        
+        viewer3d.camera.position.set(distance * 0.8, distance * 0.8, distance * 0.8);
+        viewer3d.controls.target.copy(center);
+        viewer3d.controls.update();
+        showToast('Вид сброшен', 'info');
+    }
+    
+    function toggleWireframe() {
+        if (!viewer3d) return;
+        viewer3d.wireframe = !viewer3d.wireframe;
+        viewer3d.model.traverse((child) => {
+            if (child.isMesh) {
+                child.material.wireframe = viewer3d.wireframe;
+            }
+        });
+        showToast(viewer3d.wireframe ? 'Режим каркаса включен' : 'Режим каркаса выключен', 'info');
+    }
+    
+    function toggleAxes() {
+        if (!viewer3d) return;
+        viewer3d.axesHelper.visible = !viewer3d.axesHelper.visible;
+        showToast(viewer3d.axesHelper.visible ? 'Оси координат показаны' : 'Оси координат скрыты', 'info');
+    }
+    
+    function downloadAll() {
+        if (!currentSessionId) { showToast('Нет активной сессии', 'warning'); return; }
+        window.location.href = `${API_BASE}/session/${currentSessionId}/download_all`;
+    }
+    
+    function startNewSession() {
+        if (currentStatusInterval) { clearInterval(currentStatusInterval); currentStatusInterval = null; }
+        pollingGeneration++; // инвалидируем все висящие callback'и опроса
+        currentSessionId = null;
+        selectedRows = new Set();
+        allRowIndices = [];
+        rowParts = {};
+        rowMaterials = {};
+        isGrouped = false;
+        groupMode = null;
+        groupIndexMap = {};
+        window._previewData = null;
+        
+        close3DViewer();
+        
+        resetUpload();
+        document.getElementById('step1').classList.add('disabled');
+        document.getElementById('resultsCard').style.display = 'none';
+        document.getElementById('uploadBtn').innerHTML = 'Загрузить и обработать';
+        document.getElementById('uploadBtn').disabled = true;
+        document.getElementById('selectRowsBtn').innerHTML = '🚀 Запустить обработку (<span id="selectedCount">0</span>)';
+        document.getElementById('selectRowsBtn').disabled = true;
+        document.getElementById('processingProgressWrap').style.display = 'none';
+        document.getElementById('processingProgressBar').style.width = '0%';
+        document.getElementById('processingProgressText').textContent = '';
+        document.getElementById('buildingHeight').value = '56';
+        document.getElementById('autoGroupBtn').style.display = 'inline-block';
+        document.getElementById('groupByIfcBtn').style.display = 'inline-block';
+        document.getElementById('ungroupBtn').style.display = 'none';
+        
+        // Очищаем таблицу предпросмотра от данных предыдущей сессии
+        document.getElementById('previewHead').innerHTML = '';
+        document.getElementById('previewBody').innerHTML = '';
+        document.getElementById('previewInfo').textContent = 'Загружено: 0 строк';
+        document.getElementById('selectedCount').textContent = '0';
+        document.getElementById('blueprintButtons').style.display = 'none';
+        const globalPartSel = document.getElementById('globalPartSelect');
+        if (globalPartSel) globalPartSel.value = '';
+        const globalMaterialSel = document.getElementById('globalMaterialSelect');
+        if (globalMaterialSel) globalMaterialSel.value = '';
+        
+        showToast('Новая сессия создана', 'info');
+    }
+    
+    // ========== История ==========
+    async function loadHistory() {
+        const container = document.getElementById('sessionsList');
+        container.innerHTML = 'Загрузка...';
+        try {
+            const response = await fetch(`${API_BASE}/sessions`);
+            if (!response.ok) throw new Error('Ошибка загрузки');
+            const data = await response.json();
+            
+            if (!data.sessions || data.sessions.length === 0) {
+                container.innerHTML = '<p style="color:#718096;text-align:center;padding:40px;">Нет сохранённых сессий</p>';
+                return;
+            }
+            
+            container.innerHTML = data.sessions.map(s => {
+                const statusClass = {
+                    'ifc_processing': 'status-processing', 'ifc_processed': 'status-waiting',
+                    'selecting_rows': 'status-waiting', 'processing': 'status-processing',
+                    'completed': 'status-completed', 'error': 'status-error'
+                }[s.status] || 'status-waiting';
+                
+                const statusText = {
+                    'ifc_processing': 'Обработка IFC...', 'ifc_processed': 'IFC обработан',
+                    'selecting_rows': 'Выбор строк', 'processing': 'Обработка...',
+                    'completed': '✅ Завершена', 'error': '❌ Ошибка'
+                }[s.status] || s.status;
+                
+                const date = new Date(s.createdAt).toLocaleString('ru-RU');
+                const fileCount = (s.files || []).length;
+                
+                return `
+                    <div class="session-item">
+                        <div class="top">
+                            <span class="id">${s.sessionId.substring(0, 8)}…</span>
+                            <span class="status ${statusClass}">${statusText}</span>
+                        </div>
+                        <div class="info">
+                            <span>📅 ${date}</span>
+                            ${s.ifcFileName ? ` · 📄 ${s.ifcFileName}` : ''}
+                            ${s.buildingHeight ? ` · 📏 ${s.buildingHeight}м` : ''}
+                            ${fileCount ? ` · 📦 ${fileCount} файлов` : ''}
+                        </div>
+                        <div class="actions">
+                            <button class="btn btn-sm btn-primary" onclick="restoreSession('${s.sessionId}')">Восстановить</button>
+                            ${fileCount ? `<button class="btn btn-sm btn-success" onclick="downloadAllFiles('${s.sessionId}')">Скачать всё</button>` : ''}
+                            <button class="btn btn-sm btn-danger" onclick="deleteSession('${s.sessionId}')">Удалить</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } catch (e) { container.innerHTML = `<p style="color:#fc8181;">Ошибка: ${e.message}</p>`; }
+    }
+    
+    async function restoreSession(sessionId) {
+        
+        // Очищаем любой активный polling перед восстановлением
+        if (currentStatusInterval) {
+            clearInterval(currentStatusInterval);
+            currentStatusInterval = null;
+        }
+        pollingGeneration++; // инвалидируем висящие callback'и
+        try {
+            const response = await fetch(`${API_BASE}/session/${sessionId}/restore`, { method: 'POST' });
+            if (!response.ok) { const error = await response.json(); throw new Error(error.detail || 'Ошибка восстановления'); }
+            const data = await response.json();
+            currentSessionId = sessionId;
+            
+            if (data.buildingHeight) document.getElementById('buildingHeight').value = data.buildingHeight;
+            
+            showToast('Сессия восстановлена', 'success');
+            switchTab('process');
+            
+            if (data.status === 'completed') {
+                const sessionResp = await fetch(`${API_BASE}/session/${sessionId}`);
+                const session = await sessionResp.json();
+                renderResults(session.files || []);
+                document.getElementById('resultsCard').style.display = 'block';
+                document.getElementById('step1').classList.remove('disabled');
+                document.getElementById('step1').style.display = 'block';
+                
+                // Для PDF-сессий показываем таблицу элементов
+                if (data.sourceType === 'pdf') {
+                    await onIfcProcessed(sessionId);
+                }
+                
+                // Показываем кнопки чертежа для завершённых PDF-сессий
+                // (после onIfcProcessed, чтобы перезаписать его настройки)
+                const blueprintBtns = document.getElementById('blueprintButtons');
+                const hasBlueprint = (session.files || []).some(f => f.filename && f.filename.startsWith('blueprint_painted'));
+                const hasMaterials = (session.files || []).some(f => f.filename === 'materials_colors.md');
+                if (data.sourceType === 'pdf' && (hasBlueprint || hasMaterials)) {
+                    blueprintBtns.style.display = 'flex';
+                } else {
+                    blueprintBtns.style.display = 'none';
+                }
+
+            } else if (data.status === 'selecting_rows' || data.status === 'ifc_processed') {
+                onIfcProcessed(sessionId);
+            } else if (data.status === 'processing') {
+                await onIfcProcessed(sessionId);
+                document.getElementById('processingProgressWrap').style.display = 'block';
+                document.getElementById('selectRowsBtn').disabled = true;
+                document.getElementById('selectRowsBtn').innerHTML = '✅ Обработка запущена';
+                startProcessingPolling(sessionId);
+            }
+        } catch (e) { showToast(e.message, 'error'); }
+    }
+    
+    async function downloadAllFiles(sessionId) { window.location.href = `${API_BASE}/session/${sessionId}/download_all`; }
+    
+    async function deleteSession(sessionId) {
+        if (!confirm('Удалить сессию?')) return;
+        try {
+            const response = await fetch(`${API_BASE}/session/${sessionId}`, { method: 'DELETE' });
+            if (!response.ok) throw new Error('Ошибка удаления');
+            showToast('Сессия удалена', 'info');
+            loadHistory();
+        } catch (e) { showToast(e.message, 'error'); }
+    }
+    
+    // ========== Инициализация ==========
+    document.addEventListener('DOMContentLoaded', () => {
+        console.log('App initialized with API_BASE:', API_BASE);
+        loadHistory();
+        
+        document.getElementById('previewModal').addEventListener('click', function(e) {
+            if (e.target === this) closePreview();
+        });
+                document.getElementById('blueprintImageModal').addEventListener('click', function(e) {
+            if (e.target === this) closeBlueprintImage();
+        });
+        document.getElementById('materialsLegendModal').addEventListener('click', function(e) {
+            if (e.target === this) closeMaterialsLegend();
+        });
+
+        document.getElementById('viewer3dModal').addEventListener('click', function(e) {
+            if (e.target === this) close3DViewer();
+        });
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closePreview();
+                closeBlueprintImage();
+                closeMaterialsLegend();
+                close3DViewer();
+            }
+        });
+    });
+</script>
+</body>
+</html>

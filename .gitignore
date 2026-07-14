@@ -1,0 +1,25 @@
+# Игнорируемые расширения
+*.pdf
+*.PDF
+*.jpeg
+*.JPEG
+*.jpg
+*.JPG
+*.ifc
+*.IFC
+*.json
+*.pt
+*.png
+
+debug/
+drawing_analysis/
+blueprint_tiles/
+__pycache__/
+.env
+.venv/
+setup_local.md
+run_local.sh
+.python-version
+.env.example
+outputs/
+outputs/sessions.json
