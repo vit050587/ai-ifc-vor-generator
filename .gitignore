@@ -10,6 +10,7 @@
 *.json
 *.pt
 *.png
+start.sh
 
 debug/
 drawing_analysis/
