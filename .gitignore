@@ -10,6 +10,10 @@
 *.json
 *.pt
 *.png
+
+
+#bcrk.xtybz для сервиса
+ai-ifc-vor-generator.code-workspace
 start.sh
 
 debug/
