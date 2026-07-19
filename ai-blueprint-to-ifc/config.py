@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     LEGEND_LAYOUT_MIN_INSIDE_RATIO: float = 0.7
 
     LAYOUT_ZOOM: int = 2
-    LEGEND_ZOOM: int = 3
+    LEGEND_ZOOM: int = 4
     HATCHING_ZOOM: int = 6
 
     LOGGING_LEVEL: str = "DEBUG"

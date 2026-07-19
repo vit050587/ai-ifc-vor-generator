@@ -77,10 +77,16 @@ def save_walls_highlighted(folder_name:str, walls, pdf_processor: PdfProcessor):
         highlighted_img.save(save_path / f"{image_name}")
 
 
-def save_result(folder_name:str, result):
+def save_walls_result(folder_name:str, result):
     save_path = settings.DEBUG_DIR / folder_name
     os.makedirs(save_path, exist_ok=True)
     with open(save_path / "walls_result.json", "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2, ensure_ascii=False, default=str)
+
+def save_result(result):
+    save_path = settings.DEBUG_DIR
+    os.makedirs(save_path, exist_ok=True)
+    with open(save_path / "result.json", "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False, default=str)
 
 def save_blueprint_walls_by_material(

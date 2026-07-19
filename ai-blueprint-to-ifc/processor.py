@@ -3,6 +3,7 @@ from dino_service import DinoService
 from pathlib import Path
 from draw_geometry import render_rectangles_fast, render_rectangles_on_image
 import json
+import statistics
 from utils import image_to_base64, find_intersecting_rectangles
 from pdf_prcoessor import PdfProcessor
 from walls_processor import WallsProcessor
@@ -36,10 +37,11 @@ class Processor:
         self.ollama_service = OllamaService("prompts")
         self.pdf_processor = PdfProcessor(self.PDF_PATH)
         self.transformers_service = TransformerService(settings.PROMPTS_DIR)
-        self.walls_processor = WallsProcessor(self.PDF_PATH, self.pdf_processor)
         self.hatching_processor = HatchingProcessor(self.ollama_service, pdf_processor=self.pdf_processor)
         self.layout_processor = LayoutProcessor(self.pdf_processor, self.ollama_service)
         self.legend_layout_processor = LegendLayoutProcessor(self.pdf_processor)
+
+        self.reference_scale = (1, 200)
     def process(self) -> Dict[str, Any]:
         debug_manager.save_run_settings()
         debug_manager.save_initial_blueprint(self.pdf_processor)
@@ -62,28 +64,32 @@ class Processor:
         else:
             logger.info("Легенда не найдена")
 
-        result_object = {"drawings": []}
+        result_object: dict[str, Any] = {"drawings": []}
+        all_walls_bboxes_pix = []
+        walls_processors = []
         for i, drawing in enumerate(drawings):
-            if global_blueprint_scale:
-                blueprint_scale = global_blueprint_scale
-                logger.info(f"Масштаб чертежа определен: {blueprint_scale}.")
-            elif "scale" in (drawing or {}) and drawing["scale"]:
-                blueprint_scale = drawing["scale"]
-                logger.info(f"Масштаб чертежа определен: {blueprint_scale}.")
-            else:
-                blueprint_scale = (1, 200)
-                logger.warning(f"Масштаб чертежа не найден, используется: {blueprint_scale}.")
+            blueprint_scale = self._choose_drawing_scale(global_blueprint_scale, (drawing or {}).get("scale", None))
+
+            # Вычисляем приближение для обрабатываемого чертежа
+            zoom_for_drawing = settings.BLUEPRINT.zoom * ((blueprint_scale[1] / blueprint_scale[0]) / (self.reference_scale[1] / self.reference_scale[0]))
+            if zoom_for_drawing < 1 or zoom_for_drawing > 30:
+                logger.warning(f"Неверный коэффициент приближения {zoom_for_drawing} используется {settings.BLUEPRINT.zoom}")
+                zoom_for_drawing = settings.BLUEPRINT.zoom
+                
+            self.walls_processor = WallsProcessor(self.PDF_PATH, self.pdf_processor, zoom_for_drawing)
+            walls_processors.append(self.walls_processor)
 
             drawing_bbox = drawing["object"]["bbox"] if drawing else None
 
             folder_name = str(i)
-            walls_bboxes_pix = self._process_walls(drawing_bbox, folder_name)
+            walls_bboxes_pix = self._process_walls(drawing_bbox, folder_name, zoom_for_drawing)
 
             debug_manager.save_walls_highlighted(folder_name, walls_bboxes_pix, self.pdf_processor)
 
-            self.hatching_processor.process(walls_bboxes_pix)
+            self.hatching_processor.process(walls_bboxes_pix, zoom_for_drawing)
 
             walls_bboxes_pix = self._prepare_walls(walls_bboxes_pix)
+            all_walls_bboxes_pix += walls_bboxes_pix
 
             painted_image_debug, materials_colors_md_debug = debug_manager.save_blueprint_walls_by_material(folder_name, walls_bboxes_pix, self.pdf_processor, f"page_{self.PDF_PATH.stem}_materials.png", legend_row_items or [], fill_opacity=0.5)
             walls_bboxes_mm = self.walls_processor.scale_walls_coords(walls_bboxes_pix, blueprint_scale)
@@ -92,14 +98,73 @@ class Processor:
                 "walls": self._form_walls_result(walls_bboxes_mm),
             }
 
-            debug_manager.save_result(folder_name, result)
+            debug_manager.save_walls_result(folder_name, result)
 
             results.append(result)
             result_object["drawings"].append({"painted_image": painted_image_debug, "materials_colors_md": materials_colors_md_debug, "result": result})
             
+        painted_image_debug, materials_colors_md_debug = debug_manager.save_blueprint_walls_by_material("full", all_walls_bboxes_pix, self.pdf_processor, f"page_{self.PDF_PATH.stem}_materials.png", legend_row_items or [], fill_opacity=0.5)
+        result_object["full_drawing"] = {"painted_image": painted_image_debug, "materials_colors_md": materials_colors_md_debug}
+
+        blueprint_processing_confidence = self._get_overall_confidence(walls_processors, all_walls_bboxes_pix)
+        logger.info(f"Итоговый confidence обработки для чертежа: {blueprint_processing_confidence}")
+        result_object["confidence"] = blueprint_processing_confidence
+
+        debug_manager.save_result(result_object)
+
         save_result(results)
 
         return result_object
+    
+    def _get_overall_confidence(self, walls_processors: List[WallsProcessor], walls: list[dict[str, Any]]) -> float | None:
+        confidences = []
+
+        average_walls_confidence = self._get_average_walls_confidence(walls_processors)
+        average_hatching_confidence = self._get_average_hatching_confidence(walls)
+        average_layout_confidence = self.layout_processor.get_average_confidence().get("overall_average_confidence", None)
+        average_legend_layout_confidence = self.legend_layout_processor.get_average_confidence().get("overall_average_confidence", None)
+
+        confidences = [average_walls_confidence, average_hatching_confidence, average_layout_confidence, average_legend_layout_confidence]
+        confidences = [confidence for confidence in confidences if isinstance(confidence, float)]
+
+        return statistics.mean(confidences) if confidences else None
+    
+    def _get_average_walls_confidence(self, walls_processors: List[WallsProcessor]) -> float | None:
+        walls = []
+        for wall_processor in walls_processors:
+            walls_current = wall_processor.get_walls()
+            if walls_current:
+                walls += walls_current
+        
+        if not walls:
+            return None
+        
+        confidences = [wall["confidence"] for wall in walls]
+        if not confidences:
+            return None
+        
+        return statistics.mean(confidences)
+    
+    def _get_average_hatching_confidence(self, walls: list[dict[str, Any]]) -> float | None:
+        hatchings_scores = [wall["hatching"]["best"]["score"] for wall in walls]
+        if not hatchings_scores:
+            return None
+        
+        return statistics.mean(hatchings_scores)
+    
+    def _choose_drawing_scale(self, global_blueprint_scale: Tuple[int, int] | None, blueprint_scale: Tuple[int, int] | None) -> Tuple[int, int]:
+        result_scale = None
+        if global_blueprint_scale:
+            result_scale = global_blueprint_scale
+            logger.info(f"Масштаб чертежа определен: {result_scale}.")
+        elif blueprint_scale:
+            result_scale = blueprint_scale
+            logger.info(f"Масштаб чертежа определен: {result_scale}.")
+        else:
+            result_scale = self.reference_scale
+            logger.warning(f"Масштаб чертежа не найден, используется: {result_scale}.")
+
+        return result_scale
     
     def _get_scale(self):
         blueprint_scale = self.layout_processor.get_blueprint_scale()
@@ -122,13 +187,13 @@ class Processor:
         for i, wall in enumerate(walls):
             wall["id"] = f"W{i}"
     
-    def _process_walls(self, drawing_bbox, folder_name):
+    def _process_walls(self, drawing_bbox, folder_name, zoom: float):
         walls_on_blueprint = self.walls_processor.get_walls_cords(drawing_bbox)
         walls_on_blueprint_number = len(walls_on_blueprint)
         if not walls_on_blueprint_number:
             return []
         
-        self.save_blueprint_with_walls(folder_name, {"red": walls_on_blueprint}, f"page_{self.PDF_PATH.stem}_walls.png")
+        self.save_blueprint_with_walls(folder_name, {"red": walls_on_blueprint}, f"page_{self.PDF_PATH.stem}_walls.png", zoom)
         merged_walls = merge_overlapping_obb(
             walls_on_blueprint,
             **settings.WALL_MERGE.model_dump(),
@@ -139,7 +204,7 @@ class Processor:
             f"Объединено {merged_deleted_number} стен "
             f"({100 * merged_deleted_number / walls_on_blueprint_number:.2f}%)"
         )
-        self.save_blueprint_with_walls(folder_name, {"red": merged_walls}, f"page_{self.PDF_PATH.stem}_merged_walls.png")
+        self.save_blueprint_with_walls(folder_name, {"red": merged_walls}, f"page_{self.PDF_PATH.stem}_merged_walls.png", zoom)
         trimed_walls = trim_overlapping_obb(
             merged_walls,
             **settings.WALL_TRIM.model_dump(),
@@ -150,7 +215,7 @@ class Processor:
             return []
         
         trimed_changed_number = sum(1 for w in trimed_walls if "trimmed_count" in w) # Считаем те стены где появились метаданные обрезки
-        self.save_blueprint_with_walls(folder_name, {"red": trimed_walls}, f"page_{self.PDF_PATH.stem}_trimed_walls.png")
+        self.save_blueprint_with_walls(folder_name, {"red": trimed_walls}, f"page_{self.PDF_PATH.stem}_trimed_walls.png", zoom)
         trim_deleted_number = merged_walls_number - trimed_number
         logger.info(
             f"Удалено {trim_deleted_number} стен. Обрезано "
@@ -159,10 +224,10 @@ class Processor:
         
         merged_walls_for_render = [w for w in trimed_walls if "merged_count" in w]
         unmerged_walls_for_render = [w for w in trimed_walls if not "merged_count" in w]
-        self.save_blueprint_with_walls(folder_name, {"blue": merged_walls_for_render, "red": unmerged_walls_for_render}, f"page_{self.PDF_PATH.stem}_result.png")
+        self.save_blueprint_with_walls(folder_name, {"blue": merged_walls_for_render, "red": unmerged_walls_for_render}, f"page_{self.PDF_PATH.stem}_result.png", zoom)
 
         # self._save_for_train_dino(trimed_walls)
-        self._add_pdf_bbox_to_walls(trimed_walls, settings.BLUEPRINT.zoom)
+        self._add_pdf_bbox_to_walls(trimed_walls, zoom)
         return trimed_walls
 
     def _add_pdf_bbox_to_walls(self, walls, zoom):
@@ -228,6 +293,7 @@ class Processor:
         folder_name: str | Path,
         walls: dict[str, list[dict]],
         file_name: str | Path,
+        zoom: float
     ):
         """
         Сохраняет стены на чертеже.
@@ -240,12 +306,12 @@ class Processor:
 
         # Перещитываем координаты в глобальные pdf
         for color in walls:
-            self._add_pdf_bbox_to_walls(walls[color], settings.BLUEPRINT.zoom)
+            self._add_pdf_bbox_to_walls(walls[color], zoom)
         self.pdf_processor.render_obb_rectangles(
             walls,
             width=2,
             save_path=output_path,
-            zoom=settings.BLUEPRINT.zoom
+            zoom=zoom
         )
 
     @staticmethod

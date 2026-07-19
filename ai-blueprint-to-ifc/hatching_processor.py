@@ -30,6 +30,8 @@ class HatchingProcessor:
         self.legends += self._load_walls_types("fallback")
         self.legends += self._load_walls_types("default")
 
+        self.zoom = None
+
     def specify_legends(self, legends:list):
         self.legends = legends
         if legends:
@@ -55,7 +57,8 @@ class HatchingProcessor:
         legend_symbols = [{"image": img} for img in legend_symbols]
         return {"legend_symbols": legend_symbols, "full_description": full_description}
 
-    def process(self, walls):
+    def process(self, walls, zoom: float):
+        self.zoom = zoom
         self._calculate_tensors_for_legends()
 
         for wall in tqdm(walls, desc="Анализ штриховки", unit="wall"):
@@ -218,7 +221,7 @@ class HatchingProcessor:
             rect["y0"] - pixels_around,
             rect["x1"] + pixels_around,
             rect["y1"] + pixels_around,
-            zoom=settings.BLUEPRINT.zoom
+            zoom= self.zoom or settings.BLUEPRINT.zoom
         )
 
         points = [

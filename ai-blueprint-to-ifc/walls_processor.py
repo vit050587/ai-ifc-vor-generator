@@ -3,11 +3,12 @@ from yolo_service import YoloService
 from pathlib import Path
 from typing import Any, Tuple
 from tqdm import tqdm
+
 from config import settings
 from rectangle_utils import rectangles_to_yolo_obb, get_two_points_bbox
 
 class WallsProcessor:
-    def __init__(self, pdf_path, pdf_processor: PdfProcessor | None = None):
+    def __init__(self, pdf_path, pdf_processor: PdfProcessor | None = None, zoom: float | None = None):
         self.PDF_PATH = pdf_path
         if pdf_processor:
             self.pdf_proc = pdf_processor
@@ -18,7 +19,9 @@ class WallsProcessor:
         self.tiles_path = Path("blueprint_tiles")
         self.tiles_path.mkdir(parents=True, exist_ok=True)
 
-        self.zoom = settings.BLUEPRINT.zoom
+        self.zoom = zoom or settings.BLUEPRINT.zoom
+
+        self.walls = None
 
     def _get_blueprint_crops(self, drawing_bbox: list | None):
         blueprint = settings.BLUEPRINT
@@ -27,11 +30,11 @@ class WallsProcessor:
             blueprint.tile_size,
             blueprint.tile_size,
             blueprint.tile_overlap,
-            blueprint.zoom,
+            self.zoom,
         )
 
         for i, tile in enumerate(tqdm(tiles, desc="Обработка плиток", unit="tile")):
-            image_path = self.tiles_path / f"page_{self.PDF_PATH.stem}_tile_{i}.png"
+            image_path = self.tiles_path / f"page_{self.PDF_PATH.parent.name}_{self.PDF_PATH.stem}_tile_{i}.png"
             tile["image"].save(image_path)
 
         return tiles
@@ -62,6 +65,7 @@ class WallsProcessor:
                     )
                 )
 
+        self.walls = walls
         return walls
 
     @staticmethod
@@ -146,5 +150,8 @@ class WallsProcessor:
             converted.append(converted_wall)
 
         return converted
+    
+    def get_walls(self):
+        return self.walls
 
     

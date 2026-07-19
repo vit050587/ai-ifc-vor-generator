@@ -3,7 +3,8 @@
 import json
 from pathlib import Path
 from tqdm import tqdm
-from typing import Any, List
+from typing import Any, List, Dict
+import statistics
 
 from shapely.geometry import Polygon, box
 
@@ -96,3 +97,22 @@ class LegendLayoutProcessor:
             for layout_object in layout_objects:
                 self.layouts.setdefault(layout_object["class_name"], []).append(layout_object)
         return self.layouts
+    
+    def get_average_confidence(self) -> Dict[str, Any]:
+        result_object = {}
+
+        average_confidences = []
+        for layout_type in self.layouts:
+            confidences = []
+            for layout_object in self.layouts[layout_type]:
+                confidences.append(layout_object["confidence"])
+            if not confidences:
+                continue
+            confidence = statistics.mean(confidences)
+            result_object.setdefault(layout_type, {})["average_confidence"] = confidence
+            average_confidences.append(confidence)
+        if not average_confidences:
+                return result_object
+
+        result_object["overall_average_confidence"] = statistics.mean(average_confidences)
+        return result_object

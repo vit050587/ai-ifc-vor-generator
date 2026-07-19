@@ -10,7 +10,7 @@ from typing import Tuple
 
 class PdfProcessor:
 
-    def __init__(self, pdf_path):
+    def __init__(self, pdf_path: Path):
         self.pdf_path = pdf_path
         self.img = None
         self.img_b64 = None

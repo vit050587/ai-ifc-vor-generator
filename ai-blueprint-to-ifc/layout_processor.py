@@ -2,13 +2,14 @@
 import json
 from pathlib import Path
 from tqdm import tqdm
+import statistics
 
 from pdf_prcoessor import PdfProcessor
 from yolo_service import YoloService
 from rectangle_utils import get_two_points_bbox
 from debug_manager import save_layouts
 from ollama_service import OllamaService
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Any
 
 from config import settings
 
@@ -45,7 +46,7 @@ class LayoutProcessor:
     def _convert_ollama_response_scale(self, scale_json) -> Tuple[int, int] | None:
         numerator = scale_json.get("scale", {}).get("numerator", None)
         denominator = scale_json.get("scale", {}).get("denominator", None)
-        if isinstance(numerator, int) and isinstance(denominator, int):
+        if isinstance(numerator, int) and isinstance(denominator, int) and min(denominator, numerator) >= 1 and max(denominator, numerator) <= 5000:
             scale = (numerator, denominator)
             if not scale == (0, 0):
                 return scale
@@ -56,6 +57,9 @@ class LayoutProcessor:
 
     def get_drawings(self) -> List[Dict] | None:
         return self.layouts.get("drawing_area")
+    
+    def get_layouts(self) -> Dict[str, Any]:
+        return self.layouts
 
     def save_layouts_debug(self):
         legends_images = self._get_images_from_objects_list(self.layouts.get("legend_block", []))
@@ -85,6 +89,30 @@ class LayoutProcessor:
             self.pdf_processor.crop_pdf_rect(get_two_points_bbox(bbox), zoom=settings.LAYOUT_ZOOM)[1]
             for bbox in bboxes
         ]
+    
+    def get_average_confidence(self) -> Dict[str, Any]:
+        result_object = {}
+
+        average_confidences = []
+        for layout_type in self.layouts:
+            confidences = []
+            for layout_object in self.layouts[layout_type]:
+                confidences.append(layout_object["object"]["confidence"])
+
+            if not confidences:
+                continue
+
+            confidence = statistics.mean(confidences)
+            result_object.setdefault(layout_type, {})["average_confidence"] = confidence
+            average_confidences.append(confidence)
+
+        if not average_confidences:
+            return result_object
+        
+        result_object["overall_average_confidence"] = statistics.mean(average_confidences)
+        return result_object
+            
+            
         
 
         
