@@ -472,6 +472,87 @@
             justify-content: center;
             flex-wrap: wrap;
         }
+
+        /* ========== Зум изображения чертежа ========== */
+        .blueprint-zoom-container {
+            position: relative;
+            width: 100%;
+            height: 70vh;
+            overflow: hidden;
+            background: #1a202c;
+            border-radius: 8px;
+            cursor: grab;
+            display: none;
+            touch-action: none;
+        }
+        .blueprint-zoom-container.dragging { cursor: grabbing; }
+        .blueprint-zoom-container img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            max-width: none;
+            max-height: none;
+            width: auto;
+            height: auto;
+            transform-origin: 0 0;
+            transform: translate(0px, 0px) scale(1);
+            transition: none;
+            user-select: none;
+            -webkit-user-drag: none;
+            pointer-events: none;
+            will-change: transform;
+        }
+        .blueprint-zoom-toolbar {
+            position: absolute;
+            bottom: 12px;
+            right: 12px;
+            display: flex;
+            gap: 6px;
+            background: rgba(255,255,255,0.9);
+            border-radius: 8px;
+            padding: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            z-index: 5;
+        }
+        .blueprint-zoom-toolbar button {
+            width: 36px; height: 36px;
+            border: none;
+            background: #edf2f7;
+            border-radius: 6px;
+            font-size: 18px;
+            cursor: pointer;
+            color: #2d3748;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+            line-height: 1;
+        }
+        .blueprint-zoom-toolbar button:hover { background: #e2e8f0; }
+        .blueprint-zoom-toolbar button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .blueprint-zoom-toolbar .zoom-level {
+            min-width: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 600;
+            color: #4a5568;
+            padding: 0 4px;
+        }
+        .blueprint-zoom-hint {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            background: rgba(0,0,0,0.55);
+            color: #fff;
+            font-size: 12px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            z-index: 5;
+            pointer-events: none;
+            opacity: 0.85;
+        }
         
         @media (max-width: 768px) {
             .card { padding: 16px; }
@@ -633,9 +714,19 @@
                 <h3>Чертёж с отмеченными элементами</h3>
                 <button class="modal-close" onclick="closeBlueprintImage()">✕</button>
             </div>
-            <div class="modal-body" style="text-align:center;">
+            <div class="modal-body" style="text-align:center;padding:16px 24px;">
                 <div id="blueprintImageLoading" style="padding:40px;color:#718096;">Загрузка изображения...</div>
-                <img id="blueprintImageContent" style="display:none;max-width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);" alt="Чертёж с отмеченными элементами">
+                <div class="blueprint-zoom-container" id="blueprintZoomContainer">
+                    <img id="blueprintImageContent" alt="Чертёж с отмеченными элементами">
+                    <div class="blueprint-zoom-hint">Колесо — зум, перетаскивание — перемещение</div>
+                    <div class="blueprint-zoom-toolbar">
+                        <button onclick="blueprintZoomBy(-0.25)" title="Уменьшить">−</button>
+                        <span class="zoom-level" id="blueprintZoomLevel">100%</span>
+                        <button onclick="blueprintZoomBy(0.25)" title="Увеличить">+</button>
+                        <button onclick="blueprintResetZoom()" title="Сбросить вид">⟳</button>
+                        <button onclick="blueprintFitZoom()" title="Вписать в окно">⛶</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1863,22 +1954,233 @@
     function closePreview() { document.getElementById('previewModal').classList.remove('active'); }
 
     // ========== Чертёж и условные обозначения ==========
+    // Состояние зума изображения чертежа
+    const blueprintZoom = {
+        scale: 1,
+        minScale: 0.1,
+        maxScale: 10,
+        x: 0,
+        y: 0,
+        baseScale: 1, // масштаб вписывания (fit)
+        dragging: false,
+        lastX: 0,
+        lastY: 0,
+        inited: false
+    };
+
+    function _blueprintApplyTransform() {
+        const img = document.getElementById('blueprintImageContent');
+        const s = blueprintZoom.scale;
+        // x, y — позиция левого верхнего угла изображения в контейнере
+        img.style.transform = `translate(${blueprintZoom.x}px, ${blueprintZoom.y}px) scale(${s})`;
+        const levelEl = document.getElementById('blueprintZoomLevel');
+        if (levelEl) levelEl.textContent = Math.round(s * 100) + '%';
+    }
+
+    // Размеры отображаемого изображения и контейнера
+    function _blueprintDims() {
+        const container = document.getElementById('blueprintZoomContainer');
+        const img = document.getElementById('blueprintImageContent');
+        const cw = container.clientWidth;
+        const ch = container.clientHeight;
+        const iw = (img.naturalWidth || 0) * blueprintZoom.scale;
+        const ih = (img.naturalHeight || 0) * blueprintZoom.scale;
+        return { cw, ch, iw, ih };
+    }
+
+    // Ограничиваем панорамирование, чтобы изображение не уходило
+    // в тёмное поле: если картинка больше контейнера — держим её края
+    // в пределах видимости; если меньше — центрируем.
+    function _blueprintClamp() {
+        const { cw, ch, iw, ih } = _blueprintDims();
+        if (iw <= cw) {
+            blueprintZoom.x = (cw - iw) / 2;
+        } else {
+            blueprintZoom.x = Math.min(0, Math.max(cw - iw, blueprintZoom.x));
+        }
+        if (ih <= ch) {
+            blueprintZoom.y = (ch - ih) / 2;
+        } else {
+            blueprintZoom.y = Math.min(0, Math.max(ch - ih, blueprintZoom.y));
+        }
+    }
+
+    // Зум к заданной точке контейнера (mx, my от левого верхнего угла)
+    function _blueprintZoomToPoint(newScale, mx, my) {
+        newScale = Math.max(blueprintZoom.minScale, Math.min(blueprintZoom.maxScale, newScale));
+        if (newScale === blueprintZoom.scale) return;
+        // Натуральная координата точки под курсором
+        const imgX = (mx - blueprintZoom.x) / blueprintZoom.scale;
+        const imgY = (my - blueprintZoom.y) / blueprintZoom.scale;
+        blueprintZoom.scale = newScale;
+        // Новая позиция, чтобы та же точка осталась под курсором
+        blueprintZoom.x = mx - imgX * newScale;
+        blueprintZoom.y = my - imgY * newScale;
+        _blueprintClamp();
+        _blueprintApplyTransform();
+    }
+
+    function blueprintZoomBy(delta) {
+        const container = document.getElementById('blueprintZoomContainer');
+        const rect = container.getBoundingClientRect();
+        // Зум к центру контейнера
+        _blueprintZoomToPoint(blueprintZoom.scale + delta, rect.width / 2, rect.height / 2);
+    }
+
+    function blueprintResetZoom() {
+        const container = document.getElementById('blueprintZoomContainer');
+        const rect = container.getBoundingClientRect();
+        _blueprintZoomToPoint(1, rect.width / 2, rect.height / 2);
+    }
+
+    function blueprintFitZoom() {
+        blueprintZoom.scale = blueprintZoom.baseScale || 1;
+        const { cw, ch, iw, ih } = _blueprintDims();
+        // Центрируем вписанное изображение
+        blueprintZoom.x = (cw - iw) / 2;
+        blueprintZoom.y = (ch - ih) / 2;
+        _blueprintApplyTransform();
+    }
+
+    function _blueprintInitZoom() {
+        if (blueprintZoom.inited) return;
+        blueprintZoom.inited = true;
+        const container = document.getElementById('blueprintZoomContainer');
+
+        // Зум колесом мыши с центром в позиции курсора
+        container.addEventListener('wheel', function(e) {
+            e.preventDefault();
+            const rect = container.getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+            const delta = -e.deltaY * 0.0015;
+            _blueprintZoomToPoint(blueprintZoom.scale * (1 + delta), mx, my);
+        }, { passive: false });
+
+        // Панорамирование перетаскиванием
+        container.addEventListener('mousedown', function(e) {
+            if (e.target.closest('.blueprint-zoom-toolbar')) return;
+            blueprintZoom.dragging = true;
+            blueprintZoom.lastX = e.clientX;
+            blueprintZoom.lastY = e.clientY;
+            container.classList.add('dragging');
+            e.preventDefault();
+        });
+        window.addEventListener('mousemove', function(e) {
+            if (!blueprintZoom.dragging) return;
+            blueprintZoom.x += e.clientX - blueprintZoom.lastX;
+            blueprintZoom.y += e.clientY - blueprintZoom.lastY;
+            blueprintZoom.lastX = e.clientX;
+            blueprintZoom.lastY = e.clientY;
+            _blueprintClamp();
+            _blueprintApplyTransform();
+        });
+        window.addEventListener('mouseup', function() {
+            if (!blueprintZoom.dragging) return;
+            blueprintZoom.dragging = false;
+            container.classList.remove('dragging');
+        });
+
+        // Поддержка тача (пинч-зум + панорамирование одним пальцем)
+        let touchState = null;
+        container.addEventListener('touchstart', function(e) {
+            if (e.target.closest('.blueprint-zoom-toolbar')) return;
+            if (e.touches.length === 1) {
+                touchState = { mode: 'pan', x: e.touches[0].clientX, y: e.touches[0].clientY };
+            } else if (e.touches.length === 2) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const rect = container.getBoundingClientRect();
+                touchState = {
+                    mode: 'pinch',
+                    dist: Math.hypot(dx, dy),
+                    startScale: blueprintZoom.scale,
+                    cx: (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left,
+                    cy: (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top
+                };
+            }
+        }, { passive: true });
+        container.addEventListener('touchmove', function(e) {
+            if (!touchState) return;
+            e.preventDefault();
+            if (touchState.mode === 'pan' && e.touches.length === 1) {
+                blueprintZoom.x += e.touches[0].clientX - touchState.x;
+                blueprintZoom.y += e.touches[0].clientY - touchState.y;
+                touchState.x = e.touches[0].clientX;
+                touchState.y = e.touches[0].clientY;
+                _blueprintClamp();
+                _blueprintApplyTransform();
+            } else if (touchState.mode === 'pinch' && e.touches.length === 2) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const dist = Math.hypot(dx, dy);
+                const newScale = touchState.startScale * (dist / touchState.dist);
+                _blueprintZoomToPoint(newScale, touchState.cx, touchState.cy);
+            }
+        }, { passive: false });
+        container.addEventListener('touchend', function() { touchState = null; }, { passive: true });
+
+        // Двойной клик — переключение между 100% и fit
+        container.addEventListener('dblclick', function(e) {
+            if (e.target.closest('.blueprint-zoom-toolbar')) return;
+            if (blueprintZoom.scale > 1.001) {
+                blueprintFitZoom();
+            } else {
+                const rect = container.getBoundingClientRect();
+                _blueprintZoomToPoint(1, e.clientX - rect.left, e.clientY - rect.top);
+            }
+        });
+    }
+
+    function _blueprintComputeBaseScale() {
+        const container = document.getElementById('blueprintZoomContainer');
+        const img = document.getElementById('blueprintImageContent');
+        if (!img.naturalWidth || !container.clientWidth) return 1;
+        const sx = container.clientWidth / img.naturalWidth;
+        const sy = container.clientHeight / img.naturalHeight;
+        return Math.max(0.01, Math.min(sx, sy));
+    }
+
     function showBlueprintImage() {
         if (!currentSessionId) { showToast('Нет активной сессии', 'warning'); return; }
+        _blueprintInitZoom();
         const overlay = document.getElementById('blueprintImageModal');
         const loading = document.getElementById('blueprintImageLoading');
+        const container = document.getElementById('blueprintZoomContainer');
         const img = document.getElementById('blueprintImageContent');
         loading.style.display = 'block';
-        img.style.display = 'none';
+        loading.textContent = 'Загрузка изображения...';
+        loading.style.color = '#718096';
+        container.style.display = 'none';
         overlay.classList.add('active');
-        img.onload = () => { loading.style.display = 'none'; img.style.display = 'inline-block'; };
-        img.onerror = () => { loading.textContent = 'Ошибка загрузки изображения'; loading.style.color = '#fc8181'; };
+        img.onload = () => {
+            loading.style.display = 'none';
+            container.style.display = 'block';
+            // Сброс состояния и расчёт базового масштаба вписывания
+            blueprintZoom.scale = 1;
+            blueprintZoom.x = 0;
+            blueprintZoom.y = 0;
+            blueprintZoom.baseScale = _blueprintComputeBaseScale();
+            // Изначально показываем вписанный в окно чертёж по центру
+            blueprintFitZoom();
+        };
+        img.onerror = () => {
+            loading.textContent = 'Ошибка загрузки изображения';
+            loading.style.color = '#fc8181';
+            container.style.display = 'none';
+        };
         img.src = `${API_BASE}/session/${currentSessionId}/blueprint_image`;
     }
-    
+
     function closeBlueprintImage() {
         document.getElementById('blueprintImageModal').classList.remove('active');
-        document.getElementById('blueprintImageContent').src = '';
+        const img = document.getElementById('blueprintImageContent');
+        img.src = '';
+        // Сбрасываем зум при закрытии
+        blueprintZoom.scale = 1;
+        blueprintZoom.x = 0;
+        blueprintZoom.y = 0;
+        blueprintZoom.dragging = false;
     }
     
     async function showMaterialsLegend() {
