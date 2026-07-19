@@ -137,8 +137,10 @@ def process_pdf(pdf_path: str, output_folder: str, progress_callback=None) -> Di
         
         result = result_container["result"]
 
-        # processor.process() возвращает {"drawings": [{"painted_image", "materials_colors_md", "result"}, ...]}
+        # processor.process() возвращает {"drawings": [{"painted_image", "materials_colors_md", "result"}, ...],
+        #                                     "full_drawing": {"painted_image", "materials_colors_md"}}
         drawings = result.get("drawings", []) if isinstance(result, dict) else []
+        full_drawing = result.get("full_drawing") if isinstance(result, dict) else None
 
         # Объединяем результаты всех чертежей в один
         merged = {}
@@ -157,6 +159,13 @@ def process_pdf(pdf_path: str, output_folder: str, progress_callback=None) -> Di
                 materials_colors_mds.append(drawing["materials_colors_md"])
 
         result = merged
+
+        # Сводный чертёж и условные обозначения из full_drawing имеют приоритет над склейкой из drawings
+        if full_drawing:
+            if full_drawing.get("painted_image") is not None:
+                painted_images = [full_drawing["painted_image"]]
+            if full_drawing.get("materials_colors_md"):
+                materials_colors_mds = [full_drawing["materials_colors_md"]]
 
         walls_count = len(result.get("walls", []))
         logger.info(f"PDF обработан. Найдено элементов: стен={walls_count}")
