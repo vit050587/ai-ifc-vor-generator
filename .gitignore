@@ -10,7 +10,7 @@
 *.json
 *.pt
 *.png
-
+.DS_Store
 
 #bcrk.xtybz для сервиса
 ai-ifc-vor-generator.code-workspace
