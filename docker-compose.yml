@@ -31,6 +31,7 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       DOCUMENTS_PATH: /app/data/perechen_kr.xlsx
       KOEFS_PATH: /app/data/koefs.xlsx
+      PRICE_COST_PATH: /app/data/price_cost.xlsx
       UPLOAD_FOLDER: /app/uploads
       OUTPUT_FOLDER: /app/outputs
       SESSIONS_FILE: /app/outputs/sessions.json

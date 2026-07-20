@@ -19,7 +19,10 @@ _cfg = load_config()
 LLM_MODEL = _cfg.model_ollama
 OLLAMA_URL = _cfg.ollama_url
 KOEFS_FILE = _cfg.KOEFS_PATH
-SIMILARITY_THRESHOLD = 80 
+PRICE_COST_FILE = _cfg.PRICE_COST_PATH
+SIMILARITY_THRESHOLD = 80
+
+_price_cost_lookup_cache = None 
 
 morph = pymorphy3.MorphAnalyzer()
 
@@ -73,6 +76,49 @@ def normalize_quotes(text):
         text = text.replace('„', '"').replace('“', '"').replace('”', '"')
         text = text.replace('\n', ' ')
     return text
+
+
+def _get_price_cost_lookup():
+    """Загружает price_cost.xlsx и возвращает словарь {Шифр расценки: Текущие прямые затраты/Всего затр}"""
+    global _price_cost_lookup_cache
+    if _price_cost_lookup_cache is not None:
+        return _price_cost_lookup_cache
+
+    try:
+        df = pd.read_excel(PRICE_COST_FILE, sheet_name='_Получние_параметры_позиции_sel')
+        _price_cost_lookup_cache = dict(zip(df['Шифр расценки'], df['Текущие прямые затраты/Всего затр']))
+        logger.info(f"Загружено {len(_price_cost_lookup_cache)} расценок из price_cost.xlsx")
+    except Exception as e:
+        logger.error(f"Ошибка загрузки price_cost.xlsx: {e}")
+        _price_cost_lookup_cache = {}
+    return _price_cost_lookup_cache
+
+
+def _add_cost_column(df):
+    """Добавляет колонку 'Стоимость' = 'Текущие прямые затраты/Всего затр' × 'Объём работ'"""
+    lookup = _get_price_cost_lookup()
+    if 'Шифр ТСН' not in df.columns or 'Объём работ' not in df.columns:
+        logger.warning("Не найдены колонки 'Шифр ТСН' или 'Объём работ' для расчёта стоимости")
+        df['Стоимость'] = ''
+        return df
+
+    def calculate_cost(row):
+        shifr = row.get('Шифр ТСН')
+        volume = row.get('Объём работ')
+        if pd.isna(shifr) or pd.isna(volume):
+            return ''
+        try:
+            shifr_clean = str(shifr).strip()
+            if shifr_clean not in lookup:
+                return ''
+            cost = float(lookup[shifr_clean]) * float(volume)
+            return round(cost, 2)
+        except (ValueError, TypeError):
+            return ''
+
+    df['Стоимость'] = df.apply(calculate_cost, axis=1)
+    df['Стоимость'] = df['Стоимость'].fillna('')
+    return df
 
 def _find_column_with_volume(data, marker, extra_marker):
     if 'Количество_в_группе' in data.keys():
@@ -496,6 +542,12 @@ def _process_one_element(normalized_data, row_number, output_folder):
             df_result = _get_corrected_volume(df_result)
         except Exception as e: 
             logger.error(f"Ошибка при корректировке объёма работ: {e}")
+
+        # Добавляем колонку "Стоимость"
+        try:
+            df_result = _add_cost_column(df_result)
+        except Exception as e:
+            logger.error(f"Ошибка при расчёте стоимости: {e}")
 
         # Сохраняем
         ifc_class = normalized_data.get('основные_характеристики', {}).get('ifc_class', '')

@@ -1945,10 +1945,17 @@ function previewResultFile(filename) {
             document.getElementById('previewModalInfo').innerHTML = data.isPreview
                 ? `Показаны первые ${data.previewRows} строк из ${data.totalRows} <span class="preview-badge">Предпросмотр</span>`
                 : `Всего строк: ${data.totalRows}`;
-            document.getElementById('previewModalHead').innerHTML = '<tr>' + data.headers.map(h => `<th>${h}</th>`).join('') + '</tr>';
-            document.getElementById('previewModalBody').innerHTML = data.rows.map(row =>
-                '<tr>' + row.map(cell => `<td title="${cell}">${cell}</td>`).join('') + '</tr>'
-            ).join('');
+            const costIdx = data.headers.indexOf('Стоимость');
+            document.getElementById('previewModalHead').innerHTML = '<tr>' + data.headers.map(h => 
+                `<th${h === 'Стоимость' ? ' style="background:#e6fffa;color:#234e52;font-weight:700;"' : ''}>${h}</th>`
+            ).join('') + '</tr>';
+            document.getElementById('previewModalBody').innerHTML = data.rows.map(row => {
+                const cells = row.map((cell, i) => {
+                    const isCost = i === costIdx && cell !== '-' && cell !== '';
+                    return `<td title="${cell}"${isCost ? ' style="font-weight:600;color:#234e52;background:#f0fff4;"' : ''}>${cell}</td>`;
+                }).join('');
+                return '<tr>' + cells + '</tr>';
+            }).join('');
         })
         .catch(e => { document.getElementById('previewModalInfo').textContent = 'Ошибка загрузки'; document.getElementById('previewModalInfo').style.color = '#fc8181'; });
 }
