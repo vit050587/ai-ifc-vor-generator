@@ -23,6 +23,14 @@ element_types = [
     ('ifcPile', 'Свая')
 ]
 
+# Список специфических свойств для извлечения
+SPECIFIC_PROPERTIES = [
+    'Pset_ConcreteElementGeneral.ReinforcementVolumeRatio',
+    'ExpCheck_MaterialConcrete.MGE_ConcreteGrade',
+    'ExpCheck_MaterialConcrete.MGE_WaterResist',
+    'ExpCheck_MaterialConcrete.MGE_FreezeDurability'
+]
+
 
 def safe_get_attr(obj, attr, default='-'):
     try:
@@ -103,8 +111,9 @@ def get_element_storey(element):
     
     return storey_info
 
+
 def get_all_quantities(element):
-     
+    """Извлекает все количественные характеристики элемента"""
     quantities = {}
     try:
         if hasattr(element, 'IsDefinedBy'):
@@ -148,8 +157,9 @@ def get_all_quantities(element):
         logger.error(f"Ошибка при получении параметров: {e}")
     return quantities
 
+
 def get_geometry_from_representation(element):
-     
+    """Извлекает геометрические параметры из представления элемента"""
     geometry = {}
     try:
         if hasattr(element, 'Representation') and element.Representation:
@@ -172,8 +182,9 @@ def get_geometry_from_representation(element):
         logger.error(f"Ошибка при анализе геометрии: {e}")
     return geometry
 
+
 def get_placement_info(element):
- 
+    """Извлекает информацию о размещении элемента"""
     placement = {}
     try:
         if hasattr(element, 'ObjectPlacement'):
@@ -193,8 +204,9 @@ def get_placement_info(element):
         pass
     return placement
 
+
 def get_all_properties(element):
-    
+    """Извлекает все свойства элемента из Property Sets"""
     properties = {}
     try:
         if hasattr(element, 'IsDefinedBy'):
@@ -219,8 +231,54 @@ def get_all_properties(element):
         pass
     return properties
 
+
+def get_specific_properties(element):
+    """
+    Извлекает конкретные свойства по заданному списку SPECIFIC_PROPERTIES
+    Формат: 'PsetName.PropertyName'
+    """
+    properties = {}
+    
+    # Инициализируем все целевые свойства значением '-'
+    for prop_path in SPECIFIC_PROPERTIES:
+        col_name = prop_path.replace('.', '_')
+        properties[col_name] = '-'
+    
+    try:
+        if hasattr(element, 'IsDefinedBy'):
+            for rel in element.IsDefinedBy:
+                if rel.is_a('IfcRelDefinesByProperties'):
+                    props = rel.RelatingPropertyDefinition
+                    if props:
+                        pset_name = safe_get_attr(props, 'Name')
+                        
+                        # Проверяем Property Sets
+                        if props.is_a('IfcPropertySet'):
+                            if hasattr(props, 'HasProperties'):
+                                for prop in props.HasProperties:
+                                    prop_name = safe_get_attr(prop, 'Name')
+                                    full_name = f"{pset_name}.{prop_name}"
+                                    
+                                    # Проверяем, нужно ли нам это свойство
+                                    if full_name in SPECIFIC_PROPERTIES:
+                                        col_name = full_name.replace('.', '_')
+                                        if prop.is_a('IfcPropertySingleValue') and prop.NominalValue:
+                                            if hasattr(prop.NominalValue, 'wrappedValue'):
+                                                properties[col_name] = prop.NominalValue.wrappedValue
+                                            else:
+                                                properties[col_name] = str(prop.NominalValue)
+                                        elif prop.is_a('IfcPropertyEnumeratedValue'):
+                                            if prop.EnumerationValues:
+                                                properties[col_name] = str(prop.EnumerationValues[0].wrappedValue)
+                                        break
+    except Exception as e:
+        logger.error(f"Ошибка при извлечении специфических свойств: {e}")
+    
+    return properties
+
+
 def get_element_info(element):
-     
+    """Собирает всю информацию об элементе"""
     info = {
         'GlobalId': safe_get_attr(element, 'GlobalId'),
         'Имя': safe_get_attr(element, 'Name'),
@@ -255,29 +313,31 @@ def get_element_info(element):
     if not material_found:
         info['Материал'] = '-'
     
-     
+    # Геометрия
     info.update(get_geometry_from_representation(element))
     
-     
+    # Размещение
     info.update(get_placement_info(element))
     
-     
+    # Количественные характеристики
     info.update(get_all_quantities(element))
     
-     
+    # Все свойства
     info.update(get_all_properties(element))
+    
+    # СПЕЦИФИЧЕСКИЕ СВОЙСТВА ДЛЯ СМЕТЧИКА
+    info.update(get_specific_properties(element))
     
     return info
 
- 
 
 def zero_step(ifc_file, output_folder=None):
-    
+    """Основная функция обработки IFC файла"""
     logger.info(f"Начата обработка файла {ifc_file}")
 
     model = ifcopenshell.open(ifc_file)
 
-    logger.info("Обрбаотка ifc с анализом этажей")
+    logger.info("Обработка ifc с анализом этажей")
 
     storeys = {}
     for storey in model.by_type('IfcBuildingStorey'):
@@ -294,7 +354,6 @@ def zero_step(ifc_file, output_folder=None):
             print(f"   • {name}: {elev_val} м ({elevation_mm} мм) - {storey_type}")
             storeys[name] = {'elevation': elev_val, 'type': storey_type}
 
-
     all_elevations = []
     ground_elevations = []   
 
@@ -302,27 +361,22 @@ def zero_step(ifc_file, output_folder=None):
         if hasattr(storey, 'Elevation') and storey.Elevation is not None:
             elev = float(storey.Elevation)
             
-            
             if abs(elev) > 100:   
                 elev = elev / 1000
             
             all_elevations.append(elev)
             
-            
             name = safe_get_attr(storey, 'Name')
             elev_mm = round(elev * 1000, 2)
             storey_type = classify_storey_type(name, elev_mm)
             
-            
             if storey_type in ['Цокольный', 'Надземный', 'Технический', 'Мансардный']:
                 ground_elevations.append(elev)
 
-    
     if ground_elevations:
         min_ground = min(ground_elevations)   
         max_ground = max(ground_elevations)   
         height_above_ground = max_ground - min_ground
-        
         
         if all_elevations:
             total_height = max(all_elevations) - min(all_elevations)
@@ -342,7 +396,6 @@ def zero_step(ifc_file, output_folder=None):
                 'Максимальная_отметка_надземной_части_м': 0
             }
     else:
-        
         height_above_ground = 0
         building_height_info = {
             'Высота_надземной_части_м': 0,
@@ -362,7 +415,6 @@ def zero_step(ifc_file, output_folder=None):
                 elem_info['Тип (RU)'] = ru_name
                 elements.append(elem_info)
 
-    
     df = pd.DataFrame(elements)
     df = df.fillna('-')
 
@@ -382,7 +434,7 @@ def zero_step(ifc_file, output_folder=None):
     
     smetchik_cols = ['Тип (RU)', 'Тип элемента', 'Имя', 'GlobalId', 'Материал', 'Этаж', 'Тип_этажа', 'Уровень_этажа_мм']
 
-    
+    # Геометрические параметры
     for col in df.columns:
         if 'Длина' in col and '_мм' in col:
             smetchik_cols.append(col)
@@ -393,29 +445,33 @@ def zero_step(ifc_file, output_folder=None):
         elif 'Глубина' in col and '_мм' in col:
             smetchik_cols.append(col)
 
-    
+    # Объемы
     for col in df.columns:
         if 'Объём' in col and ('_м3' in col or '_литры' in col):
             smetchik_cols.append(col)
 
-    
+    # Площади
     for col in df.columns:
         if 'Площадь' in col and '_м2' in col:
             smetchik_cols.append(col)
 
-    
+    # ДОБАВЛЯЕМ СПЕЦИФИЧЕСКИЕ СВОЙСТВА ИЗ СПИСКА
+    specific_col_names = [prop.replace('.', '_') for prop in SPECIFIC_PROPERTIES]
+    for col in specific_col_names:
+        if col in df.columns:
+            smetchik_cols.append(col)
+
     existing_cols = [col for col in smetchik_cols if col in df.columns]
 
     df_smetchik = df[existing_cols].copy()
     df_smetchik = df_smetchik.fillna('-')
 
-    
     df_smetchik.insert(0, '№ п/п', range(1, len(df_smetchik) + 1))
     df_smetchik['Примечание_сметчика'] = ''
     df_smetchik['Стоимость_за_ед_руб'] = ''
     df_smetchik['Общая_стоимость_руб'] = ''
 
-    
+    # Поиск колонки с объемом для сводки
     volume_col = None
     for col in df.columns:
         if 'Объём_NetVolume_м3' in col:
@@ -443,7 +499,6 @@ def zero_step(ifc_file, output_folder=None):
 
     df_summary = pd.DataFrame(summary_data)
 
-    
     total_count = df_summary['Количество, шт'].sum()
     total_volume = 0
     for _, row in df_summary.iterrows():
@@ -475,7 +530,6 @@ def zero_step(ifc_file, output_folder=None):
         df_smetchik.to_excel(writer, sheet_name='Данные', index=False)
         df_summary.to_excel(writer, sheet_name='Сводка_по_типам', index=False)
         
-        
         df_height = pd.DataFrame([{
             'Параметр': 'Высота надземной части',
             'Значение_м': building_height_info['Высота_надземной_части_м'],
@@ -498,5 +552,3 @@ def zero_step(ifc_file, output_folder=None):
 
     logger.info(f"Файл сохранен в {output_file}")
     logger.info("===ПРЕДВАРИТЕЛЬНЫЙ ЭТАП ЗАВЕРШЕН===")
-
- 

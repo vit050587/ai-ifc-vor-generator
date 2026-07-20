@@ -257,11 +257,4 @@ def first_step(prompt_manager: PromptManager, file, rows=None, output_folder=Non
 
     logger.info('=====ПЕРВЫЙ ЭТАП ЗАВЕРШЕН=====')
     
-
-
-
-
-    
-
-
  

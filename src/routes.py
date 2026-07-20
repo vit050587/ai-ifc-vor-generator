@@ -125,6 +125,7 @@ def _get_manager() -> SessionManager:
             output_folder=current_app.config["OUTPUT_FOLDER"],
             sessions_file=os.path.abspath(current_app.config["SESSIONS_FILE"]),
             perechen_xlsx=cfg.DOCUMENTS_PATH,
+            koefs_xlsx=cfg.KOEFS_PATH
         )
         logger.info("SessionManager инициализирован")
     return _manager
@@ -594,7 +595,7 @@ def preview_excel(session_id: str):
         else:
             df = pd.read_excel(excel_path)
           
-        df = df.drop(['GlobalId'], axis=1, errors='ignore')
+        #df = df.drop(['GlobalId'], axis=1, errors='ignore')
     except Exception as e:
         return _err(ErrorResponse(detail=f"Ошибка чтения файла: {str(e)}"), 500)
 

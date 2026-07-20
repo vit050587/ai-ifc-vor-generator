@@ -117,7 +117,7 @@ def form_result_df(data: dict) -> pd.DataFrame:
         rows.append({
             '№ п/п': row_num, 'Тип (RU)': 'Стены', 'Тип элемента': 'IfcWall',
             'GlobalId': wall.get('id', ''), 'Имя': wall.get('name', ''),
-            'Материал': wall.get('material', ''), 'Ширина_сечения_мм': wall.get('thickness_mm', ''),
+            'Материал': wall.get('material', ''), 'Длина_Width_мм': wall.get('thickness_mm', ''),
             'Глубина_выдавливания_мм': wall.get('thickness_mm', ''),
             'Периметр_мм': wall.get('perimeter_mm', ''), 'Площадь_GrossArea_м2': wall.get('area_m2', ''),
             'Объём_NetVolume_м3': wall.get('volume_m3', ''), 'Количество': wall.get('quantity', 1)
@@ -129,7 +129,7 @@ def form_result_df(data: dict) -> pd.DataFrame:
         rows.append({
             '№ п/п': row_num, 'Тип (RU)': 'Колонны', 'Тип элемента': 'IfcColumn',
             'GlobalId': col.get('id', ''), 'Имя': col.get('name', ''),
-            'Материал': col.get('material', ''), 'Ширина_сечения_мм': col.get('width_mm', ''),
+            'Материал': col.get('material', ''), 'Длина_Width_мм': col.get('width_mm', ''),
             'Высота_сечения_мм': col.get('height_mm', ''), 'Объём_NetVolume_м3': col.get('volume_m3', ''),
             'Количество': col.get('quantity', 1)
         })
@@ -152,7 +152,7 @@ def form_result_df(data: dict) -> pd.DataFrame:
         ifc_type = 'IfcDoor' if op.get('type') == 'дверь' else 'IfcWindow'
         rows.append({
             '№ п/п': row_num, 'Тип (RU)': 'Проёмы', 'Тип элемента': ifc_type,
-            'GlobalId': op.get('id', ''), 'Ширина_сечения_мм': op.get('width_mm', ''),
+            'GlobalId': op.get('id', ''), 'Длина_Width_мм': op.get('width_mm', ''),
             'Высота_сечения_мм': op.get('height_mm', ''), 'Количество': op.get('quantity', '')
         })
         row_num += 1

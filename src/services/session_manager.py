@@ -26,11 +26,12 @@ logger = setup_logger(__name__)
 class SessionManager:
     """Управление сессиями обработки IFC файлов"""
     
-    def __init__(self, upload_folder: str, output_folder: str, sessions_file: str, perechen_xlsx: str = None):
+    def __init__(self, upload_folder: str, output_folder: str, sessions_file: str, perechen_xlsx: str = None, koefs_xlsx: str = None):
         self.upload_folder = os.path.abspath(upload_folder)
         self.output_folder = os.path.abspath(output_folder)
         self.sessions_file = sessions_file
         self.perechen_xlsx = perechen_xlsx
+        self.koefs_xlsx = koefs_xlsx
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self._state_lock = threading.RLock()
         self._load()
@@ -696,7 +697,6 @@ class SessionManager:
                                     old_value = ws.cell(row=row_idx, column=material_col).value
                                     ws.cell(row=row_idx, column=material_col).value = material
                                     updated_count += 1
-                                    logger.info(f"Строка {data_idx}: материал изменён с '{old_value}' на '{material}'")
                         
                         if updated_count > 0:
                             # Сохраняем книгу со всеми листами
@@ -824,15 +824,24 @@ class SessionManager:
                     orig_idx = int(idx_str)
                     if orig_idx in row_indices:
                         pos = row_indices.index(orig_idx)
-                        for col, value in group_info.get("data", {}).items():
-                            if col in df_selected.columns:
-                                try:
-                                    float_val = float(value)
-                                    df_selected[col] = pd.to_numeric(df_selected[col], errors='coerce')
-                                    df_selected.at[pos, col] = float_val
-                                except (ValueError, TypeError):
-                                    df_selected[col] = df_selected[col].astype(object)
-                                    df_selected.at[pos, col] = value
+                        
+                        # 1. Применяем суммированные значения с суффиксом _grouped
+                        summed = group_info.get("summed", {})
+                        for col, value in summed.items():
+                            grouped_col = f"{col}_grouped"
+                            if grouped_col not in df_selected.columns:
+                                df_selected[grouped_col] = 0.0
+                            try:
+                                df_selected.at[pos, grouped_col] = float(value)
+                            except (ValueError, TypeError):
+                                df_selected.at[pos, grouped_col] = value
+                        
+                        
+                        # 2. Добавляем количество элементов в группе
+                        count = group_info.get("count", 1)
+                        if 'Количество_в_группе' not in df_selected.columns:
+                            df_selected['Количество_в_группе'] = 1
+                        df_selected.at[pos, 'Количество_в_группе'] = count
                 
                 grouped_excel_path = os.path.join(session_dir, 'ДЛЯ_СМЕТЧИКА_сгруппированный.xlsx')
                 with pd.ExcelWriter(grouped_excel_path, engine='openpyxl') as writer:

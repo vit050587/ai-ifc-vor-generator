@@ -11,12 +11,14 @@ from fuzzywuzzy import fuzz
 from src.core.config import load_config
 from src.core.logger import setup_logger
 from src.services.base_knowledge import KNOWLEDGE_BASE
+from src.services.geometry_filter import geometry_filter
 
 logger = setup_logger("fourth_step")
 _cfg = load_config()
 
 LLM_MODEL = _cfg.model_ollama
 OLLAMA_URL = _cfg.ollama_url
+KOEFS_FILE = _cfg.KOEFS_PATH
 SIMILARITY_THRESHOLD = 80 
 
 morph = pymorphy3.MorphAnalyzer()
@@ -29,92 +31,28 @@ STOP_WORDS = {'и', 'в', 'на', 'с', 'по', 'к', 'у', 'о', 'от', 'дл�
               'цоколь', 'кровля', 'подвал', 'мансарда', 'техническая'}
 
 
-def _check_condition(required_value, actual_value, condition):
-    """Проверяет выполнение условия"""
-    if condition == 'до':
-        return actual_value <= required_value
-    elif condition == 'не более':
-        return actual_value <= required_value
-    elif condition == 'более':
-        return actual_value > required_value
-    elif condition == 'не менее':
-        return actual_value >= required_value
-    elif condition == 'менее':
-        return actual_value < required_value
-    elif condition == 'равно':
-        return abs(actual_value - required_value) < 0.001  # учет погрешности
-    elif condition == 'не до':
-        return actual_value > required_value
-    else:
-        return False
+def _get_corrected_volume(df):
 
-def _determine_condition(matched_text, full_text):
-    """Определяет тип условия сравнения"""
-    matched_lower = matched_text.lower()
-    
-    if 'не более' in matched_lower:
-        return 'не более'
-    elif 'не менее' in matched_lower:
-        return 'не менее'
-    elif 'более' in matched_lower or 'больше' in matched_lower or 'свыше' in matched_lower:
-        return 'более'
-    elif 'менее' in matched_lower or 'меньше' in matched_lower:
-        return 'менее'
-    elif 'равно' in matched_lower:
-        return 'равно'
-    elif 'до' in matched_lower and 'толщин' in matched_lower:
-        # Проверяем контекст вокруг слова "до"
-        if 'не до' in matched_lower:
-            return 'не до'
-        else:
-            return 'до'
-    else:
-        return 'равно'
+    koefs = pd.read_excel(KOEFS_FILE)
 
-def _filter_by_width(works_list, width):
-    """"Фильтрация работ для стен по толщине"""
+    df_copy = df.copy()
 
-    patterns = [
-        r'толщин(?:ой|а|ы)\s*(?:не\s+)?(?:до|более|менее|больше|меньше|свыше|равно|не\s+менее|не\s+более)\s*(\d+(?:[.,]\d+)?)',
-        r'толщин(?:ой|а|ы)\s*(\d+(?:[.,]\d+)?)\s*(?:мм|см|м)?\s*(?:не\s+)?(?:до|более|менее|больше|меньше|свыше|равно|не\s+менее|не\s+более)',
-        r'(?:до|не\s+более|более|менее|не\s+менее|больше|меньше|свыше|равно)\s*(\d+(?:[.,]\d+)?)\s*(?:мм|см|м)?\s*толщин',
-    ]
+    koefs_filtered = koefs[koefs['Шифр ТСН'].isin(df_copy['Шифр ТСН'])].copy()
 
-    works_list_filtered = []
+    koefs_filtered_by_material = koefs_filtered[koefs_filtered['Наименование открытой группы ресурсов/\nресурса в составе открытой группы'].isin(df_copy['Наименование расценки/ресурса'])].copy()
 
-    for work in works_list:
-        found_match = False
-        for pattern in patterns:
-            match = re.search(pattern, work, re.IGNORECASE)
-            if match:
-                found_match = True
-                # Извлекаем число
-                number_str = match.group(1).replace(',', '.')
-                extracted_number = float(number_str)
-                
-                # Определяем условие
-                condition = _determine_condition(match.group(0), work)
-                
-                # Сравниваем с фактической толщиной
-                satisfied = _check_condition(extracted_number, width, condition)
-                
-                if satisfied:
-                    works_list_filtered.append(work)
-            # Если не нашли ни одного совпадения по паттернам
-        if not found_match:
-            works_list_filtered.append(work)
+    for idx, koef_row in koefs_filtered_by_material.iterrows():
+        # Находим индекс строки в df
+        df_idx = df_copy[df_copy['Наименование расценки/ресурса'] == koef_row['Наименование открытой группы ресурсов/\nресурса в составе открытой группы']].index[0]
+        
+        # Умножаем объём на норму расхода
+        df_copy.loc[df_idx, 'Объём работ'] = df_copy.loc[df_idx, 'Объём работ'] * koef_row['Норма расхода'] / 100 if koef_row['Норма расхода'] > 100 else df_copy.loc[df_idx, 'Объём работ'] * koef_row['Норма расхода']
 
-                
-    return works_list_filtered
+    print("Готово!")
+    print(df_copy)     
+    return df_copy  
 
-def _extract_mm_value(text):
-    """Извлекает числовое значение в миллиметрах из строки"""
-    # Ищем число (с запятой или точкой) перед 'мм'
-    match = re.search(r'(\d+(?:[.,]\d+)?)\s*мм', text, re.IGNORECASE)
-    if match:
-        # Заменяем запятую на точку и преобразуем в float
-        return float(match.group(1).replace(',', '.'))
-    return None
+
 
 def extract_words(text):
     if not text:
@@ -137,12 +75,22 @@ def normalize_quotes(text):
     return text
 
 def _find_column_with_volume(data, marker, extra_marker):
-    for param, value in data.items():
-        if marker in param and extra_marker in param and value:
-            return value
-    for param, value in data.items():
-        if marker in param and value:
-            return value
+    if 'Количество_в_группе' in data.keys():
+        logger.info('обнаружены данные после группирвоки')
+        for param, value in data.items():
+            if marker in param and extra_marker in param and value and 'grouped' in param:
+                return value
+        for param, value in data.items():
+            if marker in param and value and 'grouped' in param:
+                return value
+    else:
+        for param, value in data.items():
+            if marker in param and extra_marker in param and value:
+                return value
+        for param, value in data.items():
+            if marker in param and value:
+                return value
+    
     return ''
 
 
@@ -167,6 +115,8 @@ def _process_one_element(normalized_data, row_number, output_folder):
     composition = normalized_data.get('состав_из_имени', '')
     material_detected = normalized_data.get('материал_определенный', '')
     element_name = element_description.get('Имя', '')
+    armature_ratio = element_description.get('Pset_ConcreteElementGeneral_ReinforcementVolumeRatio', 0)
+    probably_beton = 'Смесь бетонная' + element_description.get('ExpCheck_MaterialConcrete_MGE_ConcreteGrade', '') + element_description.get('Property_ExpCheck_MaterialConcrete.MGE_WaterResist', '') + element_description.get('Property_ExpCheck_MaterialConcrete.MGE_FreezeDurability', '')
 
     if not material_name:
         material_detected = element_description.get('Имя', '')
@@ -223,14 +173,15 @@ def _process_one_element(normalized_data, row_number, output_folder):
 
     # === Шаг 1.5: Ключевые фразы из базы знаний ===
     knowledge_phrases = []
+    knowledge_phrases_material = []
     if ifc_type in KNOWLEDGE_BASE:
         beton_pattern = r'B\d{2}(?!\d)|W\d(?!\d)|F\d{3}(?!\d)'
         if re.search(beton_pattern, element_name) or 'бетон' in element_name.lower() or 'бетон' in material_name.lower():
             base_material = 'бетон'
         else:
             base_material = ''
-        knowledge_phrases = KNOWLEDGE_BASE[ifc_type].get('keywords_for_search', [])
-        knowledge_phrases_material = KNOWLEDGE_BASE[ifc_type].get('material_key_words', {}).get(base_material, [])
+        knowledge_phrases = list(KNOWLEDGE_BASE[ifc_type].get('keywords_for_search', []))
+        knowledge_phrases_material = list(KNOWLEDGE_BASE[ifc_type].get('material_key_words', {}).get(base_material, []))
         knowledge_phrases.extend(knowledge_phrases_material)
         logger.info(f"Ключевые фразы из базы знаний: {knowledge_phrases}")
 
@@ -241,7 +192,8 @@ def _process_one_element(normalized_data, row_number, output_folder):
             parsed = morph.parse(word)[0]
             forms = list(set([form.word for form in parsed.lexeme]))
             all_forms[word] = forms
-        except:
+        except Exception as e:
+            logger.warning(f'Не удалось проанализировать слово "{word}": {e}')
             all_forms[word] = [word]
 
     # === Шаг 3: Поиск работ ===
@@ -308,6 +260,8 @@ def _process_one_element(normalized_data, row_number, output_folder):
     
     base_works_words = []
 
+    base_works_words_str = ''
+
     if base_works:
         base_works_words = base_works.get('keywords_for_search', '')
         if base_works_words:
@@ -347,21 +301,9 @@ def _process_one_element(normalized_data, row_number, output_folder):
         search_type = ', '.join(work['тип_поиска'])
         works_list.append(f"{i}. {work['наименование']} [источник: {search_type}]")
 
-    width = sizes.get('ширина', '')
-    if not width:
-        width = sizes.get('ширина_сечения', '')
 
-    try:
-        width = _extract_mm_value(width)
-        width = float(width)
-    except Exception as e:
-        width = ''
-        logger.warning(f'Не удалось привести толщину к численному значению {e}')
-
-    print(f'Ширина стены {width}')
-    if width and ifc_type == 'IfcWall':
-        works_list = _filter_by_width(works_list, width)
-        logger.info(f"Найдено работ после фильтрации по ширине: {len(works_list)}")
+    #Фильтрация по геометрическим параметрам объекта (толщина для стен, площадь для плит и т.д.)
+    works_list = geometry_filter(works_list, sizes, ifc_type)
         
     works_text = "\n".join(works_list)
 
@@ -379,6 +321,9 @@ def _process_one_element(normalized_data, row_number, output_folder):
 - Качественные характеристики: {json.dumps(material_qual, ensure_ascii=False, indent=2)}
 - Размеры: {json.dumps(sizes, ensure_ascii=False, indent=2)}
 """
+    
+    material_base_works_str = ''
+
     if base_works:
         base_materials_works = base_works.get('material_key_words', '')
         
@@ -387,6 +332,7 @@ def _process_one_element(normalized_data, row_number, output_folder):
         for word in all_words:
             if 'бетон' in word or 'железобетон' in word:
                 base_material = 'бетон'
+                element_info += f"\n -Бетонная смесь по описанию ifc: {probably_beton}"
                 break
         else: 
             base_material = ''
@@ -398,20 +344,21 @@ def _process_one_element(normalized_data, row_number, output_folder):
 
         if base_material and base_materials_works:
             material_base_works_list = base_materials_works.get(base_material, '')
-            material_base_works_str = ', '. join(material_base_works_list)
+            material_base_works_str = ', '. join(material_base_works_list) + '\n ВАЖНО Если в названии объекта нет указания на материал железобетонной смеси, то выбирай Смесь бетонная тяжелого бетона БСТ на гранитном щебне, крупность заполнителя от 5 до 20 мм, класс прочности В7,5 (М100), П3'
 
-        
+    
 
     try:
         if base_works_words_str:
             element_info += f"\n -Работы для класса {ifc_type} обязательно должны содержать: {base_works_words_str}"
-            print(base_works_words_str) 
+            print(f'Класс: {base_works_words_str}') 
     except Exception as e:
         print('Информации по работам по классам нет')
     
     try:
-        print(material_base_works_str)
-        element_info += f"\n -Работы для этого элемента обязательно должны содержать: {material_base_works_str}"
+        print(f'Материал: {material_base_works_str}')
+        element_info += f"""\n -Работы для этого элемента обязательно должны содержать: {material_base_works_str}. \n Если не будет хотя бы одной работы из этого списка в ответе, то я тебя уволю
+        НИ В КОЕМ СЛУЧАЕ НЕЛЬЗЯ ЗАБЫВАТЬ ПРО РАБОТЫ: {material_base_works_str}. Без них ответ будет считаться неверным."""
     except Exception as e:
         print('Информации по работам по материалу нет')
 
@@ -428,6 +375,7 @@ def _process_one_element(normalized_data, row_number, output_folder):
 Если нет точного совпадения по бетонной смеси, цементу, кирпичу и прочему, выбери и включи в список самый подходящий (если нет похожих, то ничего не добавляй)
 Если элемент относится к подземной или цокольной части здания, то это не является автостоянкой, если это не указано явно
 
+ВАЖНО: в установку армутурных изделей не входит сама арматура, поэтому их нужно обязательно включить в список отдельно. Причем бери любую арматуру или арматурные заготовки (например, первую попавшуюся в списке), если нет точного совпадения по марке арматуры. Если есть точное совпадение по марке арматуры, то бери её.
 
 ## ОСОБОЕ ВНИМАНИЕ К РАБОТАМ ИЗ БАЗЫ ЗНАНИЙ:
 Работы с пометкой [источник: база_знаний_фраза] ОБЯЗАТЕЛЬНО должны быть включены.
@@ -435,6 +383,8 @@ def _process_one_element(normalized_data, row_number, output_folder):
 
 ## СПИСОК ДОСТУПНЫХ РАБОТ:
 {works_text}
+
+
 
 ## ФОРМАТ ОТВЕТА (ТОЛЬКО JSON):
 {{
@@ -447,7 +397,11 @@ def _process_one_element(normalized_data, row_number, output_folder):
   ],
   "рекомендация": "краткий вывод"
 }}"""
-    
+    try:
+        print(f'Материал: {material_base_works_str}')
+        prompt += f"""\n Перед тем как дать ответ, проверь, что в выбранных работах есть все работы из списка: {material_base_works_str}."""
+    except Exception as e:
+        print('Информации по работам по материалу нет')
     try:
         client = ollama.Client(host=OLLAMA_URL, timeout=120.0)
         response = client.chat(
@@ -467,6 +421,8 @@ def _process_one_element(normalized_data, row_number, output_folder):
 
         result = json.loads(answer)
         selected_works = result.get('выбранные_работы', [])
+
+        print(f"Выбранные работы для элемента {row_number}: {selected_works}")
 
         if not selected_works:
             logger.warning(f"LLM не выбрал работы для элемента {row_number}")
@@ -509,13 +465,37 @@ def _process_one_element(normalized_data, row_number, output_folder):
         # Объём работ
         net_square = _find_column_with_volume(previous_data, "м2", "Net")
         net_volume = _find_column_with_volume(previous_data, "м3", "Net")
+        gross_square = _find_column_with_volume(previous_data, "м2", "_GrossArea")
 
         if 'Ед. изм.' in df_result.columns:
-            df_result['Объём работ'] = df_result.apply(
-                lambda row: f"{net_square} м2" if net_square and 'м2' in str(row.get('Ед. изм.', '')).lower()
-                else (f"{net_volume} м3" if net_volume and 'м3' in str(row.get('Ед. изм.', '')).lower() else ''),
-                axis=1
-            )
+            def get_volume_of_work(row):
+                unit = str(row.get('Ед. изм.', '')).lower().replace(' ', '')
+                
+                conversions = {
+                    'м2': (gross_square, 1, 'м2'),
+                    '100м2': (gross_square, 100, '(100 м2)'),
+                    'м3': (net_volume, 1, 'м3'),
+                    '100м3': (net_volume, 100, '(100 м3)'),
+                    'т': (net_volume * armature_ratio, 1, 'т'),
+                    '1т': (net_volume * armature_ratio, 1, 'т')
+                }
+                
+                for unit_key, (value, divisor, label) in conversions.items():
+                    if unit_key == unit and value:
+                        converted = value / divisor
+                        decimals = 4 if divisor > 1 else (2 if 'м2' in unit_key else 3)
+                        return f"{converted:.{decimals}f}"
+                
+                return ''
+            df_result['Объём работ'] = df_result.apply(get_volume_of_work, axis=1)
+        else:
+            logger.warning("Колонка 'Ед. изм.' не найдена в df_result. Объём работ не будет рассчитан.")
+            df_result['Объём работ'] = ''
+        
+        try:
+            df_result = _get_corrected_volume(df_result)
+        except Exception as e: 
+            logger.error(f"Ошибка при корректировке объёма работ: {e}")
 
         # Сохраняем
         ifc_class = normalized_data.get('основные_характеристики', {}).get('ifc_class', '')
