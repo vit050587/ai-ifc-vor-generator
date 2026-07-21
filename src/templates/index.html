@@ -751,6 +751,14 @@ const GEOMETRY_GROUP_RULES = {
             { max: Infinity, label: 'более 4000 мм' }
         ]
     },
+    'IfcProxyElement': {
+        field: 'Объём_NetVolume_м3',
+        label: 'Объём',
+        unit: 'м³',
+        ranges: [
+            { max: Infinity, label: 'все размеры' }
+        ]
+    },
     'default': {
         field: 'Объём_NetVolume_м3',
         label: 'Объём',
@@ -767,6 +775,7 @@ const GEOMETRY_GROUP_RULES = {
 const SECTION_STRUCTURE = {
     'Подземная': {
         label: 'Подземная часть здания (до отм. 0,000)',
+        other_label: 'Прочие элементы подземной части',
         sections: [
             {
                 name: 'Раздел 1. Монолитные ж/б конструкции. Фундаменты',
@@ -775,7 +784,7 @@ const SECTION_STRUCTURE = {
                     { key: 'Свайно-ростверковый фундамент', patterns: ['свай', 'ростверк'], ifcTypes: ['IfcSlab', 'IfcBeam', 'IfcPile'] },
                     { key: 'Фундамент под инженерное оборудование', patterns: ['инженер', 'оборудование'], ifcTypes: ['IfcSlab'] },
                     { key: 'Фундамент под башенный кран', patterns: ['башен', 'кран'], ifcTypes: ['IfcSlab', 'IfcBeam'] },
-                    { key: 'Устройство горизонтальной гидроизоляции', patterns: ['горизонт', 'гидроизол'], ifcTypes: ['IfcSlab', 'IfcWall'] },
+                    { key: 'Устройство горизонтальной гидроизоляции', patterns: ['горизонт', 'гидроизол'], ifcTypes: ['IfcSlab'] },
                     { key: 'Устройство вертикальной гидроизоляции', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] },
                     { key: 'Устройство деформационного шва', patterns: ['деформац', 'шов'], ifcTypes: ['IfcSlab', 'IfcWall'] }
                 ]
@@ -788,29 +797,45 @@ const SECTION_STRUCTURE = {
                     { key: 'Подземная часть здания. Плиты перекрытия', patterns: ['перекрыт', 'плит'], ifcTypes: ['IfcSlab'] },
                     { key: 'Подземная часть здания. Балки', patterns: ['балк', 'ригел'], ifcTypes: ['IfcBeam'] },
                     { key: 'Подземная часть здания. Лестницы', patterns: ['лестн', 'марш', 'площадк'], ifcTypes: ['IfcStair', 'IfcSlab', 'IfcStairFlight'] },
-                    { key: 'Подземная часть здания. Приямки', patterns: ['приям'], ifcTypes: ['IfcSlab', 'IfcWall'] }
+                    { key: 'Подземная часть здания. Приямки', patterns: ['приям'], ifcTypes: ['IfcSlab', 'IfcWall'] },
+                    { key: 'Подземная часть здания. Вертикальная гидроизоляция', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] }
                 ]
             }
         ]
     },
     'Цоколь': {
-        label: 'Цокольная часть здания',
+        label: 'Цокольная часть здания (отм. 0,000)',
+        other_label: 'Прочие элементы цокольной части',
         sections: [
             {
-                name: 'Раздел 1. Монолитные ж/б конструкции. Цокольная часть здания',
+                name: 'Раздел 1. Монолитные ж/б конструкции. Фундаменты',
+                subsections: [
+                    { key: 'Фундаментная плита', patterns: ['фундаментная плита', 'фунд. плита', 'фундамент плита'], ifcTypes: ['IfcSlab'] },
+                    { key: 'Свайно-ростверковый фундамент', patterns: ['свай', 'ростверк'], ifcTypes: ['IfcSlab', 'IfcBeam', 'IfcPile'] },
+                    { key: 'Фундамент под инженерное оборудование', patterns: ['инженер', 'оборудование'], ifcTypes: ['IfcSlab'] },
+                    { key: 'Фундамент под башенный кран', patterns: ['башен', 'кран'], ifcTypes: ['IfcSlab', 'IfcBeam'] },
+                    { key: 'Устройство горизонтальной гидроизоляции', patterns: ['горизонт', 'гидроизол'], ifcTypes: ['IfcSlab'] },
+                    { key: 'Устройство вертикальной гидроизоляции', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] },
+                    { key: 'Устройство деформационного шва', patterns: ['деформац', 'шов'], ifcTypes: ['IfcSlab', 'IfcWall'] }
+                ]
+            },
+            {
+                name: 'Раздел 2. Монолитные ж/б конструкции. Цокольная часть здания',
                 subsections: [
                     { key: 'Цокольная часть здания. Стены', patterns: ['стен'], ifcTypes: ['IfcWall'] },
                     { key: 'Цокольная часть здания. Колонны', patterns: ['колонн'], ifcTypes: ['IfcColumn'] },
                     { key: 'Цокольная часть здания. Плиты перекрытия', patterns: ['перекрыт', 'плит'], ifcTypes: ['IfcSlab'] },
                     { key: 'Цокольная часть здания. Балки', patterns: ['балк', 'ригел'], ifcTypes: ['IfcBeam'] },
                     { key: 'Цокольная часть здания. Лестницы', patterns: ['лестн', 'марш', 'площадк'], ifcTypes: ['IfcStair', 'IfcSlab', 'IfcStairFlight'] },
-                    { key: 'Цокольная часть здания. Приямки', patterns: ['приям'], ifcTypes: ['IfcSlab', 'IfcWall'] }
+                    { key: 'Цокольная часть здания. Приямки', patterns: ['приям'], ifcTypes: ['IfcSlab', 'IfcWall'] },
+                    { key: 'Цокольная часть здания. Вертикальная гидроизоляция', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] }
                 ]
             }
         ]
     },
     'Надземная': {
         label: 'Надземная часть здания (выше отм. 0,000)',
+        other_label: 'Прочие элементы надземной части',
         sections: [
             {
                 name: 'Раздел 3. Монолитные ж/б конструкции. Надземная часть здания',
@@ -821,7 +846,8 @@ const SECTION_STRUCTURE = {
                     { key: 'Надземная часть здания. Балки', patterns: ['балк', 'ригел'], ifcTypes: ['IfcBeam'] },
                     { key: 'Надземная часть здания. Парапеты', patterns: ['парапет'], ifcTypes: ['IfcWall'] },
                     { key: 'Надземная часть здания. Лестничные площадки', patterns: ['лестничн', 'площадк'], ifcTypes: ['IfcSlab'] },
-                    { key: 'Надземная часть здания. Лестничные марши', patterns: ['лестничн', 'марш'], ifcTypes: ['IfcStair', 'IfcStairFlight'] }
+                    { key: 'Надземная часть здания. Лестничные марши', patterns: ['лестничн', 'марш'], ifcTypes: ['IfcStair', 'IfcStairFlight'] },
+                    { key: 'Надземная часть здания. Вертикальная гидроизоляция', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] }
                 ]
             }
         ]
@@ -977,6 +1003,11 @@ function safeParseFloat(value) {
 
 function getIfcType(typeRu, name) {
     const nameLower = (name || '').toLowerCase();
+    const typeLower = (typeRu || '').toLowerCase();
+    
+    // Проверка на IfcProxyElement и отверстия — ПЕРВЫЕ
+    if (typeLower.includes('ifcproxy') || typeLower.includes('proxy')) return 'IfcProxyElement';
+    if (nameLower.includes('отверсти') || nameLower.includes('проём') || nameLower.includes('проем') || nameLower.includes('окно') || nameLower.includes('двер')) return 'IfcOpening';
     
     if (nameLower.includes('стен') || nameLower.includes('парапет')) return 'IfcWall';
     if (nameLower.includes('колонн') || nameLower.includes('пилон')) return 'IfcColumn';
@@ -985,7 +1016,6 @@ function getIfcType(typeRu, name) {
     if (nameLower.includes('площадк')) return 'IfcSlab';
     if (nameLower.includes('перекрыт') || nameLower.includes('плит') || nameLower.includes('приям') || nameLower.includes('фундамент')) return 'IfcSlab';
     
-    const typeLower = (typeRu || '').toLowerCase();
     if (typeLower.includes('ifcwall')) return 'IfcWall';
     if (typeLower.includes('ifcslab')) return 'IfcSlab';
     if (typeLower.includes('ifccolumn')) return 'IfcColumn';
@@ -995,12 +1025,40 @@ function getIfcType(typeRu, name) {
     return 'default';
 }
 
+function isHydroVertical(typeRu, name, ifcType) {
+    const nameLower = (name || '').toLowerCase();
+    const hasHydro = nameLower.includes('гидроизол');
+    const hasVertical = nameLower.includes('вертикал');
+    const hasWall = nameLower.includes('стен') || ifcType === 'IfcWall';
+    return hasHydro && (hasVertical || hasWall);
+}
+
+function isHydroHorizontal(typeRu, name, ifcType) {
+    const nameLower = (name || '').toLowerCase();
+    const hasHydro = nameLower.includes('гидроизол');
+    const hasHorizontal = nameLower.includes('горизонт');
+    const hasSlab = ifcType === 'IfcSlab';
+    if (isHydroVertical(typeRu, name, ifcType)) return false;
+    return hasHydro && (hasHorizontal || hasSlab);
+}
+
 function determineSubsection(typeRu, name, part) {
     const nameLower = (name || '').toLowerCase().trim();
+    const typeLower = (typeRu || '').toLowerCase();
+    
+    // IfcProxyElement и отверстия — всегда «Прочие элементы»
+    if (typeLower.includes('ifcproxy') || typeLower.includes('proxy')) return '__OTHER__';
+    
+    const tempIfcType = getIfcType(typeRu, name);
+    if (tempIfcType === 'IfcOpening') return '__OTHER__';
+    
+    // Гидроизоляция: чёткое разделение
+    if (isHydroVertical(typeRu, name, tempIfcType)) return 'Устройство вертикальной гидроизоляции';
+    if (isHydroHorizontal(typeRu, name, tempIfcType)) return 'Устройство горизонтальной гидроизоляции';
     
     if (nameLower.includes('приям')) {
         if (part === 'Подземная') return 'Подземная часть здания. Приямки';
-        if (part === 'Цокольная') return 'Цокольная часть здания. Приямки';
+        if (part === 'Цоколь') return 'Цокольная часть здания. Приямки';
         return 'Надземная часть здания. Приямки';
     }
     
@@ -1009,21 +1067,21 @@ function determineSubsection(typeRu, name, part) {
     if (nameLower.includes('лестничн') || nameLower.includes('лестниц')) {
         if (nameLower.includes('площадк')) {
             if (part === 'Подземная') return 'Подземная часть здания. Лестницы';
-            if (part === 'Цокольная') return 'Цокольная часть здания. Лестницы';
+            if (part === 'Цоколь') return 'Цокольная часть здания. Лестницы';
             return 'Надземная часть здания. Лестничные площадки';
         }
         if (nameLower.includes('марш')) {
             if (part === 'Подземная') return 'Подземная часть здания. Лестницы';
-            if (part === 'Цокольная') return 'Цокольная часть здания. Лестницы';
+            if (part === 'Цоколь') return 'Цокольная часть здания. Лестницы';
             return 'Надземная часть здания. Лестничные марши';
         }
         if (part === 'Подземная') return 'Подземная часть здания. Лестницы';
-        if (part === 'Цокольная') return 'Цокольная часть здания. Лестницы';
+        if (part === 'Цоколь') return 'Цокольная часть здания. Лестницы';
         return 'Надземная часть здания. Лестничные марши';
     }
     
     const partStructure = SECTION_STRUCTURE[part];
-    if (!partStructure) return `${part} часть здания. Прочее`;
+    if (!partStructure) return '__OTHER__';
     
     for (const section of partStructure.sections) {
         for (const subsection of section.subsections) {
@@ -1035,14 +1093,13 @@ function determineSubsection(typeRu, name, part) {
         }
     }
     
-    const typeLower = (typeRu || '').toLowerCase();
     if (typeLower.includes('wall')) return `${part} часть здания. Стены`;
     if (typeLower.includes('slab')) return `${part} часть здания. Плиты перекрытия`;
     if (typeLower.includes('column')) return `${part} часть здания. Колонны`;
     if (typeLower.includes('beam')) return `${part} часть здания. Балки`;
     if (typeLower.includes('stair')) return `${part} часть здания. Лестницы`;
     
-    return `${part} часть здания. Прочее`;
+    return '__OTHER__';
 }
 
 // ========== Отрисовка превью ==========
@@ -1097,10 +1154,8 @@ function renderPreview(data) {
         
         let defaultPart = 'Надземная';
         
-        // Сначала проверяем savedTypes (приоритетнее)
         if (data.savedTypes && data.savedTypes[index]) {
             const savedPart = data.savedTypes[index];
-            // Нормализуем: "Цокольная", "Цокольная часть" -> "Цоколь"
             if (savedPart.includes('Цокол') || savedPart.includes('цокол')) {
                 defaultPart = 'Цоколь';
             } else if (savedPart.includes('Подземн') || savedPart.includes('подземн')) {
@@ -1110,7 +1165,6 @@ function renderPreview(data) {
             }
         }
         
-        // Если нет savedTypes, определяем по типу этажа
         if ((!data.savedTypes || !data.savedTypes[index]) && typeFloorIdx !== -1 && row[typeFloorIdx] && row[typeFloorIdx] !== '-') {
             const rawValue = row[typeFloorIdx].trim().toLowerCase();
             const partMap = {
@@ -1279,7 +1333,6 @@ function autoGroupRows() {
         let partVolume = 0;
         partRows.forEach(rd => { partVolume += getVolume(rd.index); });
         
-        // Уровень 1: Часть здания
         const l1Id = 'L1_' + (groupCounter++);
         groupIndexMap[l1Id] = partRows.map(r => r.index);
         groupLevel[l1Id] = 1;
@@ -1310,13 +1363,18 @@ function autoGroupRows() {
         const l1Cb = l1Tr.querySelector('.group-checkbox');
         l1Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l1Id, this.checked); });
         
-        // Уровень 2: Разделы
+        // Отслеживаем, какие индексы уже попали в разделы
+        const groupedIndices = new Set();
+        
         partStructure.sections.forEach(section => {
             const sectionRows = partRows.filter(rd => {
                 return section.subsections.some(sub => sub.key === rd.subsection);
             });
             
             if (sectionRows.length === 0) return;
+            
+            // Отмечаем индексы как сгруппированные
+            sectionRows.forEach(rd => groupedIndices.add(rd.index));
             
             let sectionVolume = 0;
             sectionRows.forEach(rd => { sectionVolume += getVolume(rd.index); });
@@ -1541,8 +1599,119 @@ function autoGroupRows() {
                 });
             });
         });
+        
+        // ===== Обработка ПРОЧИХ элементов =====
+        const otherRows = partRows.filter(rd => !groupedIndices.has(rd.index));
+        if (otherRows.length > 0) {
+            let otherVolume = 0;
+            otherRows.forEach(rd => { otherVolume += getVolume(rd.index); });
+            
+            const otherLabel = partStructure.other_label || 'Прочие элементы';
+            
+            const otherId = 'OTHER_' + (groupCounter++);
+            groupIndexMap[otherId] = otherRows.map(r => r.index);
+            groupLevel[otherId] = 2;
+            groupParent[otherId] = l1Id;
+            groupChildren[otherId] = [];
+            groupChildren[l1Id].push(otherId);
+            
+            const otherTr = document.createElement('tr');
+            otherTr.className = 'group-row hidden-row';
+            otherTr.dataset.group = l1Id;
+            otherTr.dataset.groupId = otherId;
+            otherTr.style.cssText = 'background:#fefcbf !important;';
+            otherTr.onclick = function(e) {
+                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                toggleGroup(otherId);
+            };
+            
+            otherTr.innerHTML = `
+                <td style="text-align:center; padding-left: 30px;">
+                    <span class="group-arrow" id="${otherId}_arrow">▶</span>
+                    <input type="checkbox" class="group-checkbox" data-group-id="${otherId}">
+                </td>
+                <td colspan="${totalCols - 1}" style="font-weight:600; color:#975a16;">
+                    📦 ${otherLabel}
+                    <span class="group-badge">×${otherRows.length}</span>
+                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${otherVolume.toFixed(2)} м³</span>
+                </td>
+            `;
+            body.appendChild(otherTr);
+            
+            const otherCb = otherTr.querySelector('.group-checkbox');
+            otherCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(otherId, this.checked); });
+            
+            // Группируем прочие элементы по имени
+            const byName = {};
+            otherRows.forEach(rd => {
+                let nameKey = (rd.name || '').trim();
+                const lastColon = nameKey.lastIndexOf(':');
+                if (lastColon !== -1) {
+                    const after = nameKey.substring(lastColon + 1).trim();
+                    if (/^\d+$/.test(after)) {
+                        nameKey = nameKey.substring(0, lastColon).trim();
+                    }
+                }
+                if (!nameKey) nameKey = 'Без названия';
+                if (!byName[nameKey]) byName[nameKey] = [];
+                byName[nameKey].push(rd);
+            });
+            
+            Object.keys(byName).forEach(nameKey => {
+                const nameRows = byName[nameKey];
+                let nameVolume = 0;
+                nameRows.forEach(rd => { nameVolume += getVolume(rd.index); });
+                
+                const nameId = 'NAME_' + (groupCounter++);
+                groupIndexMap[nameId] = nameRows.map(r => r.index);
+                groupLevel[nameId] = 3;
+                groupParent[nameId] = otherId;
+                groupChildren[nameId] = [];
+                groupChildren[otherId].push(nameId);
+                leafGroups[nameId] = true;
+                
+                const firstIndex = nameRows[0].index;
+                
+                const nameTr = document.createElement('tr');
+                nameTr.className = 'group-row hidden-row';
+                nameTr.dataset.group = otherId;
+                nameTr.dataset.groupId = nameId;
+                nameTr.style.cssText = 'background:#ffffff !important;';
+                nameTr.onclick = function(e) {
+                    if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                    toggleGroup(nameId);
+                };
+                
+                nameTr.innerHTML = `
+                    <td style="text-align:center; padding-left: 60px;">
+                        <span class="group-arrow" id="${nameId}_arrow">▶</span>
+                        <input type="checkbox" class="group-checkbox" data-group-id="${nameId}" data-first-index="${firstIndex}">
+                    </td>
+                    <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
+                        📎 ${nameKey}
+                        <span class="group-badge">×${nameRows.length}</span>
+                        <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${nameVolume.toFixed(2)} м³</span>
+                    </td>
+                `;
+                body.appendChild(nameTr);
+                
+                const nameCb = nameTr.querySelector('.group-checkbox');
+                nameCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(nameId, this.checked); });
+                
+                nameRows.forEach(rd => {
+                    rd.tr.classList.add('group-row', 'hidden-row');
+                    rd.tr.dataset.group = nameId;
+                    const firstTd = rd.tr.querySelector('td');
+                    if (firstTd) firstTd.style.paddingLeft = '90px';
+                    const cb = rd.tr.querySelector('.row-checkbox');
+                    if (cb) { cb.style.display = 'none'; cb.checked = false; }
+                    body.appendChild(rd.tr);
+                });
+            });
+        }
     });
     
+    // Убираем из leafGroups те, у которых есть дети
     Object.keys(leafGroups).forEach(key => {
         if (groupChildren[key] && groupChildren[key].length > 0) {
             delete leafGroups[key];
@@ -1772,6 +1941,9 @@ async function confirmRowSelection() {
     const selectedRowParts = {};
     const selectedRowMaterials = {};
     
+    // Собираем ВСЕ индексы из выбранных групп (для grouped-режима)
+    const allSelectedIndices = new Set();
+    
     if (isGrouped) {
         Object.keys(leafGroups).forEach(groupId => {
             const indices = groupIndexMap[groupId];
@@ -1780,68 +1952,25 @@ async function confirmRowSelection() {
                 if (selectedRows.has(firstIndex)) {
                     const part = rowParts[firstIndex] || 'Надземная';
                     const material = rowMaterials[firstIndex] || '-';
-                    indices.forEach(idx => { selectedRowParts[idx] = part; selectedRowMaterials[idx] = material; });
+                    indices.forEach(idx => { 
+                        selectedRowParts[idx] = part; 
+                        selectedRowMaterials[idx] = material;
+                        allSelectedIndices.add(idx);
+                    });
                 }
             }
         });
     }
+    
     selectedRows.forEach(index => {
         if (!selectedRowParts[index]) {
             selectedRowParts[index] = rowParts[index] || 'Надземная';
             selectedRowMaterials[index] = rowMaterials[index] || '-';
         }
+        if (!isGrouped) {
+            allSelectedIndices.add(index);
+        }
     });
-    
-    const groupedData = {};
-    if (isGrouped) {
-        const data = window._previewData;
-        
-        const sumColumns = data.headers.filter(h => 
-            h.includes('Объём') || h.includes('Объем') || 
-            h.includes('Площадь') || h.includes('Общая_стоимость')
-        );
-        
-        Object.keys(leafGroups).forEach(groupId => {
-            const indices = groupIndexMap[groupId];
-            if (indices && indices.length > 0) {
-                const firstIndex = indices[0];
-                if (selectedRows.has(firstIndex)) {
-                    
-                    const firstRow = data.rows[firstIndex];
-                    const firstRowData = {};
-                    data.headers.forEach((h, i) => {
-                        firstRowData[h] = firstRow ? firstRow[i] : '';
-                    });
-                    
-                    const summedData = {};
-                    sumColumns.forEach(col => {
-                        const colIdx = data.headers.indexOf(col);
-                        if (colIdx !== -1) {
-                            let sum = 0;
-                            indices.forEach(idx => {
-                                sum += safeParseFloat(data.rows[idx]?.[colIdx]);
-                            });
-                            if (col.includes('м3') || col.includes('литры')) {
-                                summedData[col] = Math.round(sum * 1000) / 1000;
-                            } else if (col.includes('м2')) {
-                                summedData[col] = Math.round(sum * 100) / 100;
-                            } else if (col.includes('мм')) {
-                                summedData[col] = Math.round(sum);
-                            } else {
-                                summedData[col] = Math.round(sum * 100) / 100;
-                            }
-                        }
-                    });
-                    
-                    groupedData[firstIndex] = {
-                        count: indices.length,
-                        firstRow: firstRowData,
-                        summed: summedData
-                    };
-                }
-            }
-        });
-    }
     
     document.getElementById('processingProgressWrap').style.display = 'block';
     document.getElementById('processingProgressBar').style.width = '0%';
@@ -1851,12 +1980,12 @@ async function confirmRowSelection() {
         const response = await fetch(`${API_BASE}/session/${currentSessionId}/select_rows`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                rowIndices: Array.from(selectedRows),
+                rowIndices: isGrouped ? Array.from(allSelectedIndices) : Array.from(selectedRows),
                 allRows: selectedRows.size === allRowIndices.length,
                 rowTypes: selectedRowParts,
                 rowMaterials: selectedRowMaterials,
                 buildingHeight: height,
-                groupedData: groupedData
+                groupedData: null
             })
         });
         if (!response.ok) { const error = await response.json(); throw new Error(error.detail || 'Ошибка'); }

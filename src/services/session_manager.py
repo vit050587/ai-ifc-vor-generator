@@ -6,6 +6,7 @@ import uuid
 import re
 from datetime import datetime
 from typing import Dict, List, Optional, Any
+from collections import Counter
 import pandas as pd
 from werkzeug.utils import secure_filename
 from src.core.prompt_manager import PromptManager
@@ -17,6 +18,7 @@ from src.services.third_etap import third_step
 from src.services.fourth_etap import fourth_step
 from src.services.pdf_processor import process_pdf
 from src.services.serializer import _make_glb_file
+from src.services.group_excel import process_ifc_excel
 
 from openpyxl import load_workbook
 
@@ -289,16 +291,15 @@ class SessionManager:
                 })
 
             try:
-                glb_filename =_make_glb_file(ifc_path, session_dir)
+                glb_filename = _make_glb_file(ifc_path, session_dir)
+                if os.path.exists(glb_filename):
+                    additional_files.append({
+                        "path": glb_filename,
+                        "filename": os.path.basename(glb_filename),
+                        "size": os.path.getsize(glb_filename)
+                    })
             except Exception as e:
                 logger.warning(f'Не удалось создать файл 3D модели: {e}')
-
-            if os.path.exists(glb_filename):
-                additional_files.append({
-                    "path": glb_filename,
-                    "filename": os.path.basename(excel_all_data),
-                    "size": os.path.getsize(excel_all_data)
-                })
             
             with self._state_lock:
                 if session_id in self._sessions:
@@ -476,8 +477,7 @@ class SessionManager:
             painted_image_path = result.get("painted_image_path")
             materials_md_path = result.get("materials_md_path")
 
-            
-            #Перезаписываем переменные на новые пути в случае нескольких листов с данными
+            # Перезаписываем переменные на новые пути в случае нескольких листов с данными
             excel_for_smetchik, excel_all_data = check_and_merge_sheets(
                 excel_for_smetchik, 
                 excel_all_data
@@ -615,7 +615,6 @@ class SessionManager:
         # Сохраняем типы конструкций и материалы
         construction_types = row_types or {}
         construction_materials = row_materials or {}
-        grouped_data = grouped_data or {}
         
         self._update(
             session_id,
@@ -623,7 +622,7 @@ class SessionManager:
             construction_types=construction_types,
             construction_materials=construction_materials,
             building_height=building_height,
-            grouped_data=grouped_data,
+            grouped_data=grouped_data or {},
             status="processing",
             progress=0,
             progress_message=f"Выбрано {len(row_indices)} строк. Запуск этапов обработки..."
@@ -633,7 +632,7 @@ class SessionManager:
         thread = threading.Thread(
             target=self._run_processing_pipeline,
             args=(session_id, row_indices, construction_types, construction_materials, 
-                building_height, grouped_data),
+                building_height),
             daemon=True,
             name=f"Pipeline-{session_id[:8]}"
         )
@@ -650,9 +649,8 @@ class SessionManager:
     def _run_processing_pipeline(self, session_id: str, row_indices: List[int], 
                                 construction_types: Dict[int, str],
                                 construction_materials: Dict[int, str] = None,
-                                building_height: float = None,
-                                grouped_data: Dict[str, Any] = None) -> None:
-        """Запуск полного пайплайна обработки: этапы 1-4"""
+                                building_height: float = None) -> None:
+        """Запуск полного пайплайна обработки: группировка + этапы 1-4"""
         try:
             s = self.get(session_id)
             if not s:
@@ -666,19 +664,14 @@ class SessionManager:
             
             self._update_progress(session_id, 3, "Подготовка данных...")
             
-            # Применяем выбранные пользователем материалы к ОРИГИНАЛЬНОМУ Excel
+            # ===== Применяем выбранные пользователем материалы к ОРИГИНАЛЬНОМУ Excel =====
             if construction_materials:
                 try:
-                    from openpyxl import load_workbook
-                    
                     logger.info(f"Применяем материалы к файлу: {excel_path}")
-                    logger.info(f"Материалы для обновления: {construction_materials}")
                     
-                    # Открываем книгу
                     wb = load_workbook(excel_path)
                     ws = wb['Данные']
                     
-                    # Находим колонку "Материал"
                     material_col = None
                     for col_idx, cell in enumerate(ws[1], 1):
                         if cell.value == 'Материал':
@@ -687,25 +680,17 @@ class SessionManager:
                     
                     if material_col:
                         updated_count = 0
-                        # Начинаем со 2-й строки (после заголовков)
                         for row_idx in range(2, ws.max_row + 1):
-                            data_idx = row_idx - 2  # 0-based индекс
-                            
+                            data_idx = row_idx - 2
                             if str(data_idx) in construction_materials:
                                 material = construction_materials[str(data_idx)]
                                 if material and material != '-':
-                                    old_value = ws.cell(row=row_idx, column=material_col).value
                                     ws.cell(row=row_idx, column=material_col).value = material
                                     updated_count += 1
                         
                         if updated_count > 0:
-                            # Сохраняем книгу со всеми листами
                             wb.save(excel_path)
-                            logger.info(f"✅ Excel обновлён: {updated_count} материалов изменено в файле {excel_path}")
-                        else:
-                            logger.info("Нет материалов для обновления (все значения уже установлены или равны '-')")
-                    else:
-                        logger.warning("Колонка 'Материал' не найдена на листе 'Данные'")
+                            logger.info(f"Excel обновлён: {updated_count} материалов изменено")
                     
                     wb.close()
                     
@@ -719,140 +704,150 @@ class SessionManager:
                     import traceback
                     logger.error(traceback.format_exc())
             
-            # Если есть сгруппированные данные — создаём новый Excel для пайплайна
-            if grouped_data:
-                # Читаем УЖЕ ОБНОВЛЕННЫЙ Excel
-                df_full = pd.read_excel(excel_path, sheet_name='Данные')
-                df_full = df_full.replace('-', pd.NA)
-                            
-                # Очищаем "Имя" от ID после последнего ":"
-                def clean_name(name):
-                    if pd.isna(name):
-                        return name
-                    name = str(name)
-                    last_colon = name.rfind(':')
-                    if last_colon != -1:
-                        after = name[last_colon+1:].strip()
-                        if after.isdigit():
-                            return name[:last_colon].strip()
-                    return name
-
-                df_full['Имя_очищенное'] = df_full['Имя'].apply(clean_name)
-                
-                # Часть здания берём из construction_types
-                if 'Часть здания' not in df_full.columns:
-                    df_full['Часть здания'] = 'Надземная'
-                
-                for idx_str, part in construction_types.items():
-                    idx = int(idx_str)
-                    if idx < len(df_full):
-                        df_full.at[idx, 'Часть здания'] = part
-                
-                # Группируем
-                group_cols_base = ['Часть здания', 'Материал', 'Имя_очищенное']
-                columns_df = df_full.columns
-                group_cols = [col for col in group_cols_base if col in columns_df]
-                
-                # Колонки для суммирования
-                sum_cols = [col for col in columns_df if 'объем' in col.lower() or 'площадь' in col.lower()]
-                
-                # Создаем agg_dict, исключая group_cols
-                agg_dict = {col: 'sum' for col in sum_cols if col in df_full.columns}
-                
-                for col in df_full.columns:
-                    if col not in agg_dict and col not in group_cols:
-                        agg_dict[col] = 'first'
-                
-                # Группируем
-                df_grouped = df_full.groupby(group_cols, dropna=False).agg(agg_dict).reset_index()
-
-                counts = df_full.groupby(group_cols, dropna=False).size()
-                counts.name = 'Количество элементов в группе'
-                df_grouped = df_grouped.merge(counts, on=group_cols)
-
-                # Список № п/п через точку с запятой
-                def join_numbers(indices):
-                    nums = df_full.iloc[indices]['№ п/п'].dropna().astype(int).astype(str).tolist()
-                    return '; '.join(nums)
-
-                numbers = df_full.groupby(group_cols, dropna=False).apply(
-                    lambda g: join_numbers(g.index), include_groups=False
-                )
-                numbers.name = 'Элементы в группе'
-                df_grouped = df_grouped.merge(numbers, on=group_cols)
-
-                # Переименовываем Имя_очищенное обратно в Имя
-                if 'Имя' in df_grouped.columns and 'Имя_очищенное' in group_cols:
-                    df_grouped = df_grouped.drop(['Имя'], axis=1)
-                if 'GlobalId' in df_grouped.columns:
-                    df_grouped = df_grouped.drop(['GlobalId'], axis=1)
-                
-                df_grouped = df_grouped.rename(columns={'Имя_очищенное': 'Имя'})
-
-                # Желаемый порядок колонок
-                desired_order = [
-                    'Часть здания', 'Материал', '№ п/п', 
-                    'Количество элементов в группе', 'Элементы в группе', 'Тип (RU)', 
-                    'Тип элемента', 'Имя', 'Этаж', 'Тип_этажа', 'Уровень_этажа_мм',
-                    'Глубина_выдавливания_мм', 'Длина_Height_мм', 'Длина_Length_мм', 
-                    'Длина_Perimeter_мм', 'Длина_Width_мм', 'Объём_GrossVolume_литры', 
-                    'Объём_NetVolume_м3', 'Площадь_CrossSectionArea_м2', 
-                    'Площадь_GrossArea_м2', 'Площадь_GrossSideArea_м2',
-                    'Площадь_NetArea_м2', 'Площадь_NetSideArea_м2', 
-                    'Площадь_OuterSurfaceArea_м2', 'Примечание_сметчика', 
-                    'Стоимость_за_ед_руб', 'Общая_стоимость_руб'
-                ]
-                
-                existing_cols = [col for col in desired_order if col in df_grouped.columns]
-                other_cols = [col for col in df_grouped.columns if col not in desired_order]
-                df_grouped = df_grouped[existing_cols + other_cols]
-                
-                if '№ п/п' in df_grouped.columns:
-                    df_grouped['_sort'] = pd.to_numeric(df_grouped['№ п/п'], errors='coerce').fillna(0)
-                    df_grouped = df_grouped.sort_values('_sort').drop(columns=['_sort'])
-
-                # Сохраняем полный сгруппированный файл
-                full_grouped_path = os.path.join(session_dir, 'Результаты группировки.xlsx')
-                with pd.ExcelWriter(full_grouped_path, engine='openpyxl') as writer:
-                    df_grouped.to_excel(writer, sheet_name='Данные', index=False)
-                
-                # Для пайплайна — только выбранные строки
-                df_selected = df_full.iloc[row_indices].reset_index(drop=True)
-                
-                # Применяем суммированные значения из grouped_data
-                for idx_str, group_info in grouped_data.items():
-                    orig_idx = int(idx_str)
-                    if orig_idx in row_indices:
-                        pos = row_indices.index(orig_idx)
-                        
-                        # 1. Применяем суммированные значения с суффиксом _grouped
-                        summed = group_info.get("summed", {})
-                        for col, value in summed.items():
-                            grouped_col = f"{col}_grouped"
-                            if grouped_col not in df_selected.columns:
-                                df_selected[grouped_col] = 0.0
-                            try:
-                                df_selected.at[pos, grouped_col] = float(value)
-                            except (ValueError, TypeError):
-                                df_selected.at[pos, grouped_col] = value
-                        
-                        
-                        # 2. Добавляем количество элементов в группе
-                        count = group_info.get("count", 1)
-                        if 'Количество_в_группе' not in df_selected.columns:
-                            df_selected['Количество_в_группе'] = 1
-                        df_selected.at[pos, 'Количество_в_группе'] = count
-                
-                grouped_excel_path = os.path.join(session_dir, 'ДЛЯ_СМЕТЧИКА_сгруппированный.xlsx')
-                with pd.ExcelWriter(grouped_excel_path, engine='openpyxl') as writer:
-                    df_selected.to_excel(writer, sheet_name='Данные', index=False)
-                
-                excel_path = grouped_excel_path
-                row_indices = list(range(len(df_selected)))
+            # ===== НОВАЯ ЛОГИКА: фильтрация + группировка через group_excel =====
             
-            self._update_progress(session_id, 5, "Этап 1: Анализ элементов через LLM...")
+            # Шаг 1: Фильтруем исходный Excel — оставляем только выбранные строки
+            self._update_progress(session_id, 5, "Фильтрация выбранных элементов...")
             
-            # Этап 1: first_step
+            df_original = pd.read_excel(excel_path, sheet_name='Данные')
+            
+            # Убираем дубликаты в индексах и сортируем
+            unique_indices = sorted(set(row_indices))
+            
+            # Отбираем строки по индексам
+            df_filtered = df_original.iloc[unique_indices].reset_index(drop=True)
+            
+            # Сохраняем отфильтрованный файл
+            filtered_path = os.path.join(session_dir, 'filtered_elements.xlsx')
+            with pd.ExcelWriter(filtered_path, engine='openpyxl') as writer:
+                df_filtered.to_excel(writer, sheet_name='Данные', index=False)
+            
+            logger.info(f"Отфильтровано {len(df_filtered)} элементов из {len(df_original)}")
+            
+            # Шаг 2: Запускаем новую группировку из group_excel.py
+            self._update_progress(session_id, 10, "Группировка элементов...")
+            
+            group_result = process_ifc_excel(filtered_path, session_dir)
+            all_project_tree = process_ifc_excel(os.path.join(session_dir, 'IFC_ВСЕ_ДАННЫЕ_исправленный.xlsx'), session_dir)
+            
+            # Переименовываем результат в Дерево_проекта.xlsx
+            tree_excel_src = group_result['excel']
+            tree_excel_dst = os.path.join(session_dir, 'Дерево_проекта_выбранные_элементы.xlsx')
+
+            whole_tree = all_project_tree['excel']
+            whole_tree_dst = os.path.join(session_dir, 'Дерево_проекта.xlsx')
+            if os.path.exists(tree_excel_src) and tree_excel_src != tree_excel_dst:
+                if os.path.exists(tree_excel_dst):
+                    os.remove(tree_excel_dst)
+                os.rename(tree_excel_src, tree_excel_dst)
+            
+            if os.path.exists(whole_tree) and whole_tree != whole_tree_dst:
+                if os.path.exists(whole_tree_dst):
+                    os.remove(whole_tree_dst)
+                os.rename(whole_tree, whole_tree_dst)
+            
+            # Загружаем JSON с группами
+            json_path = group_result['json']
+            with open(json_path, 'r', encoding='utf-8') as f:
+                groups = json.load(f)
+            
+            # Шаг 3: Извлекаем группы последнего уровня (листья дерева)
+            self._update_progress(session_id, 15, "Формирование групп для сметчика...")
+            
+            def collect_leaf_groups(groups_list, result=None):
+                """Рекурсивно собирает листовые группы (без детей)"""
+                if result is None:
+                    result = []
+                for group in groups_list:
+                    if group.get('children') and len(group['children']) > 0:
+                        collect_leaf_groups(group['children'], result)
+                    else:
+                        result.append(group)
+                return result
+            
+            leaf_groups = collect_leaf_groups(groups)
+            logger.info(f"Найдено {len(leaf_groups)} групп последнего уровня")
+            
+            # Шаг 4: Создаём ДЛЯ_СМЕТЧИКА_сгруппированный.xlsx из leaf_groups
+            smetchik_rows = []
+            
+            for group in leaf_groups:
+                first_element = dict(group.get('first_element', {}))
+                
+                # Копируем все поля первого элемента
+                row_data = first_element.copy()
+                
+                # Добавляем групповые поля с постфиксом _grouped
+                row_data['Объём_NetVolume_м3_grouped'] = group.get('total_volume', 0)
+                row_data['Количество_в_группе_grouped'] = group.get('count', 1)
+                
+                # Добавляем суммарные площади
+                for area_name, area_value in group.get('total_areas', {}).items():
+                    # Формируем имя колонки с _grouped
+                    if area_name.endswith('_grouped'):
+                        row_data[area_name] = area_value
+                    else:
+                        row_data[f'{area_name}_grouped'] = area_value
+                
+                # Добавляем название группы и уровень
+                row_data['Название_группы'] = group.get('name', '')
+                row_data['Уровень_группы'] = group.get('level', 0)
+                row_data['Индексы_элементов'] = ', '.join(str(i + 1) for i in group.get('indices', []))
+                
+                smetchik_rows.append(row_data)
+            
+            # Создаём DataFrame и сохраняем
+            df_smetchik = pd.DataFrame(smetchik_rows)
+            smetchik_path = os.path.join(session_dir, 'ДЛЯ_СМЕТЧИКА_сгруппированный.xlsx')
+            
+            # Переставляем колонки: сначала основные, потом _grouped
+            grouped_cols = [c for c in df_smetchik.columns if c.endswith('_grouped')]
+            info_cols = ['Название_группы', 'Уровень_группы', 'Индексы_элементов']
+            other_cols = [c for c in df_smetchik.columns if c not in grouped_cols and c not in info_cols]
+            df_smetchik = df_smetchik[other_cols + grouped_cols + info_cols]
+            
+            with pd.ExcelWriter(smetchik_path, engine='openpyxl') as writer:
+                df_smetchik.to_excel(writer, sheet_name='Данные', index=False)
+            
+            logger.info(f"Создан файл для сметчика: {len(df_smetchik)} строк (групп)")
+            
+            # Шаг 4.5: Определяем часть здания для каждой группы
+            new_construction_types = {}
+            
+            for i, group in enumerate(leaf_groups):
+                indices = group.get('indices', [])
+                
+                # Собираем части здания всех элементов в группе
+                parts_in_group = []
+                for idx in indices:
+                    part = construction_types.get(str(idx), construction_types.get(idx, None))
+                    if part:
+                        parts_in_group.append(part)
+                
+                # Определяем часть здания группы (большинством)
+                if parts_in_group:
+                    part_counts = Counter(parts_in_group)
+                    most_common_part = part_counts.most_common(1)[0][0]
+                    new_construction_types[str(i)] = most_common_part
+                else:
+                    # Если не удалось определить — Надземная по умолчанию
+                    new_construction_types[str(i)] = 'Надземная'
+            
+            # Сохраняем новый building_parts.json
+            parts_file = os.path.join(session_dir, 'building_parts.json')
+            with open(parts_file, 'w', encoding='utf-8') as f:
+                json.dump(new_construction_types, f, ensure_ascii=False, indent=2)
+            
+
+            # Шаг 5: Заменяем excel_path и row_indices для дальнейшей обработки
+            excel_path = smetchik_path
+            row_indices = list(range(len(df_smetchik)))
+            
+            # ===== КОНЕЦ НОВОЙ ЛОГИКИ =====
+            
+            # Далее — стандартный пайплайн
+            self._update_progress(session_id, 20, "Этап 1: Анализ элементов через LLM...")
+            
             first_step(
                 prompt_manager=self.prompt_manager,
                 file=excel_path,
@@ -860,63 +855,68 @@ class SessionManager:
                 output_folder=session_dir
             )
             
-            self._update_progress(session_id, 20, "Этап 2: Фильтрация по части здания...")
-
-            parts_file = os.path.join(session_dir, 'building_parts.json')
-            with open(parts_file, 'w', encoding='utf-8') as f:
-                json.dump(construction_types, f, ensure_ascii=False, indent=2)
-
-            # Этап 2: second_step
+            self._update_progress(session_id, 40, "Этап 2: Фильтрация по части здания...")
+            
             second_step(input_folder=session_dir)
             
-            # Этап 3: third_step
             self._update_progress(session_id, 60, "Этап 3: Фильтрация по высоте здания...")
             third_step(input_folder=session_dir, building_height=building_height)
             
-            # Этап 4: fourth_step
             self._update_progress(session_id, 90, "Этап 4: Формирование финального перечня...")
             fourth_step(input_folder=session_dir)
             
             self._update_progress(session_id, 95, "Сохранение результатов...")
             
-            # Собираем финальные файлы результатов
+            # Собираем финальные файлы
             final_files = []
             for f in os.listdir(session_dir):
-                # Пропускаем временные и служебные файлы
-                if 'группир' in f or "ОБЩИЙ" in f or ("ДЛЯ_СМЕТЧИКА" in f and "испр"not in f) or '.glb' in f:
+                fpath = os.path.join(session_dir, f)
+                if os.path.isfile(fpath):
+                    # Пропускаем служебные файлы
+                    if f in ['filtered_elements.xlsx', 'building_parts.json', 'materials.json']:
+                        continue
+                    # Пропускаем промежуточный JSON группировки
+                    if f.endswith('_grouped.json') and 'filtered_elements' in f:
+                        continue
+                    # Пропускаем временные файлы LLM
+                    if f.startswith('Нормализованные_данные_элемента_') or f.endswith('json') or f.endswith('ifc'):
+                        continue
+                    # Пропускаем промежуточные файлы этапов
+                    if f.startswith('Промежуточные_работы_'):
+                        continue
+                    if f.startswith('height') or f.startswith('Финальный') or f.startswith('Подобранные') or f.startswith('Все_найденные'):
+                        continue
                     
+                    final_files.append({
+                        "path": fpath,
+                        "filename": f,
+                        "size": os.path.getsize(fpath)
+                    })
+            
+            final_files.sort(key=lambda x: x['filename'])
+            
+            # Добавляем файлы чертежа (для PDF-сессий)
+            for f in os.listdir(session_dir):
+                if f.startswith("blueprint_painted") and f.endswith(".png"):
                     fpath = os.path.join(session_dir, f)
-                    if os.path.isfile(fpath):
+                    if not any(ff['path'] == fpath for ff in final_files):
                         final_files.append({
                             "path": fpath,
                             "filename": f,
                             "size": os.path.getsize(fpath)
                         })
-
-            final_files.sort(key=lambda x: x['filename'])
-            
-            # Сохраняем файлы чертежа и условных обозначений (для PDF-сессий)
-            blueprint_files = []
-            for f in os.listdir(session_dir):
-                if f.startswith("blueprint_painted") and f.endswith(".png"):
-                    fpath = os.path.join(session_dir, f)
-                    blueprint_files.append({
-                        "path": fpath,
-                        "filename": f,
-                        "size": os.path.getsize(fpath)
-                    })
                 elif f == "materials_colors.md":
                     fpath = os.path.join(session_dir, f)
-                    blueprint_files.append({
-                        "path": fpath,
-                        "filename": f,
-                        "size": os.path.getsize(fpath)
-                    })
+                    if not any(ff['path'] == fpath for ff in final_files):
+                        final_files.append({
+                            "path": fpath,
+                            "filename": f,
+                            "size": os.path.getsize(fpath)
+                        })
             
             with self._state_lock:
                 if session_id in self._sessions:
-                    # Объединяем файлы результатов с файлами чертежа
-                    self._sessions[session_id]["files"] = final_files + blueprint_files
+                    self._sessions[session_id]["files"] = final_files
                     self._sessions[session_id]["status"] = "completed"
                     self._sessions[session_id]["has_results"] = True
                     self._sessions[session_id]["progress"] = 100
