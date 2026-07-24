@@ -1,5 +1,5 @@
 from pathlib import Path
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import json
 from pdf_prcoessor import PdfProcessor
 import os
@@ -96,6 +96,7 @@ def save_blueprint_walls_by_material(
     file_name: str | Path,
     legend_row_items: list[dict[str, Any]],
     fill_opacity: float,
+    confidence: float | None = None
 ):
     grouped_walls: dict[str, list[dict]] = {}
     material_colors: dict[str, str] = {}
@@ -119,6 +120,7 @@ def save_blueprint_walls_by_material(
             grouped_walls.setdefault(color, []).append({"bbox_pdf": symbol["bbox"]})
 
     output_path = settings.DEBUG_DIR / folder_name / settings.DEBUG_IMAGES_DIR / file_name
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     _, painted_walls_image = pdf_processor.render_obb_rectangles(
         grouped_walls,
@@ -130,9 +132,13 @@ def save_blueprint_walls_by_material(
         painted_walls_image,
         walls,
         label_key="id",
-        save_path=output_path,
         zoom=settings.BLUEPRINT.zoom
     )
+
+    if confidence:
+        draw_text_in_top_left_corner(img_with_labels, f"Conf: {round(confidence*100, 1)}%")
+
+    img_with_labels.save(output_path)
 
     materials_colors_md = _format_material_colors_markdown(material_colors)
     color_map_path = output_path.with_suffix(".materials.md")
@@ -212,3 +218,36 @@ def save_run_settings():
             indent=4,
             ensure_ascii=False,
         )
+
+
+def draw_text_in_top_left_corner(
+    image: Image.Image,
+    text: str,
+    font_size_ratio: float = 0.03,
+    margin_ratio: float = 0.01,
+    text_color: str = "white",
+    stroke_width_ratio: float = 0.002,
+    stroke_color: str = "black",
+) -> Image.Image:
+    """Рисует текст в левом верхнем углу изображения.
+
+    Размер шрифта, отступ и толщина обводки задаются в долях от меньшей
+    стороны изображения. Функция изменяет и возвращает исходное изображение.
+    """
+    reference_size = min(image.size)
+    font_size = max(1, round(reference_size * font_size_ratio))
+    margin = max(0, round(reference_size * margin_ratio))
+    stroke_width = max(0, round(reference_size * stroke_width_ratio))
+    font = ImageFont.load_default(size=font_size)
+
+    draw = ImageDraw.Draw(image)
+    draw.text(
+        (margin, margin),
+        text,
+        font=font,
+        fill=text_color,
+        stroke_width=stroke_width,
+        stroke_fill=stroke_color,
+    )
+    return image
+

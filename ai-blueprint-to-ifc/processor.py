@@ -102,11 +102,12 @@ class Processor:
 
             results.append(result)
             result_object["drawings"].append({"painted_image": painted_image_debug, "materials_colors_md": materials_colors_md_debug, "result": result})
-            
-        painted_image_debug, materials_colors_md_debug = debug_manager.save_blueprint_walls_by_material("full", all_walls_bboxes_pix, self.pdf_processor, f"page_{self.PDF_PATH.stem}_materials.png", legend_row_items or [], fill_opacity=0.5)
+
+        blueprint_processing_confidence = self._get_overall_confidence(walls_processors)
+        painted_image_debug, materials_colors_md_debug = debug_manager.save_blueprint_walls_by_material("full", all_walls_bboxes_pix, self.pdf_processor, f"page_{self.PDF_PATH.stem}_materials.png", legend_row_items or [], fill_opacity=0.5, confidence=blueprint_processing_confidence)
         result_object["full_drawing"] = {"painted_image": painted_image_debug, "materials_colors_md": materials_colors_md_debug}
 
-        blueprint_processing_confidence = self._get_overall_confidence(walls_processors, all_walls_bboxes_pix)
+        
         logger.info(f"Итоговый confidence обработки для чертежа: {blueprint_processing_confidence}")
         result_object["confidence"] = blueprint_processing_confidence
 
@@ -116,11 +117,11 @@ class Processor:
 
         return result_object
     
-    def _get_overall_confidence(self, walls_processors: List[WallsProcessor], walls: list[dict[str, Any]]) -> float | None:
+    def _get_overall_confidence(self, walls_processors: List[WallsProcessor]) -> float | None:
         confidences = []
 
         average_walls_confidence = self._get_average_walls_confidence(walls_processors)
-        average_hatching_confidence = self._get_average_hatching_confidence(walls)
+        average_hatching_confidence = self.hatching_processor._get_average_best_hatching_confidence()
         average_layout_confidence = self.layout_processor.get_average_confidence().get("overall_average_confidence", None)
         average_legend_layout_confidence = self.legend_layout_processor.get_average_confidence().get("overall_average_confidence", None)
 
@@ -144,13 +145,6 @@ class Processor:
             return None
         
         return statistics.mean(confidences)
-    
-    def _get_average_hatching_confidence(self, walls: list[dict[str, Any]]) -> float | None:
-        hatchings_scores = [wall["hatching"]["best"]["score"] for wall in walls]
-        if not hatchings_scores:
-            return None
-        
-        return statistics.mean(hatchings_scores)
     
     def _choose_drawing_scale(self, global_blueprint_scale: Tuple[int, int] | None, blueprint_scale: Tuple[int, int] | None) -> Tuple[int, int]:
         result_scale = None

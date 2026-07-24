@@ -6,6 +6,7 @@ from PIL import Image
 from torchvision import transforms
 from torchvision.transforms import functional as TF
 from torchvision.transforms import InterpolationMode
+from tqdm import tqdm
 
 from config import settings
 
@@ -166,6 +167,7 @@ class DinoService:
         plan_image_tensors: list[torch.Tensor],
         plan_mask_tensors: list[torch.Tensor],
         max_batch_size: int | None = None,
+        tqdm_settings: dict | None = None,
     ) -> list[dict]:
         tensor_count = len(image2_tensors)
         if not (
@@ -185,7 +187,11 @@ class DinoService:
         model = self._get_model()
         predictions: list[dict] = []
 
-        for start in range(0, len(image2_tensors), batch_size):
+        batch_starts = range(0, len(image2_tensors), batch_size)
+        if tqdm_settings is not None:
+            batch_starts = tqdm(batch_starts, **tqdm_settings)
+
+        for start in batch_starts:
             end = start + batch_size
             legend_images = torch.cat(image2_tensors[start:end], dim=0)
             legend_masks = torch.cat(image2_mask_tensors[start:end], dim=0)

@@ -2,8 +2,9 @@ import json
 from pathlib import Path
 from tqdm import tqdm
 from PIL import Image
-from typing import List
+from typing import List, Dict
 import hashlib
+import statistics
 
 from dino_service import DinoService
 from pdf_prcoessor import PdfProcessor
@@ -31,6 +32,7 @@ class HatchingProcessor:
         self.legends += self._load_walls_types("default")
 
         self.zoom = None
+        self.processed_walls_best_scores: List[float]  = []
 
     def specify_legends(self, legends:list):
         self.legends = legends
@@ -61,18 +63,26 @@ class HatchingProcessor:
         self.zoom = zoom
         self._calculate_tensors_for_legends()
 
-        for wall in tqdm(walls, desc="Анализ штриховки", unit="wall"):
-            self._process_wall(wall)
+        requests = None
+        if not self.adjust_legends:
+            requests = self._form_dino_requests_walls(walls)
+
+        for i, wall in enumerate(tqdm(walls, desc="Анализ штриховки", unit="wall")):
+            wall_requests = requests[i] if requests is not None else None
+            self._process_wall(wall, wall_requests)
 
         save_legend_rows(self.legends)
 
         return walls
 
-    def _process_wall(self, wall):
-        cropped_wall = self._crop_wall(wall)
-        plan_tensor, plan_mask_tensor = self.dino_service.prepare_image_and_mask(cropped_wall["image"], cropped_wall["plan_obb"])
+    def _process_wall(self, wall: Dict, requests: Dict | None):
+        if not requests:
+            cropped_wall = self._crop_wall(wall)
+            plan_tensor, plan_mask_tensor = self.dino_service.prepare_image_and_mask(cropped_wall["image"], cropped_wall["plan_obb"])
+            requests = self._form_dino_requests_legends(plan_tensor, plan_mask_tensor)
+            requests = self._predict_dino_legend_request(requests)
+
         results = []
-        requests = self._form_dino_requests(plan_tensor, plan_mask_tensor)
 
         i = 0
         for legend in self.legends:
@@ -91,6 +101,7 @@ class HatchingProcessor:
             new_row = self._create_legend_row_for_hatching([new_symbol], str(hashlib.md5(new_symbol.tobytes()).hexdigest()))
             self.legends += [new_row]
             self._calculate_tensors_for_legends()
+
             best_result = self._get_best_symbol_with_tensors(plan_tensor, plan_mask_tensor, new_row["legend_symbols"], new_row["full_description"])
             
         # save_dino_train_sample(
@@ -100,15 +111,53 @@ class HatchingProcessor:
         #     best_result=best_result,
         #     output_dir="dino_train"
         # )
+        self.processed_walls_best_scores.append(best_result["score"] if best_result else 0)
         wall["hatching"] = {
             "best": best_result,
             "matches": results,
         }
 
         return wall
+
+    def _get_average_best_hatching_confidence(self) -> float | None:
+        if not self.processed_walls_best_scores:
+            return None
+
+        return statistics.mean(self.processed_walls_best_scores)
+
+    def _form_dino_requests_walls(self, walls: List):
+        requests = []
+
+        plan_image_tensors, plan_mask_tensors, image2_tensors, image2_mask_tensors = ([],[],[],[])
+        for wall in tqdm(walls, desc="Подготовка тензоров", unit="wall"):
+            cropped_wall = self._crop_wall(wall)
+            plan_tensor, plan_mask_tensor = self.dino_service.prepare_image_and_mask(cropped_wall["image"], cropped_wall["plan_obb"])
+            request = self._form_dino_requests_legends(plan_tensor, plan_mask_tensor)
+
+            plan_image_tensors += request["plan_image_tensor"]
+            plan_mask_tensors += request["plan_mask_tensor"]
+            image2_tensors += request["image2_tensor"]
+            image2_mask_tensors += request["image2_mask_tensor"]
+
+            requests.append(request)
+
+        dino_results = self.dino_service.predict_pairs_in_tensors(
+            image2_tensors,
+            image2_mask_tensors,
+            plan_image_tensors,
+            plan_mask_tensors,
+            tqdm_settings={"desc": "Анализ штриховки", "unit": "batch"}
+        )
+
+        current_offset = 0
+        for request in requests:
+            result_len = len(request["plan_image_tensor"])
+            request["request_results"] = dino_results[current_offset: current_offset + result_len]
+            current_offset += result_len
+        return requests
     
-    def _form_dino_requests(self, plan_tensor, plan_mask_tensor):
-        """Создает словарь запросов и обращается к dino"""
+    def _form_dino_requests_legends(self, plan_tensor, plan_mask_tensor):
+        """Создает словарь запросов к dino"""
         requests = {"ids": [], "plan_image_tensor": [],"plan_mask_tensor":[],"image2_tensor":[],"image2_mask_tensor":[], "request_results":[]}
 
         i = 0
@@ -123,14 +172,16 @@ class HatchingProcessor:
                 requests["image2_tensor"].append(symbol["tensor"])
                 requests["image2_mask_tensor"].append(symbol["mask_tensor"])
                 i += 1
-   
-        requests["request_results"] = self.dino_service.predict_pairs_in_tensors(
-            [tensor for tensor in requests["image2_tensor"]],
-            [tensor for tensor in requests["image2_mask_tensor"]],
-            [tensor for tensor in requests["plan_image_tensor"]], 
-            [tensor for tensor in requests["plan_mask_tensor"]],
-            )
         
+        return requests
+
+    def _predict_dino_legend_request(self, requests):
+        requests["request_results"] = self.dino_service.predict_pairs_in_tensors(
+            requests["image2_tensor"],
+            requests["image2_mask_tensor"],
+            requests["plan_image_tensor"], 
+            requests["plan_mask_tensor"],
+            )
         return requests
     
     def _get_best_symbol_with_tensors(self, plan_tensor, plan_mask_tensor, symbols, description):

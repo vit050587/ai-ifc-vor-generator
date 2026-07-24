@@ -89,9 +89,9 @@ class LegendLayoutProcessor:
 
     def parse_legend(self, bboxes: List[dict]):
         bboxes = [get_two_points_bbox(bbox) for bbox in bboxes]
-        for bbox in bboxes:
+        for i, bbox in enumerate(bboxes):
             _, img = self.pdf_processor.crop_pdf_rect(bbox, zoom=settings.LEGEND_ZOOM)
-            layout_objects = self.yolo_service.detect(img, confidence=0.5, iou=0.50, imgsz=1472, classes=[0, 1, 2, 3], save_debug_dir=settings.DEBUG_LEGEND_LAYOUTS_DIR)
+            layout_objects = self.yolo_service.detect(img, confidence=0.5, iou=0.50, imgsz=1472, classes=[0, 1, 2, 3], save_debug_dir=settings.DEBUG_LEGEND_LAYOUTS_DIR, save_debug_name=f"{i}.png")
             layout_objects = self.pdf_processor.cropped_image_obbs_to_pdf_obbs(bbox, layout_objects, zoom=settings.LEGEND_ZOOM)
 
             for layout_object in layout_objects:

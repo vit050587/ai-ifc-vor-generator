@@ -47,6 +47,7 @@ class YoloService:
         agnostic_nms: bool = False,
         normalized: bool = False,
         save_debug_dir:Path | None = None,
+        save_debug_name:str | None = None,
         **predict_options: Any,
     ) -> list[dict[str, Any]]:
         """
@@ -135,7 +136,7 @@ class YoloService:
 
         for r_i, result in enumerate(results):
             if save_debug_dir:
-                result.save(filename=str(save_debug_dir / f"{r_i}.png"))
+                result.save(filename=str(save_debug_dir / (save_debug_name or f"{r_i}.png")))
 
             names = result.names
             obb = getattr(result, "obb", None)
