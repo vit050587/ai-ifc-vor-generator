@@ -246,6 +246,23 @@ class SessionManager:
             # Шаг 0: zero_step
             self._update_progress(session_id, 20, "Извлечение элементов из IFC...")
             zero_step(ifc_path, output_folder=session_dir)
+
+            # --- ПАРАЛЛЕЛЬНЫЙ МОДУЛЬ: Построение справочной структуры ---
+            # Запускается в отдельном потоке, не блокирует основной пайплайн.
+            # Создаёт файлы ifc_reference_output.json / .xlsx в папке сессии.
+            try:
+                from src.services.ifc_reference_builder import build_reference_from_ifc
+                ref_thread = threading.Thread(
+                    target=self._run_reference_builder,
+                    args=(session_id, ifc_path),
+                    daemon=True,
+                    name=f"RefBuilder-{session_id[:8]}"
+                )
+                ref_thread.start()
+                logger.info(f"Запущено параллельное построение справочной структуры для сессии {session_id}")
+            except Exception as e:
+                logger.warning(f"Не удалось запустить построение справочной структуры: {e}")
+            # -----------------------------------------------------------
             
             self._update_progress(session_id, 80, "Проверка результатов...")
             
@@ -324,7 +341,32 @@ class SessionManager:
             error_msg = f"{type(e).__name__}: {str(e)}"
             logger.error(f"Ошибка обработки IFC для сессии {session_id}:\n{traceback.format_exc()}")
             self._update(session_id, status="error", error=error_msg)
-    
+
+    def _run_reference_builder(self, session_id: str, ifc_path: str) -> None:
+        """
+        Запускает построение справочной структуры из IFC в отдельном потоке.
+        Не влияет на основной пайплайн — только логирует ошибки.
+        Создаёт файлы в папке сессии:
+          - ifc_reference_output.json (основной результат)
+          - ifc_reference_output.xlsx
+          - ifc_raw_elements.json / .xlsx
+          - ifc_reference_groups.json / .xlsx
+        """
+        try:
+            session_dir = os.path.join(self.output_folder, session_id)
+            from src.services.ifc_reference_builder import build_reference_from_ifc
+            result = build_reference_from_ifc(ifc_path, session_dir)
+            logger.info(
+                f"Справочная структура построена для сессии {session_id}: "
+                f"{len(result)} групп"
+            )
+        except Exception as e:
+            import traceback
+            logger.error(
+                f"Ошибка построения справочной структуры для сессии "
+                f"{session_id}:\n{traceback.format_exc()}"
+            )
+
     # ========== Обработка PDF ==========
     
     def process_pdf(self, file, original_name: str) -> Dict[str, Any]:
