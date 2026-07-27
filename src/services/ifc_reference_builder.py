@@ -97,9 +97,9 @@ def _get_location_name(part: str) -> str:
 
 
 def _normalize_material(material_str: str) -> str:
-    """Нормализует название материала."""
-    if not material_str or material_str == '-' or material_str == '':
-        return 'Не указан'
+    """Нормализует название материала. Возвращает пустую строку, если материал не указан."""
+    if not material_str or material_str in ('-', '', 'Не указан'):
+        return ''
     mat = material_str.lower()
     if any(w in mat for w in ['железобетон', 'ж/б', 'жб', 'арматур']):
         return 'Железобетон'
@@ -113,7 +113,7 @@ def _normalize_material(material_str: str) -> str:
         return 'Дерево'
     if any(w in mat for w in ['камен', 'камень']):
         return 'Каменная кладка'
-    return material_str.capitalize() if material_str else 'Не указан'
+    return material_str.capitalize() if material_str else ''
 
 
 def _get_original_geometry(element_data: dict, ifc_type: str) -> Optional[float]:
