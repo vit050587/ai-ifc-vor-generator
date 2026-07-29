@@ -96,7 +96,8 @@ def save_blueprint_walls_by_material(
     file_name: str | Path,
     legend_row_items: list[dict[str, Any]],
     fill_opacity: float,
-    confidence: float | None = None
+    confidence: float | None = None,
+    save_md: bool = True
 ):
     grouped_walls: dict[str, list[dict]] = {}
     material_colors: dict[str, str] = {}
@@ -142,8 +143,9 @@ def save_blueprint_walls_by_material(
 
     materials_colors_md = _format_material_colors_markdown(material_colors)
     color_map_path = output_path.with_suffix(".materials.md")
-    with color_map_path.open("w", encoding="utf-8") as color_map_file:
-        color_map_file.write(materials_colors_md)
+    if save_md:
+        with color_map_path.open("w", encoding="utf-8") as color_map_file:
+            color_map_file.write(materials_colors_md)
 
     return img_with_labels, materials_colors_md
 def _get_wall_material(wall: dict) -> str:
@@ -209,6 +211,12 @@ def save_legend_rows(legend_rows):
     
     with (settings.DEBUG_LEGEND_LAYOUTS_FILTERED_DIR / "map.json").open("w", encoding="utf-8") as f:
         json.dump(map_for_save, f, indent=2, ensure_ascii=False)
+
+def clear_legend_rows_folder():
+    path = settings.DEBUG_LEGEND_LAYOUTS_FILTERED_DIR
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
 
 def save_run_settings():
     with open(settings.DEBUG_DIR / "run_config.json", "w", encoding="utf-8") as f:

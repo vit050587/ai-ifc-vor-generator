@@ -141,6 +141,205 @@ def _get_original_geometry(element_data: dict, ifc_type: str) -> Optional[float]
     return None
 
 
+def _get_geometry_range_for_element(element_data: dict, ifc_type: str) -> Tuple[str, str]:
+    """
+    Определяет нормализованный геометрический диапазон для отдельного элемента.
+
+    Использует GEOMETRY_GROUP_RULES для определения поля и диапазонов.
+    Возвращает (имя_характеристики, нормализованный_диапазон) или ('', '').
+    """
+    rule = GEOMETRY_GROUP_RULES.get(ifc_type, GEOMETRY_GROUP_RULES['default'])
+    geo_label = rule.get('label', 'Объём')
+    field = rule.get('field', '')
+
+    # Получаем значение геометрии
+    value = 0.0
+    if field and field in element_data:
+        value = safe_parse_float(element_data[field])
+    elif ifc_type == 'IfcWall':
+        # Для стен — ширина сечения или глубина выдавливания
+        for key in ['Ширина_сечения_мм', 'Глубина_выдавливания_мм', 'Длина_Width_мм']:
+            if key in element_data:
+                val = safe_parse_float(element_data[key])
+                if val > 0:
+                    value = val
+                    break
+    elif ifc_type == 'IfcSlab':
+        for key in ['Площадь_NetArea_м2', 'Площадь_GrossArea_м2']:
+            if key in element_data:
+                val = safe_parse_float(element_data[key])
+                if val > 0:
+                    value = val
+                    break
+
+    # Если значение не найдено — не добавляем геометрическую характеристику
+    if value <= 0:
+        return geo_label, ''
+
+    # Ищем подходящий диапазон
+    for rg in rule['ranges']:
+        if value <= rg['max']:
+            return geo_label, _extract_geometry_range(rg['label'])
+
+    # Если не попали ни в один диапазон — берём последний
+    return geo_label, _extract_geometry_range(rule['ranges'][-1]['label'])
+
+
+def _get_location_from_storey_type(storey_type: str) -> str:
+    """
+    Определяет часть здания по типу этажа.
+
+    'Подземный' → 'Подземная часть здания'
+    'Цокольный' → 'Цокольная часть здания'
+    остальное   → 'Надземная часть здания'
+    """
+    if not storey_type or storey_type == '-':
+        return 'Надземная часть здания'
+    st = str(storey_type).lower()
+    if 'подзем' in st or 'подвал' in st:
+        return 'Подземная часть здания'
+    if 'цокол' in st:
+        return 'Цокольная часть здания'
+    return 'Надземная часть здания'
+
+
+def build_elements_json_output(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    """
+    Формирует массив объектов по каждому элементу IFC в целевом формате.
+
+    Для каждого элемента создаётся объект с полями:
+      - characteristics: нормализованные характеристики (Материал, Расположение, геометрия)
+      - additionalCharacteristics: оригинальные значения (Имя, Тип бетона, геометрия, Этаж, Тип этажа)
+
+    Вход:  DataFrame с данными элементов (полный набор колонок из get_element_info)
+    Выход: список словарей в целевом формате
+    """
+    result = []
+
+    for _, row in df.iterrows():
+        element_data = row.to_dict()
+
+        # Определяем IFC-тип
+        ifc_type = element_data.get('Тип элемента', '')
+        if not ifc_type or ifc_type == '-':
+            ifc_type = get_ifc_type(
+                element_data.get('Тип (RU)', ''),
+                element_data.get('Имя', ''),
+            )
+
+        # ---- characteristics (нормализованные) ----
+        characteristics = []
+
+        # 1. Материал
+        characteristics.append({
+            'name': 'Материал',
+            'values': [
+                {'strValue': _normalize_material(str(element_data.get('Материал', '')))}
+            ],
+        })
+
+        # 2. Расположение (по типу этажа)
+        characteristics.append({
+            'name': 'Расположение',
+            'values': [
+                {'strValue': _get_location_from_storey_type(
+                    str(element_data.get('Тип_этажа', ''))
+                )}
+            ],
+        })
+
+        # 3. Геометрическая характеристика (нормализованный диапазон)
+        geo_name, geo_range = _get_geometry_range_for_element(element_data, ifc_type)
+        if geo_range:
+            characteristics.append({
+                'name': geo_name,
+                'values': [
+                    {'strValue': geo_range}
+                ],
+            })
+
+        # ---- additionalCharacteristics (оригинальные значения) ----
+        additional = []
+
+        # Имя элемента
+        elem_name = element_data.get('Имя', '')
+        if elem_name and elem_name != '-':
+            additional.append({
+                'name': 'Имя элемента',
+                'values': [{'strValue': str(elem_name)}],
+            })
+
+        # Тип бетона (марка)
+        concrete_grade = element_data.get(
+            'ExpCheck_MaterialConcrete_MGE_ConcreteGrade', ''
+        )
+        if concrete_grade and concrete_grade != '-' and str(concrete_grade).strip():
+            additional.append({
+                'name': 'Тип бетона',
+                'values': [{'strValue': str(concrete_grade)}],
+            })
+
+        # Водонепроницаемость
+        water_resist = element_data.get(
+            'ExpCheck_MaterialConcrete_MGE_WaterResist', ''
+        )
+        if water_resist and water_resist != '-' and str(water_resist).strip():
+            wr = str(water_resist)
+            if not wr.startswith('W'):
+                wr = f'W{wr}'
+            additional.append({
+                'name': 'Водонепроницаемость',
+                'values': [{'strValue': wr}],
+            })
+
+        # Морозостойкость
+        freeze_durability = element_data.get(
+            'ExpCheck_MaterialConcrete_MGE_FreezeDurability', ''
+        )
+        if freeze_durability and freeze_durability != '-' and str(freeze_durability).strip():
+            fd = str(freeze_durability)
+            if not fd.startswith('F'):
+                fd = f'F{fd}'
+            additional.append({
+                'name': 'Морозостойкость',
+                'values': [{'strValue': fd}],
+            })
+
+        # Оригинальное геометрическое значение
+        orig_geo = _get_original_geometry(element_data, ifc_type)
+        if orig_geo is not None:
+            additional.append({
+                'name': geo_name or _get_geometry_label(ifc_type),
+                'values': [{'strValue': str(orig_geo)}],
+            })
+
+        # Этаж
+        storey = element_data.get('Этаж', '')
+        if storey and storey != '-':
+            additional.append({
+                'name': 'Этаж',
+                'values': [{'strValue': str(storey)}],
+            })
+
+        # Тип этажа
+        storey_type = element_data.get('Тип_этажа', '')
+        if storey_type and storey_type != '-':
+            additional.append({
+                'name': 'Тип этажа',
+                'values': [{'strValue': str(storey_type)}],
+            })
+
+        # ---- Собираем итоговый объект ----
+        obj = {
+            'characteristics': characteristics,
+            'additionalCharacteristics': additional,
+        }
+
+        result.append(obj)
+
+    return result
+
+
 # =====================================================================
 #  ЭТАП A: ИЗВЛЕЧЕНИЕ ВСЕХ ЭЛЕМЕНТОВ ИЗ IFC
 # =====================================================================
@@ -237,7 +436,18 @@ def extract_elements_from_ifc(ifc_path: str, output_folder: str) -> str:
         f"(из {len(df.columns)} исходных)"
     )
 
-    # --- Сохраняем только XLSX с листом 'Данные' (smetchik-формат, как в zero_step) ---
+    # --- Сохраняем JSON с массивом объектов по каждому элементу IFC ---
+    # Формат: characteristics + additionalCharacteristics для каждого элемента.
+    elements_json_path = os.path.join(output_folder, 'ifc_elements_output.json')
+    elements_output = build_elements_json_output(df)
+    with open(elements_json_path, 'w', encoding='utf-8') as f:
+        json.dump(elements_output, f, ensure_ascii=False, indent=2, default=str)
+    logger.info(
+        f"Сохранён {elements_json_path} "
+        f"({len(elements_output)} элементов в формате characteristics/additionalCharacteristics)"
+    )
+
+    # --- Сохраняем XLSX с листом 'Данные' (smetchik-формат, как в zero_step) ---
     # Этот файл нужен как промежуточный для process_ifc_excel на этапе B.
     xlsx_path = os.path.join(output_folder, 'ifc_raw_elements.xlsx')
     with pd.ExcelWriter(xlsx_path, engine='openpyxl') as writer:
@@ -591,6 +801,161 @@ def build_reference_from_ifc(ifc_path: str, output_folder: str) -> List[Dict[str
 
     logger.info("=" * 60)
     logger.info(f"ПОСТРОЕНИЕ СПРАВОЧНОЙ СТРУКТУРЫ ЗАВЕРШЕНО. "
+                f"Сформировано {len(result)} групп.")
+    logger.info("=" * 60)
+
+    return result
+
+
+# =====================================================================
+#  ФУНКЦИЯ ДЛЯ PDF: ФОРМИРОВАНИЕ ifc_elements_output.json И ifc_raw_elements_grouped.json
+# =====================================================================
+
+def build_reference_from_pdf(df: pd.DataFrame, output_folder: str) -> List[Dict[str, Any]]:
+    """
+    Формирует ifc_elements_output.json и ifc_raw_elements_grouped.json
+    из DataFrame, полученного при обработке PDF-чертежа.
+
+    Аналог build_reference_from_ifc, но работает с готовым DataFrame
+    вместо IFC-файла.
+
+    Аргументы:
+        df — DataFrame с данными элементов из PDF (формат form_result_df)
+        output_folder — папка для сохранения результатов
+
+    Возвращает:
+        Массив объектов в формате ifc_reference_output.json (через build_reference_output)
+    """
+    logger.info("=" * 60)
+    logger.info("ФОРМИРОВАНИЕ JSON-ФАЙЛОВ ИЗ PDF-ЧЕРТЕЖА")
+    logger.info("=" * 60)
+
+    os.makedirs(output_folder, exist_ok=True)
+
+    # Заполняем пропуски
+    df = df.fillna('-')
+
+    # ---- Этап 1: Создаём ifc_elements_output.json ----
+    logger.info("--- Этап 1: Формирование ifc_elements_output.json ---")
+    elements_json_path = os.path.join(output_folder, 'ifc_elements_output.json')
+    elements_output = build_elements_json_output(df)
+    with open(elements_json_path, 'w', encoding='utf-8') as f:
+        json.dump(elements_output, f, ensure_ascii=False, indent=2, default=str)
+    logger.info(
+        f"Сохранён {elements_json_path} "
+        f"({len(elements_output)} элементов в формате characteristics/additionalCharacteristics)"
+    )
+
+    # ---- Этап 2: Формируем Excel с листом 'Данные' для группировки ----
+    logger.info("--- Этап 2: Подготовка Excel для группировки ---")
+
+    # Формируем набор колонок как в smetchik-формате (аналог extract_elements_from_ifc)
+    smetchik_cols = [
+        'Тип (RU)', 'Тип элемента', 'Имя', 'GlobalId', 'Материал',
+    ]
+
+    # Геометрические параметры
+    for col in df.columns:
+        if 'Длина' in col and '_мм' in col:
+            smetchik_cols.append(col)
+        elif 'Ширина' in col and '_мм' in col:
+            smetchik_cols.append(col)
+        elif 'Высота' in col and '_мм' in col:
+            smetchik_cols.append(col)
+        elif 'Глубина' in col and '_мм' in col:
+            smetchik_cols.append(col)
+
+    # Объёмы
+    for col in df.columns:
+        if 'Объём' in col and ('_м3' in col or '_литры' in col):
+            smetchik_cols.append(col)
+
+    # Площади
+    for col in df.columns:
+        if 'Площадь' in col and '_м2' in col:
+            smetchik_cols.append(col)
+
+    # Оставляем только существующие колонки, убираем дубликаты
+    existing_cols = []
+    seen = set()
+    for col in smetchik_cols:
+        if col in df.columns and col not in seen:
+            existing_cols.append(col)
+            seen.add(col)
+
+    df_smetchik = df[existing_cols].copy()
+    df_smetchik = df_smetchik.fillna('-')
+
+    # Добавляем служебные колонки
+    df_smetchik.insert(0, '№ п/п', range(1, len(df_smetchik) + 1))
+    df_smetchik['Примечание_сметчика'] = ''
+    df_smetchik['Стоимость_за_ед_руб'] = ''
+    df_smetchik['Общая_стоимость_руб'] = ''
+
+    # Сохраняем временный Excel для группировки
+    xlsx_path = os.path.join(output_folder, 'ifc_raw_elements.xlsx')
+    with pd.ExcelWriter(xlsx_path, engine='openpyxl') as writer:
+        df_smetchik.to_excel(writer, sheet_name='Данные', index=False)
+    logger.info(f"Сохранён {xlsx_path} (лист 'Данные', {len(df_smetchik.columns)} колонок)")
+
+    # ---- Этап 3: Группировка через process_ifc_excel ----
+    logger.info("--- Этап 3: Группировка элементов ---")
+    leaf_groups, full_groups, grouped_json_path, grouped_excel_path = group_elements_by_type(
+        xlsx_path, output_folder
+    )
+    if not leaf_groups:
+        logger.warning("Группировка не дала результатов, удаляем временный файл")
+        if os.path.exists(xlsx_path):
+            os.remove(xlsx_path)
+        return []
+
+    # ---- Этап 4: Трансформация в формат справочника ----
+    logger.info("--- Этап 4: Формирование выходного формата ---")
+    result = build_reference_output(leaf_groups, full_groups)
+
+    # Перезаписываем ifc_raw_elements_grouped.json в формате справочника
+    if grouped_json_path and result:
+        with open(grouped_json_path, 'w', encoding='utf-8') as f:
+            json.dump(result, f, ensure_ascii=False, indent=2, default=str)
+        logger.info(
+            f"Файл {os.path.basename(grouped_json_path)} перезаписан "
+            f"в формате справочника ({len(result)} групп)"
+        )
+
+        # XLSX — плоская таблица в формате справочника
+        xlsx_rows = []
+        for item in result:
+            row = {
+                'buildingElementName': item['buildingElementName'],
+                'isActive': item['isActive'],
+                'elementCount': item['elementCount'],
+                'totalMeasure_type': item['totalMeasure']['type'],
+                'totalMeasure_value': item['totalMeasure']['value'],
+                'totalMeasure_unit': item['totalMeasure']['unit'],
+            }
+            for ch in item['characteristics']:
+                vals = ', '.join(v['strValue'] for v in ch['values'])
+                row[f'char_{ch["name"]}'] = vals
+            for ch in item['additionalCharacteristics']:
+                vals = ', '.join(v['strValue'] for v in ch['values'])
+                row[f'additional_{ch["name"]}'] = vals
+            xlsx_rows.append(row)
+
+        if xlsx_rows:
+            df_out = pd.DataFrame(xlsx_rows).fillna('')
+            df_out.to_excel(grouped_excel_path, index=False)
+            logger.info(
+                f"Файл {os.path.basename(grouped_excel_path)} перезаписан "
+                f"в формате справочника ({len(result)} групп)"
+            )
+
+    # Удаляем временный файл
+    if os.path.exists(xlsx_path):
+        os.remove(xlsx_path)
+        logger.info(f"Удалён временный файл {os.path.basename(xlsx_path)}")
+
+    logger.info("=" * 60)
+    logger.info(f"ФОРМИРОВАНИЕ JSON-ФАЙЛОВ ИЗ PDF ЗАВЕРШЕНО. "
                 f"Сформировано {len(result)} групп.")
     logger.info("=" * 60)
 

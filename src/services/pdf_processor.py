@@ -186,6 +186,14 @@ def process_pdf(pdf_path: str, output_folder: str, progress_callback=None) -> Di
         if progress_callback:
             progress_callback("Формирование результатов", 98)
 
+        # Формируем ifc_elements_output.json и ifc_raw_elements_grouped.json
+        # (аналогично пайплайну IFC из ifc_reference_builder.py)
+        try:
+            from src.services.ifc_reference_builder import build_reference_from_pdf
+            build_reference_from_pdf(df_all, output_folder_str)
+        except Exception as e:
+            logger.warning(f"Не удалось сформировать JSON-файлы справочника для PDF: {e}", exc_info=True)
+
         # Заполняем пропуски
         df_all = df_all.fillna("-")
 

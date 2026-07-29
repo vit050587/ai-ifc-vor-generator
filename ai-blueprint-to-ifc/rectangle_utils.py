@@ -804,7 +804,7 @@ def _copy_rectangle(rectangle: dict[str, Any]) -> dict[str, Any]:
     copied["bbox"] = dict(rectangle["bbox"])
     return copied
 
-def get_two_points_bbox(four_points_bbox: dict):
+def get_two_points_bbox(four_points_bbox: dict | None):
     if not four_points_bbox:
         return {}
     

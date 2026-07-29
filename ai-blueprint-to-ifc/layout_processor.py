@@ -27,7 +27,7 @@ class LayoutProcessor:
     def _process_pdf(self):
         """Заполняет layouts классами drawing_area, legend_block, title_block"""
         _, img = self.pdf_processor.pdf_to_base64(settings.LAYOUT_ZOOM)
-        layout_objects = self.yolo_service.detect(img, confidence=0.58, iou=0.30, imgsz=1472, classes=[0, 1, 2], save_debug_dir=settings.DEBUG_LAYOUTS_DIR, class_iou_thresholds={1:0.01})
+        layout_objects = self.yolo_service.detect(img, confidence=settings.LAYOUT_CONFIDENCE, iou=0.30, imgsz=1472, classes=[0, 1, 2], save_debug_dir=settings.DEBUG_LAYOUTS_DIR, class_iou_thresholds={1:0.01})
         layout_objects = self.pdf_processor.image_obbs_to_pdf_obbs(layout_objects, zoom=settings.LAYOUT_ZOOM)
 
         for layout_object in layout_objects:

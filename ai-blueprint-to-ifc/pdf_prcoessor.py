@@ -345,9 +345,13 @@ class PdfProcessor:
             if label is None:
                 continue
             
-            bbox = rectangle.get("bbox", rectangle)
-            if not "bbox" in rectangle:
-                bbox = self.pdf_obb_to_image_obb(rectangle["bbox_pdf"], zoom)
+            if "bbox_pdf" in rectangle:
+                bbox = self.pdf_obb_to_image_obb(
+                    rectangle["bbox_pdf"],
+                    zoom=zoom,
+                )
+            else:
+                bbox = rectangle.get("bbox", rectangle)
             try:
                 center_x = sum(float(bbox[f"x{i}"]) for i in range(1, 5)) / 4
                 center_y = sum(float(bbox[f"y{i}"]) for i in range(1, 5)) / 4
@@ -411,6 +415,7 @@ class PdfProcessor:
         tile_height: int,
         overlap_percent: float = 0,
         zoom: float | None = None,
+        exclude_bboxes: list | None = None
     ) -> list[dict]:
         if tile_width <= 0 or tile_height <= 0:
             raise ValueError("tile_width and tile_height must be greater than 0")
@@ -427,6 +432,9 @@ class PdfProcessor:
         crop_offset_x = 0
         crop_offset_y = 0
 
+        if exclude_bboxes:
+            _, self.img = self.render_obb_rectangles({"white": exclude_bboxes}, width=0, save_path=None, fill_opacity=1, zoom=zoom)
+
         if drawing_bbox:
             image_rect = self.pdf_rect_to_image_rect(drawing_bbox)
             crop_offset_x = max(0, int(image_rect["x0"]))
@@ -434,6 +442,8 @@ class PdfProcessor:
             _, drawing_img = self.crop_pdf_rect(drawing_bbox, zoom=zoom)
         else:
             drawing_img = self.img
+
+        self.img = None
 
         image_width, image_height = drawing_img.size
         x_step = max(1, int(tile_width * (1 - overlap_percent / 100)))

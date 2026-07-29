@@ -20,6 +20,7 @@ from hatching_processor import HatchingProcessor
 import debug_manager
 from layout_processor import LayoutProcessor
 from legend_layout_processor import LegendLayoutProcessor
+from drawing_statistics_analyzer import DrawingStatisticsAnalyzer
 
 from logger import setup_logger
 from config import settings
@@ -36,8 +37,9 @@ class Processor:
 
         self.ollama_service = OllamaService("prompts")
         self.pdf_processor = PdfProcessor(self.PDF_PATH)
+        self.drawing_statistics = DrawingStatisticsAnalyzer(self.pdf_processor)
         self.transformers_service = TransformerService(settings.PROMPTS_DIR)
-        self.hatching_processor = HatchingProcessor(self.ollama_service, pdf_processor=self.pdf_processor)
+        self.hatching_processor = HatchingProcessor(self.ollama_service, self.drawing_statistics, pdf_processor=self.pdf_processor)
         self.layout_processor = LayoutProcessor(self.pdf_processor, self.ollama_service)
         self.legend_layout_processor = LegendLayoutProcessor(self.pdf_processor)
 
@@ -79,14 +81,19 @@ class Processor:
             self.walls_processor = WallsProcessor(self.PDF_PATH, self.pdf_processor, zoom_for_drawing)
             walls_processors.append(self.walls_processor)
 
-            drawing_bbox = drawing["object"]["bbox"] if drawing else None
-
             folder_name = str(i)
-            walls_bboxes_pix = self._process_walls(drawing_bbox, folder_name, zoom_for_drawing)
+            walls_bboxes_pix = self._process_walls(i, drawings, zoom_for_drawing)
 
             debug_manager.save_walls_highlighted(folder_name, walls_bboxes_pix, self.pdf_processor)
 
             self.hatching_processor.process(walls_bboxes_pix, zoom_for_drawing)
+            legend_row_items, hatching_confidence = self._retry_hatching_without_detected_legend(
+                walls_bboxes_pix,
+                zoom_for_drawing,
+                legend_row_items,
+            )
+
+            logger.info(f"Уверенность обработки штриховок для чертежа {i}: {round((hatching_confidence if hatching_confidence else 0) * 100, 1)}%")
 
             walls_bboxes_pix = self._prepare_walls(walls_bboxes_pix)
             all_walls_bboxes_pix += walls_bboxes_pix
@@ -107,8 +114,9 @@ class Processor:
         painted_image_debug, materials_colors_md_debug = debug_manager.save_blueprint_walls_by_material("full", all_walls_bboxes_pix, self.pdf_processor, f"page_{self.PDF_PATH.stem}_materials.png", legend_row_items or [], fill_opacity=0.5, confidence=blueprint_processing_confidence)
         result_object["full_drawing"] = {"painted_image": painted_image_debug, "materials_colors_md": materials_colors_md_debug}
 
+        self.drawing_statistics.save_deleted_walls(legend_row_items or [])
         
-        logger.info(f"Итоговый confidence обработки для чертежа: {blueprint_processing_confidence}")
+        logger.info(f"Итоговый confidence обработки для чертежа: {round((blueprint_processing_confidence if blueprint_processing_confidence else 0) * 100, 1)}%")
         result_object["confidence"] = blueprint_processing_confidence
 
         debug_manager.save_result(result_object)
@@ -116,12 +124,35 @@ class Processor:
         save_result(results)
 
         return result_object
+
+    def _retry_hatching_without_detected_legend(self, walls, zoom, legend_row_items):
+        hatching_confidence = self.drawing_statistics.get_last_processing_confidence()
+        should_retry = (
+            not self.hatching_processor.adjust_legends
+            and len(walls) > settings.HATCHING_LEGEND_FALLBACK_MIN_WALL_COUNT
+            and hatching_confidence is not None
+            and hatching_confidence < settings.HATCHING_LEGEND_FALLBACK_MIN_AVERAGE_CONFIDENCE
+        )
+        if not should_retry:
+            return legend_row_items, hatching_confidence
+
+        logger.info(
+            f"Уверенность обработки штриховок слишком низкая ({round((hatching_confidence if hatching_confidence else 0) *100, 1)}%). "
+            "Выполняется повторная обработка без найденной легенды."
+        )
+        debug_manager.clear_legend_rows_folder()
+
+        self.drawing_statistics.delete_last_hatching_scores()
+        self.hatching_processor.reset_to_default_legends()
+        self.hatching_processor.process(walls, zoom)
+
+        return None, self.drawing_statistics.get_last_processing_confidence()
     
     def _get_overall_confidence(self, walls_processors: List[WallsProcessor]) -> float | None:
         confidences = []
 
         average_walls_confidence = self._get_average_walls_confidence(walls_processors)
-        average_hatching_confidence = self.hatching_processor._get_average_best_hatching_confidence()
+        average_hatching_confidence = self.drawing_statistics.get_average_best_hatching_confidence()
         average_layout_confidence = self.layout_processor.get_average_confidence().get("overall_average_confidence", None)
         average_legend_layout_confidence = self.legend_layout_processor.get_average_confidence().get("overall_average_confidence", None)
 
@@ -169,9 +200,9 @@ class Processor:
     
     
     def _prepare_walls(self, walls):
-        walls, statistics = Processor._delete_wrong_walls(walls)
-        for reason, number in statistics["deleted"].items():
-            logger.info(f"Удалено {number} стен по причине {reason}.")
+        walls, deleted_walls = self._delete_wrong_walls(walls)
+        for reason, deleted_by_reason in deleted_walls.items():
+            logger.info(f"Удалено {len(deleted_by_reason)} стен по причине {reason}.")
 
         self._assign_designations_to_walls(walls)
 
@@ -181,8 +212,10 @@ class Processor:
         for i, wall in enumerate(walls):
             wall["id"] = f"W{i}"
     
-    def _process_walls(self, drawing_bbox, folder_name, zoom: float):
-        walls_on_blueprint = self.walls_processor.get_walls_cords(drawing_bbox)
+    def _process_walls(self, drawing_index, drawings, zoom: float):
+        folder_name = str(drawing_index)
+
+        walls_on_blueprint = self.walls_processor.get_walls_cords(drawing_index, drawings, self.layout_processor)
         walls_on_blueprint_number = len(walls_on_blueprint)
         if not walls_on_blueprint_number:
             return []
@@ -348,14 +381,16 @@ class Processor:
 
         return walls
     
-    @staticmethod
-    def _delete_wrong_walls(walls):
-        statistics = {"deleted": {}}
-        walls_number = len(walls)
+    def _delete_wrong_walls(self, walls):
+        deleted_walls = [wall for wall in walls if wall["hatching"]["best"]["text_designation"] == "wrong_wall_type"]
         walls = [wall for wall in walls if wall["hatching"]["best"]["text_designation"] != "wrong_wall_type"]
-        statistics["deleted"]["wrong_walls"] = walls_number - len(walls)
-        walls_number = len(walls)
+        deleted_walls_by_reason = {"wrong_walls": deleted_walls}
+
+        deleted_walls = [wall for wall in walls if wall["hatching"]["best"]["score"] <= settings.HATCHING_SCORE_THRESHOLD]
         walls = [wall for wall in walls if wall["hatching"]["best"]["score"] > settings.HATCHING_SCORE_THRESHOLD]
-        statistics["deleted"]["wrong_confidence"] = walls_number - len(walls)
-        return walls, statistics
+        deleted_walls_by_reason["wrong_confidence"] = deleted_walls
+
+        self.drawing_statistics.add_deleted_walls(deleted_walls_by_reason)
+
+        return walls, deleted_walls_by_reason
 

@@ -9,13 +9,15 @@ DEFAULT_OUTPUT_DIR = Path("debug") / "dino_train"
 
 
 def save_dino_train_sample(
-    plan_image: str | Path | Image.Image,
-    plan_obb: list[float],
+    cropped_wall,
     legend_image: str | Path | Image.Image | list,
     best_result: dict | None = None,
     legend_obb: list[float] | None = None,
     output_dir: str | Path = DEFAULT_OUTPUT_DIR,
 ) -> dict:
+    plan_image: str | Path | Image.Image = cropped_wall["image"]
+    plan_obb: list[float] = cropped_wall["plan_obb"]
+    
     output_dir = Path(output_dir)
     plan_dir = output_dir / "plan_images"
     plan_highlighted_dir = output_dir / "plan_highlighted"

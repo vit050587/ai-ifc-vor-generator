@@ -4,11 +4,10 @@ from tqdm import tqdm
 from PIL import Image
 from typing import List, Dict
 import hashlib
-import statistics
-
 from dino_service import DinoService
 from pdf_prcoessor import PdfProcessor
 from ollama_service import OllamaService
+from drawing_statistics_analyzer import DrawingStatisticsAnalyzer
 from rectangle_utils import get_two_points_bbox
 from debug_manager import save_legend_rows
 from dino_train_creator import save_dino_train_sample
@@ -21,24 +20,28 @@ class HatchingProcessor:
     def __init__(
         self,
         ollama_service: OllamaService,
+        drawing_statistics: DrawingStatisticsAnalyzer,
         pdf_processor: PdfProcessor | None = None
     ):
         self.dino_service = DinoService(model_path=settings.DINO_HATCHING_MODEL)
+        self.drawing_statistics = drawing_statistics
         self.pdf_processor = pdf_processor
-        self.legends = []
         self.ollama_service = ollama_service
-        self.adjust_legends = True
-        self.legends += self._load_walls_types("fallback")
-        self.legends += self._load_walls_types("default")
+        self.reset_to_default_legends()
 
         self.zoom = None
-        self.processed_walls_best_scores: List[float]  = []
 
     def specify_legends(self, legends:list):
         self.legends = legends
         if legends:
             self.adjust_legends = False
         self._prepare_legends()
+        self.legends += self._load_walls_types("default")
+
+    def reset_to_default_legends(self):
+        self.legends = []
+        self.adjust_legends = True
+        self.legends += self._load_walls_types("fallback")
         self.legends += self._load_walls_types("default")
 
     def _load_walls_types(self, legends_type: str):
@@ -70,6 +73,8 @@ class HatchingProcessor:
         for i, wall in enumerate(tqdm(walls, desc="Анализ штриховки", unit="wall")):
             wall_requests = requests[i] if requests is not None else None
             self._process_wall(wall, wall_requests)
+
+        self.drawing_statistics.add_hatching_scores([wall["hatching"]["best"]["score"] if wall["hatching"]["best"] else 0 for wall in walls])
 
         save_legend_rows(self.legends)
 
@@ -105,25 +110,17 @@ class HatchingProcessor:
             best_result = self._get_best_symbol_with_tensors(plan_tensor, plan_mask_tensor, new_row["legend_symbols"], new_row["full_description"])
             
         # save_dino_train_sample(
-        #     plan_image=cropped_wall["image"],
-        #     plan_obb=cropped_wall["plan_obb"],
+        #     cropped_wall=self._crop_wall(wall),
         #     legend_image=self.legends,
         #     best_result=best_result,
         #     output_dir="dino_train"
         # )
-        self.processed_walls_best_scores.append(best_result["score"] if best_result else 0)
         wall["hatching"] = {
             "best": best_result,
             "matches": results,
         }
 
         return wall
-
-    def _get_average_best_hatching_confidence(self) -> float | None:
-        if not self.processed_walls_best_scores:
-            return None
-
-        return statistics.mean(self.processed_walls_best_scores)
 
     def _form_dino_requests_walls(self, walls: List):
         requests = []
@@ -258,21 +255,30 @@ class HatchingProcessor:
         if self.pdf_processor is None:
             raise ValueError("PdfProcessor is required to crop walls")
 
-        bbox = wall["bbox"]
+        target_zoom = (self.zoom or settings.BLUEPRINT.zoom) * 2
+        bbox_pdf = wall.get("bbox_pdf")
+        if bbox_pdf is None:
+            raise ValueError("Wall must contain bbox_pdf to crop at a different zoom")
+
+        bbox = self.pdf_processor.pdf_obb_to_image_obb(
+            bbox_pdf,
+            zoom=target_zoom,
+        )
+        padding = pixels_around * 2
         rect = {
             "x0": min(bbox["x1"], bbox["x2"], bbox["x3"], bbox["x4"]),
             "y0": min(bbox["y1"], bbox["y2"], bbox["y3"], bbox["y4"]),
             "x1": max(bbox["x1"], bbox["x2"], bbox["x3"], bbox["x4"]),
             "y1": max(bbox["y1"], bbox["y2"], bbox["y3"], bbox["y4"]),
         }
-        crop_x0 = max(0, int(rect["x0"] - pixels_around))
-        crop_y0 = max(0, int(rect["y0"] - pixels_around))
+        crop_x0 = max(0, int(rect["x0"] - padding))
+        crop_y0 = max(0, int(rect["y0"] - padding))
         _, img = self.pdf_processor.crop_image(
-            rect["x0"] - pixels_around,
-            rect["y0"] - pixels_around,
-            rect["x1"] + pixels_around,
-            rect["y1"] + pixels_around,
-            zoom= self.zoom or settings.BLUEPRINT.zoom
+            rect["x0"] - padding,
+            rect["y0"] - padding,
+            rect["x1"] + padding,
+            rect["y1"] + padding,
+            zoom=target_zoom,
         )
 
         points = [
