@@ -127,13 +127,13 @@ def save_blueprint_walls_by_material(
         grouped_walls,
         width=2,
         fill_opacity=fill_opacity,
-        zoom=settings.BLUEPRINT.zoom
+        zoom=settings.BLUEPRINT.zoom * 1.5
     )
     img_with_labels = pdf_processor.draw_obb_labels(
         painted_walls_image,
         walls,
         label_key="id",
-        zoom=settings.BLUEPRINT.zoom
+        zoom=settings.BLUEPRINT.zoom * 1.5
     )
 
     if confidence:

@@ -29,7 +29,7 @@ GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcSlab': {
-        'field': 'Площадь_NetArea_м2',
+        'field': 'Площадь_GrossArea_м2',
         'label': 'Площадь',
         'unit': 'м²',
         'ranges': [
@@ -39,40 +39,67 @@ GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcColumn': {
-        'field': 'Длина_Length_мм',
-        'label': 'Длина',
+        'field': 'Длина_Perimeter_мм',
+        'label': 'Периметр',
         'unit': 'мм',
         'ranges': [
             {'max': 1200, 'label': 'до 1200 мм'},
             {'max': float('inf'), 'label': 'более 1200 мм'}
-        ]
+        ],
+        'sub_ranges': {
+            'field': 'Длина_Width_мм',
+            'label': 'Сторона',
+            'unit': 'мм',
+            'ranges': [
+                {'max': 300, 'label': '≤ 300 мм'},
+                {'max': 500, 'label': '≤ 500 мм'},
+                {'max': float('inf'), 'label': '> 500 мм'}
+            ]
+        }
     },
     'IfcBeam': {
-        'field': 'Длина_Length_мм',
-        'label': 'Длина',
-        'unit': 'мм',
+        'field': 'Площадь_GrossArea_м2',
+        'label': 'Площадь',
+        'unit': 'м²',
         'ranges': [
-            {'max': 3000, 'label': 'до 3000 мм'},
-            {'max': 6000, 'label': 'до 6000 мм'},
-            {'max': float('inf'), 'label': 'более 6000 мм'}
+            {'max': 10, 'label': 'до 10 м²'},
+            {'max': 20, 'label': 'до 20 м²'},
+            {'max': float('inf'), 'label': 'более 20 м²'}
         ]
     },
     'IfcStair': {
+        'field': 'Объём_NetVolume_м3',
+        'label': '',
+        'unit': 'м³',
+        'ranges': [
+            {'max': float('inf'), 'label': 'Все элементы'}
+        ]
+    },
+    'IfcStairFlight': {
+        'field': 'Объём_NetVolume_м3',
+        'label': '',
+        'unit': 'м³',
+        'ranges': [
+            {'max': float('inf'), 'label': 'Все элементы'}
+        ]
+    },
+    'IfcPile': {
         'field': 'Длина_Length_мм',
         'label': 'Длина',
         'unit': 'мм',
         'ranges': [
-            {'max': 2000, 'label': 'до 2000 мм'},
-            {'max': 4000, 'label': 'до 4000 мм'},
-            {'max': float('inf'), 'label': 'более 4000 мм'}
+            {'max': 8000, 'label': '6-8 м'},
+            {'max': 10000, 'label': '9-10 м'},
+            {'max': 12000, 'label': '11-12 м'},
+            {'max': float('inf'), 'label': 'более 12 м'}
         ]
     },
     'IfcProxyElement': {
         'field': 'Объём_NetVolume_м3',
-        'label': 'Объём',
+        'label': '',
         'unit': 'м³',
         'ranges': [
-            {'max': float('inf'), 'label': 'все размеры'}
+            {'max': float('inf'), 'label': 'Все элементы'}
         ]
     },
     'default': {
@@ -87,10 +114,17 @@ GEOMETRY_GROUP_RULES = {
     }
 }
 
+# Подразделы, для которых НЕ применяется геометрическая группировка
+NO_GEOMETRY_GROUP_SUBSECTIONS = [
+    'Фундаментная плита',
+    'Фундамент под инженерное оборудование',
+    'Фундамент под башенный кран',
+]
 
 SECTION_STRUCTURE = {
     'Подземная': {
         'label': 'Подземная часть здания (до отм. 0,000)',
+        'other_label': 'Прочие элементы подземной части',
         'sections': [
             {
                 'name': 'Раздел 1. Монолитные ж/б конструкции. Фундаменты',
@@ -99,8 +133,7 @@ SECTION_STRUCTURE = {
                     {'key': 'Свайно-ростверковый фундамент', 'patterns': ['свай', 'ростверк'], 'ifcTypes': ['IfcSlab', 'IfcBeam', 'IfcPile']},
                     {'key': 'Фундамент под инженерное оборудование', 'patterns': ['инженер', 'оборудование'], 'ifcTypes': ['IfcSlab']},
                     {'key': 'Фундамент под башенный кран', 'patterns': ['башен', 'кран'], 'ifcTypes': ['IfcSlab', 'IfcBeam']},
-                    {'key': 'Устройство горизонтальной гидроизоляции', 'patterns': ['горизонт', 'гидроизол'], 'ifcTypes': ['IfcSlab', 'IfcWall']},
-                    {'key': 'Устройство вертикальной гидроизоляции', 'patterns': ['вертикал', 'гидроизол'], 'ifcTypes': ['IfcWall']},
+                    {'key': 'Устройство горизонтальной гидроизоляции', 'patterns': ['горизонт', 'гидроизол'], 'ifcTypes': ['IfcSlab']},
                     {'key': 'Устройство деформационного шва', 'patterns': ['деформац', 'шов'], 'ifcTypes': ['IfcSlab', 'IfcWall']}
                 ]
             },
@@ -111,16 +144,16 @@ SECTION_STRUCTURE = {
                     {'key': 'Подземная часть здания. Колонны', 'patterns': ['колонн'], 'ifcTypes': ['IfcColumn']},
                     {'key': 'Подземная часть здания. Плиты перекрытия', 'patterns': ['перекрыт', 'плит'], 'ifcTypes': ['IfcSlab']},
                     {'key': 'Подземная часть здания. Балки', 'patterns': ['балк', 'ригел'], 'ifcTypes': ['IfcBeam']},
-                    {'key': 'Подземная часть здания. Лестницы', 'patterns': ['лестн', 'марш', 'площадк'], 'ifcTypes': ['IfcStair', 'IfcSlab', 'IfcStairFlight']},
+                    {'key': 'Подземная часть здания. Лестницы', 'patterns': ['лестн', 'марш', 'площадк', 'плм', 'лмн'], 'ifcTypes': ['IfcStair', 'IfcSlab', 'IfcStairFlight']},
                     {'key': 'Подземная часть здания. Приямки', 'patterns': ['приям'], 'ifcTypes': ['IfcSlab', 'IfcWall']},
                     {'key': 'Подземная часть здания. Вертикальная гидроизоляция', 'patterns': ['вертикал', 'гидроизол'], 'ifcTypes': ['IfcWall']}
                 ]
             }
-        ],
-        'other_label': 'Прочие элементы подземной части'
+        ]
     },
     'Цоколь': {
         'label': 'Цокольная часть здания (отм. 0,000)',
+        'other_label': 'Прочие элементы цокольной части',
         'sections': [
             {
                 'name': 'Раздел 1. Монолитные ж/б конструкции. Фундаменты',
@@ -141,16 +174,16 @@ SECTION_STRUCTURE = {
                     {'key': 'Цокольная часть здания. Колонны', 'patterns': ['колонн'], 'ifcTypes': ['IfcColumn']},
                     {'key': 'Цокольная часть здания. Плиты перекрытия', 'patterns': ['перекрыт', 'плит'], 'ifcTypes': ['IfcSlab']},
                     {'key': 'Цокольная часть здания. Балки', 'patterns': ['балк', 'ригел'], 'ifcTypes': ['IfcBeam']},
-                    {'key': 'Цокольная часть здания. Лестницы', 'patterns': ['лестн', 'марш', 'площадк'], 'ifcTypes': ['IfcStair', 'IfcSlab', 'IfcStairFlight']},
+                    {'key': 'Цокольная часть здания. Лестницы', 'patterns': ['лестн', 'марш', 'площадк', 'плм', 'лмн'], 'ifcTypes': ['IfcStair', 'IfcSlab', 'IfcStairFlight']},
                     {'key': 'Цокольная часть здания. Приямки', 'patterns': ['приям'], 'ifcTypes': ['IfcSlab', 'IfcWall']},
                     {'key': 'Цокольная часть здания. Вертикальная гидроизоляция', 'patterns': ['вертикал', 'гидроизол'], 'ifcTypes': ['IfcWall']}
                 ]
             }
-        ],
-        'other_label': 'Прочие элементы цокольной части'
+        ]
     },
     'Надземная': {
         'label': 'Надземная часть здания (выше отм. 0,000)',
+        'other_label': 'Прочие элементы надземной части',
         'sections': [
             {
                 'name': 'Раздел 3. Монолитные ж/б конструкции. Надземная часть здания',
@@ -160,13 +193,12 @@ SECTION_STRUCTURE = {
                     {'key': 'Надземная часть здания. Колонны', 'patterns': ['колонн'], 'ifcTypes': ['IfcColumn']},
                     {'key': 'Надземная часть здания. Балки', 'patterns': ['балк', 'ригел'], 'ifcTypes': ['IfcBeam']},
                     {'key': 'Надземная часть здания. Парапеты', 'patterns': ['парапет'], 'ifcTypes': ['IfcWall']},
-                    {'key': 'Надземная часть здания. Лестничные площадки', 'patterns': ['лестничн', 'площадк'], 'ifcTypes': ['IfcSlab']},
+                    {'key': 'Надземная часть здания. Лестничные площадки', 'patterns': ['лестничн', 'площадк', 'плм', 'лмн'], 'ifcTypes': ['IfcSlab']},
                     {'key': 'Надземная часть здания. Лестничные марши', 'patterns': ['лестничн', 'марш'], 'ifcTypes': ['IfcStair', 'IfcStairFlight']},
                     {'key': 'Надземная часть здания. Вертикальная гидроизоляция', 'patterns': ['вертикал', 'гидроизол'], 'ifcTypes': ['IfcWall']}
                 ]
             }
-        ],
-        'other_label': 'Прочие элементы надземной части'
+        ]
     }
 }
 
@@ -200,11 +232,27 @@ def get_ifc_type(type_ru: str, name: str) -> str:
     name_lower = name.lower() if name else ''
     type_lower = type_ru.lower() if type_ru else ''
     
-    # Проверка на отверстия/проёмы/IfcProxyElement — ДОЛЖНА БЫТЬ ПЕРВОЙ
-    if any(w in name_lower for w in ['отверсти', 'проём', 'проем', 'окно', 'двер']):
-        return 'IfcOpening'
     if 'ifcproxy' in type_lower or 'proxy' in type_lower:
         return 'IfcProxyElement'
+    
+    if any(w in name_lower for w in ['отверсти', 'проём', 'проем', 'окно', 'двер']):
+        return 'IfcOpening'
+    
+    if 'труб' in name_lower:
+        return 'IfcProxyElement'
+    
+    # Проверка по ТИПУ (до проверки по имени)
+    if 'ifcpile' in type_lower:
+        return 'IfcPile'
+    if 'ifcstairflight' in type_lower:
+        return 'IfcStairFlight'
+    
+    # Проверка по ИМЕНИ
+    if 'сва' in name_lower:
+        return 'IfcPile'
+    
+    if any(w in name_lower for w in ['плм', 'лмн', 'площадк']):
+        return 'IfcSlab'
     
     if any(w in name_lower for w in ['стен', 'парапет']):
         return 'IfcWall'
@@ -227,7 +275,7 @@ def get_ifc_type(type_ru: str, name: str) -> str:
         return 'IfcColumn'
     if 'ifcbeam' in type_lower:
         return 'IfcBeam'
-    if any(t in type_lower for t in ['ifcstair', 'ifcstairflight']):
+    if 'ifcstair' in type_lower:
         return 'IfcStair'
     
     return 'default'
@@ -240,20 +288,18 @@ def is_hydro_vertical(type_ru: str, name: str, ifc_type: str) -> bool:
     has_hydro = 'гидроизол' in name_lower
     has_vertical = 'вертикал' in name_lower
     has_wall = 'стен' in name_lower or ifc_type == 'IfcWall'
-    return has_hydro and (has_vertical or has_wall)
+    has_fundament = any(w in name_lower for w in ['фундамент', 'фунд. плита', 'фундаментная'])
+    return has_hydro and has_wall and not has_fundament
 
 
 def is_hydro_horizontal(type_ru: str, name: str, ifc_type: str) -> bool:
     """Определяет, относится ли элемент к ГОРИЗОНТАЛЬНОЙ гидроизоляции (плиты/перекрытия)"""
     name_lower = name.lower() if name else ''
     has_hydro = 'гидроизол' in name_lower
-    has_horizontal = 'горизонт' in name_lower
-    has_slab = ifc_type == 'IfcSlab'
-    # Горизонтальная = гидроизоляция + плита (или горизонтальная в названии)
-    # Если уже определена как вертикальная — не горизонтальная
+    has_fundament_or_slab = any(w in name_lower for w in ['фундамент', 'фунд. плита', 'фундаментная', 'плит', 'перекрыт']) or ifc_type == 'IfcSlab'
     if is_hydro_vertical(type_ru, name, ifc_type):
         return False
-    return has_hydro and (has_horizontal or has_slab)
+    return has_hydro and has_fundament_or_slab
 
 
 def determine_subsection(type_ru: str, name: str, part: str) -> str:
@@ -267,15 +313,26 @@ def determine_subsection(type_ru: str, name: str, part: str) -> str:
     if 'ifcproxy' in type_lower or 'proxy' in type_lower:
         return '__OTHER__'
     
-    # Отверстия — тоже в прочие
+    temp_ifc_type = get_ifc_type(type_ru, name)
     if temp_ifc_type == 'IfcOpening':
         return '__OTHER__'
     
-    # Гидроизоляция: чёткое разделение
+    if 'труб' in name_lower:
+        return '__OTHER__'
+    
     if is_hydro_vertical(type_ru, name, temp_ifc_type):
-        return 'Устройство вертикальной гидроизоляции'
+        # Гидроизоляция стен → в Раздел 2
+        if part == 'Подземная':
+            return 'Подземная часть здания. Вертикальная гидроизоляция'
+        elif part == 'Цоколь':
+            return 'Цокольная часть здания. Вертикальная гидроизоляция'
+        else:
+            return 'Надземная часть здания. Вертикальная гидроизоляция'
     if is_hydro_horizontal(type_ru, name, temp_ifc_type):
         return 'Устройство горизонтальной гидроизоляции'
+    
+    if 'сва' in name_lower or 'ifcpile' in type_lower:
+        return 'Свайно-ростверковый фундамент'
     
     if 'приям' in name_lower:
         mapping = {'Подземная': 'Подземная часть здания. Приямки',
@@ -284,6 +341,24 @@ def determine_subsection(type_ru: str, name: str, part: str) -> str:
     
     if 'парапет' in name_lower:
         return 'Надземная часть здания. Парапеты'
+    
+    # Лестничные марши по ifcType (IfcStairFlight)
+    if temp_ifc_type == 'IfcStairFlight':
+        if part in ('Подземная', 'Цоколь'):
+            return f'{part} часть здания. Лестницы'
+        return 'Надземная часть здания. Лестничные марши'
+    
+    # Лестничные площадки (Плм)
+    if 'плм' in name_lower:
+        if part in ('Подземная', 'Цоколь'):
+            return f'{part} часть здания. Лестницы'
+        return 'Надземная часть здания. Лестничные площадки'
+    
+    # ЛМн без признаков марша — площадка
+    if 'лмн' in name_lower:
+        if part in ('Подземная', 'Цоколь'):
+            return f'{part} часть здания. Лестницы'
+        return 'Надземная часть здания. Лестничные площадки'
     
     if 'лестничн' in name_lower or 'лестниц' in name_lower:
         if 'площадк' in name_lower:
@@ -354,6 +429,12 @@ def group_elements(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[
         
         return 'Надземная'
     
+    def get_material_group(elem: ElementData) -> str:
+        material = str(elem.row.get('Материал', ''))
+        if not material or material == '-' or material == '':
+            return 'Материал: не указан'
+        return f'Материал: {material}'
+    
     def get_concrete_group(elem: ElementData) -> str:
         concrete_grade = str(elem.row.get('ExpCheck_MaterialConcrete_MGE_ConcreteGrade', ''))
         water_resist = str(elem.row.get('ExpCheck_MaterialConcrete_MGE_WaterResist', ''))
@@ -382,6 +463,49 @@ def group_elements(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[
             if after.isdigit():
                 name = name[:last_colon].strip()
         return name if name else 'Без названия'
+    
+    def apply_material_concrete_grouping(parent_group: dict, elems: List[ElementData], 
+                                         mat_level: int, concrete_level: int) -> None:
+        """Группировка по материалу, затем по бетону внутри каждого материала"""
+        material_groups = defaultdict(list)
+        for e in elems:
+            mat_key = get_material_group(e)
+            material_groups[mat_key].append(e)
+        
+        if len(material_groups) == 1:
+            # Один материал — группируем сразу по бетону
+            concrete_groups = defaultdict(list)
+            for e in elems:
+                concrete_key = get_concrete_group(e)
+                concrete_groups[concrete_key].append(e)
+            
+            if len(concrete_groups) == 1:
+                # Один бетон — не создаём лишних уровней
+                return
+            else:
+                for concrete_key, concrete_elements in concrete_groups.items():
+                    concrete_group = create_group(concrete_key, concrete_level, concrete_elements)
+                    if concrete_group:
+                        parent_group['children'].append(concrete_group)
+        else:
+            # Несколько материалов
+            for mat_key, mat_elements in material_groups.items():
+                mat_group = create_group(mat_key, mat_level, mat_elements)
+                if not mat_group:
+                    continue
+                
+                concrete_groups = defaultdict(list)
+                for e in mat_elements:
+                    concrete_key = get_concrete_group(e)
+                    concrete_groups[concrete_key].append(e)
+                
+                if len(concrete_groups) > 1:
+                    for concrete_key, concrete_elements in concrete_groups.items():
+                        concrete_group = create_group(concrete_key, concrete_level, concrete_elements)
+                        if concrete_group:
+                            mat_group['children'].append(concrete_group)
+                
+                parent_group['children'].append(mat_group)
     
     elements = []
     
@@ -488,88 +612,102 @@ def group_elements(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[
                 if not subsection_group:
                     continue
                 
-                # Группировка по IFC типу
-                ifc_groups = defaultdict(list)
-                for e in subsection_elements:
-                    ifc_groups[e.ifc_type].append(e)
+                skip_geometry = subsection_key in NO_GEOMETRY_GROUP_SUBSECTIONS
                 
-                need_ifc_group = len(ifc_groups) > 1
-                
-                for ifc_type, ifc_elements in ifc_groups.items():
-                    rule = GEOMETRY_GROUP_RULES.get(ifc_type, GEOMETRY_GROUP_RULES['default'])
+                if skip_geometry:
+                    # Без геометрической группировки — сразу материал/бетон
+                    apply_material_concrete_grouping(subsection_group, subsection_elements, 4, 5)
+                else:
+                    ifc_groups = defaultdict(list)
+                    for e in subsection_elements:
+                        ifc_groups[e.ifc_type].append(e)
                     
-                    parent = subsection_group
+                    need_ifc_group = len(ifc_groups) > 1
                     
-                    if need_ifc_group:
-                        ifc_labels = {
-                            'IfcWall': 'Стены',
-                            'IfcSlab': 'Плиты',
-                            'IfcColumn': 'Колонны',
-                            'IfcBeam': 'Балки',
-                            'IfcStair': 'Лестницы',
-                            'default': 'Прочее'
-                        }
-                        ifc_group = create_group(ifc_labels.get(ifc_type, ifc_type), 4, ifc_elements)
-                        if ifc_group:
-                            parent['children'].append(ifc_group)
-                            parent = ifc_group
-                    
-                    # Геометрическая группировка
-                    geo_groups = defaultdict(list)
-                    for e in ifc_elements:
-                        value = get_geometry_value(rule, e)
-                        assigned = False
-                        for rg in rule['ranges']:
-                            if value <= rg['max']:
-                                geo_groups[rg['label']].append(e)
-                                assigned = True
-                                break
-                        if not assigned:
-                            geo_groups[rule['ranges'][-1]['label']].append(e)
-                    
-                    for geo_label, geo_elements in geo_groups.items():
-                        if not geo_elements:
-                            continue
+                    for ifc_type, ifc_elements in ifc_groups.items():
+                        rule = GEOMETRY_GROUP_RULES.get(ifc_type, GEOMETRY_GROUP_RULES['default'])
                         
-                        geo_group = create_group(f'{rule["label"]}: {geo_label}', 5, geo_elements)
-                        if not geo_group:
-                            continue
+                        parent = subsection_group
                         
-                        concrete_groups = defaultdict(list)
-                        for e in geo_elements:
-                            concrete_key = get_concrete_group(e)
-                            concrete_groups[concrete_key].append(e)
+                        if need_ifc_group:
+                            ifc_labels = {
+                                'IfcWall': 'Стены',
+                                'IfcSlab': 'Плиты',
+                                'IfcColumn': 'Колонны',
+                                'IfcBeam': 'Балки',
+                                'IfcStair': 'Лестницы',
+                                'IfcStairFlight': 'Лестничные марши',
+                                'IfcPile': 'Сваи',
+                                'default': 'Прочее'
+                            }
+                            ifc_group = create_group(ifc_labels.get(ifc_type, ifc_type), 4, ifc_elements)
+                            if ifc_group:
+                                parent['children'].append(ifc_group)
+                                parent = ifc_group
                         
-                        if len(concrete_groups) == 1:
-                            parent['children'].append(geo_group)
-                        else:
-                            for concrete_key, concrete_elements in concrete_groups.items():
-                                concrete_group = create_group(concrete_key, 6, concrete_elements)
-                                if concrete_group:
-                                    geo_group['children'].append(concrete_group)
-                            parent['children'].append(geo_group)
+                        geo_groups = defaultdict(list)
+                        for e in ifc_elements:
+                            value = get_geometry_value(rule, e)
+                            assigned = False
+                            for rg in rule['ranges']:
+                                if value <= rg['max']:
+                                    geo_groups[rg['label']].append(e)
+                                    assigned = True
+                                    break
+                            if not assigned:
+                                geo_groups[rule['ranges'][-1]['label']].append(e)
+                        
+                        for geo_label, geo_elements in geo_groups.items():
+                            if not geo_elements:
+                                continue
+                            
+                            geo_group = create_group(f'{rule["label"]}: {geo_label}', 5, geo_elements)
+                            if not geo_group:
+                                continue
+                            
+                            if rule.get('sub_ranges'):
+                                sub_rule = rule['sub_ranges']
+                                
+                                sub_geo_groups = defaultdict(list)
+                                for e in geo_elements:
+                                    val = safe_parse_float(e.row.get(sub_rule['field'], 0))
+                                    assigned = False
+                                    for rg in sub_rule['ranges']:
+                                        if val <= rg['max']:
+                                            sub_geo_groups[rg['label']].append(e)
+                                            assigned = True
+                                            break
+                                    if not assigned:
+                                        sub_geo_groups[sub_rule['ranges'][-1]['label']].append(e)
+                                
+                                for sub_label, sub_elems in sub_geo_groups.items():
+                                    if not sub_elems:
+                                        continue
+                                    
+                                    sub_geo_group = create_group(
+                                        f'{sub_rule["label"]}: {sub_label}', 6, sub_elems
+                                    )
+                                    if not sub_geo_group:
+                                        continue
+                                    
+                                    # Группировка по материалу/бетону внутри sub_geo_group
+                                    apply_material_concrete_grouping(sub_geo_group, sub_elems, 7, 8)
+                                    
+                                    geo_group['children'].append(sub_geo_group)
+                                
+                                if geo_group['children']:
+                                    parent['children'].append(geo_group)
+                            else:
+                                # Группировка по материалу/бетону внутри geo_group
+                                apply_material_concrete_grouping(geo_group, geo_elements, 6, 7)
+                                parent['children'].append(geo_group)
                 
                 if subsection_group['children']:
                     section_group['children'].append(subsection_group)
                 elif subsection_elements:
-                    # Группируем по бетону
-                    concrete_groups = defaultdict(list)
-                    for e in subsection_elements:
-                        concrete_key = get_concrete_group(e)
-                        concrete_groups[concrete_key].append(e)
-                    
-                    if len(concrete_groups) > 1:
-                        for concrete_key, concrete_elements in concrete_groups.items():
-                            concrete_group = create_group(concrete_key, 4, concrete_elements)
-                            if concrete_group:
-                                subsection_group['children'].append(concrete_group)
-                    else:
-                        for e in subsection_elements:
-                            elem_group = create_group(f"Элемент: {e.name}", 5, [e])
-                            if elem_group:
-                                subsection_group['children'].append(elem_group)
-                    
-                    section_group['children'].append(subsection_group)
+                    apply_material_concrete_grouping(subsection_group, subsection_elements, 4, 5)
+                    if subsection_group['children']:
+                        section_group['children'].append(subsection_group)
             
             if section_group['children']:
                 part_group['children'].append(section_group)
@@ -583,23 +721,9 @@ def group_elements(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[
             for sub_key, sub_elems in by_subsection.items():
                 sub_group = create_group(sub_key, 2, sub_elems)
                 if sub_group:
-                    concrete_groups = defaultdict(list)
-                    for e in sub_elems:
-                        concrete_key = get_concrete_group(e)
-                        concrete_groups[concrete_key].append(e)
-                    
-                    if len(concrete_groups) > 1:
-                        for concrete_key, concrete_elements in concrete_groups.items():
-                            concrete_group = create_group(concrete_key, 3, concrete_elements)
-                            if concrete_group:
-                                sub_group['children'].append(concrete_group)
-                    else:
-                        for e in sub_elems:
-                            elem_group = create_group(f"Элемент: {e.name}", 3, [e])
-                            if elem_group:
-                                sub_group['children'].append(elem_group)
-                    
-                    part_group['children'].append(sub_group)
+                    apply_material_concrete_grouping(sub_group, sub_elems, 3, 4)
+                    if sub_group['children']:
+                        part_group['children'].append(sub_group)
         
         # Обрабатываем ПРОЧИЕ элементы
         if other_elements:
@@ -614,24 +738,12 @@ def group_elements(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[
                 for name_key, name_elems in by_name.items():
                     name_group = create_group(name_key, 3, name_elems)
                     if name_group:
-                        # Внутри группы по имени — группировка по бетону (если есть)
-                        concrete_groups = defaultdict(list)
-                        for e in name_elems:
-                            concrete_key = get_concrete_group(e)
-                            concrete_groups[concrete_key].append(e)
-                        
-                        if len(concrete_groups) > 1:
-                            for concrete_key, concrete_elements in concrete_groups.items():
-                                concrete_group = create_group(concrete_key, 4, concrete_elements)
-                                if concrete_group:
-                                    name_group['children'].append(concrete_group)
-                        else:
-                            # Один тип бетона — просто элементы
-                            pass  # элементы уже учтены в name_group
-                        
-                        other_group['children'].append(name_group)
+                        apply_material_concrete_grouping(name_group, name_elems, 4, 5)
+                        if name_group['children']:
+                            other_group['children'].append(name_group)
                 
-                part_group['children'].append(other_group)
+                if other_group['children']:
+                    part_group['children'].append(other_group)
         
         result.append(part_group)
     

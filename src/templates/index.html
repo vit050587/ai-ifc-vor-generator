@@ -171,6 +171,16 @@
             z-index: 100;
             max-width: 500px;
         }
+
+        /* Первая колонка (чексбоксы/стрелки) не расширяется */
+        .table-wrap td:first-child:hover {
+            overflow: hidden !important;
+            white-space: nowrap !important;
+            max-width: none !important;
+            box-shadow: none !important;
+            z-index: auto !important;
+            background: inherit !important;
+        }
         .table-wrap tr:hover td { background: #ebf8ff; }
         .group-header {
             background: #edf2f7 !important;
@@ -713,7 +723,7 @@ const GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcSlab': {
-        field: 'Площадь_NetArea_м2',
+        field: 'Площадь_GrossArea_м2',
         label: 'Площадь',
         unit: 'м²',
         ranges: [
@@ -723,40 +733,67 @@ const GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcColumn': {
-        field: 'Длина_Length_мм',
-        label: 'Длина',
+        field: 'Длина_Perimeter_мм',
+        label: 'Периметр',
         unit: 'мм',
         ranges: [
             { max: 1200, label: 'до 1200 мм' },
             { max: Infinity, label: 'более 1200 мм' }
-        ]
+        ],
+        sub_ranges: {
+            field: 'Длина_Width_мм',
+            label: 'Сторона',
+            unit: 'мм',
+            ranges: [
+                { max: 300, label: '≤ 300 мм' },
+                { max: 500, label: '≤ 500 мм' },
+                { max: Infinity, label: '> 500 мм' }
+            ]
+        }
     },
     'IfcBeam': {
-        field: 'Длина_Length_мм',
-        label: 'Длина',
-        unit: 'мм',
+        field: 'Площадь_GrossArea_м2',
+        label: 'Площадь',
+        unit: 'м²',
         ranges: [
-            { max: 3000, label: 'до 3000 мм' },
-            { max: 6000, label: 'до 6000 мм' },
-            { max: Infinity, label: 'более 6000 мм' }
+            { max: 10, label: 'до 10 м²' },
+            { max: 20, label: 'до 20 м²' },
+            { max: Infinity, label: 'более 20 м²' }
         ]
     },
     'IfcStair': {
+        field: 'Объём_NetVolume_м3',
+        label: '',
+        unit: 'м³',
+        ranges: [
+            { max: Infinity, label: 'Все элементы' }
+        ]
+    },
+    'IfcStairFlight': {
+        field: 'Объём_NetVolume_м3',
+        label: '',
+        unit: 'м³',
+        ranges: [
+            { max: Infinity, label: 'Все элементы' }
+        ]
+    },
+    'IfcPile': {
         field: 'Длина_Length_мм',
         label: 'Длина',
         unit: 'мм',
         ranges: [
-            { max: 2000, label: 'до 2000 мм' },
-            { max: 4000, label: 'до 4000 мм' },
-            { max: Infinity, label: 'более 4000 мм' }
+            { max: 8000, label: '6-8 м' },
+            { max: 10000, label: '9-10 м' },
+            { max: 12000, label: '11-12 м' },
+            { max: Infinity, label: 'более 12 м' }
         ]
     },
     'IfcProxyElement': {
         field: 'Объём_NetVolume_м3',
-        label: 'Объём',
+        label: '',
         unit: 'м³',
         ranges: [
-            { max: Infinity, label: 'все размеры' }
+            { max: Infinity, label: 'Все элементы' }
         ]
     },
     'default': {
@@ -770,6 +807,13 @@ const GEOMETRY_GROUP_RULES = {
         ]
     }
 };
+
+// Подразделы без геометрической группировки
+const NO_GEOMETRY_GROUP_SUBSECTIONS = [
+    'Фундаментная плита',
+    'Фундамент под инженерное оборудование',
+    'Фундамент под башенный кран',
+];
 
 // ========== Структура разделов ==========
 const SECTION_STRUCTURE = {
@@ -785,7 +829,6 @@ const SECTION_STRUCTURE = {
                     { key: 'Фундамент под инженерное оборудование', patterns: ['инженер', 'оборудование'], ifcTypes: ['IfcSlab'] },
                     { key: 'Фундамент под башенный кран', patterns: ['башен', 'кран'], ifcTypes: ['IfcSlab', 'IfcBeam'] },
                     { key: 'Устройство горизонтальной гидроизоляции', patterns: ['горизонт', 'гидроизол'], ifcTypes: ['IfcSlab'] },
-                    { key: 'Устройство вертикальной гидроизоляции', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] },
                     { key: 'Устройство деформационного шва', patterns: ['деформац', 'шов'], ifcTypes: ['IfcSlab', 'IfcWall'] }
                 ]
             },
@@ -796,7 +839,7 @@ const SECTION_STRUCTURE = {
                     { key: 'Подземная часть здания. Колонны', patterns: ['колонн'], ifcTypes: ['IfcColumn'] },
                     { key: 'Подземная часть здания. Плиты перекрытия', patterns: ['перекрыт', 'плит'], ifcTypes: ['IfcSlab'] },
                     { key: 'Подземная часть здания. Балки', patterns: ['балк', 'ригел'], ifcTypes: ['IfcBeam'] },
-                    { key: 'Подземная часть здания. Лестницы', patterns: ['лестн', 'марш', 'площадк'], ifcTypes: ['IfcStair', 'IfcSlab', 'IfcStairFlight'] },
+                    { key: 'Подземная часть здания. Лестницы', patterns: ['лестн', 'марш', 'площадк', 'плм', 'лмн'], ifcTypes: ['IfcStair', 'IfcSlab', 'IfcStairFlight'] },
                     { key: 'Подземная часть здания. Приямки', patterns: ['приям'], ifcTypes: ['IfcSlab', 'IfcWall'] },
                     { key: 'Подземная часть здания. Вертикальная гидроизоляция', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] }
                 ]
@@ -826,7 +869,7 @@ const SECTION_STRUCTURE = {
                     { key: 'Цокольная часть здания. Колонны', patterns: ['колонн'], ifcTypes: ['IfcColumn'] },
                     { key: 'Цокольная часть здания. Плиты перекрытия', patterns: ['перекрыт', 'плит'], ifcTypes: ['IfcSlab'] },
                     { key: 'Цокольная часть здания. Балки', patterns: ['балк', 'ригел'], ifcTypes: ['IfcBeam'] },
-                    { key: 'Цокольная часть здания. Лестницы', patterns: ['лестн', 'марш', 'площадк'], ifcTypes: ['IfcStair', 'IfcSlab', 'IfcStairFlight'] },
+                    { key: 'Цокольная часть здания. Лестницы', patterns: ['лестн', 'марш', 'площадк', 'плм', 'лмн'], ifcTypes: ['IfcStair', 'IfcSlab', 'IfcStairFlight'] },
                     { key: 'Цокольная часть здания. Приямки', patterns: ['приям'], ifcTypes: ['IfcSlab', 'IfcWall'] },
                     { key: 'Цокольная часть здания. Вертикальная гидроизоляция', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] }
                 ]
@@ -845,7 +888,7 @@ const SECTION_STRUCTURE = {
                     { key: 'Надземная часть здания. Колонны', patterns: ['колонн'], ifcTypes: ['IfcColumn'] },
                     { key: 'Надземная часть здания. Балки', patterns: ['балк', 'ригел'], ifcTypes: ['IfcBeam'] },
                     { key: 'Надземная часть здания. Парапеты', patterns: ['парапет'], ifcTypes: ['IfcWall'] },
-                    { key: 'Надземная часть здания. Лестничные площадки', patterns: ['лестничн', 'площадк'], ifcTypes: ['IfcSlab'] },
+                    { key: 'Надземная часть здания. Лестничные площадки', patterns: ['лестничн', 'площадк', 'плм', 'лмн'], ifcTypes: ['IfcSlab'] },
                     { key: 'Надземная часть здания. Лестничные марши', patterns: ['лестничн', 'марш'], ifcTypes: ['IfcStair', 'IfcStairFlight'] },
                     { key: 'Надземная часть здания. Вертикальная гидроизоляция', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] }
                 ]
@@ -1008,6 +1051,16 @@ function getIfcType(typeRu, name) {
     // Проверка на IfcProxyElement и отверстия — ПЕРВЫЕ
     if (typeLower.includes('ifcproxy') || typeLower.includes('proxy')) return 'IfcProxyElement';
     if (nameLower.includes('отверсти') || nameLower.includes('проём') || nameLower.includes('проем') || nameLower.includes('окно') || nameLower.includes('двер')) return 'IfcOpening';
+    if (nameLower.includes('труб')) return 'IfcProxyElement';
+    
+    // Проверка по ТИПУ (до проверки по имени)
+    if (typeLower.includes('ifcpile')) return 'IfcPile';
+    if (typeLower.includes('ifcstairflight')) return 'IfcStairFlight';
+    
+    // Проверка по ИМЕНИ
+    if (nameLower.includes('сва')) return 'IfcPile';
+    
+    if (nameLower.includes('плм') || nameLower.includes('лмн') || nameLower.includes('площадк')) return 'IfcSlab';
     
     if (nameLower.includes('стен') || nameLower.includes('парапет')) return 'IfcWall';
     if (nameLower.includes('колонн') || nameLower.includes('пилон')) return 'IfcColumn';
@@ -1020,7 +1073,7 @@ function getIfcType(typeRu, name) {
     if (typeLower.includes('ifcslab')) return 'IfcSlab';
     if (typeLower.includes('ifccolumn')) return 'IfcColumn';
     if (typeLower.includes('ifcbeam')) return 'IfcBeam';
-    if (typeLower.includes('ifcstair') || typeLower.includes('ifcstairflight')) return 'IfcStair';
+    if (typeLower.includes('ifcstair')) return 'IfcStair';
     
     return 'default';
 }
@@ -1030,16 +1083,16 @@ function isHydroVertical(typeRu, name, ifcType) {
     const hasHydro = nameLower.includes('гидроизол');
     const hasVertical = nameLower.includes('вертикал');
     const hasWall = nameLower.includes('стен') || ifcType === 'IfcWall';
-    return hasHydro && (hasVertical || hasWall);
+    const hasFundament = nameLower.includes('фундамент') || nameLower.includes('фунд. плита') || nameLower.includes('фундаментная');
+    return hasHydro && hasWall && !hasFundament;
 }
 
 function isHydroHorizontal(typeRu, name, ifcType) {
     const nameLower = (name || '').toLowerCase();
     const hasHydro = nameLower.includes('гидроизол');
-    const hasHorizontal = nameLower.includes('горизонт');
-    const hasSlab = ifcType === 'IfcSlab';
+    const hasFundamentOrSlab = nameLower.includes('фундамент') || nameLower.includes('фунд. плита') || nameLower.includes('фундаментная') || nameLower.includes('плит') || nameLower.includes('перекрыт') || ifcType === 'IfcSlab';
     if (isHydroVertical(typeRu, name, ifcType)) return false;
-    return hasHydro && (hasHorizontal || hasSlab);
+    return hasHydro && hasFundamentOrSlab;
 }
 
 function determineSubsection(typeRu, name, part) {
@@ -1051,10 +1104,17 @@ function determineSubsection(typeRu, name, part) {
     
     const tempIfcType = getIfcType(typeRu, name);
     if (tempIfcType === 'IfcOpening') return '__OTHER__';
+    if (nameLower.includes('труб')) return '__OTHER__';
     
     // Гидроизоляция: чёткое разделение
-    if (isHydroVertical(typeRu, name, tempIfcType)) return 'Устройство вертикальной гидроизоляции';
+    if (isHydroVertical(typeRu, name, tempIfcType)) {
+    if (part === 'Подземная') return 'Подземная часть здания. Вертикальная гидроизоляция';
+    if (part === 'Цоколь') return 'Цокольная часть здания. Вертикальная гидроизоляция';
+    return 'Надземная часть здания. Вертикальная гидроизоляция';
+}
     if (isHydroHorizontal(typeRu, name, tempIfcType)) return 'Устройство горизонтальной гидроизоляции';
+    
+    if (nameLower.includes('сва') || typeLower.includes('ifcpile')) return 'Свайно-ростверковый фундамент';
     
     if (nameLower.includes('приям')) {
         if (part === 'Подземная') return 'Подземная часть здания. Приямки';
@@ -1063,6 +1123,24 @@ function determineSubsection(typeRu, name, part) {
     }
     
     if (nameLower.includes('парапет')) return 'Надземная часть здания. Парапеты';
+    
+    // Лестничные марши по ifcType (IfcStairFlight)
+    if (tempIfcType === 'IfcStairFlight') {
+        if (part === 'Подземная' || part === 'Цоколь') return part + ' часть здания. Лестницы';
+        return 'Надземная часть здания. Лестничные марши';
+    }
+
+    // Лестничные площадки (Плм)
+    if (nameLower.includes('плм')) {
+        if (part === 'Подземная' || part === 'Цоколь') return part + ' часть здания. Лестницы';
+        return 'Надземная часть здания. Лестничные площадки';
+    }
+
+    // ЛМн без признаков марша — площадка
+    if (nameLower.includes('лмн')) {
+        if (part === 'Подземная' || part === 'Цоколь') return part + ' часть здания. Лестницы';
+        return 'Надземная часть здания. Лестничные площадки';
+    }
     
     if (nameLower.includes('лестничн') || nameLower.includes('лестниц')) {
         if (nameLower.includes('площадк')) {
@@ -1110,7 +1188,7 @@ function renderPreview(data) {
     const typeFloorIdx = data.headers.indexOf('Тип_этажа');
     const materialIdx = data.headers.indexOf('Материал');
     
-    const requiredColumns = ['№ п/п', 'Имя', 'Тип элемента', 'Длина_Width_мм', 'NetVolume', 'GrossSquare'];
+    const requiredColumns = ['№ п/п', 'Имя', 'Тип элемента', 'Толщина, мм', 'Объём, м3', 'Площадь, м2'];
     
     const findColumn = (partialName) => {
         return data.headers.find(h => {
@@ -1124,9 +1202,9 @@ function renderPreview(data) {
         '№ п/п': '№ п/п',
         'Имя': 'Имя',
         'Тип элемента': 'Тип элемента',
-        'Длина_Width_мм': findColumn('width') || 'Длина_Width_мм',
-        'NetVolume': findColumn('netvolume') || findColumn('объём_netvolume') || 'Объём_NetVolume_м3',
-        'GrossSquare': findColumn('grossarea') || findColumn('площадь_grossarea') || 'Площадь_GrossArea_м2',
+        'Толщина, мм': findColumn('width') || 'Длина_Width_мм',
+        'Объём, м3': findColumn('netvolume') || findColumn('объём_netvolume') || 'Объём_NetVolume_м3',
+        'Площадь, м2': findColumn('grossarea') || findColumn('площадь_grossarea') || 'Площадь_GrossArea_м2',
     };
     
     // Заголовки: чекбокс, данные, Часть здания (заблокирована), Материал
@@ -1453,150 +1531,320 @@ function autoGroupRows() {
                 const l3Cb = l3Tr.querySelector('.group-checkbox');
                 l3Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l3Id, this.checked); });
                 
-                // Уровень 4: Группировка по ifc-типу
-                const ifcGroups = {};
-                subsectionRows.forEach(rd => {
-                    if (!ifcGroups[rd.ifcType]) ifcGroups[rd.ifcType] = [];
-                    ifcGroups[rd.ifcType].push(rd);
-                });
+                const skipGeometry = NO_GEOMETRY_GROUP_SUBSECTIONS.includes(subsection.key);
                 
-                const needIcfGroup = Object.keys(ifcGroups).length > 1;
-                
-                Object.keys(ifcGroups).forEach(ifcType => {
-                    const ifcRows = ifcGroups[ifcType];
-                    const rule = GEOMETRY_GROUP_RULES[ifcType] || GEOMETRY_GROUP_RULES['default'];
+                if (skipGeometry) {
+                    const geoId = 'GEO_' + (groupCounter++);
+                    groupIndexMap[geoId] = subsectionRows.map(r => r.index);
+                    groupLevel[geoId] = 4;
+                    groupParent[geoId] = l3Id;
+                    groupChildren[geoId] = [];
+                    if (!groupChildren[l3Id]) groupChildren[l3Id] = [];
+                    groupChildren[l3Id].push(geoId);
+                    leafGroups[geoId] = true;
                     
-                    if (rule && rule.ranges && rule.ranges.length > 0) {
-                        const geoGroups = rule.ranges.map(r => ({ ...r, rows: [], indices: [] }));
+                    const firstIndex = subsectionRows[0].index;
+                    
+                    const geoTr = document.createElement('tr');
+                    geoTr.className = 'group-row hidden-row';
+                    geoTr.dataset.group = l3Id;
+                    geoTr.dataset.groupId = geoId;
+                    geoTr.style.cssText = 'background:#ffffff !important;';
+                    geoTr.onclick = function(e) {
+                        if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                        toggleGroup(geoId);
+                    };
+                    
+                    geoTr.innerHTML = `
+                        <td style="text-align:center; padding-left: 90px;">
+                            <span class="group-arrow" id="${geoId}_arrow">▶</span>
+                            <input type="checkbox" class="group-checkbox" data-group-id="${geoId}" data-first-index="${firstIndex}">
+                        </td>
+                        <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
+                            📏 Все элементы
+                            <span class="group-badge">×${subsectionRows.length}</span>
+                            <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${subsectionVolume.toFixed(2)} м³</span>
+                        </td>
+                    `;
+                    body.appendChild(geoTr);
+                    
+                    const geoCb = geoTr.querySelector('.group-checkbox');
+                    geoCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(geoId, this.checked); });
+                    
+                    subsectionRows.forEach(rd => {
+                        rd.tr.classList.add('group-row', 'hidden-row');
+                        rd.tr.dataset.group = geoId;
+                        const firstTd = rd.tr.querySelector('td');
+                        if (firstTd) firstTd.style.paddingLeft = '120px';
+                        const cb = rd.tr.querySelector('.row-checkbox');
+                        if (cb) { cb.style.display = 'none'; cb.checked = false; }
+                        body.appendChild(rd.tr);
+                    });
+                } else {
+                    const ifcGroups = {};
+                    subsectionRows.forEach(rd => {
+                        if (!ifcGroups[rd.ifcType]) ifcGroups[rd.ifcType] = [];
+                        ifcGroups[rd.ifcType].push(rd);
+                    });
+                    
+                    const needIcfGroup = Object.keys(ifcGroups).length > 1;
+                    
+                    Object.keys(ifcGroups).forEach(ifcType => {
+                        const ifcRows = ifcGroups[ifcType];
+                        const rule = GEOMETRY_GROUP_RULES[ifcType] || GEOMETRY_GROUP_RULES['default'];
                         
-                        ifcRows.forEach(rd => {
-                            const value = getGeometryValue(rule, rd.index);
-                            let assigned = false;
-                            for (const rg of geoGroups) {
-                                if (value <= rg.max) {
-                                    rg.rows.push(rd);
-                                    rg.indices.push(rd.index);
-                                    assigned = true;
-                                    break;
+                        if (rule && rule.ranges && rule.ranges.length > 0) {
+                            const geoGroups = rule.ranges.map(r => ({ ...r, rows: [], indices: [] }));
+                            
+                            ifcRows.forEach(rd => {
+                                const value = getGeometryValue(rule, rd.index);
+                                let assigned = false;
+                                for (const rg of geoGroups) {
+                                    if (value <= rg.max) {
+                                        rg.rows.push(rd);
+                                        rg.indices.push(rd.index);
+                                        assigned = true;
+                                        break;
+                                    }
                                 }
-                            }
-                            if (!assigned) {
-                                const lastGroup = geoGroups[geoGroups.length - 1];
-                                if (lastGroup) {
-                                    lastGroup.rows.push(rd);
-                                    lastGroup.indices.push(rd.index);
+                                if (!assigned) {
+                                    const lastGroup = geoGroups[geoGroups.length - 1];
+                                    if (lastGroup) {
+                                        lastGroup.rows.push(rd);
+                                        lastGroup.indices.push(rd.index);
+                                    }
                                 }
-                            }
-                        });
-                        
-                        geoGroups.forEach((geoGroup) => {
-                            if (geoGroup.rows.length === 0) return;
+                            });
                             
-                            let geoVolume = 0;
-                            geoGroup.rows.forEach(rd => { geoVolume += getVolume(rd.index); });
-                            
-                            let parentId = l3Id;
-                            let paddingLeft = 90;
-                            
-                            if (needIcfGroup) {
-                                const ifcId = 'IFC_' + (groupCounter++);
-                                groupIndexMap[ifcId] = geoGroup.indices;
-                                groupLevel[ifcId] = 4;
-                                groupParent[ifcId] = l3Id;
-                                groupChildren[ifcId] = [];
-                                if (!groupChildren[l3Id]) groupChildren[l3Id] = [];
-                                groupChildren[l3Id].push(ifcId);
+                            geoGroups.forEach((geoGroup) => {
+                                if (geoGroup.rows.length === 0) return;
                                 
-                                const ifcLabels = {
-                                    'IfcWall': '🧱 Стены',
-                                    'IfcSlab': '🔲 Плиты',
-                                    'IfcColumn': '🏛️ Колонны',
-                                    'IfcBeam': '〰️ Балки',
-                                    'IfcStair': '🪜 Лестницы',
-                                    'default': '📦 Прочее'
-                                };
+                                let geoVolume = 0;
+                                geoGroup.rows.forEach(rd => { geoVolume += getVolume(rd.index); });
                                 
-                                const ifcTr = document.createElement('tr');
-                                ifcTr.className = 'group-row hidden-row';
-                                ifcTr.dataset.group = l3Id;
-                                ifcTr.dataset.groupId = ifcId;
-                                ifcTr.style.cssText = 'background:#f0f4f8 !important;';
-                                ifcTr.onclick = function(e) {
+                                let parentId = l3Id;
+                                let paddingLeft = 90;
+                                let geoLevel = 5;
+                                
+                                if (needIcfGroup) {
+                                    const ifcId = 'IFC_' + (groupCounter++);
+                                    groupIndexMap[ifcId] = geoGroup.indices;
+                                    groupLevel[ifcId] = 4;
+                                    groupParent[ifcId] = l3Id;
+                                    groupChildren[ifcId] = [];
+                                    if (!groupChildren[l3Id]) groupChildren[l3Id] = [];
+                                    groupChildren[l3Id].push(ifcId);
+                                    
+                                    const ifcLabels = {
+                                        'IfcWall': '🧱 Стены',
+                                        'IfcSlab': '🔲 Плиты',
+                                        'IfcColumn': '🏛️ Колонны',
+                                        'IfcBeam': '〰️ Балки',
+                                        'IfcStair': '🪜 Лестницы',
+                                        'IfcStairFlight': '🪜 Лестничные марши',
+                                        'IfcPile': '🔩 Сваи',
+                                        'default': '📦 Прочее'
+                                    };
+                                    
+                                    const ifcTr = document.createElement('tr');
+                                    ifcTr.className = 'group-row hidden-row';
+                                    ifcTr.dataset.group = l3Id;
+                                    ifcTr.dataset.groupId = ifcId;
+                                    ifcTr.style.cssText = 'background:#f0f4f8 !important;';
+                                    ifcTr.onclick = function(e) {
+                                        if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                                        toggleGroup(ifcId);
+                                    };
+                                    
+                                    ifcTr.innerHTML = `
+                                        <td style="text-align:center; padding-left: 90px;">
+                                            <span class="group-arrow" id="${ifcId}_arrow">▶</span>
+                                            <input type="checkbox" class="group-checkbox" data-group-id="${ifcId}">
+                                        </td>
+                                        <td colspan="${totalCols - 1}" style="font-weight:500; color:#4a5568;">
+                                            ${ifcLabels[ifcType] || ifcType}
+                                            <span class="group-badge">×${geoGroup.rows.length}</span>
+                                            <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³</span>
+                                        </td>
+                                    `;
+                                    body.appendChild(ifcTr);
+                                    
+                                    const ifcCb = ifcTr.querySelector('.group-checkbox');
+                                    ifcCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(ifcId, this.checked); });
+                                    
+                                    parentId = ifcId;
+                                    paddingLeft = 120;
+                                    geoLevel = 5;
+                                }
+                                
+                                // Проверка на sub_ranges (для колонн)
+                                if (rule.sub_ranges) {
+                                    const subRule = rule.sub_ranges;
+                                    
+                                    const subGeoGroups = {};
+                                    geoGroup.rows.forEach(rd => {
+                                        const val = safeParseFloat(data.rows[rd.index]?.[data.headers.indexOf(subRule.field)] ?? 0);
+                                        let assigned = false;
+                                        for (const rg of subRule.ranges) {
+                                            if (val <= rg.max) {
+                                                if (!subGeoGroups[rg.label]) subGeoGroups[rg.label] = { rows: [], indices: [] };
+                                                subGeoGroups[rg.label].rows.push(rd);
+                                                subGeoGroups[rg.label].indices.push(rd.index);
+                                                assigned = true;
+                                                break;
+                                            }
+                                        }
+                                        if (!assigned) {
+                                            const lastRg = subRule.ranges[subRule.ranges.length - 1];
+                                            if (!subGeoGroups[lastRg.label]) subGeoGroups[lastRg.label] = { rows: [], indices: [] };
+                                            subGeoGroups[lastRg.label].rows.push(rd);
+                                            subGeoGroups[lastRg.label].indices.push(rd.index);
+                                        }
+                                    });
+                                    
+                                    const geoId = 'GEO_' + (groupCounter++);
+                                    groupIndexMap[geoId] = geoGroup.indices;
+                                    groupLevel[geoId] = geoLevel;
+                                    groupParent[geoId] = parentId;
+                                    groupChildren[geoId] = [];
+                                    if (!groupChildren[parentId]) groupChildren[parentId] = [];
+                                    groupChildren[parentId].push(geoId);
+                                    
+                                    const firstIndex = geoGroup.indices[0];
+                                    
+                                    const geoTr = document.createElement('tr');
+                                    geoTr.className = 'group-row hidden-row';
+                                    geoTr.dataset.group = parentId;
+                                    geoTr.dataset.groupId = geoId;
+                                    geoTr.style.cssText = 'background:#ffffff !important;';
+                                    geoTr.onclick = function(e) {
+                                        if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                                        toggleGroup(geoId);
+                                    };
+                                    
+                                    geoTr.innerHTML = `
+                                        <td style="text-align:center; padding-left: ${paddingLeft}px;">
+                                            <span class="group-arrow" id="${geoId}_arrow">▶</span>
+                                            <input type="checkbox" class="group-checkbox" data-group-id="${geoId}" data-first-index="${firstIndex}">
+                                        </td>
+                                        <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
+                                            📏 ${rule.label}: ${geoGroup.label}
+                                            <span class="group-badge">×${geoGroup.rows.length}</span>
+                                            <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³</span>
+                                        </td>
+                                    `;
+                                    body.appendChild(geoTr);
+                                    
+                                    const geoCb = geoTr.querySelector('.group-checkbox');
+                                    geoCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(geoId, this.checked); });
+                                    
+                                    Object.keys(subGeoGroups).forEach(subLabel => {
+                                        const subGroup = subGeoGroups[subLabel];
+                                        let subVolume = 0;
+                                        subGroup.rows.forEach(rd => { subVolume += getVolume(rd.index); });
+                                        
+                                        const subGeoId = 'SUBGEO_' + (groupCounter++);
+                                        groupIndexMap[subGeoId] = subGroup.indices;
+                                        groupLevel[subGeoId] = geoLevel + 1;
+                                        groupParent[subGeoId] = geoId;
+                                        groupChildren[subGeoId] = [];
+                                        if (!groupChildren[geoId]) groupChildren[geoId] = [];
+                                        groupChildren[geoId].push(subGeoId);
+                                        leafGroups[subGeoId] = true;
+                                        
+                                        const firstSubIndex = subGroup.indices[0];
+                                        
+                                        const subGeoTr = document.createElement('tr');
+                                        subGeoTr.className = 'group-row hidden-row';
+                                        subGeoTr.dataset.group = geoId;
+                                        subGeoTr.dataset.groupId = subGeoId;
+                                        subGeoTr.style.cssText = 'background:#ffffff !important;';
+                                        subGeoTr.onclick = function(e) {
+                                            if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                                            toggleGroup(subGeoId);
+                                        };
+                                        
+                                        subGeoTr.innerHTML = `
+                                            <td style="text-align:center; padding-left: ${paddingLeft + 30}px;">
+                                                <span class="group-arrow" id="${subGeoId}_arrow">▶</span>
+                                                <input type="checkbox" class="group-checkbox" data-group-id="${subGeoId}" data-first-index="${firstSubIndex}">
+                                            </td>
+                                            <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
+                                                📐 ${subRule.label}: ${subLabel}
+                                                <span class="group-badge">×${subGroup.rows.length}</span>
+                                                <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${subVolume.toFixed(2)} м³</span>
+                                            </td>
+                                        `;
+                                        body.appendChild(subGeoTr);
+                                        
+                                        const subGeoCb = subGeoTr.querySelector('.group-checkbox');
+                                        subGeoCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(subGeoId, this.checked); });
+                                        
+                                        subGroup.rows.forEach(rd => {
+                                            rd.tr.classList.add('group-row', 'hidden-row');
+                                            rd.tr.dataset.group = subGeoId;
+                                            const firstTd = rd.tr.querySelector('td');
+                                            if (firstTd) firstTd.style.paddingLeft = (paddingLeft + 60) + 'px';
+                                            const cb = rd.tr.querySelector('.row-checkbox');
+                                            if (cb) { cb.style.display = 'none'; cb.checked = false; }
+                                            body.appendChild(rd.tr);
+                                        });
+                                    });
+                                    
+                                    return;
+                                }
+                                
+                                // Стандартная группа (без sub_ranges)
+                                const geoId = 'GEO_' + (groupCounter++);
+                                groupIndexMap[geoId] = geoGroup.indices;
+                                groupLevel[geoId] = geoLevel;
+                                groupParent[geoId] = parentId;
+                                groupChildren[geoId] = [];
+                                if (!groupChildren[parentId]) groupChildren[parentId] = [];
+                                groupChildren[parentId].push(geoId);
+                                leafGroups[geoId] = true;
+                                
+                                const firstIndex = geoGroup.indices[0];
+                                
+                                const geoTr = document.createElement('tr');
+                                geoTr.className = 'group-row hidden-row';
+                                geoTr.dataset.group = parentId;
+                                geoTr.dataset.groupId = geoId;
+                                geoTr.style.cssText = 'background:#ffffff !important;';
+                                geoTr.onclick = function(e) {
                                     if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                                    toggleGroup(ifcId);
+                                    toggleGroup(geoId);
                                 };
                                 
-                                ifcTr.innerHTML = `
-                                    <td style="text-align:center; padding-left: 90px;">
-                                        <span class="group-arrow" id="${ifcId}_arrow">▶</span>
-                                        <input type="checkbox" class="group-checkbox" data-group-id="${ifcId}">
+                                geoTr.innerHTML = `
+                                    <td style="text-align:center; padding-left: ${paddingLeft}px;">
+                                        <span class="group-arrow" id="${geoId}_arrow">▶</span>
+                                        <input type="checkbox" class="group-checkbox" data-group-id="${geoId}" data-first-index="${firstIndex}">
                                     </td>
-                                    <td colspan="${totalCols - 1}" style="font-weight:500; color:#4a5568;">
-                                        ${ifcLabels[ifcType] || ifcType}
+                                    <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
+                                        📏 ${rule.label}: ${geoGroup.label}
                                         <span class="group-badge">×${geoGroup.rows.length}</span>
                                         <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³</span>
                                     </td>
                                 `;
-                                body.appendChild(ifcTr);
+                                body.appendChild(geoTr);
                                 
-                                const ifcCb = ifcTr.querySelector('.group-checkbox');
-                                ifcCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(ifcId, this.checked); });
+                                const geoCb = geoTr.querySelector('.group-checkbox');
+                                geoCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(geoId, this.checked); });
                                 
-                                parentId = ifcId;
-                                paddingLeft = 120;
-                            }
-                            
-                            // Уровень 5: Геометрическая группа
-                            const geoId = 'GEO_' + (groupCounter++);
-                            groupIndexMap[geoId] = geoGroup.indices;
-                            groupLevel[geoId] = 5;
-                            groupParent[geoId] = parentId;
-                            groupChildren[geoId] = [];
-                            if (!groupChildren[parentId]) groupChildren[parentId] = [];
-                            groupChildren[parentId].push(geoId);
-                            leafGroups[geoId] = true;
-                            
-                            const firstIndex = geoGroup.indices[0];
-                            
-                            const geoTr = document.createElement('tr');
-                            geoTr.className = 'group-row hidden-row';
-                            geoTr.dataset.group = parentId;
-                            geoTr.dataset.groupId = geoId;
-                            geoTr.style.cssText = 'background:#ffffff !important;';
-                            geoTr.onclick = function(e) {
-                                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                                toggleGroup(geoId);
-                            };
-                            
-                            geoTr.innerHTML = `
-                                <td style="text-align:center; padding-left: ${paddingLeft}px;">
-                                    <span class="group-arrow" id="${geoId}_arrow">▶</span>
-                                    <input type="checkbox" class="group-checkbox" data-group-id="${geoId}" data-first-index="${firstIndex}">
-                                </td>
-                                <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
-                                    📏 ${rule.label}: ${geoGroup.label}
-                                    <span class="group-badge">×${geoGroup.rows.length}</span>
-                                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³</span>
-                                </td>
-                            `;
-                            body.appendChild(geoTr);
-                            
-                            const geoCb = geoTr.querySelector('.group-checkbox');
-                            geoCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(geoId, this.checked); });
-                            
-                            // Добавляем строки элементов
-                            geoGroup.rows.forEach(rd => {
-                                rd.tr.classList.add('group-row', 'hidden-row');
-                                rd.tr.dataset.group = geoId;
-                                const firstTd = rd.tr.querySelector('td');
-                                if (firstTd) firstTd.style.paddingLeft = (paddingLeft + 30) + 'px';
-                                const cb = rd.tr.querySelector('.row-checkbox');
-                                if (cb) { cb.style.display = 'none'; cb.checked = false; }
-                                body.appendChild(rd.tr);
+                                geoGroup.rows.forEach(rd => {
+                                    rd.tr.classList.add('group-row', 'hidden-row');
+                                    rd.tr.dataset.group = geoId;
+                                    const firstTd = rd.tr.querySelector('td');
+                                    if (firstTd) firstTd.style.paddingLeft = (paddingLeft + 30) + 'px';
+                                    const cb = rd.tr.querySelector('.row-checkbox');
+                                    if (cb) { cb.style.display = 'none'; cb.checked = false; }
+                                    body.appendChild(rd.tr);
+                                });
                             });
-                        });
-                    }
-                });
+                        }
+                    });
+                }
             });
         });
         
@@ -1853,7 +2101,7 @@ function toggleGroupSelection(groupId, checked) {
         });
     }
     
-    [5, 4, 3, 2, 1].forEach(lvl => {
+    [6, 5, 4, 3, 2, 1].forEach(lvl => {
         Object.keys(groupLevel).forEach(gid => {
             if (groupLevel[gid] !== lvl) return;
             const cb = document.querySelector(`.group-checkbox[data-group-id="${gid}"]`);
@@ -1897,7 +2145,7 @@ function selectAllRows() {
                 updateChildCheckboxes(groupId, true);
             }
         });
-        [5, 4, 3, 2, 1].forEach(lvl => {
+        [6, 5, 4, 3, 2, 1].forEach(lvl => {
             Object.keys(groupLevel).forEach(gid => {
                 if (groupLevel[gid] !== lvl) return;
                 const cb = document.querySelector(`.group-checkbox[data-group-id="${gid}"]`);

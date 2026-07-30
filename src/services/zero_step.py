@@ -175,9 +175,9 @@ def get_geometry_from_representation(element):
                                     swept = item.SweptArea
                                     if swept.is_a('IfcRectangleProfileDef'):
                                         if hasattr(swept, 'XDim'):
-                                            geometry['Ширина_сечения_мм'] = round(float(swept.XDim), 2)
+                                            geometry['Длина_мм'] = round(float(swept.XDim), 2)
                                         if hasattr(swept, 'YDim'):
-                                            geometry['Высота_сечения_мм'] = round(float(swept.YDim), 2)
+                                            geometry['Толщина_мм'] = round(float(swept.YDim), 2)
     except Exception as e:
         logger.error(f"Ошибка при анализе геометрии: {e}")
     return geometry
@@ -422,6 +422,8 @@ def zero_step(ifc_file, output_folder=None):
     storey_cols = ['Этаж', 'Тип_этажа', 'Уровень_этажа_мм']
     other_cols = [col for col in df.columns if col not in base_cols + storey_cols]
     df = df[base_cols + storey_cols + other_cols]
+
+    df = df.drop(['Глубина_выдавливания_мм', 'Координата_X_мм', 'Координата_Y_мм', 'Координата_Z_мм'], axis=1)
 
     if output_folder:
         output_filename = os.path.join(output_folder, 'IFC_ВСЕ_ДАННЫЕ_исправленный.xlsx')
