@@ -33,6 +33,8 @@ from src.services.group_excel import (
     get_ifc_type,
     safe_parse_float,
     process_ifc_excel,
+    is_hydro_vertical,
+    is_hydro_horizontal,
 )
 
 logger = setup_logger(__name__)
@@ -86,6 +88,30 @@ def _extract_geometry_range_from_path(path: List[str], geo_label: str) -> Tuple[
     return '', ''
 
 
+def _determine_building_element_name(
+    ru_type: str,
+    name: str,
+    ifc_type: str,
+) -> str:
+    """
+    Определяет итоговое buildingElementName с учётом гидроизоляции.
+
+    Если элемент относится к вертикальной или горизонтальной гидроизоляции
+    (по тем же правилам, что в group_excel.py), возвращает соответствующее
+    название. Иначе — возвращает ru_type (или name, если ru_type пуст).
+    """
+    if is_hydro_vertical(ru_type, name, ifc_type):
+        return 'Вертикальная гидроизоляция'
+    if is_hydro_horizontal(ru_type, name, ifc_type):
+        return 'Горизонтальная гидроизоляция'
+    # Значение по умолчанию: ru_type, иначе имя элемента
+    if ru_type and ru_type != '-':
+        return str(ru_type)
+    if name and name != '-':
+        return str(name)
+    return ''
+
+
 def _get_location_name(part: str) -> str:
     """Преобразует ключ части здания в полное название."""
     mapping = {
@@ -119,14 +145,16 @@ def _normalize_material(material_str: str) -> str:
 def _get_original_geometry(element_data: dict, ifc_type: str) -> Optional[float]:
     """Возвращает оригинальное числовое значение геометрии элемента."""
     if ifc_type == 'IfcWall':
-        # Пробуем ширину сечения, затем глубину выдавливания
-        for key in ['Ширина_сечения_мм', 'Глубина_выдавливания_мм']:
-            if key in element_data:
-                val = safe_parse_float(element_data[key])
-                if val > 0:
-                    return val
-        # Пробуем Длина_Width_мм
+        # Приоритет: Длина_Width_мм (толщина стены, используется в GEOMETRY_GROUP_RULES)
         val = safe_parse_float(element_data.get('Длина_Width_мм', 0))
+        if val > 0:
+            return val
+        # Запасной вариант: ширина сечения
+        val = safe_parse_float(element_data.get('Ширина_сечения_мм', 0))
+        if val > 0:
+            return val
+        # Глубина выдавливания — это высота/длина стены, НЕ толщина
+        val = safe_parse_float(element_data.get('Глубина_выдавливания_мм', 0))
         if val > 0:
             return val
     elif ifc_type == 'IfcSlab':
@@ -139,6 +167,59 @@ def _get_original_geometry(element_data: dict, ifc_type: str) -> Optional[float]
         if val > 0:
             return val
     return None
+
+
+def _collect_all_geometry_params(element_data: dict) -> List[Dict[str, Any]]:
+    """
+    Собирает все нормализованные геометрические параметры элемента
+    из его данных для добавления в additionalCharacteristics.
+
+    Сканирует все ключи element_data и отбирает колонки с геометрическими
+    параметрами (длины, ширины, высоты, глубины, толщины, периметры, площади,
+    объёмы, веса). Значения уже нормализованы в zero_step.py / result_former.py
+    (приведены к единым единицам измерения и округлены).
+
+    Возвращает список характеристик в формате {name, values}.
+    """
+    result = []
+
+    # Паттерны геометрических параметров: (ключевое_слово, суффикс_единицы)
+    geometry_patterns = [
+        ('Длина', '_мм'),
+        ('Ширина', '_мм'),
+        ('Высота', '_мм'),
+        ('Глубина', '_мм'),
+        ('Толщина', '_мм'),
+        ('Периметр', '_мм'),
+        ('Площадь', '_м2'),
+        ('Объём', '_м3'),
+        ('Объём', '_литры'),
+        ('Вес', '_кг'),
+    ]
+
+    seen_keys = set()
+
+    for keyword, unit_suffix in geometry_patterns:
+        for key, value in element_data.items():
+            if keyword in key and key.endswith(unit_suffix) and key not in seen_keys:
+                # Пропускаем пустые значения
+                if value is None or value == '-' or value == '':
+                    continue
+                # Округляем числовые значения до 2 знаков
+                val = value
+                try:
+                    num_val = float(val)
+                    val = round(num_val, 2)
+                except (ValueError, TypeError):
+                    pass
+
+                result.append({
+                    'name': key,
+                    'values': [{'strValue': str(val)}],
+                })
+                seen_keys.add(key)
+
+    return result
 
 
 def _get_geometry_range_for_element(element_data: dict, ifc_type: str) -> Tuple[str, str]:
@@ -157,8 +238,8 @@ def _get_geometry_range_for_element(element_data: dict, ifc_type: str) -> Tuple[
     if field and field in element_data:
         value = safe_parse_float(element_data[field])
     elif ifc_type == 'IfcWall':
-        # Для стен — ширина сечения или глубина выдавливания
-        for key in ['Ширина_сечения_мм', 'Глубина_выдавливания_мм', 'Длина_Width_мм']:
+        # Для стен — толщина из Длина_Width_мм, затем ширина сечения, глубина выдавливания — не толщина
+        for key in ['Длина_Width_мм', 'Ширина_сечения_мм', 'Глубина_выдавливания_мм']:
             if key in element_data:
                 val = safe_parse_float(element_data[key])
                 if val > 0:
@@ -305,13 +386,10 @@ def build_elements_json_output(df: pd.DataFrame) -> List[Dict[str, Any]]:
                 'values': [{'strValue': fd}],
             })
 
-        # Оригинальное геометрическое значение
-        orig_geo = _get_original_geometry(element_data, ifc_type)
-        if orig_geo is not None:
-            additional.append({
-                'name': geo_name or _get_geometry_label(ifc_type),
-                'values': [{'strValue': str(orig_geo)}],
-            })
+        # Все нормализованные геометрические параметры элемента
+        # (длины, ширины, высоты, глубины, толщины, периметры, площади, объёмы, веса)
+        geometry_params = _collect_all_geometry_params(element_data)
+        additional.extend(geometry_params)
 
         # Этаж
         storey = element_data.get('Этаж', '')
@@ -330,7 +408,13 @@ def build_elements_json_output(df: pd.DataFrame) -> List[Dict[str, Any]]:
             })
 
         # ---- Собираем итоговый объект ----
+        # buildingElementName — общее имя группы по IFC-типу с учётом гидроизоляции
+        ru_type = element_data.get('Тип (RU)', '')
+        group_name = _determine_building_element_name(ru_type, elem_name, ifc_type)
+
         obj = {
+            'buildingElementName': group_name,
+            'isActive': True,
             'characteristics': characteristics,
             'additionalCharacteristics': additional,
         }
@@ -571,8 +655,12 @@ def build_reference_output(
                 first.get('Имя', ''),
             )
 
-        # Русское название элемента
-        ru_name = first.get('Тип (RU)', 'Неизвестно')
+        # Русское название элемента (с учётом гидроизоляции)
+        ru_name = _determine_building_element_name(
+            first.get('Тип (RU)', 'Неизвестно'),
+            first.get('Имя', ''),
+            ifc_type,
+        )
 
         # ---- Формируем totalMeasure ----
         total_volume = group.get('total_volume', 0)
