@@ -112,6 +112,36 @@ def _determine_building_element_name(
     return ''
 
 
+# Словарь для перевода названий элементов из множественного числа
+# в единственное. Ключи — как они приходят из zero_step / group_excel,
+# значения — единственное число для buildingElementName.
+_SINGULAR_MAP = {
+    'Стены': 'Стена',
+    'Перекрытия': 'Перекрытие',
+    'Колонны': 'Колонна',
+    'Балки': 'Балка',
+    'Лестницы': 'Лестница',
+    'Пандусы': 'Пандус',
+    'Плиты': 'Плита',
+    'Плиты перекрытия': 'Плита перекрытия',
+    'Прочие_элементы': 'Прочий_элемент',
+    'Лестничные марши': 'Лестничный марш',
+    'Сваи': 'Свая',
+}
+
+
+def _singularize_ru_name(name: str) -> str:
+    """
+    Приводит название конструктивного элемента к единственному числу.
+
+    Если название найдено в словаре _SINGULAR_MAP — возвращает
+    соответствующее значение. Иначе возвращает исходную строку без изменений.
+    """
+    if not name:
+        return name
+    return _SINGULAR_MAP.get(name, name)
+
+
 def _get_location_name(part: str) -> str:
     """Преобразует ключ части здания в полное название."""
     mapping = {
@@ -169,6 +199,29 @@ def _get_original_geometry(element_data: dict, ifc_type: str) -> Optional[float]
     return None
 
 
+# Карта переименования геометрических параметров для additionalCharacteristics.
+# Ключ — исходное имя колонки, значение — новое имя характеристики.
+_GEOMETRY_RENAME_MAP = {
+    'Длина_Width_мм': 'Толщина_мм',
+    'Длина_Height_мм': 'Высота_мм',
+    'Длина_Length_мм': 'Длина_мм',
+    'Длина_Perimeter_мм': 'Периметр_мм',
+    'Площадь_GrossSideArea_м2': 'Площадь_общая_м2',
+    'Площадь_NetSideArea_м2': 'Площадь_чистая_м2',
+    'Площадь_CrossSectionArea_м2': 'Площадь_поперечного_сечения_м2',
+    'Площадь_GrossArea_м2': 'Площадь_общая_вся_м2',
+    'Площадь_NetArea_м2': 'Площадь_чистая_вся_м2',
+    'Площадь_OuterSurfaceArea_м2': 'Площадь_наружняя_м2',
+    'Объём_NetVolume_м3': 'Объём_чистый_м3',
+    'Объём_GrossVolume_литры': 'Объём_общий_литры',
+}
+
+# Параметры, которые не нужно добавлять в additionalCharacteristics.
+_GEOMETRY_SKIP_KEYS = {
+    'Глубина_выдавливания_мм',
+}
+
+
 def _collect_all_geometry_params(element_data: dict) -> List[Dict[str, Any]]:
     """
     Собирает все нормализованные геометрические параметры элемента
@@ -178,6 +231,9 @@ def _collect_all_geometry_params(element_data: dict) -> List[Dict[str, Any]]:
     параметрами (длины, ширины, высоты, глубины, толщины, периметры, площади,
     объёмы, веса). Значения уже нормализованы в zero_step.py / result_former.py
     (приведены к единым единицам измерения и округлены).
+
+    Применяет карту переименований _GEOMETRY_RENAME_MAP для приведения
+    названий к требуемому виду и пропусает параметры из _GEOMETRY_SKIP_KEYS.
 
     Возвращает список характеристик в формате {name, values}.
     """
@@ -202,6 +258,9 @@ def _collect_all_geometry_params(element_data: dict) -> List[Dict[str, Any]]:
     for keyword, unit_suffix in geometry_patterns:
         for key, value in element_data.items():
             if keyword in key and key.endswith(unit_suffix) and key not in seen_keys:
+                # Пропускаем параметры из списка исключений
+                if key in _GEOMETRY_SKIP_KEYS:
+                    continue
                 # Пропускаем пустые значения
                 if value is None or value == '-' or value == '':
                     continue
@@ -213,8 +272,11 @@ def _collect_all_geometry_params(element_data: dict) -> List[Dict[str, Any]]:
                 except (ValueError, TypeError):
                     pass
 
+                # Применяем переименование, если есть в карте
+                display_name = _GEOMETRY_RENAME_MAP.get(key, key)
+
                 result.append({
-                    'name': key,
+                    'name': display_name,
                     'values': [{'strValue': str(val)}],
                 })
                 seen_keys.add(key)
@@ -350,32 +412,19 @@ def build_elements_json_output(df: pd.DataFrame) -> List[Dict[str, Any]]:
                 'values': [{'strValue': str(elem_name)}],
             })
 
-        # Тип бетона (марка)
+        # Прочность бетона (марка)
         concrete_grade = element_data.get(
-            'ExpCheck_MaterialConcrete_MGE_ConcreteGrade', ''
+            'Свойство_ExpCheck_MaterialConcrete_MGE_ConcreteGrade', ''
         )
         if concrete_grade and concrete_grade != '-' and str(concrete_grade).strip():
             additional.append({
-                'name': 'Тип бетона',
+                'name': 'Прочность',
                 'values': [{'strValue': str(concrete_grade)}],
-            })
-
-        # Водонепроницаемость
-        water_resist = element_data.get(
-            'ExpCheck_MaterialConcrete_MGE_WaterResist', ''
-        )
-        if water_resist and water_resist != '-' and str(water_resist).strip():
-            wr = str(water_resist)
-            if not wr.startswith('W'):
-                wr = f'W{wr}'
-            additional.append({
-                'name': 'Водонепроницаемость',
-                'values': [{'strValue': wr}],
             })
 
         # Морозостойкость
         freeze_durability = element_data.get(
-            'ExpCheck_MaterialConcrete_MGE_FreezeDurability', ''
+            'Свойство_ExpCheck_MaterialConcrete_MGE_FreezeDurability', ''
         )
         if freeze_durability and freeze_durability != '-' and str(freeze_durability).strip():
             fd = str(freeze_durability)
@@ -384,6 +433,19 @@ def build_elements_json_output(df: pd.DataFrame) -> List[Dict[str, Any]]:
             additional.append({
                 'name': 'Морозостойкость',
                 'values': [{'strValue': fd}],
+            })
+
+        # Водонепроницаемость
+        water_resist = element_data.get(
+            'Свойство_ExpCheck_MaterialConcrete_MGE_WaterResist', ''
+        )
+        if water_resist and water_resist != '-' and str(water_resist).strip():
+            wr = str(water_resist)
+            if not wr.startswith('W'):
+                wr = f'W{wr}'
+            additional.append({
+                'name': 'Водонепроницаемость',
+                'values': [{'strValue': wr}],
             })
 
         # Все нормализованные геометрические параметры элемента
@@ -413,7 +475,7 @@ def build_elements_json_output(df: pd.DataFrame) -> List[Dict[str, Any]]:
         group_name = _determine_building_element_name(ru_type, elem_name, ifc_type)
 
         obj = {
-            'buildingElementName': group_name,
+            'buildingElementName': _singularize_ru_name(group_name),
             'isActive': True,
             'characteristics': characteristics,
             'additionalCharacteristics': additional,
@@ -722,32 +784,19 @@ def build_reference_output(
                 'values': [{'strValue': str(elem_name)}],
             })
 
-        # Тип бетона (марка)
+        # Прочность бетона (марка)
         concrete_grade = first.get(
-            'ExpCheck_MaterialConcrete_MGE_ConcreteGrade', ''
+            'Свойство_ExpCheck_MaterialConcrete_MGE_ConcreteGrade', ''
         )
         if concrete_grade and concrete_grade != '-' and str(concrete_grade).strip():
             additional.append({
-                'name': 'Тип бетона',
+                'name': 'Прочность',
                 'values': [{'strValue': str(concrete_grade)}],
-            })
-
-        # Водонепроницаемость
-        water_resist = first.get(
-            'ExpCheck_MaterialConcrete_MGE_WaterResist', ''
-        )
-        if water_resist and water_resist != '-' and str(water_resist).strip():
-            wr = str(water_resist)
-            if not wr.startswith('W'):
-                wr = f'W{wr}'
-            additional.append({
-                'name': 'Водонепроницаемость',
-                'values': [{'strValue': wr}],
             })
 
         # Морозостойкость
         freeze_durability = first.get(
-            'ExpCheck_MaterialConcrete_MGE_FreezeDurability', ''
+            'Свойство_ExpCheck_MaterialConcrete_MGE_FreezeDurability', ''
         )
         if freeze_durability and freeze_durability != '-' and str(freeze_durability).strip():
             fd = str(freeze_durability)
@@ -756,6 +805,19 @@ def build_reference_output(
             additional.append({
                 'name': 'Морозостойкость',
                 'values': [{'strValue': fd}],
+            })
+
+        # Водонепроницаемость
+        water_resist = first.get(
+            'Свойство_ExpCheck_MaterialConcrete_MGE_WaterResist', ''
+        )
+        if water_resist and water_resist != '-' and str(water_resist).strip():
+            wr = str(water_resist)
+            if not wr.startswith('W'):
+                wr = f'W{wr}'
+            additional.append({
+                'name': 'Водонепроницаемость',
+                'values': [{'strValue': wr}],
             })
 
         # Оригинальное геометрическое значение
@@ -784,7 +846,7 @@ def build_reference_output(
 
         # ---- Собираем итоговый объект ----
         obj = {
-            'buildingElementName': ru_name,
+            'buildingElementName': _singularize_ru_name(ru_name),
             'isActive': True,
             'elementCount': group.get('count', 0),
             'totalMeasure': {
