@@ -7,11 +7,13 @@ import os
 import pymorphy3
 import ollama
 from fuzzywuzzy import fuzz
+import math
 
 from src.core.config import load_config
 from src.core.logger import setup_logger
 from src.services.base_knowledge import KNOWLEDGE_BASE
 from src.services.geometry_filter import geometry_filter
+
 
 logger = setup_logger("fourth_step")
 _cfg = load_config()
@@ -33,6 +35,107 @@ STOP_WORDS = {'и', 'в', 'на', 'с', 'по', 'к', 'у', 'о', 'от', 'дл�
               'подземная', 'подземный', 'надземная', 'надземный',
               'цоколь', 'кровля', 'подвал', 'мансарда', 'техническая'}
 
+
+def safe_float(value, default=0.0):
+    """
+    Безопасное преобразование значения во float.
+    Поддерживает строки с единицами измерения: "123.45 м2", "1 234,56 мм", "1.62 м³"
+    
+    Args:
+        value: Любое значение для преобразования
+        default: Значение по умолчанию при ошибке (по умолчанию 0.0)
+    
+    Returns:
+        float: Преобразованное значение или default при ошибке
+    
+    Examples:
+        safe_float("123.45 м2") -> 123.45
+        safe_float("1 234,56 мм") -> 1234.56
+        safe_float("1.62 м³") -> 1.62
+        safe_float("14.724 м²") -> 14.724
+        safe_float("abc") -> 0.0
+        safe_float(None) -> 0.0
+    """
+    if value is None:
+        return default
+    
+    # Если уже число
+    if isinstance(value, bool):
+        return float(value)
+    
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return default
+        return float(value)
+    
+    # Если список, словарь и т.д. — не конвертируем
+    if isinstance(value, (list, tuple, dict, set)):
+        return default
+    
+    # Преобразуем в строку
+    try:
+        text = str(value).strip()
+    except:
+        return default
+    
+    if not text or text in ('-', '.', 'nan', 'NaN', 'NAN', 'inf', 'INF', '-inf', '-INF'):
+        return default
+    
+    # Заменяем неразрывные пробелы и табуляции
+    text = text.replace('\xa0', ' ').replace('\t', ' ')
+    
+    # Обработка запятых и точек
+    if ',' in text and '.' in text:
+        # Если есть и точка, и запятая — последний знак (точка или запятая) считается десятичным разделителем
+        # Если запятая после точки — это разделитель тысяч в десятичной части, что маловероятно
+        # Поэтому: если точка последняя — она десятичный разделитель, запятая — разделитель тысяч
+        # Если запятая последняя — она десятичный разделитель, точка — разделитель тысяч
+        last_dot = text.rfind('.')
+        last_comma = text.rfind(',')
+        if last_dot > last_comma:
+            # Точка последняя — она десятичный разделитель
+            text = text.replace(',', '')
+        else:
+            # Запятая последняя — она десятичный разделитель
+            text = text.replace('.', '').replace(',', '.')
+    elif ',' in text:
+        # Только запятые
+        parts = text.split(',')
+        if len(parts) == 2:
+            # Одна запятая — всегда считаем десятичным разделителем (132,500000 → 132.500000)
+            text = text.replace(',', '.')
+        else:
+            # Множественные запятые — это разделители тысяч: "1,234,567"
+            text = text.replace(',', '')
+    
+    # Ищем число: опциональный минус, цифры, опциональная точка с цифрами
+    # Поддерживаем научную нотацию: 1.5e-3
+    pattern = r'(-?[\d]+(?:\.[\d]+)?(?:[eE][+-]?[\d]+)?)'
+    match = re.search(pattern, text)
+    
+    if match:
+        try:
+            return float(match.group(1))
+        except (ValueError, TypeError):
+            pass
+    
+    # Если не нашли — пробуем убрать всё лишнее, оставив цифры, точку и минус
+    cleaned = ''
+    for i, char in enumerate(text):
+        if char.isdigit():
+            cleaned += char
+        elif char == '.' and '.' not in cleaned:
+            cleaned += char
+        elif char == '-' and i == 0 and len(cleaned) == 0:
+            cleaned += char
+    
+    if cleaned and cleaned not in ('-', '.'):
+        try:
+            return float(cleaned)
+        except (ValueError, TypeError):
+            pass
+    
+    return default
 
 def _get_corrected_volume(df):
 
@@ -161,9 +264,11 @@ def _process_one_element(normalized_data, row_number, output_folder):
     composition = normalized_data.get('состав_из_имени', '')
     material_detected = normalized_data.get('материал_определенный', '')
     element_name = element_description.get('Имя', '')
-    armature_ratio = element_description.get('Pset_ConcreteElementGeneral_ReinforcementVolumeRatio', 0)
-    probably_beton = 'Смесь бетонная' + element_description.get('ExpCheck_MaterialConcrete_MGE_ConcreteGrade', '') + element_description.get('Property_ExpCheck_MaterialConcrete.MGE_WaterResist', '') + element_description.get('Property_ExpCheck_MaterialConcrete.MGE_FreezeDurability', '')
+    armature_ratio = safe_float(element_description.get('ReinforcementVolumeRatio', 0)) / 1000.0 if safe_float(element_description.get('ReinforcementVolumeRatio', 0)) else 0.0
+    probably_beton = 'Смесь бетонная' + str(element_description.get('ExpCheck_MaterialConcrete_MGE_ConcreteGrade', '')) + str(element_description.get('Property_ExpCheck_MaterialConcrete.MGE_WaterResist', '')) + str(element_description.get('Property_ExpCheck_MaterialConcrete.MGE_FreezeDurability', ''))
 
+
+    print('armature_ratio:', armature_ratio, type(armature_ratio))
     if not material_name:
         material_detected = element_description.get('Имя', '')
 
@@ -350,6 +455,7 @@ def _process_one_element(normalized_data, row_number, output_folder):
 
     #Фильтрация по геометрическим параметрам объекта (толщина для стен, площадь для плит и т.д.)
     works_list = geometry_filter(works_list, sizes, ifc_type)
+
         
     works_text = "\n".join(works_list)
 
@@ -509,9 +615,8 @@ def _process_one_element(normalized_data, row_number, output_folder):
         df_result = df_result.drop([c for c in cols_to_drop if c in df_result.columns], axis=1)
 
         # Объём работ
-        net_square = _find_column_with_volume(previous_data, "м2", "Net")
-        net_volume = _find_column_with_volume(previous_data, "м3", "Net")
-        gross_square = _find_column_with_volume(previous_data, "м2", "_GrossArea")
+        net_volume = _find_column_with_volume(previous_data, "м3", "Объём")
+        gross_square = _find_column_with_volume(previous_data, "м2", "Площадь")
 
         if 'Ед. изм.' in df_result.columns:
             def get_volume_of_work(row):
@@ -522,13 +627,13 @@ def _process_one_element(normalized_data, row_number, output_folder):
                     '100м2': (gross_square, 100, '(100 м2)'),
                     'м3': (net_volume, 1, 'м3'),
                     '100м3': (net_volume, 100, '(100 м3)'),
-                    'т': (net_volume * armature_ratio, 1, 'т'),
-                    '1т': (net_volume * armature_ratio, 1, 'т')
+                    'т': (safe_float(net_volume) * armature_ratio if safe_float(net_volume) and armature_ratio else 0, 1, 'т'),
+                    '1т': (safe_float(net_volume) * armature_ratio if safe_float(net_volume) and armature_ratio else 0, 1, 'т')
                 }
                 
                 for unit_key, (value, divisor, label) in conversions.items():
                     if unit_key == unit and value:
-                        converted = value / divisor
+                        converted = safe_float(value) / divisor
                         decimals = 4 if divisor > 1 else (2 if 'м2' in unit_key else 3)
                         return f"{converted:.{decimals}f}"
                 
@@ -587,7 +692,7 @@ def _process_one_element(normalized_data, row_number, output_folder):
 
         logger.info(f"Сохранено: {output_filename}")
 
-    except Exception as e:
+    except KeyboardInterrupt as e:
         logger.error(f"Ошибка LLM для элемента {row_number}: {e}")
         if 'answer' in locals():
             logger.error(f"Ответ LLM: {answer[:500]}")
@@ -656,6 +761,7 @@ def merge_final_worklists(input_folder):
                         ifc_class = prev_data.get('Тип элемента', '')
                         global_id = prev_data.get('GlobalId', '')
                         name_elem = prev_data.get('Имя', '')
+                        floor = prev_data.get('Тип_этажа', '')
                         
                         logger.info(f"Данные из JSON для {filename}:")
                         logger.info(f"  ifc_class: {ifc_class}")
@@ -669,7 +775,7 @@ def merge_final_worklists(input_folder):
             
             # Создаем строку со значениями переменных
             separator_row = {}
-            separator_row[all_columns[0]] = ifc_class + " " + name_elem + " " + global_id
+            separator_row[all_columns[0]] = ifc_class + " " + name_elem + " " + global_id + " " + floor 
             
             # Остальные колонки оставляем пустыми
             for col in all_columns[1:]:

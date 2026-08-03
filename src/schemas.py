@@ -1,6 +1,6 @@
 from __future__ import annotations
-from typing import List, Optional, Dict
-from pydantic import BaseModel, ConfigDict
+from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 
@@ -38,6 +38,9 @@ class SessionFull(CamelModel):
     progress: int = 0
     progress_message: str = ""
     has_results: bool = False
+    # Поля для поддержки множественных запусков
+    runs: Optional[List[Dict[str, Any]]] = None
+    current_run_id: Optional[str] = None
 
 
 class SessionListResponse(CamelModel):
@@ -102,6 +105,9 @@ class RestoreResponse(CamelModel):
     building_height: Optional[float] = None
     selected_rows_count: int = 0
     source_type: Optional[str] = None
+    # Поля для поддержки множественных запусков
+    runs: Optional[List[Dict[str, Any]]] = None
+    current_run_id: Optional[str] = None
 
 
 class SelectRowsResponse(CamelModel):
@@ -121,3 +127,55 @@ class FilterHeightResponse(CamelModel):
 class HealthResponse(CamelModel):
     status: str
     timestamp: str
+
+
+# ========== НОВЫЕ СХЕМЫ ДЛЯ ПОДДЕРЖКИ МНОЖЕСТВЕННЫХ ЗАПУСКОВ ==========
+
+class RunInfo(CamelModel):
+    """Информация об одном запуске обработки"""
+    run_id: str
+    run_number: int
+    status: str
+    selected_rows: Optional[List[int]] = None
+    construction_types: Dict[str, str] = {}
+    construction_materials: Dict[str, str] = {}
+    building_height: Optional[float] = None
+    grouped_data: Dict[str, Any] = {}
+    files: List[SessionFile] = []
+    created_at: str  # ← должно быть created_at (snake_case)
+    error: Optional[str] = None
+
+class NewRunRequest(CamelModel):
+    """Запрос на создание нового запуска"""
+    row_indices: List[int]
+    row_types: Dict[str, str] = {}
+    row_materials: Dict[str, str] = {}
+    building_height: Optional[float] = None
+    grouped_data: Optional[Dict[str, Any]] = None
+
+
+class NewRunResponse(CamelModel):
+    """Ответ при создании нового запуска"""
+    session_id: str
+    run_id: str
+    run_number: int
+    status: str
+    selected_rows: int
+    message: str
+
+
+class RunSwitchResponse(CamelModel):
+    """Ответ при переключении на другой запуск"""
+    session_id: str
+    run_id: str
+    run_number: Optional[int] = None
+    status: Optional[str] = None
+    files: List[SessionFile] = []
+    building_height: Optional[float] = None
+
+
+class RunsListResponse(CamelModel):
+    """Список всех запусков сессии"""
+    runs: List[RunInfo]
+    current_run_id: Optional[str] = None
+    total: int

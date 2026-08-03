@@ -179,6 +179,6 @@ def second_step(input_folder):
                     data = json.load(file)
                     _filter_one_element_by_part(input_folder, WORKS_FILE, row_number, building_part, data)  
                     logger.info(f"Обработан файл: {filename}")
-                except json.JSONDecodeError:
-                    logger.warning(f"Ошибка чтения JSON в файле: {filename}")
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Ошибка чтения JSON в файле: {filename}, {e}")
     logger.info("  ===ЭТАП 2 ЗАВЕРШЕН===")

@@ -17,7 +17,7 @@ from openpyxl.utils import get_column_letter
 # ========== Configuration ==========
 GEOMETRY_GROUP_RULES = {
     'IfcWall': {
-        'field': 'Длина_Width_мм',
+        'field': 'Ширина, мм',
         'label': 'Толщина',
         'unit': 'мм',
         'ranges': [
@@ -29,7 +29,7 @@ GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcSlab': {
-        'field': 'Площадь_GrossArea_м2',
+        'field': 'Площадь, м2',
         'label': 'Площадь',
         'unit': 'м²',
         'ranges': [
@@ -39,7 +39,7 @@ GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcColumn': {
-        'field': 'Длина_Perimeter_мм',
+        'field': 'Периметр, мм',
         'label': 'Периметр',
         'unit': 'мм',
         'ranges': [
@@ -47,7 +47,7 @@ GEOMETRY_GROUP_RULES = {
             {'max': float('inf'), 'label': 'более 1200 мм'}
         ],
         'sub_ranges': {
-            'field': 'Длина_Width_мм',
+            'field': 'Ширина, мм',
             'label': 'Сторона',
             'unit': 'мм',
             'ranges': [
@@ -58,7 +58,7 @@ GEOMETRY_GROUP_RULES = {
         }
     },
     'IfcBeam': {
-        'field': 'Площадь_GrossArea_м2',
+        'field': 'Площадь, м2',
         'label': 'Площадь',
         'unit': 'м²',
         'ranges': [
@@ -68,7 +68,7 @@ GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcStair': {
-        'field': 'Объём_NetVolume_м3',
+        'field': 'Объём, м3',
         'label': '',
         'unit': 'м³',
         'ranges': [
@@ -76,7 +76,7 @@ GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcStairFlight': {
-        'field': 'Объём_NetVolume_м3',
+        'field': 'Объём, м3',
         'label': '',
         'unit': 'м³',
         'ranges': [
@@ -84,7 +84,7 @@ GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcPile': {
-        'field': 'Длина_Length_мм',
+        'field': 'Длина, мм',
         'label': 'Длина',
         'unit': 'мм',
         'ranges': [
@@ -95,7 +95,7 @@ GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcProxyElement': {
-        'field': 'Объём_NetVolume_м3',
+        'field': 'Объём, м3',
         'label': '',
         'unit': 'м³',
         'ranges': [
@@ -103,7 +103,7 @@ GEOMETRY_GROUP_RULES = {
         ]
     },
     'default': {
-        'field': 'Объём_NetVolume_м3',
+        'field': 'Объём, м3',
         'label': 'Объём',
         'unit': 'м³',
         'ranges': [

@@ -17,7 +17,8 @@ from src.schemas import (
     ErrorResponse, SessionFull, SessionListResponse,
     UploadResponse, StatusResponse, DeleteResponse,
     PreviewResponse, RestoreResponse, HealthResponse,
-    SelectRowsResponse, FilterHeightResponse,
+    SelectRowsResponse, FilterHeightResponse, NewRunResponse,
+    RunSwitchResponse, RunsListResponse,
 )
 
 logger = setup_logger(__name__)
@@ -269,63 +270,6 @@ def upload_ifc():
 
 @bp.route("/api/sessions", methods=["GET"])
 def list_sessions():
-    """
-    Список всех сессий обработки.
-    ---
-    tags:
-      - sessions
-    responses:
-      200:
-        description: Массив сессий
-        schema:
-          type: object
-          properties:
-            sessions:
-              type: array
-              items:
-                $ref: '#/definitions/SessionFull'
-            total:
-              type: integer
-    definitions:
-      SessionFile:
-        type: object
-        properties:
-          path:
-            type: string
-          filename:
-            type: string
-          size:
-            type: integer
-          downloadUrl:
-            type: string
-      SessionFull:
-        type: object
-        properties:
-          sessionId:
-            type: string
-          createdAt:
-            type: string
-          status:
-            type: string
-          ifcFileName:
-            type: string
-          excelFileName:
-            type: string
-          buildingHeight:
-            type: number
-          files:
-            type: array
-            items:
-              $ref: '#/definitions/SessionFile'
-          progress:
-            type: integer
-          progressMessage:
-            type: string
-          hasResults:
-            type: boolean
-          error:
-            type: string
-    """
     try:
         raw = _get_manager().list_sessions()
         sessions = [SessionFull(**s) for s in raw]
@@ -337,43 +281,6 @@ def list_sessions():
 
 @bp.route("/api/session/<session_id>/status", methods=["GET"])
 def get_status(session_id: str):
-    """
-    Краткий статус сессии (для поллинга).
-    ---
-    tags:
-      - sessions
-    parameters:
-      - name: session_id
-        in: path
-        type: string
-        required: true
-        description: ID сессии
-    responses:
-      200:
-        description: Статус сессии
-        schema:
-          type: object
-          properties:
-            sessionId:
-              type: string
-            status:
-              type: string
-              enum: [ifc_processing, selecting_rows, processing, completed, error]
-            realStatus:
-              type: string
-            progress:
-              type: integer
-            progressMessage:
-              type: string
-            error:
-              type: string
-            hasResults:
-              type: boolean
-      400:
-        description: Некорректный ID сессии
-      404:
-        description: Сессия не найдена
-    """
     if not session_id or len(session_id) < 8:
         return _err(ErrorResponse(detail="Некорректный ID сессии"), 400)
 
@@ -522,17 +429,32 @@ def restore_session(session_id: str):
     if not s:
         return _err(ErrorResponse(detail="Сессия не найдена"), 404)
 
+    # Получаем файлы текущего запуска
+    current_files = []
+    current_run_id = s.get("current_run_id")
+    if current_run_id:
+        runs = s.get("runs", [])
+        for run in runs:
+            if run.get("run_id") == current_run_id:
+                current_files = run.get("files", [])
+                break
+    
+    if not current_files:
+        current_files = s.get("files", [])
+
     return _ok(RestoreResponse(
         session_id=s["session_id"],
         status=s["status"],
         progress=s.get("progress", 0),
         progress_message=s.get("progress_message", ""),
         has_results=s.get("has_results", False),
-        files=s.get("files", []),
+        files=current_files,
         construction_types=s.get("construction_types", {}),
         building_height=s.get("building_height"),
         selected_rows_count=len(s.get("selected_rows", []) or []),
         source_type=s.get("source_type"),
+        runs=s.get("runs", []),
+        current_run_id=s.get("current_run_id"),
     ))
 
 
@@ -581,7 +503,13 @@ def preview_excel(session_id: str):
     if not s:
         return _err(ErrorResponse(detail="Сессия не найдена"), 404)
 
-    excel_path = s.get("excel_file_path")
+    # Ищем Excel в original/ директории
+    excel_path = _get_manager()._get_original_excel_path(session_id)
+    
+    if not excel_path or not os.path.exists(excel_path):
+        # Fallback: старый путь
+        excel_path = s.get("excel_file_path")
+    
     if not excel_path or not os.path.exists(excel_path):
         csv_path = excel_path.replace(".xlsx", ".csv") if excel_path else None
         if csv_path and os.path.exists(csv_path):
@@ -603,15 +531,19 @@ def preview_excel(session_id: str):
     rows = df.fillna("-").astype(str).values.tolist()
     saved_types = s.get("construction_types", {})
 
-    # Проверяем наличие чертежа и условных обозначений (для PDF-сессий)
+    # Проверяем наличие чертежа и условных обозначений
     has_blueprint_image = False
     has_materials_md = False
     source_type = s.get("source_type")
-    for f in s.get("files", []):
-        fname = f.get("filename", "")
-        if fname.startswith("blueprint_painted") and fname.endswith(".png"):
+    
+    session_dir = os.path.join(_get_manager().output_folder, session_id)
+    original_dir = os.path.join(session_dir, 'original')
+    search_dir = original_dir if os.path.exists(original_dir) else session_dir
+    
+    for f in os.listdir(search_dir) if os.path.exists(search_dir) else []:
+        if f.startswith("blueprint_painted") and f.endswith(".png"):
             has_blueprint_image = True
-        if fname == "materials_colors.md":
+        if f == "materials_colors.md":
             has_materials_md = True
 
         # После чтения основного Excel
@@ -755,26 +687,26 @@ def get_blueprint_image(session_id: str):
     if not s:
         return _err(ErrorResponse(detail="Сессия не найдена"), 404)
 
-    # Ищем файл с изображением чертежа в списке файлов сессии
     image_path = None
-    for f in s.get("files", []):
-        fname = f.get("filename", "")
-        if fname.startswith("blueprint_painted") and fname.endswith(".png"):
-            image_path = f.get("path")
+    
+    # Ищем в original/ директории
+    session_dir = os.path.join(_get_manager().output_folder, session_id)
+    original_dir = os.path.join(session_dir, 'original')
+    
+    search_dirs = []
+    if os.path.exists(original_dir):
+        search_dirs.append(original_dir)
+    search_dirs.append(session_dir)
+    
+    for search_dir in search_dirs:
+        for fname in os.listdir(search_dir):
+            if fname.startswith("blueprint_painted") and fname.endswith(".png"):
+                image_path = os.path.join(search_dir, fname)
+                break
+        if image_path:
             break
 
-    # Fallback: ищем напрямую в директории сессии
     if not image_path or not os.path.exists(image_path):
-        manager = _get_manager()
-        session_dir = os.path.join(manager.output_folder, session_id)
-        if os.path.isdir(session_dir):
-            for fname in os.listdir(session_dir):
-                if fname.startswith("blueprint_painted") and fname.endswith(".png"):
-                    image_path = os.path.join(session_dir, fname)
-                    break
-
-    if not image_path or not os.path.exists(image_path):
-        logger.warning(f"Изображение чертежа не найдено для сессии {session_id}. image_path={image_path}")
         return _err(ErrorResponse(detail="Изображение чертежа не найдено"), 404)
 
     return send_file(os.path.abspath(image_path), mimetype="image/png")
@@ -782,28 +714,6 @@ def get_blueprint_image(session_id: str):
 
 @bp.route("/api/session/<session_id>/materials_md", methods=["GET"])
 def get_materials_md(session_id: str):
-    """
-    Получить условные обозначения материалов (markdown) для PDF-сессии.
-    ---
-    tags:
-      - files
-    parameters:
-      - name: session_id
-        in: path
-        type: string
-        required: true
-        description: ID сессии
-    responses:
-      200:
-        description: Markdown-таблица условных обозначений
-        schema:
-          type: object
-          properties:
-            markdown:
-              type: string
-      404:
-        description: Сессия или файл не найдены
-    """
     if not session_id:
         return _err(ErrorResponse(detail="ID сессии не указан"), 400)
 
@@ -813,13 +723,17 @@ def get_materials_md(session_id: str):
 
     md_path = _get_manager().file_path(session_id, "materials_colors.md")
 
-    # Fallback: ищем напрямую в директории сессии
+    # Fallback: ищем в директории сессии
     if not md_path or not os.path.exists(md_path):
-        manager = _get_manager()
-        session_dir = os.path.join(manager.output_folder, session_id)
-        fallback_path = os.path.join(session_dir, "materials_colors.md")
-        if os.path.exists(fallback_path):
-            md_path = fallback_path
+        session_dir = os.path.join(_get_manager().output_folder, session_id)
+        original_dir = os.path.join(session_dir, 'original')
+        
+        for search_dir in [original_dir, session_dir]:
+            if os.path.exists(search_dir):
+                fallback_path = os.path.join(search_dir, "materials_colors.md")
+                if os.path.exists(fallback_path):
+                    md_path = fallback_path
+                    break
 
     if not md_path or not os.path.exists(md_path):
         return _err(ErrorResponse(detail="Условные обозначения не найдены"), 404)
@@ -896,7 +810,19 @@ def download_all(session_id: str):
     if not s:
         return _err(ErrorResponse(detail="Сессия не найдена"), 404)
 
-    files = s.get("files", [])
+    # Получаем файлы текущего запуска
+    files = []
+    current_run_id = s.get("current_run_id")
+    if current_run_id:
+        runs = s.get("runs", [])
+        for run in runs:
+            if run.get("run_id") == current_run_id:
+                files = run.get("files", [])
+                break
+    
+    if not files:
+        files = s.get("files", [])
+    
     if not files:
         return _err(ErrorResponse(detail="Нет файлов для скачивания"), 404)
 
@@ -925,68 +851,6 @@ def download_all(session_id: str):
 
 @bp.route("/api/session/<session_id>/select_rows", methods=["POST"])
 def select_rows(session_id: str):
-    """
-    Выбрать строки Excel-таблицы и запустить пайплайн обработки (этапы 1-6).
-    ---
-    tags:
-      - processing
-    parameters:
-      - name: session_id
-        in: path
-        type: string
-        required: true
-        description: ID сессии (должна быть в статусе selecting_rows)
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          required:
-            - rowIndices
-          properties:
-            rowIndices:
-              type: array
-              items:
-                type: integer
-              description: Индексы выбранных строк (0-based)
-            allRows:
-              type: boolean
-              description: Выбрать все строки
-              default: false
-            rowTypes:
-              type: object
-              description: "Часть здания для каждой строки: {row_index: 'Надземная'|'Подземная'|'Цоколь'}"
-            rowMaterials:
-              type: object
-              description: "Материал для каждой строки: {row_index: 'Бетон'|'Цемент'|'Кирпич'|'Дерево'|...}"
-            buildingHeight:
-              type: number
-              description: Высота здания в метрах (1-10000)
-            groupedData:
-              type: object
-              description: Данные сгруппированных элементов
-    responses:
-      200:
-        description: Строки выбраны, обработка запущена
-        schema:
-          type: object
-          properties:
-            sessionId:
-              type: string
-            status:
-              type: string
-              example: processing
-            selectedRows:
-              type: integer
-            message:
-              type: string
-      400:
-        description: Ошибка валидации
-      404:
-        description: Сессия не найдена
-      500:
-        description: Ошибка сервера
-    """
     if not session_id:
         return _err(ErrorResponse(detail="ID сессии не указан"), 400)
 
@@ -1016,11 +880,9 @@ def select_rows(session_id: str):
 
     # Валидация материалов
     if row_materials:
-        # Проверяем, что все ключи - строки с числами
         validated_materials = {}
         for key, value in row_materials.items():
             try:
-                # Пробуем преобразовать ключ в int
                 int_key = int(key)
                 if not isinstance(value, str):
                     return _err(ErrorResponse(detail=f"Некорректное значение материала для строки {key}"), 400)
@@ -1029,7 +891,6 @@ def select_rows(session_id: str):
                 return _err(ErrorResponse(detail=f"Некорректный индекс строки в материалах: {key}"), 400)
         row_materials = validated_materials
 
-    # Валидация частей здания
     if row_types:
         validated_types = {}
         valid_parts = {"Надземная", "Подземная", "Цоколь"}
@@ -1037,7 +898,7 @@ def select_rows(session_id: str):
             try:
                 int_key = int(key)
                 if value not in valid_parts:
-                    return _err(ErrorResponse(detail=f"Некорректная часть здания для строки {key}: {value}. Допустимые значения: {', '.join(valid_parts)}"), 400)
+                    return _err(ErrorResponse(detail=f"Некорректная часть здания для строки {key}: {value}"), 400)
                 validated_types[str(int_key)] = value
             except (ValueError, TypeError):
                 return _err(ErrorResponse(detail=f"Некорректный индекс строки в частях здания: {key}"), 400)
@@ -1063,10 +924,13 @@ def select_rows(session_id: str):
         return _err(ErrorResponse(detail=f"Ошибка сервера: {str(e)}"), 500)
 
 
-@bp.route("/api/session/<session_id>/filter_height", methods=["POST"])
-def filter_by_height(session_id: str):
+# ========== НОВЫЕ ЭНДПОИНТЫ ДЛЯ ПОВТОРНЫХ ЗАПУСКОВ ==========
+
+@bp.route("/api/session/<session_id>/new_run", methods=["POST"])
+def new_run(session_id: str):
     """
-    Запустить фильтрацию по высоте здания (этапы 5-6).
+    Создать новый запуск обработки с другими выбранными строками.
+    Исходный IFC/PDF файл не обрабатывается заново.
     ---
     tags:
       - processing
@@ -1082,31 +946,151 @@ def filter_by_height(session_id: str):
         schema:
           type: object
           required:
-            - buildingHeight
+            - rowIndices
           properties:
+            rowIndices:
+              type: array
+              items:
+                type: integer
+            rowTypes:
+              type: object
+            rowMaterials:
+              type: object
             buildingHeight:
               type: number
-              description: Высота здания в метрах (1-10000)
+            groupedData:
+              type: object
     responses:
       200:
-        description: Фильтрация запущена
-        schema:
-          type: object
-          properties:
-            sessionId:
-              type: string
-            status:
-              type: string
-              example: processing
-            buildingHeight:
-              type: number
-            message:
-              type: string
+        description: Новый запуск создан
       400:
-        description: Ошибка валидации или неверный статус сессии
+        description: Ошибка валидации
       404:
         description: Сессия не найдена
     """
+    if not session_id:
+        return _err(ErrorResponse(detail="ID сессии не указан"), 400)
+
+    data = request.get_json()
+    if not data:
+        return _err(ErrorResponse(detail="Тело запроса должно быть JSON"), 400)
+
+    row_indices = data.get("rowIndices", data.get("row_indices", []))
+    row_types = data.get("rowTypes", data.get("row_types", {}))
+    row_materials = data.get("rowMaterials", data.get("row_materials", {}))
+    building_height = data.get("buildingHeight", data.get("building_height"))
+    grouped_data = data.get("groupedData", data.get("grouped_data", {}))
+
+    if not row_indices or len(row_indices) == 0:
+        return _err(ErrorResponse(detail="Выберите хотя бы одну строку"), 400)
+
+    if building_height is not None:
+        try:
+            building_height = float(building_height)
+            if building_height <= 0:
+                return _err(ErrorResponse(detail="Высота должна быть положительным числом"), 400)
+            if building_height > 10000:
+                return _err(ErrorResponse(detail="Слишком большая высота здания"), 400)
+        except (ValueError, TypeError):
+            return _err(ErrorResponse(detail="Некорректное значение высоты"), 400)
+
+    try:
+        result = _get_manager().new_run(
+            session_id,
+            row_indices,
+            row_types or {},
+            row_materials or {},
+            building_height,
+            grouped_data or {}
+        )
+        return _ok(NewRunResponse(**result))
+    except KeyError:
+        return _err(ErrorResponse(detail="Сессия не найдена"), 404)
+    except ValueError as e:
+        return _err(ErrorResponse(detail=str(e)), 400)
+    except Exception as e:
+        logger.error(f"Ошибка создания нового запуска: {e}", exc_info=True)
+        return _err(ErrorResponse(detail=f"Ошибка сервера: {str(e)}"), 500)
+
+
+@bp.route("/api/session/<session_id>/runs", methods=["GET"])
+def list_runs(session_id: str):
+    """
+    Получить список всех запусков сессии.
+    ---
+    tags:
+      - sessions
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+    responses:
+      200:
+        description: Список запусков
+    """
+    if not session_id:
+        return _err(ErrorResponse(detail="ID сессии не указан"), 400)
+
+    runs = _get_manager().list_runs(session_id)
+    current_run_id = None
+    
+    s = _get_manager().get(session_id)
+    if s:
+        current_run_id = s.get("current_run_id")
+    
+    # Логируем для отладки
+    logger.info(f"Runs для сессии {session_id}:")
+    logger.info(f"  всего={len(runs)}, current_run_id={current_run_id}")
+    for run in runs:
+        logger.info(f"  Run: {json.dumps(run, ensure_ascii=False, default=str)[:200]}")
+    
+    return _ok(RunsListResponse(
+        runs=runs,
+        current_run_id=current_run_id,
+        total=len(runs)
+    ))
+
+
+@bp.route("/api/session/<session_id>/switch_run/<run_id>", methods=["POST"])
+def switch_run(session_id: str, run_id: str):
+    """
+    Переключиться на другой запуск.
+    ---
+    tags:
+      - processing
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+      - name: run_id
+        in: path
+        type: string
+        required: true
+    responses:
+      200:
+        description: Переключение выполнено
+      404:
+        description: Сессия или запуск не найдены
+    """
+    if not session_id or not run_id:
+        return _err(ErrorResponse(detail="ID сессии и запуска обязательны"), 400)
+
+    try:
+        result = _get_manager().switch_run(session_id, run_id)
+        return _ok(RunSwitchResponse(**result))
+    except KeyError:
+        return _err(ErrorResponse(detail="Сессия не найдена"), 404)
+    except ValueError as e:
+        return _err(ErrorResponse(detail=str(e)), 404)
+    except Exception as e:
+        logger.error(f"Ошибка переключения запуска: {e}", exc_info=True)
+        return _err(ErrorResponse(detail=f"Ошибка сервера: {str(e)}"), 500)
+
+
+@bp.route("/api/session/<session_id>/filter_height", methods=["POST"])
+def filter_by_height(session_id: str):
     if not session_id:
         return _err(ErrorResponse(detail="ID сессии не указан"), 400)
 

@@ -219,6 +219,8 @@ _GEOMETRY_RENAME_MAP = {
 # Параметры, которые не нужно добавлять в additionalCharacteristics.
 _GEOMETRY_SKIP_KEYS = {
     'Глубина_выдавливания_мм',
+    # Площадь_GROSS_м2 — дубликат, создаваемый в zero_step.py для приоритетного поиска
+    'Площадь_GROSS_м2',
 }
 
 
@@ -258,6 +260,10 @@ def _collect_all_geometry_params(element_data: dict) -> List[Dict[str, Any]]:
     for keyword, unit_suffix in geometry_patterns:
         for key, value in element_data.items():
             if keyword in key and key.endswith(unit_suffix) and key not in seen_keys:
+                # Пропускаем дубликаты с префиксом QTO_ и Свойство_
+                # (zero_step.py создаёт их одновременно со старым форматом без префикса)
+                if key.startswith('QTO_') or key.startswith('Свойство_'):
+                    continue
                 # Пропускаем параметры из списка исключений
                 if key in _GEOMETRY_SKIP_KEYS:
                     continue

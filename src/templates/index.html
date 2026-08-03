@@ -171,8 +171,6 @@
             z-index: 100;
             max-width: 500px;
         }
-
-        /* Первая колонка (чексбоксы/стрелки) не расширяется */
         .table-wrap td:first-child:hover {
             overflow: hidden !important;
             white-space: nowrap !important;
@@ -405,8 +403,6 @@
             justify-content: center;
             flex-wrap: wrap;
         }
-
-        /* ========== Зум изображения чертежа ========== */
         .blueprint-zoom-container {
             position: relative;
             width: 100%;
@@ -486,7 +482,44 @@
             pointer-events: none;
             opacity: 0.85;
         }
-
+        .run-selector {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: #ebf8ff;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border: 1px solid #bee3f8;
+        }
+        .run-selector label {
+            font-weight: 600;
+            font-size: 14px;
+            color: #2b6cb0;
+            white-space: nowrap;
+        }
+        .run-selector select { flex: 1; min-width: 200px; }
+        .run-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #2b6cb0;
+            color: white;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 6px;
+        }
+        .run-badge.active { background: #48bb78; }
+        .new-run-section {
+            border-top: 1px solid #e2e8f0;
+            padding-top: 16px;
+            margin-top: 16px;
+        }
+        .new-run-section h4 {
+            font-size: 16px;
+            color: #2d3748;
+            margin-bottom: 8px;
+        }
         @media (max-width: 768px) {
             .card { padding: 16px; }
             header { padding: 16px; }
@@ -586,10 +619,34 @@
                     <span class="step-number done">✓</span>
                     Результаты обработки
                 </div>
+                
+                <div class="run-selector" id="runSelector" style="display:none;">
+                    <label>📋 Запуски:</label>
+                    <select id="runSelect" onchange="onRunSelectChange()">
+                        <option value="">Загрузка...</option>
+                    </select>
+                    <span id="currentRunBadge" class="run-badge active" style="display:none;"></span>
+                </div>
+                
                 <div id="resultsFiles"></div>
                 <div class="flex mt-12">
                     <button class="btn btn-success" id="downloadAllBtn" onclick="downloadAll()">📥 Скачать все файлы</button>
-                    <button class="btn btn-secondary" onclick="startNewSession()">🔄 Новая сессия</button>
+                </div>
+                
+                <div class="new-run-section">
+                    <h4>🔄 Новая обработка</h4>
+                    <p style="font-size:13px;color:#718096;margin-bottom:12px;">
+                        Запустить новую обработку с другими выбранными строками. 
+                        Исходный файл не будет обрабатываться заново.
+                    </p>
+                    <div class="flex gap-8">
+                        <button class="btn btn-primary" onclick="startNewRun()">
+                            🔄 Запустить новую обработку
+                        </button>
+                        <button class="btn btn-secondary" onclick="startNewSession()">
+                            🆕 Новая сессия
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -678,6 +735,7 @@
 <script>
 // ========== Глобальные переменные ==========
 let currentSessionId = null;
+let currentRunId = null;
 let currentStatusInterval = null;
 let selectedRows = new Set();
 let allRowIndices = [];
@@ -691,6 +749,8 @@ let groupLevel = {};
 let leafGroups = {};
 let viewer3d = null;
 let pollingGeneration = 0;
+let isNewRunMode = false;
+let autoGroupEnabled = true;
 
 const API_BASE = '/ifc-vor/api';
 
@@ -711,7 +771,7 @@ const blueprintZoom = {
 // ========== Правила геометрической группировки ==========
 const GEOMETRY_GROUP_RULES = {
     'IfcWall': {
-        field: 'Длина_Width_мм',
+        field: 'Ширина, мм',
         label: 'Толщина',
         unit: 'мм',
         ranges: [
@@ -723,7 +783,7 @@ const GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcSlab': {
-        field: 'Площадь_GrossArea_м2',
+        field: 'Площадь, м2',
         label: 'Площадь',
         unit: 'м²',
         ranges: [
@@ -733,7 +793,7 @@ const GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcColumn': {
-        field: 'Длина_Perimeter_мм',
+        field: 'Периметр, мм',
         label: 'Периметр',
         unit: 'мм',
         ranges: [
@@ -741,7 +801,7 @@ const GEOMETRY_GROUP_RULES = {
             { max: Infinity, label: 'более 1200 мм' }
         ],
         sub_ranges: {
-            field: 'Длина_Width_мм',
+            field: 'Ширина, мм',
             label: 'Сторона',
             unit: 'мм',
             ranges: [
@@ -752,7 +812,7 @@ const GEOMETRY_GROUP_RULES = {
         }
     },
     'IfcBeam': {
-        field: 'Площадь_GrossArea_м2',
+        field: 'Площадь, м2',
         label: 'Площадь',
         unit: 'м²',
         ranges: [
@@ -762,7 +822,7 @@ const GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcStair': {
-        field: 'Объём_NetVolume_м3',
+        field: 'Объём, м3',
         label: '',
         unit: 'м³',
         ranges: [
@@ -770,7 +830,7 @@ const GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcStairFlight': {
-        field: 'Объём_NetVolume_м3',
+        field: 'Объём, м3',
         label: '',
         unit: 'м³',
         ranges: [
@@ -778,7 +838,7 @@ const GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcPile': {
-        field: 'Длина_Length_мм',
+        field: 'Длина, мм',
         label: 'Длина',
         unit: 'мм',
         ranges: [
@@ -789,7 +849,7 @@ const GEOMETRY_GROUP_RULES = {
         ]
     },
     'IfcProxyElement': {
-        field: 'Объём_NetVolume_м3',
+        field: 'Объём, м3',
         label: '',
         unit: 'м³',
         ranges: [
@@ -797,7 +857,7 @@ const GEOMETRY_GROUP_RULES = {
         ]
     },
     'default': {
-        field: 'Объём_NetVolume_м3',
+        field: 'Объём, м3',
         label: 'Объём',
         unit: 'м³',
         ranges: [
@@ -808,14 +868,12 @@ const GEOMETRY_GROUP_RULES = {
     }
 };
 
-// Подразделы без геометрической группировки
 const NO_GEOMETRY_GROUP_SUBSECTIONS = [
     'Фундаментная плита',
     'Фундамент под инженерное оборудование',
     'Фундамент под башенный кран',
 ];
 
-// ========== Структура разделов ==========
 const SECTION_STRUCTURE = {
     'Подземная': {
         label: 'Подземная часть здания (до отм. 0,000)',
@@ -949,6 +1007,7 @@ function resetUpload() {
     document.getElementById('uploadProgressWrap').style.display = 'none';
     document.getElementById('uploadProgressBar').style.width = '0%';
     document.getElementById('uploadProgressText').textContent = '';
+    isNewRunMode = false;
 }
 
 async function uploadFile() {
@@ -969,6 +1028,7 @@ async function uploadFile() {
         }
         const data = await response.json();
         currentSessionId = data.sessionId;
+        isNewRunMode = false;
         startStatusPolling(currentSessionId);
         showToast('Файл загружен, начата обработка', 'success');
         btn.innerHTML = '⏳ Обработка...';
@@ -1010,7 +1070,7 @@ function startStatusPolling(sessionId) {
 async function onIfcProcessed(sessionId) {
     document.getElementById('uploadBtn').innerHTML = '✅ Обработано';
     document.getElementById('step1').classList.remove('disabled');
-    document.getElementById('step1Number').textContent = '1';
+    document.getElementById('step1Number').textContent = isNewRunMode ? 'Выбор строк (новый запуск)' : '2';
     try {
         let preview_data = null;
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -1031,9 +1091,499 @@ async function onIfcProcessed(sessionId) {
             blueprintBtns.style.display = (preview_data.sourceType === 'pdf' && (preview_data.hasBlueprintImage || preview_data.hasMaterialsMd)) ? 'flex' : 'none';
         }
         showToast(`Загружено ${preview_data.totalRows} строк`, 'success');
+        
+        if (isNewRunMode) {
+            document.getElementById('resultsCard').style.display = 'none';
+            document.getElementById('processingProgressWrap').style.display = 'none';
+        }
     } catch (e) {
         showToast(e.message, 'error');
     }
+}
+
+// ========== Функция нового запуска ==========
+async function startNewRun() {
+    console.log('🔄 startNewRun вызвана');
+    
+    if (!currentSessionId) { 
+        showToast('Нет активной сессии', 'warning'); 
+        return; 
+    }
+    
+    // Сбрасываем выбранные строки
+    selectedRows.clear();
+    document.querySelectorAll('.group-checkbox,.row-checkbox').forEach(cb => {
+        if (cb) cb.checked = false;
+    });
+    
+    // Показываем карточку выбора строк
+    const step1 = document.getElementById('step1');
+    const resultsCard = document.getElementById('resultsCard');
+    const processingWrap = document.getElementById('processingProgressWrap');
+    const selectBtn = document.getElementById('selectRowsBtn');
+    
+    if (!step1) {
+        console.error('❌ step1 не найден');
+        return;
+    }
+    
+    step1.classList.remove('disabled');
+    if (resultsCard) resultsCard.style.display = 'none';
+    if (processingWrap) processingWrap.style.display = 'none';
+    
+    // ВАЖНО: Обновляем текст кнопки
+    if (selectBtn) {
+        selectBtn.disabled = true;
+        selectBtn.innerHTML = `🚀 Запустить обработку (<span id="selectedCount">0</span>)`;
+    }
+    
+    isNewRunMode = true;
+    
+    // Обновляем UI (счётчик)
+    updateSelectionUI();
+    
+    // Загружаем данные предпросмотра
+    try {
+        const response = await fetch(`${API_BASE}/session/${currentSessionId}/preview`);
+        if (response.ok) {
+            const preview_data = await response.json();
+            renderPreview(preview_data);
+            if (preview_data.buildingHeight) {
+                const heightInput = document.getElementById('buildingHeight');
+                if (heightInput) heightInput.value = preview_data.buildingHeight;
+            }
+            showToast(`Загружено ${preview_data.totalRows} строк. Выберите нужные.`, 'info');
+        } else {
+            showToast('Ошибка загрузки данных предпросмотра', 'error');
+            return;
+        }
+    } catch (e) {
+        console.error('Ошибка загрузки preview:', e);
+        showToast('Ошибка загрузки данных: ' + e.message, 'error');
+        return;
+    }
+    
+    // Прокручиваем к таблице
+    step1.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function confirmRowSelection() {
+    console.log('🚀 confirmRowSelection вызвана');
+    console.log('  isNewRunMode:', isNewRunMode);
+    console.log('  isGrouped:', isGrouped);
+    console.log('  selectedRows.size:', selectedRows.size);
+    console.log('  selectedRows:', [...selectedRows]);
+    
+    if (selectedRows.size === 0) { 
+        console.warn('⚠️ Нет выбранных строк');
+        showToast('Выберите хотя бы одну строку', 'warning'); 
+        return; 
+    }
+    
+    const heightInput = document.getElementById('buildingHeight');
+    if (!heightInput) {
+        showToast('Поле высоты не найдено', 'error');
+        return;
+    }
+    
+    const height = parseFloat(heightInput.value);
+    if (!height || height <= 0 || height > 10000) { 
+        console.warn('⚠️ Некорректная высота:', height);
+        showToast('Некорректная высота (допустимо: 1-10000 м)', 'warning'); 
+        return; 
+    }
+    
+    const btn = document.getElementById('selectRowsBtn');
+    if (!btn) {
+        showToast('Кнопка запуска не найдена', 'error');
+        return;
+    }
+    
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Запуск...';
+    
+    // Собираем данные о выбранных строках
+    const selectedRowParts = {};
+    const selectedRowMaterials = {};
+    const allSelectedIndices = new Set();
+    
+    console.log('=== ПРОВЕРКА rowMaterials ДО СБОРА ===');
+    console.log('  Всего записей в rowMaterials:', Object.keys(rowMaterials).length);
+    // Выведем первые 20 материалов
+    const sampleKeys = Object.keys(rowMaterials).slice(0, 20);
+    for (const k of sampleKeys) {
+        console.log(`  rowMaterials[${k}] = "${rowMaterials[k]}"`);
+    }
+    
+    if (isGrouped) {
+        console.log('=== РЕЖИМ ГРУППИРОВКИ ===');
+        console.log('  Количество leafGroups:', Object.keys(leafGroups).length);
+        
+        // Для каждой leaf-группы
+        Object.keys(leafGroups).forEach(groupId => {
+            const indices = groupIndexMap[groupId];
+            if (indices && indices.length > 0) {
+                const firstIndex = indices[0];
+                const isSelected = selectedRows.has(firstIndex);
+                
+                console.log(`\n  Группа ${groupId}:`);
+                console.log(`    firstIndex: ${firstIndex}`);
+                console.log(`    selected: ${isSelected}`);
+                console.log(`    количество элементов: ${indices.length}`);
+                console.log(`    индексы: [${indices.join(', ')}]`);
+                
+                if (isSelected) {
+                    const part = rowParts[firstIndex] || 'Надземная';
+                    console.log(`    part: "${part}"`);
+                    
+                    // Показываем материалы КАЖДОГО элемента группы
+                    console.log(`    Материалы элементов группы:`);
+                    indices.forEach(idx => {
+                        const mat = rowMaterials[idx] || '-';
+                        console.log(`      [${idx}]: "${mat}"`);
+                    });
+                    
+                    // Для КАЖДОГО элемента в группе — СВОЙ материал
+                    indices.forEach(idx => {
+                        selectedRowParts[idx] = part;
+                        selectedRowMaterials[idx] = rowMaterials[idx] || '-';
+                        allSelectedIndices.add(idx);
+                    });
+                }
+            }
+        });
+    } else {
+        console.log('=== ОБЫЧНЫЙ РЕЖИМ (без группировки) ===');
+        selectedRows.forEach(index => {
+            selectedRowParts[index] = rowParts[index] || 'Надземная';
+            selectedRowMaterials[index] = rowMaterials[index] || '-';
+            allSelectedIndices.add(index);
+            console.log(`  [${index}]: part="${selectedRowParts[index]}", material="${selectedRowMaterials[index]}"`);
+        });
+    }
+    
+    console.log('\n=== ИТОГОВЫЕ ДАННЫЕ ДЛЯ ОТПРАВКИ ===');
+    console.log('  Всего выбрано индексов:', allSelectedIndices.size);
+    console.log('  selectedRowMaterials:');
+    const sortedIndices = [...allSelectedIndices].sort((a, b) => a - b);
+    // Показываем все материалы (или первые 30 если очень много)
+    
+    // Показываем прогресс
+    const progressWrap = document.getElementById('processingProgressWrap');
+    const progressBar = document.getElementById('processingProgressBar');
+    const progressText = document.getElementById('processingProgressText');
+    
+    if (progressWrap) progressWrap.style.display = 'block';
+    if (progressBar) progressBar.style.width = '0%';
+    if (progressText) progressText.textContent = 'Запуск обработки...';
+    
+    // Выбираем правильный эндпоинт
+    const endpoint = isNewRunMode 
+        ? `${API_BASE}/session/${currentSessionId}/new_run`
+        : `${API_BASE}/session/${currentSessionId}/select_rows`;
+    
+    const payload = {
+        rowIndices: Array.from(allSelectedIndices),
+        allRows: false,
+        rowTypes: selectedRowParts,
+        rowMaterials: selectedRowMaterials,
+        buildingHeight: height,
+        groupedData: null
+    };
+    
+    console.log('\n📤 ОТПРАВКА ЗАПРОСА:');
+    console.log('  endpoint:', endpoint);
+    console.log('  rowIndices count:', payload.rowIndices.length);
+    console.log('  rowMaterials count:', Object.keys(selectedRowMaterials).length);
+    console.log('  Уникальных материалов в payload:', new Set(Object.values(selectedRowMaterials)).size);
+    
+    // Выводим ТОЧНО отправляемый payload.rowMaterials (первые 30)
+    console.log('  payload.rowMaterials (первые 30):');
+    let count = 0;
+    for (const [idx, mat] of Object.entries(selectedRowMaterials)) {
+        if (count < 30) {
+            console.log(`    ${idx}: "${mat}"`);
+            count++;
+        }
+    }
+    
+    try {
+        const response = await fetch(endpoint, {
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        console.log('📥 ОТВЕТ:', response.status, response.statusText);
+        
+        const responseText = await response.text();
+        console.log('  тело ответа (первые 500 символов):', responseText.substring(0, 500));
+        
+        if (!response.ok) {
+            let errorMessage = 'Ошибка сервера';
+            try { 
+                const errorData = JSON.parse(responseText); 
+                errorMessage = errorData.detail || errorMessage;
+            } catch { 
+                errorMessage = responseText || errorMessage;
+            }
+            throw new Error(errorMessage);
+        }
+        
+        const data = JSON.parse(responseText);
+        console.log('✅ УСПЕХ:', data);
+        
+        if (data.runId || data.run_id) {
+            currentRunId = data.runId || data.run_id;
+        }
+        
+        const runNumber = data.runNumber || data.run_number || '';
+        const selectedCount = data.selectedRows || data.selected_rows || allSelectedIndices.size;
+        const message = runNumber 
+            ? `Запуск ${runNumber} начат (${selectedCount} строк)`
+            : `Обработка начата (${selectedCount} строк)`;
+        
+        showToast(message, 'success');
+        btn.innerHTML = '✅ Обработка запущена';
+        startProcessingPolling(currentSessionId);
+        
+    } catch (e) {
+        console.error('❌ ОШИБКА:', e.message);
+        showToast(e.message, 'error');
+        btn.disabled = false;
+        btn.innerHTML = `🚀 Запустить обработку (<span id="selectedCount">${selectedRows.size}</span>)`;
+        if (progressWrap) progressWrap.style.display = 'none';
+        updateSelectionUI();
+    }
+}
+
+function startProcessingPolling(sessionId) {
+    if (currentStatusInterval) { clearInterval(currentStatusInterval); currentStatusInterval = null; }
+    const gen = ++pollingGeneration;
+    currentStatusInterval = setInterval(async () => {
+        if (gen !== pollingGeneration) return;
+        try {
+            const response = await fetch(`${API_BASE}/session/${sessionId}/status`);
+            if (gen !== pollingGeneration) return;
+            if (!response.ok) throw new Error('Ошибка');
+            const data = await response.json();
+            if (gen !== pollingGeneration) return;
+            const progressBar = document.getElementById('processingProgressBar');
+            const progressText = document.getElementById('processingProgressText');
+            progressBar.style.width = data.progress + '%';
+            progressText.textContent = data.progressMessage || `Обработка: ${data.progress}%`;
+            if (data.status === 'completed') { clearInterval(currentStatusInterval); currentStatusInterval = null; onProcessingComplete(sessionId); }
+            else if (data.status === 'error') {
+                clearInterval(currentStatusInterval); currentStatusInterval = null;
+                showToast('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'error');
+                document.getElementById('selectRowsBtn').disabled = false;
+                document.getElementById('selectRowsBtn').innerHTML = `🚀 Запустить обработку (<span id="selectedCount">${selectedRows.size}</span>)`;
+            }
+        } catch (e) { console.error('Polling error:', e); }
+    }, 2000);
+}
+
+async function onProcessingComplete(sessionId) {
+    document.getElementById('processingProgressBar').style.width = '100%';
+    document.getElementById('processingProgressText').textContent = 'Обработка завершена';
+    
+    try {
+        const response = await fetch(`${API_BASE}/session/${sessionId}`);
+        if (!response.ok) throw new Error('Ошибка');
+        const data = await response.json();
+        
+        // Теперь data.files должен содержать файлы текущего запуска
+        let files = data.files || [];
+        currentRunId = data.current_run_id;
+        
+        renderResults(files, data);
+        document.getElementById('resultsCard').style.display = 'block';
+        showToast('Обработка завершена!', 'success');
+        
+        await loadRuns();
+    } catch (e) { 
+        console.error('Ошибка в onProcessingComplete:', e);
+        showToast(e.message, 'error'); 
+    }
+}
+
+// ========== Управление запусками ==========
+async function loadRuns() {
+    if (!currentSessionId) return;
+    
+    console.log('📋 Загрузка списка запусков для сессии:', currentSessionId);
+    
+    try {
+        const response = await fetch(`${API_BASE}/session/${currentSessionId}/runs`);
+        console.log('  Статус ответа:', response.status);
+        
+        if (!response.ok) {
+            console.error('  Ошибка загрузки runs:', response.statusText);
+            return;
+        }
+        
+        const data = await response.json();
+        console.log('  Данные runs:', JSON.stringify(data, null, 2));
+        
+        const runs = data.runs || [];
+        const currentRunIdFromServer = data.currentRunId || data.current_run_id || null;
+        
+        if (currentRunIdFromServer) {
+            currentRunId = currentRunIdFromServer;
+        }
+        
+        const runSelector = document.getElementById('runSelector');
+        const runSelect = document.getElementById('runSelect');
+        const currentRunBadge = document.getElementById('currentRunBadge');
+        
+        if (!runSelector || !runSelect) {
+            console.error('  Элементы runSelector не найдены в DOM!');
+            return;
+        }
+        
+        if (runs.length > 1) {
+            runSelector.style.display = 'flex';
+            
+            runSelect.innerHTML = runs.map((run) => {
+                // Пробуем разные форматы даты
+                let dateStr = 'Дата неизвестна';
+                
+                // Проверяем все возможные имена полей с датой
+                const createdAt = run.createdAt || run.created_at || run.created || run.date || run.timestamp;
+                
+                if (createdAt) {
+                    try {
+                        // Пробуем распарсить дату
+                        const date = new Date(createdAt);
+                        
+                        // Проверяем, валидная ли дата
+                        if (!isNaN(date.getTime())) {
+                            dateStr = date.toLocaleString('ru-RU', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            });
+                        } else {
+                            // Если невалидная — показываем как есть
+                            dateStr = String(createdAt).substring(0, 19).replace('T', ' ');
+                        }
+                    } catch (e) {
+                        dateStr = String(createdAt).substring(0, 19).replace('T', ' ');
+                    }
+                }
+                
+                // Определяем иконку статуса
+                const status = run.status || 'unknown';
+                const statusIcon = status === 'completed' ? '✅' : 
+                                   status === 'processing' ? '⏳' : 
+                                   status === 'error' ? '❌' : '📋';
+                
+                // Определяем номер запуска
+                const runNumber = run.runNumber || run.run_number || run.number || '?';
+                
+                // Проверяем, это текущий запуск?
+                const runId = run.runId || run.run_id || run.id;
+                const isSelected = (runId === currentRunId);
+                
+                return `<option value="${runId}" ${isSelected ? 'selected' : ''}>
+                    ${statusIcon} Запуск ${runNumber} — ${dateStr} (${status})
+                </option>`;
+            }).join('');
+            
+            // Обновляем бейдж текущего запуска
+            if (currentRunBadge) {
+                const currentRun = runs.find(r => {
+                    const rid = r.runId || r.run_id || r.id;
+                    return rid === currentRunId;
+                });
+                
+                if (currentRun) {
+                    currentRunBadge.style.display = 'inline-block';
+                    const rn = currentRun.runNumber || currentRun.run_number || '?';
+                    currentRunBadge.textContent = `Текущий: Запуск ${rn}`;
+                } else {
+                    currentRunBadge.style.display = 'none';
+                }
+            }
+            
+            console.log(`  Загружено ${runs.length} запусков`);
+        } else {
+            runSelector.style.display = 'none';
+            console.log('  Всего 1 или 0 запусков — селектор скрыт');
+        }
+    } catch (e) {
+        console.error('  Ошибка загрузки runs:', e);
+    }
+}
+
+async function onRunSelectChange() {
+    const runSelect = document.getElementById('runSelect');
+    const selectedRunId = runSelect.value;
+    
+    if (!selectedRunId || selectedRunId === currentRunId) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/session/${currentSessionId}/switch_run/${selectedRunId}`, {
+            method: 'POST'
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Ошибка переключения');
+        }
+        
+        const data = await response.json();
+        currentRunId = data.run_id;
+        
+        renderResults(data.files || [], { runs: [], current_run_id: currentRunId });
+        
+        if (data.building_height) {
+            document.getElementById('buildingHeight').value = data.building_height;
+        }
+        
+        showToast(`Переключено на Запуск ${data.run_number}`, 'info');
+        
+        await loadRuns();
+    } catch (e) {
+        showToast(e.message, 'error');
+        await loadRuns();
+    }
+}
+
+function renderResults(files, sessionData) {
+    const container = document.getElementById('resultsFiles');
+    if (!files || files.length === 0) {
+        container.innerHTML = '<p style="color:#718096;">Нет файлов</p>';
+        return;
+    }
+    container.innerHTML = files.map(f => {
+        const ext = f.filename.split('.').pop().toLowerCase();
+        const canPreview = ['xlsx','csv','json'].includes(ext);
+        const isGlb = ext === 'glb';
+        return `<div class="file-info">
+            <span>${isGlb ? '🧊' : '📄'}</span>
+            <span class="name">${f.filename}</span>
+            <span style="color:#718096;font-size:13px;">${(f.size / 1024).toFixed(1)} KB</span>
+            ${isGlb ? `<button class="btn btn-sm btn-secondary" onclick="previewGlbFile('${f.filename.replace(/'/g,"\\'")}')">👁️ 3D просмотр</button>` : ''}
+            ${canPreview ? `<button class="btn btn-sm btn-secondary" onclick="previewResultFile('${f.filename.replace(/'/g,"\\'")}')">👁️ Просмотр</button>` : ''}
+            <a href="${API_BASE}/session/${currentSessionId}/download/${encodeURIComponent(f.filename)}" class="btn btn-sm btn-primary" download>Скачать</a>
+        </div>`;
+    }).join('');
+}
+
+function downloadAll() {
+    if (!currentSessionId) return;
+    window.location.href = `${API_BASE}/session/${currentSessionId}/download_all`;
+}
+
+function startNewSession() {
+    if (currentStatusInterval) { clearInterval(currentStatusInterval); currentStatusInterval = null; }
+    currentSessionId = null;
+    currentRunId = null;
+    isNewRunMode = false;
+    location.reload();
 }
 
 // ========== Вспомогательные функции ==========
@@ -1048,20 +1598,15 @@ function getIfcType(typeRu, name) {
     const nameLower = (name || '').toLowerCase();
     const typeLower = (typeRu || '').toLowerCase();
     
-    // Проверка на IfcProxyElement и отверстия — ПЕРВЫЕ
     if (typeLower.includes('ifcproxy') || typeLower.includes('proxy')) return 'IfcProxyElement';
     if (nameLower.includes('отверсти') || nameLower.includes('проём') || nameLower.includes('проем') || nameLower.includes('окно') || nameLower.includes('двер')) return 'IfcOpening';
     if (nameLower.includes('труб')) return 'IfcProxyElement';
     
-    // Проверка по ТИПУ (до проверки по имени)
     if (typeLower.includes('ifcpile')) return 'IfcPile';
     if (typeLower.includes('ifcstairflight')) return 'IfcStairFlight';
     
-    // Проверка по ИМЕНИ
     if (nameLower.includes('сва')) return 'IfcPile';
-    
     if (nameLower.includes('плм') || nameLower.includes('лмн') || nameLower.includes('площадк')) return 'IfcSlab';
-    
     if (nameLower.includes('стен') || nameLower.includes('парапет')) return 'IfcWall';
     if (nameLower.includes('колонн') || nameLower.includes('пилон')) return 'IfcColumn';
     if (nameLower.includes('балк') || nameLower.includes('ригел') || nameLower.includes('перемычк')) return 'IfcBeam';
@@ -1099,19 +1644,17 @@ function determineSubsection(typeRu, name, part) {
     const nameLower = (name || '').toLowerCase().trim();
     const typeLower = (typeRu || '').toLowerCase();
     
-    // IfcProxyElement и отверстия — всегда «Прочие элементы»
     if (typeLower.includes('ifcproxy') || typeLower.includes('proxy')) return '__OTHER__';
     
     const tempIfcType = getIfcType(typeRu, name);
     if (tempIfcType === 'IfcOpening') return '__OTHER__';
     if (nameLower.includes('труб')) return '__OTHER__';
     
-    // Гидроизоляция: чёткое разделение
     if (isHydroVertical(typeRu, name, tempIfcType)) {
-    if (part === 'Подземная') return 'Подземная часть здания. Вертикальная гидроизоляция';
-    if (part === 'Цоколь') return 'Цокольная часть здания. Вертикальная гидроизоляция';
-    return 'Надземная часть здания. Вертикальная гидроизоляция';
-}
+        if (part === 'Подземная') return 'Подземная часть здания. Вертикальная гидроизоляция';
+        if (part === 'Цоколь') return 'Цокольная часть здания. Вертикальная гидроизоляция';
+        return 'Надземная часть здания. Вертикальная гидроизоляция';
+    }
     if (isHydroHorizontal(typeRu, name, tempIfcType)) return 'Устройство горизонтальной гидроизоляции';
     
     if (nameLower.includes('сва') || typeLower.includes('ifcpile')) return 'Свайно-ростверковый фундамент';
@@ -1124,19 +1667,16 @@ function determineSubsection(typeRu, name, part) {
     
     if (nameLower.includes('парапет')) return 'Надземная часть здания. Парапеты';
     
-    // Лестничные марши по ifcType (IfcStairFlight)
     if (tempIfcType === 'IfcStairFlight') {
         if (part === 'Подземная' || part === 'Цоколь') return part + ' часть здания. Лестницы';
         return 'Надземная часть здания. Лестничные марши';
     }
 
-    // Лестничные площадки (Плм)
     if (nameLower.includes('плм')) {
         if (part === 'Подземная' || part === 'Цоколь') return part + ' часть здания. Лестницы';
         return 'Надземная часть здания. Лестничные площадки';
     }
 
-    // ЛМн без признаков марша — площадка
     if (nameLower.includes('лмн')) {
         if (part === 'Подземная' || part === 'Цоколь') return part + ' часть здания. Лестницы';
         return 'Надземная часть здания. Лестничные площадки';
@@ -1185,6 +1725,12 @@ function renderPreview(data) {
     window._previewData = data;
     const head = document.getElementById('previewHead');
     const body = document.getElementById('previewBody');
+    
+    if (!head || !body) {
+        console.error('❌ Не найдены previewHead или previewBody');
+        return;
+    }
+    
     const typeFloorIdx = data.headers.indexOf('Тип_этажа');
     const materialIdx = data.headers.indexOf('Материал');
     
@@ -1202,12 +1748,11 @@ function renderPreview(data) {
         '№ п/п': '№ п/п',
         'Имя': 'Имя',
         'Тип элемента': 'Тип элемента',
-        'Толщина, мм': findColumn('width') || 'Длина_Width_мм',
-        'Объём, м3': findColumn('netvolume') || findColumn('объём_netvolume') || 'Объём_NetVolume_м3',
-        'Площадь, м2': findColumn('grossarea') || findColumn('площадь_grossarea') || 'Площадь_GrossArea_м2',
+        'Толщина, мм': findColumn('Ширина, мм') || 'Ширина, мм',
+        'Объём, м3': findColumn('Объём, м3') || findColumn('Объём, м3') || 'Объём, м3',
+        'Площадь, м2': findColumn('Площадь, м2') || findColumn('Площадь, м2') || 'Площадь, м2',
     };
     
-    // Заголовки: чекбокс, данные, Часть здания (заблокирована), Материал
     head.innerHTML = '<tr>' +
         '<th style="width:40px;">✓</th>' +
         requiredColumns.map(h => `<th>${h}</th>`).join('') +
@@ -1302,11 +1847,34 @@ function renderPreview(data) {
         body.appendChild(tr);
     });
     
-    document.getElementById('previewInfo').textContent = `Загружено: ${data.totalRows} строк`;
-    document.getElementById('selectedCount').textContent = '0';
-    document.getElementById('selectRowsBtn').disabled = true;
-    document.getElementById('autoGroupBtn').style.display = 'inline-block';
-    document.getElementById('ungroupBtn').style.display = 'none';
+    // Обновляем информацию о количестве строк
+    const previewInfo = document.getElementById('previewInfo');
+    if (previewInfo) {
+        previewInfo.textContent = `Загружено: ${data.totalRows} строк`;
+    }
+    
+    // Обновляем счётчик выбранных строк
+    updateSelectionUI();
+    
+    // Обновляем кнопку
+    const selectRowsBtn = document.getElementById('selectRowsBtn');
+    if (selectRowsBtn) {
+        selectRowsBtn.disabled = true;
+        selectRowsBtn.innerHTML = `🚀 Запустить обработку (<span id="selectedCount">0</span>)`;
+    }
+    
+    // Показываем/скрываем кнопки группировки
+    const autoGroupBtn = document.getElementById('autoGroupBtn');
+    const ungroupBtn = document.getElementById('ungroupBtn');
+    if (autoGroupBtn) autoGroupBtn.style.display = 'none';
+    if (ungroupBtn) ungroupBtn.style.display = 'inline-block';
+    
+    // === АВТО-ГРУППИРОВКА ПО УМОЛЧАНИЮ ===
+    if (autoGroupEnabled && data.totalRows > 0) {
+        setTimeout(() => {
+            autoGroupRows();
+        }, 100);
+    }
 }
 
 function updateRowMaterial(index, value) { 
@@ -1328,14 +1896,42 @@ function toggleRowSelection(index) {
 function setGlobalMaterial() {
     const material = document.getElementById('globalMaterialSelect').value;
     if (!material) return;
-    selectedRows.forEach(index => {
-        rowMaterials[index] = material;
-        const ms = document.querySelector(`.material-select[data-index="${index}"]`);
-        if (ms) {
-            if (!Array.from(ms.options).some(o => o.value === material)) ms.add(new Option(material, material));
-            ms.value = material;
-        }
-    });
+    
+    if (isGrouped) {
+        // В режиме группировки обновляем материал для ВСЕХ элементов в выбранных группах
+        selectedRows.forEach(firstIndex => {
+            // Находим группу, в которой firstIndex является первым элементом
+            for (const [groupId, indices] of Object.entries(groupIndexMap)) {
+                if (indices && indices.length > 0 && indices[0] === firstIndex) {
+                    // Обновляем материал для ВСЕХ элементов группы
+                    indices.forEach(idx => {
+                        rowMaterials[idx] = material;
+                        const ms = document.querySelector(`.material-select[data-index="${idx}"]`);
+                        if (ms) {
+                            if (!Array.from(ms.options).some(o => o.value === material)) {
+                                ms.add(new Option(material, material));
+                            }
+                            ms.value = material;
+                        }
+                    });
+                    break;
+                }
+            }
+        });
+    } else {
+        // Обычный режим
+        selectedRows.forEach(index => {
+            rowMaterials[index] = material;
+            const ms = document.querySelector(`.material-select[data-index="${index}"]`);
+            if (ms) {
+                if (!Array.from(ms.options).some(o => o.value === material)) {
+                    ms.add(new Option(material, material));
+                }
+                ms.value = material;
+            }
+        });
+    }
+    
     showToast(`Материал "${material}" назначен`, 'info');
     document.getElementById('globalMaterialSelect').value = '';
 }
@@ -1358,7 +1954,7 @@ function autoGroupRows() {
     const typeRuIdx = data.headers.indexOf('Тип элемента');
     const nameIdx = data.headers.indexOf('Имя');
     const volumeIdx = data.headers.findIndex(h => 
-        h.toLowerCase().includes('netvolume') || h.includes('NetVolume') || h.includes('м3')
+        h.toLowerCase().includes('объём, м3') || h.includes('Объём, м3')
     );
     
     const totalCols = 1 + 6 + 2;
@@ -1383,7 +1979,6 @@ function autoGroupRows() {
         const tds = tr.querySelectorAll('td');
         const index = parseInt(tr.dataset.rowIndex);
         
-        // Часть здания - предпоследний td, Материал - последний td
         const partSelect = tds[tds.length - 2]?.querySelector('select');
         const materialSelect = tds[tds.length - 1]?.querySelector('select');
         
@@ -1441,7 +2036,6 @@ function autoGroupRows() {
         const l1Cb = l1Tr.querySelector('.group-checkbox');
         l1Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l1Id, this.checked); });
         
-        // Отслеживаем, какие индексы уже попали в разделы
         const groupedIndices = new Set();
         
         partStructure.sections.forEach(section => {
@@ -1451,7 +2045,6 @@ function autoGroupRows() {
             
             if (sectionRows.length === 0) return;
             
-            // Отмечаем индексы как сгруппированные
             sectionRows.forEach(rd => groupedIndices.add(rd.index));
             
             let sectionVolume = 0;
@@ -1490,7 +2083,6 @@ function autoGroupRows() {
             const l2Cb = l2Tr.querySelector('.group-checkbox');
             l2Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l2Id, this.checked); });
             
-            // Уровень 3: Подразделы
             section.subsections.forEach(subsection => {
                 const subsectionRows = sectionRows.filter(rd => rd.subsection === subsection.key);
                 if (subsectionRows.length === 0) return;
@@ -1677,7 +2269,6 @@ function autoGroupRows() {
                                     geoLevel = 5;
                                 }
                                 
-                                // Проверка на sub_ranges (для колонн)
                                 if (rule.sub_ranges) {
                                     const subRule = rule.sub_ranges;
                                     
@@ -1794,7 +2385,6 @@ function autoGroupRows() {
                                     return;
                                 }
                                 
-                                // Стандартная группа (без sub_ranges)
                                 const geoId = 'GEO_' + (groupCounter++);
                                 groupIndexMap[geoId] = geoGroup.indices;
                                 groupLevel[geoId] = geoLevel;
@@ -1848,7 +2438,6 @@ function autoGroupRows() {
             });
         });
         
-        // ===== Обработка ПРОЧИХ элементов =====
         const otherRows = partRows.filter(rd => !groupedIndices.has(rd.index));
         if (otherRows.length > 0) {
             let otherVolume = 0;
@@ -1889,7 +2478,6 @@ function autoGroupRows() {
             const otherCb = otherTr.querySelector('.group-checkbox');
             otherCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(otherId, this.checked); });
             
-            // Группируем прочие элементы по имени
             const byName = {};
             otherRows.forEach(rd => {
                 let nameKey = (rd.name || '').trim();
@@ -1959,7 +2547,6 @@ function autoGroupRows() {
         }
     });
     
-    // Убираем из leafGroups те, у которых есть дети
     Object.keys(leafGroups).forEach(key => {
         if (groupChildren[key] && groupChildren[key].length > 0) {
             delete leafGroups[key];
@@ -1973,10 +2560,8 @@ function autoGroupRows() {
 }
 
 function toggleGroup(groupId) {
-    // Собираем только ПРЯМЫХ детей (как группы, так и элементы)
     const directChildren = [];
     
-    // Добавляем прямые дочерние группы
     if (groupChildren[groupId]) {
         groupChildren[groupId].forEach(childId => {
             const childTr = document.querySelector(`tr[data-group-id="${childId}"]`);
@@ -1984,7 +2569,6 @@ function toggleGroup(groupId) {
         });
     }
     
-    // Добавляем строки-элементы, которые ПРЯМО принадлежат этой группе
     const indices = groupIndexMap[groupId];
     if (indices) {
         indices.forEach(index => {
@@ -1999,18 +2583,15 @@ function toggleGroup(groupId) {
     const arrow = document.getElementById(groupId + '_arrow');
     const isHidden = directChildren[0].classList.contains('hidden-row');
     
-    // Переключаем видимость только прямых детей
     directChildren.forEach(row => {
         if (isHidden) {
             row.classList.remove('hidden-row');
         } else {
             row.classList.add('hidden-row');
-            // Если сворачиваем родителя, скрываем ВСЕ вложенные элементы рекурсивно
             hideAllNested(row);
         }
     });
     
-    // Обновляем стрелку
     if (arrow) {
         if (isHidden) {
             arrow.classList.add('expanded');
@@ -2022,30 +2603,24 @@ function toggleGroup(groupId) {
     }
 }
 
-// Вспомогательная функция для скрытия всех вложенных элементов
 function hideAllNested(row) {
-    // Если это группа, скрываем всех её детей рекурсивно
     const groupId = row.dataset.groupId;
     if (groupId) {
-        // Скрываем дочерние группы
         if (groupChildren[groupId]) {
             groupChildren[groupId].forEach(childId => {
                 const childRow = document.querySelector(`tr[data-group-id="${childId}"]`);
                 if (childRow) {
                     childRow.classList.add('hidden-row');
-                    // Сбрасываем стрелку
                     const childArrow = document.getElementById(childId + '_arrow');
                     if (childArrow) {
                         childArrow.classList.remove('expanded');
                         childArrow.textContent = '▶';
                     }
-                    // Рекурсивно скрываем дальше
                     hideAllNested(childRow);
                 }
             });
         }
         
-        // Скрываем элементы группы
         const indices = groupIndexMap[groupId];
         if (indices) {
             indices.forEach(index => {
@@ -2172,143 +2747,31 @@ function deselectAllRows() {
 }
 
 function updateSelectionUI() {
-    document.getElementById('selectedCount').textContent = selectedRows.size;
-    document.getElementById('selectRowsBtn').disabled = selectedRows.size === 0;
-}
-
-// ========== Отправка на обработку ==========
-async function confirmRowSelection() {
-    if (selectedRows.size === 0) { showToast('Выберите хотя бы одну строку', 'warning'); return; }
-    const height = parseFloat(document.getElementById('buildingHeight').value);
-    if (!height || height <= 0 || height > 10000) { showToast('Некорректная высота', 'warning'); return; }
-    
-    const btn = document.getElementById('selectRowsBtn');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> Запуск...';
-    
-    const selectedRowParts = {};
-    const selectedRowMaterials = {};
-    
-    // Собираем ВСЕ индексы из выбранных групп (для grouped-режима)
-    const allSelectedIndices = new Set();
-    
-    if (isGrouped) {
-        Object.keys(leafGroups).forEach(groupId => {
-            const indices = groupIndexMap[groupId];
-            if (indices && indices.length > 0) {
-                const firstIndex = indices[0];
-                if (selectedRows.has(firstIndex)) {
-                    const part = rowParts[firstIndex] || 'Надземная';
-                    const material = rowMaterials[firstIndex] || '-';
-                    indices.forEach(idx => { 
-                        selectedRowParts[idx] = part; 
-                        selectedRowMaterials[idx] = material;
-                        allSelectedIndices.add(idx);
-                    });
-                }
-            }
-        });
+    // Безопасно обновляем счётчик в информационной строке
+    const selectedCountSpan = document.getElementById('selectedCount');
+    if (selectedCountSpan) {
+        selectedCountSpan.textContent = selectedRows.size;
     }
     
-    selectedRows.forEach(index => {
-        if (!selectedRowParts[index]) {
-            selectedRowParts[index] = rowParts[index] || 'Надземная';
-            selectedRowMaterials[index] = rowMaterials[index] || '-';
+    // Безопасно обновляем кнопку запуска
+    const selectRowsBtn = document.getElementById('selectRowsBtn');
+    if (selectRowsBtn) {
+        selectRowsBtn.disabled = selectedRows.size === 0;
+        
+        // Обновляем только span внутри кнопки, если он есть
+        const countSpan = selectRowsBtn.querySelector('#selectedCount');
+        if (countSpan) {
+            countSpan.textContent = selectedRows.size;
         }
-        if (!isGrouped) {
-            allSelectedIndices.add(index);
-        }
-    });
+    }
     
-    document.getElementById('processingProgressWrap').style.display = 'block';
-    document.getElementById('processingProgressBar').style.width = '0%';
-    document.getElementById('processingProgressText').textContent = 'Запуск обработки...';
-    
-    try {
-        const response = await fetch(`${API_BASE}/session/${currentSessionId}/select_rows`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                rowIndices: isGrouped ? Array.from(allSelectedIndices) : Array.from(selectedRows),
-                allRows: selectedRows.size === allRowIndices.length,
-                rowTypes: selectedRowParts,
-                rowMaterials: selectedRowMaterials,
-                buildingHeight: height,
-                groupedData: null
-            })
-        });
-        if (!response.ok) { const error = await response.json(); throw new Error(error.detail || 'Ошибка'); }
-        const data = await response.json();
-        showToast(`Выбрано ${data.selectedRows} строк`, 'success');
-        btn.innerHTML = '✅ Обработка запущена';
-        startProcessingPolling(currentSessionId);
-    } catch (e) {
-        showToast(e.message, 'error');
-        btn.disabled = false;
-        btn.innerHTML = `🚀 Запустить обработку (<span id="selectedCount">${selectedRows.size}</span>)`;
-        document.getElementById('processingProgressWrap').style.display = 'none';
+    // Безопасно обновляем текст в previewInfo
+    const previewInfo = document.getElementById('previewInfo');
+    if (previewInfo && window._previewData) {
+        previewInfo.textContent = `Загружено: ${window._previewData.totalRows} строк`;
     }
 }
-
-function startProcessingPolling(sessionId) {
-    if (currentStatusInterval) { clearInterval(currentStatusInterval); currentStatusInterval = null; }
-    const gen = ++pollingGeneration;
-    currentStatusInterval = setInterval(async () => {
-        if (gen !== pollingGeneration) return;
-        try {
-            const response = await fetch(`${API_BASE}/session/${sessionId}/status`);
-            if (gen !== pollingGeneration) return;
-            if (!response.ok) throw new Error('Ошибка');
-            const data = await response.json();
-            if (gen !== pollingGeneration) return;
-            const progressBar = document.getElementById('processingProgressBar');
-            const progressText = document.getElementById('processingProgressText');
-            progressBar.style.width = data.progress + '%';
-            progressText.textContent = data.progressMessage || `Обработка: ${data.progress}%`;
-            if (data.status === 'completed') { clearInterval(currentStatusInterval); currentStatusInterval = null; onProcessingComplete(sessionId); }
-            else if (data.status === 'error') {
-                clearInterval(currentStatusInterval); currentStatusInterval = null;
-                showToast('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'error');
-                document.getElementById('selectRowsBtn').disabled = false;
-                document.getElementById('selectRowsBtn').innerHTML = `🚀 Запустить обработку (<span id="selectedCount">${selectedRows.size}</span>)`;
-            }
-        } catch (e) { console.error('Polling error:', e); }
-    }, 2000);
-}
-
-async function onProcessingComplete(sessionId) {
-    document.getElementById('processingProgressBar').style.width = '100%';
-    document.getElementById('processingProgressText').textContent = 'Обработка завершена';
-    try {
-        const response = await fetch(`${API_BASE}/session/${sessionId}`);
-        if (!response.ok) throw new Error('Ошибка');
-        const data = await response.json();
-        renderResults(data.files || []);
-        document.getElementById('resultsCard').style.display = 'block';
-        showToast('Обработка завершена!', 'success');
-    } catch (e) { showToast(e.message, 'error'); }
-}
-
-function renderResults(files) {
-    const container = document.getElementById('resultsFiles');
-    if (!files || files.length === 0) {
-        container.innerHTML = '<p style="color:#718096;">Нет файлов</p>';
-        return;
-    }
-    container.innerHTML = files.map(f => {
-        const ext = f.filename.split('.').pop().toLowerCase();
-        const canPreview = ['xlsx','csv','json'].includes(ext);
-        const isGlb = ext === 'glb';
-        return `<div class="file-info">
-            <span>${isGlb ? '🧊' : '📄'}</span>
-            <span class="name">${f.filename}</span>
-            <span style="color:#718096;font-size:13px;">${(f.size / 1024).toFixed(1)} KB</span>
-            ${isGlb ? `<button class="btn btn-sm btn-secondary" onclick="previewGlbFile('${f.filename.replace(/'/g,"\\'")}')">👁️ 3D просмотр</button>` : ''}
-            ${canPreview ? `<button class="btn btn-sm btn-secondary" onclick="previewResultFile('${f.filename.replace(/'/g,"\\'")}')">👁️ Просмотр</button>` : ''}
-            <a href="${API_BASE}/session/${currentSessionId}/download/${encodeURIComponent(f.filename)}" class="btn btn-sm btn-primary" download>Скачать</a>
-        </div>`;
-    }).join('');
-}
-
+// ========== Предпросмотр файлов ==========
 function previewResultFile(filename) {
     const overlay = document.getElementById('previewModal');
     document.getElementById('previewModalTitle').textContent = filename;
@@ -2717,15 +3180,6 @@ function toggleAxes() {
     viewer3d.axesHelper.visible = !viewer3d.axesHelper.visible;
 }
 
-function downloadAll() {
-    if (!currentSessionId) return;
-    window.location.href = `${API_BASE}/session/${currentSessionId}/download_all`;
-}
-
-function startNewSession() {
-    location.reload();
-}
-
 // ========== История ==========
 async function loadHistory() {
     const container = document.getElementById('sessionsList');
@@ -2754,26 +3208,52 @@ async function restoreSession(sessionId) {
         if (!response.ok) { const error = await response.json(); throw new Error(error.detail || 'Ошибка'); }
         const data = await response.json();
         currentSessionId = sessionId;
-        if (data.buildingHeight) document.getElementById('buildingHeight').value = data.buildingHeight;
+        currentRunId = data.current_run_id || null;
+        
+        console.log('🔄 Восстановление сессии:', data);
+        
+        if (data.buildingHeight) {
+            document.getElementById('buildingHeight').value = data.buildingHeight;
+        }
+        
         showToast('Сессия восстановлена', 'success');
         switchTab('process');
+        
         if (data.status === 'completed') {
+            // Загружаем результаты
             const r = await fetch(`${API_BASE}/session/${sessionId}`);
             const s = await r.json();
-            renderResults(s.files || []);
+            
+            let files = s.files || [];
+            if (s.runs && s.runs.length > 0) {
+                const currentRun = s.runs.find(r => r.run_id === currentRunId);
+                if (currentRun) files = currentRun.files || [];
+            }
+            
+            renderResults(files, s);
             document.getElementById('resultsCard').style.display = 'block';
             document.getElementById('step1').classList.remove('disabled');
-            if (data.sourceType === 'pdf') await onIfcProcessed(sessionId);
+            
+            // ВАЖНО: загружаем таблицу предпросмотра
+            await onIfcProcessed(sessionId);
+            
+            await loadRuns();
         } else if (data.status === 'selecting_rows' || data.status === 'ifc_processed') {
-            onIfcProcessed(sessionId);
+            // Загружаем таблицу предпросмотра
+            await onIfcProcessed(sessionId);
+            document.getElementById('resultsCard').style.display = 'none';
         } else if (data.status === 'processing') {
+            // Загружаем таблицу и показываем прогресс
             await onIfcProcessed(sessionId);
             document.getElementById('processingProgressWrap').style.display = 'block';
             document.getElementById('selectRowsBtn').disabled = true;
             document.getElementById('selectRowsBtn').innerHTML = '✅ Обработка запущена';
             startProcessingPolling(sessionId);
         }
-    } catch (e) { showToast(e.message, 'error'); }
+    } catch (e) { 
+        console.error('Ошибка восстановления:', e);
+        showToast(e.message, 'error'); 
+    }
 }
 
 async function downloadAllFiles(sessionId) { window.location.href = `${API_BASE}/session/${sessionId}/download_all`; }

@@ -23,16 +23,24 @@ ELEMENT_ROW_INDEX = 17
 
 
 def convert_value(value):
-    
+    """Безопасное преобразование значений для JSON"""
     if pd.isna(value) or value == '' or value == '-':
         return None
     if isinstance(value, (np.integer, np.int64)):
         return int(value)
     if isinstance(value, (np.floating, np.float64)):
+        if np.isnan(value) or np.isinf(value):
+            return None
         return float(value)
     if isinstance(value, np.ndarray):
         return value.tolist()
-    return value
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    # Для всех остальных типов — преобразуем в строку
+    try:
+        return str(value)
+    except:
+        return None
 
 def clean_json_response(answer):
    
@@ -115,21 +123,48 @@ def _upload_file(file):
 
 
 def _process_one_row(df_elements, row_number):
-    element_row = df_elements.iloc[row_number]
+    try:
+        element_row = df_elements.iloc[row_number]
+    except IndexError:
+        logger.error(f"Строка {row_number} не найдена в DataFrame (всего строк: {len(df_elements)})")
+        raise
+    
     raw_data = {}
+    
+    # Колонки, которые пропускаем
+    SKIP_COLUMNS = [
+        'Объём_NetVolume_м3_grouped',
+        'Количество_в_группе_grouped',
+        'Название_группы',
+        'Уровень_группы',
+        'Индексы_элементов',
+        'Объём работ',  # может добавляться на предыдущих этапах
+    ]
+    
+    # Максимальная длина значения
+    MAX_VALUE_LENGTH = 500
+    
     for col in df_elements.columns:
+        # Пропускаем группировочные колонки
+        if col in SKIP_COLUMNS or col.endswith('_grouped'):
+            continue
+        
         value = element_row.get(col)
         value = convert_value(value)
+        
         if value is not None and value != '' and value != '-':
-            raw_data[col] = value
-
-    for key, value in raw_data.items():
-        print(f"  • {key}: {value}")
-
-
-
+            # Обрезаем слишком длинные значения
+            str_value = str(value)
+            if len(str_value) > MAX_VALUE_LENGTH:
+                str_value = str_value[:MAX_VALUE_LENGTH] + '...'
+            
+            raw_data[col] = str_value
+    
+    logger.info(f"Обработка строки {row_number}: {raw_data.get('Имя', 'неизвестно')[:100]}")
+    logger.info(f"  Полей для отправки в LLM: {len(raw_data)}")
+    
     data_str = "\n".join([f"  • {k}: {v}" for k, v in raw_data.items()])
-
+    
     return data_str, raw_data
 
 
@@ -141,10 +176,22 @@ def _create_first_step_prompt(prompt, data_str):
     return prompt
 
 def _analyze_row_wit_llm(raw_data, prompt, output_folder):
-
-    logger.info(f"Обращение к модели {OLLAMA_MODEL}")
+    """Анализ строки через LLM с надёжным сохранением результата"""
+    
+    # Получаем номер элемента для имени файла
+    num = raw_data.get('№ п/п', 'unknown')
+    output_filename = os.path.join(output_folder, f'Нормализованные_данные_элемента_{num}.json')
+    
+    logger.info(f"=== Анализ элемента {num} ===")
+    logger.info(f"Имя элемента: {raw_data.get('Имя', 'неизвестно')[:150]}")
+    logger.info(f"Тип элемента: {raw_data.get('Тип элемента', 'неизвестно')}")
+    
+    answer = None  # Для логирования в случае ошибки
     
     try:
+        # Обращение к LLM
+        logger.info(f"Обращение к модели {OLLAMA_MODEL}...")
+        
         client = ollama.Client(host=OLLAMA_URL, timeout=1200.0)
         response = client.chat(
             model=OLLAMA_MODEL,
@@ -153,82 +200,235 @@ def _analyze_row_wit_llm(raw_data, prompt, output_folder):
         )
         
         answer = response['message']['content'].strip()
-        #print(f"\nОтвет LLM (сырой):\n{answer[:500]}...")
+        logger.info(f"Получен ответ от LLM длиной {len(answer)} символов")
+        logger.info(f"Первые 300 символов ответа:\n{answer[:300]}")
         
-        answer = clean_json_response(answer)
-        #print(f"\nОтвет LLM (очищенный):\n{answer[:500]}...")
+        # Очищаем ответ от лишнего форматирования
+        answer_cleaned = clean_json_response(answer)
+        logger.info(f"Ответ после очистки (первые 300 символов):\n{answer_cleaned[:300]}")
         
+        # Парсим JSON
+        result = None
+        parse_error = None
         
-        result = json.loads(answer)
+        try:
+            result = json.loads(answer_cleaned)
+            logger.info(f"JSON успешно распарсен")
+        except json.JSONDecodeError as e:
+            parse_error = e
+            logger.error(f"Ошибка парсинга JSON: {e}")
+            logger.error(f"Позиция ошибки: строка {e.lineno}, столбец {e.colno}")
+            
+            # Показываем проблемный фрагмент
+            lines = answer_cleaned.split('\n')
+            if e.lineno and e.lineno <= len(lines):
+                error_line = lines[e.lineno - 1]
+                logger.error(f"Проблемная строка: {error_line[:200]}")
+            
+            # Пробуем исправить частые проблемы
+            # 1. Убираем запятые перед закрывающими скобками
+            fixed_json = re.sub(r',\s*}', '}', answer_cleaned)
+            fixed_json = re.sub(r',\s*]', ']', fixed_json)
+            
+            # 2. Убираем незакрытые строки в конце
+            # Если JSON обрывается на "ключ": без значения
+            fixed_json = re.sub(r':\s*$', ': ""', fixed_json, flags=re.MULTILINE)
+            # Если JSON обрывается на "ключ":
+            fixed_json = re.sub(r'"\s*$', '": ""', fixed_json, flags=re.MULTILINE)
+            
+            # 3. Пробуем добавить недостающие закрывающие скобки
+            open_braces = fixed_json.count('{')
+            close_braces = fixed_json.count('}')
+            if open_braces > close_braces:
+                fixed_json += '\n' + '}' * (open_braces - close_braces)
+            
+            try:
+                result = json.loads(fixed_json)
+                logger.info(f"JSON исправлен после автоматических правок")
+            except json.JSONDecodeError as e2:
+                logger.error(f"Повторная ошибка парсинга JSON: {e2}")
+                
+                # Сохраняем отладочную информацию
+                debug_file = os.path.join(output_folder, f'DEBUG_ответ_LLM_{num}.txt')
+                try:
+                    with open(debug_file, 'w', encoding='utf-8') as f:
+                        f.write("="*60 + "\n")
+                        f.write(f"Элемент: {num}\n")
+                        f.write(f"Имя: {raw_data.get('Имя', 'неизвестно')}\n")
+                        f.write("="*60 + "\n\n")
+                        f.write("=== СЫРОЙ ОТВЕТ LLM ===\n")
+                        f.write(answer + "\n\n")
+                        f.write("=== ОЧИЩЕННЫЙ ОТВЕТ ===\n")
+                        f.write(answer_cleaned + "\n\n")
+                        f.write("=== ИСПРАВЛЕННЫЙ JSON ===\n")
+                        f.write(fixed_json + "\n\n")
+                        f.write("=== ОШИБКИ ===\n")
+                        f.write(f"Первая ошибка: {e}\n")
+                        f.write(f"Вторая ошибка: {e2}\n")
+                    logger.info(f"Отладочная информация сохранена в {debug_file}")
+                except Exception as write_err:
+                    logger.error(f"Не удалось сохранить отладку: {write_err}")
+                
+                # Создаём минимальную рабочую структуру
+                result = {
+                    "размеры": {},
+                    "материал": {
+                        "название": "",
+                        "количественные_характеристики": {},
+                        "качественные_характеристики": {}
+                    },
+                    "описание_элемента": {},
+                    "ошибка_парсинга_json": str(e2)[:300]
+                }
         
+        # Если result всё ещё None (не должно быть, но на всякий случай)
+        if result is None:
+            result = {
+                "размеры": {},
+                "материал": {
+                    "название": "",
+                    "количественные_характеристики": {},
+                    "качественные_характеристики": {}
+                },
+                "описание_элемента": {}
+            }
         
+        # Валидируем и исправляем структуру
         result = validate_and_fix_json(result)
         
-        if result.get('размеры') and len(result['размеры']) > 0:
-            for key, value in result['размеры'].items():
-                # Очищаем ключи от суффиксов для красивого вывода
-                clean_key = key
-                for suffix in ['_мм', '_м3', '_м2', '_литры', '_м']:
-                    if key.endswith(suffix):
-                        clean_key = key.replace(suffix, '')
-                        break
-                print(f"   • {clean_key}: {value}")
-        else:
-            print("   • Размеры не указаны")
+        # Добавляем исходные данные
+        result["исходные_данные"] = raw_data
         
+        # Логируем результат
+        logger.info(f"Результат анализа элемента {num}:")
+        logger.info(f"  Размеры: {len(result.get('размеры', {}))} полей")
+        if result.get('размеры'):
+            for k, v in result['размеры'].items():
+                logger.info(f"    - {k}: {v}")
         
-        if result.get('материал'):
-            material = result['материал']
+        logger.info(f"  Материал: {result.get('материал', {}).get('название', 'не указан')}")
+        material_quant = result.get('материал', {}).get('количественные_характеристики', {})
+        material_qual = result.get('материал', {}).get('качественные_характеристики', {})
+        logger.info(f"    Количественные: {len(material_quant)} полей")
+        logger.info(f"    Качественные: {len(material_qual)} полей")
+        
+        logger.info(f"  Описание: {len(result.get('описание_элемента', {}))} полей")
+        
+        # Сохраняем результат АТОМАРНО
+        try:
+            # Сначала сериализуем в строку
+            json_str = json.dumps(result, ensure_ascii=False, indent=2, default=str)
             
-            if material.get('название'):
-                print(f"   • Название: {material['название']}")
+            # Проверяем, что JSON валидный (парсим обратно)
+            try:
+                json.loads(json_str)
+            except json.JSONDecodeError as json_err:
+                logger.error(f"Сгенерированный JSON невалиден: {json_err}")
+                # Пробуем упростить данные
+                result_simple = {
+                    "размеры": {str(k): str(v)[:200] for k, v in result.get('размеры', {}).items()},
+                    "материал": {
+                        "название": str(result.get('материал', {}).get('название', ''))[:300],
+                        "количественные_характеристики": {
+                            str(k): str(v)[:200] 
+                            for k, v in result.get('материал', {}).get('количественные_характеристики', {}).items()
+                        },
+                        "качественные_характеристики": {
+                            str(k): str(v)[:200] if not isinstance(v, list) else [str(x)[:200] for x in v[:10]]
+                            for k, v in result.get('материал', {}).get('качественные_характеристики', {}).items()
+                        }
+                    },
+                    "описание_элемента": {str(k): str(v)[:200] for k, v in result.get('описание_элемента', {}).items()},
+                    "исходные_данные": {
+                        "№ п/п": raw_data.get('№ п/п', num),
+                        "Имя": str(raw_data.get('Имя', ''))[:300],
+                        "Тип элемента": str(raw_data.get('Тип элемента', ''))[:200],
+                    }
+                }
+                json_str = json.dumps(result_simple, ensure_ascii=False, indent=2, default=str)
+                logger.info(f"Использована упрощённая версия JSON")
             
-            if material.get('количественные_характеристики') and len(material['количественные_характеристики']) > 0:
-                print(f"   • Количественные характеристики:")
-                for key, value in material['количественные_характеристики'].items():
-                    print(f"      - {key}: {value}")
+            # Записываем во временный файл
+            temp_file = output_filename + '.tmp'
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                f.write(json_str)
             
-            if material.get('качественные_характеристики') and len(material['качественные_характеристики']) > 0:
-                print(f"   • Качественные характеристики:")
-                for key, value in material['качественные_характеристики'].items():
-                    if key == 'слои' and isinstance(value, list):
-                        print(f"      - {key}: {', '.join(value)}")
-                    else:
-                        print(f"      - {key}: {value}")
-        else:
-            print("   • Не определено")
+            # Атомарно заменяем основной файл
+            if os.path.exists(output_filename):
+                os.remove(output_filename)
+            os.rename(temp_file, output_filename)
+            
+            file_size = os.path.getsize(output_filename)
+            logger.info(f"✅ Сохранён файл: {os.path.basename(output_filename)} ({file_size} bytes)")
+            
+        except Exception as write_error:
+            logger.error(f"❌ Ошибка при сохранении JSON для элемента {num}: {write_error}", exc_info=True)
+            
+            # Последняя попытка — сохраняем минимальную версию
+            try:
+                minimal_result = {
+                    "размеры": {},
+                    "материал": {
+                        "название": str(result.get('материал', {}).get('название', ''))[:200],
+                        "количественные_характеристики": {},
+                        "качественные_характеристики": {}
+                    },
+                    "описание_элемента": {},
+                    "исходные_данные": {
+                        "№ п/п": num,
+                        "Имя": str(raw_data.get('Имя', ''))[:200],
+                        "Тип элемента": str(raw_data.get('Тип элемента', ''))[:100],
+                    },
+                    "ошибка_сохранения": str(write_error)[:200]
+                }
+                
+                with open(output_filename, 'w', encoding='utf-8') as f:
+                    json.dump(minimal_result, f, ensure_ascii=False, indent=2)
+                logger.info(f"⚠️ Сохранена минимальная версия JSON для элемента {num}")
+            except:
+                logger.error(f"💥 Полный провал сохранения JSON для элемента {num}")
         
+        return result
         
-        if result.get('описание_элемента') and len(result['описание_элемента']) > 0:
-            for key, value in result['описание_элемента'].items():
-                print(f"   • {key}: {value}")
-        else:
-            print("   • Нет данных")
+    except Exception as e:
+        logger.error(f"💥 Критическая ошибка при анализе элемента {num}: {e}", exc_info=True)
         
-    
+        # Сохраняем ответ LLM если он был получен
+        if answer:
+            try:
+                debug_file = os.path.join(output_folder, f'CRASH_элемент_{num}_ответ_LLM.txt')
+                with open(debug_file, 'w', encoding='utf-8') as f:
+                    f.write(f"Элемент: {num}\n")
+                    f.write(f"Ошибка: {e}\n\n")
+                    f.write(f"Ответ LLM:\n{answer[:5000]}")
+            except:
+                pass
         
-        output = {
-            "размеры": result.get('размеры', {}),
-            "материал": result.get('материал', {}),
-            "описание_элемента": result.get('описание_элемента', {}),
-            "исходные_данные": raw_data
+        # Создаём аварийный JSON
+        emergency_result = {
+            "размеры": {},
+            "материал": {
+                "название": "",
+                "количественные_характеристики": {},
+                "качественные_характеристики": {}
+            },
+            "описание_элемента": {},
+            "исходные_данные": {
+                "№ п/п": num,
+                "Имя": str(raw_data.get('Имя', ''))[:200],
+                "Тип элемента": str(raw_data.get('Тип элемента', ''))[:100],
+            },
+            "критическая_ошибка": str(e)[:300]
         }
         
-        num = raw_data.get('№ п/п', '')
-
-        output_filename = f'Нормализованные_данные_элемента_{num}.json' if not output_folder else os.path.join(output_folder, f'Нормализованные_данные_элемента_{num}.json')
-
-        with open(output_filename, 'w', encoding='utf-8') as f:
-            json.dump(output, f, ensure_ascii=False, indent=2, default=convert_value)
-    
-    except json.JSONDecodeError as e:
-     
-        if 'answer' in locals():
-            print(f"Ответ LLM:\n{answer}")
-    except Exception as e:
-        print(e)
-        if 'answer' in locals():
-            print(f"Ответ LLM: {answer[:500]}")
+        try:
+            with open(output_filename, 'w', encoding='utf-8') as f:
+                json.dump(emergency_result, f, ensure_ascii=False, indent=2, default=str)
+            logger.info(f"Создан аварийный JSON для элемента {num}")
+        except Exception as write_error:
+            logger.error(f"Не удалось сохранить даже аварийный JSON: {write_error}")
+        
+        return emergency_result
 
 def _process_row_with_llm(df_elements, row_number, prompt, output_folder):
     data_str, raw_data = _process_one_row(df_elements, row_number)
@@ -256,5 +456,4 @@ def first_step(prompt_manager: PromptManager, file, rows=None, output_folder=Non
     
 
     logger.info('=====ПЕРВЫЙ ЭТАП ЗАВЕРШЕН=====')
-    
  
