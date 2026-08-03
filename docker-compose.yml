@@ -1,6 +1,6 @@
 services:
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.30.7
     container_name: ai_ifc_ollama
     restart: unless-stopped
     ports:
@@ -9,9 +9,17 @@ services:
       - ollama_data:/root/.ollama
       - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
     environment:
-      - NVIDIA_VISIBLE_DEVICES=1
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-    runtime: nvidia
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_CONTEXT_LENGTH=16384
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD-SHELL", "ollama list > /dev/null && nvidia-smi > /dev/null"]
       interval: 30s
@@ -36,9 +44,14 @@ services:
       OUTPUT_FOLDER: /app/outputs
       SESSIONS_FILE: /app/outputs/sessions.json
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-1024}
-      NVIDIA_VISIBLE_DEVICES: "1"
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
-    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
     ports:
       - "127.0.0.1:6001:6000"
     depends_on:

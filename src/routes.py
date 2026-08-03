@@ -503,19 +503,30 @@ def preview_excel(session_id: str):
     if not s:
         return _err(ErrorResponse(detail="Сессия не найдена"), 404)
 
-    # Ищем Excel в original/ директории
-    excel_path = _get_manager()._get_original_excel_path(session_id)
+    # Ищем Excel в original/ директории — ТОЛЬКО исправленный или объединенный
+    excel_path = None
+    session_dir = os.path.join(_get_manager().output_folder, session_id)
+    original_dir = os.path.join(session_dir, 'original')
+    search_dir = original_dir if os.path.exists(original_dir) else session_dir
     
+    if os.path.exists(search_dir):
+        for f in os.listdir(search_dir):
+            if f.endswith('.xlsx'):
+                # ПРОПУСКАЕМ сгруппированные и сокращённые
+                if 'сгруппированный' in f.lower() or 'сокращенный' in f.lower():
+                    continue
+                if 'ДЛЯ_СМЕТЧИКА' in f:
+                    excel_path = os.path.join(search_dir, f)
+                    logger.info(f"Найден Excel для preview: {f}")
+                    break
+    
+    # Fallback: старый путь из сессии
     if not excel_path or not os.path.exists(excel_path):
-        # Fallback: старый путь
         excel_path = s.get("excel_file_path")
+        logger.info(f"Использую fallback Excel: {excel_path}")
     
     if not excel_path or not os.path.exists(excel_path):
-        csv_path = excel_path.replace(".xlsx", ".csv") if excel_path else None
-        if csv_path and os.path.exists(csv_path):
-            excel_path = csv_path
-        else:
-            return _err(ErrorResponse(detail="Excel файл не найден"), 404)
+        return _err(ErrorResponse(detail="Excel файл не найден"), 404)
 
     try:
         if excel_path.endswith(".csv"):
@@ -536,10 +547,6 @@ def preview_excel(session_id: str):
     has_materials_md = False
     source_type = s.get("source_type")
     
-    session_dir = os.path.join(_get_manager().output_folder, session_id)
-    original_dir = os.path.join(session_dir, 'original')
-    search_dir = original_dir if os.path.exists(original_dir) else session_dir
-    
     for f in os.listdir(search_dir) if os.path.exists(search_dir) else []:
         if f.startswith("blueprint_painted") and f.endswith(".png"):
             has_blueprint_image = True
@@ -549,14 +556,48 @@ def preview_excel(session_id: str):
         # После чтения основного Excel
     building_height = None
     try:
-        # Пробуем прочитать лист "Высота здания"
         xls = pd.ExcelFile(excel_path)
-        if 'Высота_здания' in xls.sheet_names:
-            df_height = pd.read_excel(excel_path, sheet_name='Высота_здания')
-            if 'Значение_м' in df_height.columns:
+        
+        # Ищем лист с высотой
+        height_sheet = None
+        for sheet_name in xls.sheet_names:
+            if 'высота' in sheet_name.lower():
+                height_sheet = sheet_name
+                break
+        
+        if height_sheet:
+            df_height = pd.read_excel(excel_path, sheet_name=height_sheet)
+            logger.info(f"Лист высоты: {height_sheet}, колонки: {df_height.columns.tolist()}")
+            
+            # Ищем значение высоты
+            for col in df_height.columns:
+                col_lower = str(col).lower()
+                if 'значение' in col_lower or 'высота' in col_lower or 'height' in col_lower:
+                    for _, row_data in df_height.iterrows():
+                        try:
+                            val = float(row_data[col])
+                            if val > 0:
+                                building_height = val
+                                logger.info(f"Найдена высота: {building_height} м")
+                                break
+                        except (ValueError, TypeError):
+                            pass
+                    if building_height:
+                        break
+            
+            # Если не нашли по колонкам — ищем в первой строке
+            if not building_height:
                 for _, row_data in df_height.iterrows():
-                    if 'Высота надземной части' in str(row_data.iloc[0]):
-                        building_height = float(row_data['Значение_м'])
+                    for col in df_height.columns:
+                        try:
+                            val = float(row_data[col])
+                            if 1 < val < 10000:
+                                building_height = val
+                                logger.info(f"Найдена высота (по значению): {building_height} м")
+                                break
+                        except (ValueError, TypeError):
+                            pass
+                    if building_height:
                         break
     except Exception as e:
         logger.warning(f"Не удалось прочитать высоту: {e}")

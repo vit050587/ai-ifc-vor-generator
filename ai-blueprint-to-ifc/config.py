@@ -40,6 +40,7 @@ class Settings(BaseSettings):
 
     OLLAMA_MODEL_NAME: str = "hf.co/unsloth/Qwen3-VL-8B-Instruct-GGUF:Q5_K_M"
     OLLAMA_BASE_URL: str = "http://ollama:11434"
+    OLLAMA_CONTEXT_LENGTH: int = 16384
 
     TEMPERATURE: float = 0.0
     TOP_K: int = 1

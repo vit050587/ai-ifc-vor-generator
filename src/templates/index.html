@@ -2697,13 +2697,23 @@ function toggleGroupSelection(groupId, checked) {
 function ungroupRows() {
     const data = window._previewData;
     if (!data) return;
+    
     groupIndexMap = {};
     groupChildren = {};
     groupParent = {};
     groupLevel = {};
     leafGroups = {};
     isGrouped = false;
+    
+    // Временно отключаем авто-группировку
+    autoGroupEnabled = false;
+    
+    // Перерисовываем таблицу без группировки
     renderPreview(data);
+    
+    // Включаем авто-группировку обратно для будущих загрузок
+    autoGroupEnabled = true;
+    
     document.getElementById('autoGroupBtn').style.display = 'inline-block';
     document.getElementById('ungroupBtn').style.display = 'none';
     showToast('Группировка снята', 'info');

@@ -27,7 +27,11 @@ class OllamaService:
         response = client.chat(
             model=model_name,
             messages=[{'role': 'user', 'content': prompt, 'images': [img_base64]}],
-            options={'temperature': 0.0, 'num_predict': 16000}
+            options={
+                'temperature': 0.0,
+                'num_ctx': settings.OLLAMA_CONTEXT_LENGTH,
+                'num_predict': 16000,
+            }
         )
 
         result_text = response['message']['content']
@@ -46,7 +50,11 @@ class OllamaService:
         response = client.chat(
             model=model_name,
             messages=[{'role': 'user', 'content': prompt, 'images': images_base64}],
-            options={'temperature': 0.0, 'num_predict': 16000}
+            options={
+                'temperature': 0.0,
+                'num_ctx': settings.OLLAMA_CONTEXT_LENGTH,
+                'num_predict': 16000,
+            }
         )
 
         result_text = response['message']['content']
