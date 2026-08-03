@@ -98,7 +98,7 @@ class Processor:
             walls_bboxes_pix = self._prepare_walls(walls_bboxes_pix)
             all_walls_bboxes_pix += walls_bboxes_pix
 
-            painted_image_debug, materials_colors_md_debug = debug_manager.save_blueprint_walls_by_material(folder_name, walls_bboxes_pix, self.pdf_processor, f"page_{self.PDF_PATH.stem}_materials.png", legend_row_items or [], fill_opacity=0.5)
+            painted_image_debug, materials_colors_md_debug = debug_manager.save_blueprint_walls_by_material(folder_name, walls_bboxes_pix, self.pdf_processor, f"page_{self.PDF_PATH.stem}_materials.png", legend_row_items or [], fill_opacity=0.5, zoom=zoom_for_drawing)
             walls_bboxes_mm = self.walls_processor.scale_walls_coords(walls_bboxes_pix, blueprint_scale)
 
             result = {
@@ -111,7 +111,7 @@ class Processor:
             result_object["drawings"].append({"painted_image": painted_image_debug, "materials_colors_md": materials_colors_md_debug, "result": result})
 
         blueprint_processing_confidence = self._get_overall_confidence(walls_processors)
-        painted_image_debug, materials_colors_md_debug = debug_manager.save_blueprint_walls_by_material("full", all_walls_bboxes_pix, self.pdf_processor, f"page_{self.PDF_PATH.stem}_materials.png", legend_row_items or [], fill_opacity=0.5, confidence=blueprint_processing_confidence)
+        painted_image_debug, materials_colors_md_debug = debug_manager.save_blueprint_walls_by_material("full", all_walls_bboxes_pix, self.pdf_processor, f"page_{self.PDF_PATH.stem}_materials.png", legend_row_items or [], fill_opacity=0.5, confidence=blueprint_processing_confidence, zoom=zoom_for_drawing)
         result_object["full_drawing"] = {"painted_image": painted_image_debug, "materials_colors_md": materials_colors_md_debug}
 
         self.drawing_statistics.save_deleted_walls(legend_row_items or [])
@@ -253,7 +253,6 @@ class Processor:
         unmerged_walls_for_render = [w for w in trimed_walls if not "merged_count" in w]
         self.save_blueprint_with_walls(folder_name, {"blue": merged_walls_for_render, "red": unmerged_walls_for_render}, f"page_{self.PDF_PATH.stem}_result.png", zoom)
 
-        # self._save_for_train_dino(trimed_walls)
         self._add_pdf_bbox_to_walls(trimed_walls, zoom)
         return trimed_walls
 
@@ -266,54 +265,6 @@ class Processor:
 
         for wall, wall_pdf in zip(walls, walls_pdf):
             wall["bbox_pdf"] = wall_pdf["bbox"]
-        
-    
-    def _save_for_train_dino(self, trimed_walls):
-        Path("walls").mkdir(parents=True, exist_ok=True)
-        Path("walls_highlited").mkdir(parents=True, exist_ok=True)
-        with open("train.jsonl", "w", encoding="utf-8") as train_file:
-            for i, wall in enumerate(trimed_walls):
-                bbox = wall["bbox"]
-                rect = {
-                    "x0": min(bbox["x1"], bbox["x2"], bbox["x3"], bbox["x4"]),
-                    "y0": min(bbox["y1"], bbox["y2"], bbox["y3"], bbox["y4"]),
-                    "x1": max(bbox["x1"], bbox["x2"], bbox["x3"], bbox["x4"]),
-                    "y1": max(bbox["y1"], bbox["y2"], bbox["y3"], bbox["y4"]),
-                }
-                crop_x0 = max(0, int(rect["x0"] - 20))
-                crop_y0 = max(0, int(rect["y0"] - 20))
-                _, img = self.pdf_processor.crop_image(
-                    rect["x0"] - 20,
-                    rect["y0"] - 20,
-                    rect["x1"] + 20,
-                    rect["y1"] + 20,
-                )
-
-                image_name = f"page_1_{i}.png"
-                img.save(f"walls/{image_name}")
-                highlighted_img = img.copy()
-                draw = ImageDraw.Draw(highlighted_img)
-                points = [
-                    (
-                        float(bbox[f"x{point_index}"]) - crop_x0,
-                        float(bbox[f"y{point_index}"]) - crop_y0,
-                    )
-                    for point_index in range(1, 5)
-                ]
-                draw.line(points + [points[0]], fill="red", width=1)
-                highlighted_img.save(f"walls_highlited/{image_name}")
-
-                train_row = {
-                    "plan_image": image_name,
-                    "plan_obb": [
-                        coordinate
-                        for point in points
-                        for coordinate in point
-                    ],
-                    "wall_type": "monolit_jb_1",
-                }
-                train_file.write(json.dumps(train_row, ensure_ascii=False) + "\n")
-        
     
     def save_blueprint_with_walls(
         self,

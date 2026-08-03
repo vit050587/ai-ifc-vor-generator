@@ -97,7 +97,8 @@ def save_blueprint_walls_by_material(
     legend_row_items: list[dict[str, Any]],
     fill_opacity: float,
     confidence: float | None = None,
-    save_md: bool = True
+    save_md: bool = True,
+    zoom: float = settings.BLUEPRINT.zoom
 ):
     grouped_walls: dict[str, list[dict]] = {}
     material_colors: dict[str, str] = {}
@@ -127,13 +128,13 @@ def save_blueprint_walls_by_material(
         grouped_walls,
         width=2,
         fill_opacity=fill_opacity,
-        zoom=settings.BLUEPRINT.zoom * 1.5
+        zoom=zoom
     )
     img_with_labels = pdf_processor.draw_obb_labels(
         painted_walls_image,
         walls,
         label_key="id",
-        zoom=settings.BLUEPRINT.zoom * 1.5
+        zoom=zoom
     )
 
     if confidence:
@@ -164,8 +165,8 @@ def _get_wall_material(wall: dict) -> str:
 
 def _format_material_colors_markdown(material_colors: dict[str, str]) -> str:
     lines = [
-        "| Цвет | Материал | Hex |",
-        "| --- | --- | --- |",
+        "| Цвет | Материал |",
+        "| --- | --- |",
     ]
     for material, color in material_colors.items():
         swatch = (
@@ -173,7 +174,7 @@ def _format_material_colors_markdown(material_colors: dict[str, str]) -> str:
             f'background:{color};border:1px solid #999;"></span>'
         )
         material_text = _escape_markdown_table_cell(material)
-        lines.append(f"| {swatch} | {material_text} | `{color}` |")
+        lines.append(f"| {swatch} | {material_text} |")
 
     return "\n".join(lines) + "\n"
 

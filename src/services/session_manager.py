@@ -251,11 +251,22 @@ class SessionManager:
             return s.get("excel_file_path")
         
         # Ищем Excel для сметчика в original/
+        # ВАЖНО: предпочитаем 'исправленный' (имеет лист 'Данные'),
+        # пропускаем 'сокращенный' (у него дефолтный лист 'Sheet1')
         for f in os.listdir(original_dir):
-            if 'ДЛЯ_СМЕТЧИКА' in f and f.endswith('.xlsx'):
+            if 'ДЛЯ_СМЕТЧИКА' in f and 'исправленный' in f and f.endswith('.xlsx'):
                 return os.path.join(original_dir, f)
         
-        # Fallback: любой Excel
+        for f in os.listdir(original_dir):
+            if 'ДЛЯ_СМЕТЧИКА' in f and 'сокращенный' not in f.lower() and f.endswith('.xlsx'):
+                return os.path.join(original_dir, f)
+        
+        # Fallback: любой Excel (кроме сокращенного)
+        for f in os.listdir(original_dir):
+            if 'сокращенный' not in f.lower() and f.endswith('.xlsx'):
+                return os.path.join(original_dir, f)
+        
+        # Last resort: любой Excel
         for f in os.listdir(original_dir):
             if f.endswith('.xlsx'):
                 return os.path.join(original_dir, f)
@@ -1051,6 +1062,22 @@ class SessionManager:
                     })
             
             final_files.sort(key=lambda x: x['filename'])
+            
+            # Добавляем справочные файлы из корня сессии
+            # (создаются при начальной обработке IFC/PDF в ifc_reference_builder)
+            reference_files = [
+                ("ifc_elements_output.json", "все элементы.json"),
+                ("ifc_raw_elements_grouped.json", "группы элементов.json"),
+                ("ifc_raw_elements_grouped.xlsx", "группы элементов.xlsx"),
+            ]
+            for src_name, display_name in reference_files:
+                src_path = os.path.join(session_dir, src_name)
+                if os.path.isfile(src_path):
+                    final_files.append({
+                        "path": src_path,
+                        "filename": display_name,
+                        "size": os.path.getsize(src_path),
+                    })
             
             # Обновляем run в сессии
             with self._state_lock:

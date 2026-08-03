@@ -6,8 +6,8 @@ from typing import Literal
 
 
 class BlueprintSettings(BaseModel):
-    zoom: int = Field(default=6, gt=0)
-    tile_size: int = Field(default=720, gt=0)
+    tile_size: int = 720
+    zoom: float = Field(default=6 * (tile_size / 720), gt=0)
     tile_overlap: float = Field(default=37, ge=0, lt=100)
 
 

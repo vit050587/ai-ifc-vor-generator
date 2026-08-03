@@ -186,6 +186,39 @@ def process_pdf(pdf_path: str, output_folder: str, progress_callback=None) -> Di
         if progress_callback:
             progress_callback("Формирование результатов", 98)
 
+        # ========== АГРЕГИРОВАННЫЕ КОЛОНКИ (как в zero_step для IFC) ==========
+        # Добавляем ДО build_reference_from_pdf, чтобы группировка видела те же колонки
+        # Ширина, мм — из Длина_Width_мм (толщина стен / ширина колонн)
+        if 'Длина_Width_мм' in df_all.columns:
+            df_all['Ширина, мм'] = df_all['Длина_Width_мм']
+        # Длина, мм — из Глубина_выдавливания_мм (высота/длина выдавливания)
+        if 'Глубина_выдавливания_мм' in df_all.columns:
+            df_all['Длина, мм'] = df_all['Глубина_выдавливания_мм']
+        # Высота, мм — из Высота_сечения_мм
+        if 'Высота_сечения_мм' in df_all.columns:
+            df_all['Высота, мм'] = df_all['Высота_сечения_мм']
+        # Периметр, м — из Периметр_мм / 1000
+        if 'Периметр_мм' in df_all.columns:
+            df_all['Периметр, м'] = pd.to_numeric(
+                df_all['Периметр_мм'].replace('-', pd.NA), errors='coerce'
+            ) / 1000
+        # Площадь, м2 — из Площадь_GrossArea_м2
+        if 'Площадь_GrossArea_м2' in df_all.columns:
+            df_all['Площадь, м2'] = df_all['Площадь_GrossArea_м2']
+        # Объём, м3 — из Объём_NetVolume_м3
+        if 'Объём_NetVolume_м3' in df_all.columns:
+            df_all['Объём, м3'] = df_all['Объём_NetVolume_м3']
+
+        # Заполняем NaN в агрегированных колонках
+        for col in ['Ширина, мм', 'Длина, мм', 'Высота, мм', 'Периметр, м', 'Площадь, м2', 'Объём, м3']:
+            if col in df_all.columns:
+                df_all[col] = df_all[col].fillna('-')
+
+        # Колонки этажности (в PDF недоступны — прочерк)
+        for col in ['Этаж', 'Тип_этажа', 'Уровень_этажа_мм']:
+            if col not in df_all.columns:
+                df_all[col] = '-'
+
         # Формируем ifc_elements_output.json и ifc_raw_elements_grouped.json
         # (аналогично пайплайну IFC из ifc_reference_builder.py)
         try:
@@ -214,19 +247,34 @@ def process_pdf(pdf_path: str, output_folder: str, progress_callback=None) -> Di
         df_all.to_excel(excel_all_data_path, index=False, engine="openpyxl")
         logger.info(f"Сохранён файл всех данных: {excel_all_data_path}")
 
-        # --- Формируем ДЛЯ_СМЕТЧИКА_исправленный.xlsx (подмножество колонок) ---
-        smetchik_cols = ["Тип (RU)", "Тип элемента", "Имя", "GlobalId", "Материал"]
+        # --- Формируем ДЛЯ_СМЕТЧИКА_исправленный.xlsx (как в zero_step для IFC) ---
+        smetchik_cols = [
+            'Тип (RU)', 'Тип элемента', 'Имя', 'GlobalId', 'Материал',
+            'Этаж', 'Тип_этажа', 'Уровень_этажа_мм',
+        ]
 
+        # Оригинальные геометрические колонки (с _мм)
         for col in df_all.columns:
-            if any(x in col for x in ["Длина", "Ширина", "Высота", "Глубина"]) and "_мм" in col:
-                smetchik_cols.append(col)
+            if any(term in col for term in ['Длина', 'Ширина', 'Высота', 'Глубина']) and '_мм' in col:
+                if col not in smetchik_cols:
+                    smetchik_cols.append(col)
 
+        # Объёмы
         for col in df_all.columns:
-            if "Объём" in col and ("_м3" in col or "_литры" in col):
-                smetchik_cols.append(col)
+            if 'Объём' in col and ('_м3' in col or '_литры' in col):
+                if col not in smetchik_cols:
+                    smetchik_cols.append(col)
 
+        # Площади (Gross)
         for col in df_all.columns:
-            if "Площадь" in col and "_м2" in col:
+            if 'Площадь' in col and 'Gross' in col and '_м2' in col:
+                if col not in smetchik_cols:
+                    smetchik_cols.append(col)
+
+        # Агрегированные колонки (как в zero_step)
+        aggregated_cols = ['Длина, мм', 'Ширина, мм', 'Высота, мм', 'Периметр, м', 'Площадь, м2', 'Объём, м3']
+        for col in aggregated_cols:
+            if col in df_all.columns and col not in smetchik_cols:
                 smetchik_cols.append(col)
 
         # Только существующие колонки
@@ -247,11 +295,7 @@ def process_pdf(pdf_path: str, output_folder: str, progress_callback=None) -> Di
 
         # Сводка по типам (как в zero_step)
         summary_data = []
-        volume_col = None
-        for col in df_all.columns:
-            if "Объём_NetVolume_м3" in col:
-                volume_col = col
-                break
+        volume_col = 'Объём, м3' if 'Объём, м3' in df_all.columns else None
 
         if "Тип (RU)" in df_all.columns and "Тип элемента" in df_all.columns:
             group_cols = ["Тип (RU)", "Тип элемента"]

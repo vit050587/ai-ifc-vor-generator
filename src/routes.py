@@ -668,6 +668,8 @@ def preview_result(session_id: str, filename: str):
         return _err(ErrorResponse(detail="Файл не найден"), 404)
 
     try:
+        MAX_PREVIEW = 100
+
         if path.endswith(".csv"):
             df = pd.read_csv(path)
         elif path.endswith(".xlsx"):
@@ -675,9 +677,31 @@ def preview_result(session_id: str, filename: str):
         elif path.endswith(".json"):
             with open(path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
+
+            # Массив объектов (например, «все элементы» или «группы элементов»)
+            if isinstance(data, list):
+                if data and isinstance(data[0], dict):
+                    headers = list(data[0].keys())
+                else:
+                    headers = ["№", "Значение"]
+                rows = []
+                for i, item in enumerate(data[:MAX_PREVIEW], 1):
+                    if isinstance(item, dict):
+                        rows.append([str(item.get(h, "-")) for h in headers])
+                    else:
+                        rows.append([str(i), str(item)])
+                return _ok(PreviewResponse(
+                    headers=headers,
+                    rows=rows,
+                    total_rows=len(data),
+                    preview_rows=min(len(data), MAX_PREVIEW),
+                    is_preview=len(data) > MAX_PREVIEW,
+                ))
+
+            # Словарь «ключ — значение»
             return _ok(PreviewResponse(
                 headers=["Ключ", "Значение"],
-                rows=[[k, str(v)] for k, v in data.items()],
+                rows=[[str(k), str(v)] for k, v in data.items()],
                 total_rows=len(data),
                 is_preview=True,
             ))
@@ -686,7 +710,6 @@ def preview_result(session_id: str, filename: str):
 
         headers = df.columns.tolist()
         rows = df.fillna("-").astype(str).values.tolist()
-        MAX_PREVIEW = 100
 
         return _ok(PreviewResponse(
             headers=headers,

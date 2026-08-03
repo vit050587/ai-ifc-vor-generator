@@ -39,6 +39,76 @@ from src.services.group_excel import (
 
 logger = setup_logger(__name__)
 
+# Маппинг внутренних имён колонок XLSX на русские
+_COLUMN_RU_NAMES = {
+    'buildingElementName': 'Элемент',
+    'isActive': 'Активен',
+    'elementCount': 'Количество',
+    'totalMeasure_type': 'Тип измерения',
+    'totalMeasure_value': 'Значение',
+    'totalMeasure_unit': 'Единица измерения',
+    # characteristics (нормализованные)
+    'char_Материал': 'Материал',
+    'char_Расположение': 'Расположение',
+    'char_Толщина': 'Толщина',
+    'char_Площадь': 'Площадь',
+    'char_Периметр': 'Периметр',
+    'char_Длина': 'Длина',
+    'char_Объём': 'Объём',
+    # additional (оригинальные)
+    'additional_Имя элемента': 'Имя элемента',
+    'additional_Толщина': 'Толщина элемента',
+    'additional_Площадь': 'Площадь элемента',
+    'additional_Периметр': 'Периметр элемента',
+    'additional_Длина': 'Длина элемента',
+    'additional_Высота': 'Высота элемента',
+    'additional_Этаж': 'Этаж',
+    'additional_Тип этажа': 'Тип этажа',
+}
+
+# Порядок колонок в XLSX (внутренние имена, до переименования в русские).
+_COLUMN_ORDER = [
+    'buildingElementName',
+    'isActive',
+    'elementCount',
+    'totalMeasure_type',
+    'totalMeasure_value',
+    'totalMeasure_unit',
+    # characteristics (нормализованные)
+    'char_Материал',
+    'char_Расположение',
+    'char_Толщина',
+    'char_Площадь',
+    'char_Периметр',
+    # additionalCharacteristics (оригинальные)
+    'additional_Имя элемента',
+    'additional_Толщина',
+    'additional_Площадь',
+    'additional_Периметр',
+]
+
+
+def _prepare_xlsx_df(xlsx_rows: list) -> pd.DataFrame:
+    """Формирует DataFrame из строк XLSX, упорядочивает колонки и переименовывает в русские."""
+    if not xlsx_rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(xlsx_rows).fillna('')
+    # Упорядочиваем колонки по _COLUMN_ORDER (только те, что есть в данных)
+    ordered_cols = [col for col in _COLUMN_ORDER if col in df.columns]
+    # Добавляем колонки, которых нет в _COLUMN_ORDER, в конец
+    remaining_cols = [col for col in df.columns if col not in _COLUMN_ORDER]
+    df = df[ordered_cols + remaining_cols]
+    # Переименовываем колонки в русские названия
+    rename_map = {}
+    for col in df.columns:
+        if col in _COLUMN_RU_NAMES:
+            rename_map[col] = _COLUMN_RU_NAMES[col]
+        elif col.startswith('char_'):
+            rename_map[col] = col.replace('char_', '', 1)
+        elif col.startswith('additional_'):
+            rename_map[col] = col.replace('additional_', '', 1)
+    return df.rename(columns=rename_map)
+
 
 # =====================================================================
 #  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -577,6 +647,103 @@ def extract_elements_from_ifc(ifc_path: str, output_folder: str) -> str:
     df_smetchik = df[existing_cols].copy()
     df_smetchik = df_smetchik.fillna('-')
 
+    # --- Добавляем агрегированные колонки геометрии, необходимые для GEOMETRY_GROUP_RULES ---
+    # group_excel.py использует 'Ширина, мм', 'Площадь, м2', 'Объём, м3', 'Длина, мм', 'Периметр, мм'
+    # Эти колонки ожидаются в GEOMETRY_GROUP_RULES для правильной группировки по толщине/площади и т.д.
+    # Без них get_geometry_value() падает на get_volume() (объём в м³), что даёт неверные диапазоны.
+
+    # Ширина, мм — для стен это толщина (Длина_Width_мм), для колонн — ширина сечения
+    if 'Ширина, мм' not in df_smetchik.columns:
+        width_col = None
+        for candidate in ['Длина_Width_мм', 'Ширина_сечения_мм', 'Глубина_выдавливания_мм']:
+            if candidate in df_smetchik.columns:
+                width_col = candidate
+                break
+        if width_col:
+            df_smetchik['Ширина, мм'] = df_smetchik[width_col].apply(
+                lambda v: safe_parse_float(v) if v != '-' else 0
+            )
+        else:
+            df_smetchik['Ширина, мм'] = 0
+
+    # Площадь, м2 — для плит, балок и т.д.
+    if 'Площадь, м2' not in df_smetchik.columns:
+        area_col = None
+        for candidate in ['Площадь_GrossArea_м2', 'Площадь_NetArea_м2', 'Площадь_GROSS_м2']:
+            if candidate in df_smetchik.columns:
+                area_col = candidate
+                break
+        if area_col:
+            df_smetchik['Площадь, м2'] = df_smetchik[area_col].apply(
+                lambda v: safe_parse_float(v) if v != '-' else 0
+            )
+        else:
+            df_smetchik['Площадь, м2'] = 0
+
+    # Объём, м3
+    if 'Объём, м3' not in df_smetchik.columns:
+        vol_col = None
+        for candidate in ['Объём_NetVolume_м3', 'Объём_GrossVolume_м3']:
+            if candidate in df_smetchik.columns:
+                vol_col = candidate
+                break
+        if vol_col:
+            df_smetchik['Объём, м3'] = df_smetchik[vol_col].apply(
+                lambda v: safe_parse_float(v) if v != '-' else 0
+            )
+        else:
+            # Пробуем из литров
+            for candidate in ['Объём_GrossVolume_литры', 'Объём_NetVolume_литры']:
+                if candidate in df_smetchik.columns:
+                    df_smetchik['Объём, м3'] = df_smetchik[candidate].apply(
+                        lambda v: safe_parse_float(v) / 1000 if v != '-' else 0
+                    )
+                    break
+            else:
+                df_smetchik['Объём, м3'] = 0
+
+    # Длина, мм — для свай, балок
+    if 'Длина, мм' not in df_smetchik.columns:
+        length_col = None
+        for candidate in ['Длина_Length_мм', 'Длина_мм', 'Длина_Height_мм']:
+            if candidate in df_smetchik.columns:
+                length_col = candidate
+                break
+        if length_col:
+            df_smetchik['Длина, мм'] = df_smetchik[length_col].apply(
+                lambda v: safe_parse_float(v) if v != '-' else 0
+            )
+        else:
+            df_smetchik['Длина, мм'] = 0
+
+    # Периметр, мм — для колонн
+    if 'Периметр, мм' not in df_smetchik.columns:
+        perim_col = None
+        for candidate in ['Длина_Perimeter_мм', 'Периметр_мм']:
+            if candidate in df_smetchik.columns:
+                perim_col = candidate
+                break
+        if perim_col:
+            df_smetchik['Периметр, мм'] = df_smetchik[perim_col].apply(
+                lambda v: safe_parse_float(v) if v != '-' else 0
+            )
+        else:
+            df_smetchik['Периметр, мм'] = 0
+
+    # Высота, мм
+    if 'Высота, мм' not in df_smetchik.columns:
+        height_col = None
+        for candidate in ['Длина_Height_мм', 'Высота_мм', 'Глубина_выдавливания_мм']:
+            if candidate in df_smetchik.columns:
+                height_col = candidate
+                break
+        if height_col:
+            df_smetchik['Высота, мм'] = df_smetchik[height_col].apply(
+                lambda v: safe_parse_float(v) if v != '-' else 0
+            )
+        else:
+            df_smetchik['Высота, мм'] = 0
+
     # Добавляем служебные колонки (как в zero_step)
     df_smetchik.insert(0, '№ п/п', range(1, len(df_smetchik) + 1))
     df_smetchik['Примечание_сметчика'] = ''
@@ -943,7 +1110,7 @@ def build_reference_from_ifc(ifc_path: str, output_folder: str) -> List[Dict[str
             xlsx_rows.append(row)
 
         if xlsx_rows:
-            df = pd.DataFrame(xlsx_rows).fillna('')
+            df = _prepare_xlsx_df(xlsx_rows)
             df.to_excel(grouped_excel_path, index=False)
             logger.info(
                 f"Файл {os.path.basename(grouped_excel_path)} перезаписан "
@@ -1031,6 +1198,11 @@ def build_reference_from_pdf(df: pd.DataFrame, output_folder: str) -> List[Dict[
         if 'Площадь' in col and '_м2' in col:
             smetchik_cols.append(col)
 
+    # Агрегированные колонки (единый формат с zero_step, через запятую)
+    for col in df.columns:
+        if col in ('Ширина, мм', 'Длина, мм', 'Высота, мм', 'Периметр, м', 'Площадь, м2', 'Объём, м3'):
+            smetchik_cols.append(col)
+
     # Оставляем только существующие колонки, убираем дубликаты
     existing_cols = []
     seen = set()
@@ -1098,7 +1270,7 @@ def build_reference_from_pdf(df: pd.DataFrame, output_folder: str) -> List[Dict[
             xlsx_rows.append(row)
 
         if xlsx_rows:
-            df_out = pd.DataFrame(xlsx_rows).fillna('')
+            df_out = _prepare_xlsx_df(xlsx_rows)
             df_out.to_excel(grouped_excel_path, index=False)
             logger.info(
                 f"Файл {os.path.basename(grouped_excel_path)} перезаписан "
