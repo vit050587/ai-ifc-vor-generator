@@ -85,6 +85,56 @@
             flex-shrink: 0;
         }
         .card .step-number.done { background: #48bb78; color: white; }
+        .processing-type-selector {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .processing-type-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            padding: 12px 20px;
+            border: 2px solid #cbd5e0;
+            border-radius: 12px;
+            transition: all 0.2s;
+            background: white;
+            user-select: none;
+        }
+        .processing-type-label:hover {
+            border-color: #4299e1;
+            background: #f7fafc;
+        }
+        .processing-type-label.active {
+            border-color: #2b6cb0 !important;
+            background: #ebf8ff !important;
+            box-shadow: 0 0 0 3px rgba(43, 108, 176, 0.15);
+        }
+        .processing-type-label input[type="radio"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            accent-color: #2b6cb0;
+        }
+        .pt-icon { font-size: 24px; }
+        .pt-text { font-weight: 600; color: #4a5568; font-size: 15px; }
+        .pt-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #e2e8f0;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #718096;
+            margin-left: 4px;
+        }
+        .processing-type-label.active .pt-badge {
+            background: #2b6cb0;
+            color: white;
+        }
         .upload-area {
             border: 2px dashed #cbd5e0;
             border-radius: 12px;
@@ -189,7 +239,11 @@
         }
         .group-header:hover { background: #e2e8f0 !important; }
         .group-header td { font-weight: 600; padding: 10px 12px; border-bottom: 2px solid #cbd5e0; }
-        .group-row { transition: background 0.2s; }
+        .group-row {
+            transition: background 0.2s;
+            content-visibility: auto;
+            contain-intrinsic-size: 0 35px;
+        }
         .group-row.hidden-row { display: none; }
         .group-arrow {
             display: inline-block;
@@ -520,6 +574,73 @@
             color: #2d3748;
             margin-bottom: 8px;
         }
+        .pt-info-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #ebf8ff;
+            color: #2b6cb0;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+        .reference-status {
+            display: none;
+            padding: 16px 20px;
+            margin-top: 16px;
+            border: 1px solid #bee3f8;
+            border-radius: 10px;
+            background: #ebf8ff;
+        }
+        .reference-status.error { border-color: #feb2b2; background: #fff5f5; }
+        .reference-status.completed { border-color: #9ae6b4; background: #f0fff4; }
+        .reference-meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 10px 20px;
+            margin-bottom: 12px;
+            color: #4a5568;
+            font-size: 14px;
+        }
+        .reference-meta code {
+            word-break: break-all;
+            color: #2b6cb0;
+            font-size: 13px;
+        }
+        .reference-results-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+        .reference-json-panel {
+            min-width: 0;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #1a202c;
+        }
+        .reference-json-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 12px 14px;
+            background: #f7fafc;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .reference-json-header strong { font-size: 14px; color: #2d3748; }
+        .reference-json-panel pre {
+            margin: 0;
+            padding: 16px;
+            max-height: 520px;
+            overflow: auto;
+            color: #e2e8f0;
+            font: 12px/1.5 Consolas, Monaco, monospace;
+            white-space: pre;
+            tab-size: 2;
+        }
         @media (max-width: 768px) {
             .card { padding: 16px; }
             header { padding: 16px; }
@@ -527,16 +648,20 @@
             .tab-btn { flex: 1; text-align: center; padding: 8px 12px; font-size: 13px; }
             .params-row { flex-direction: column; gap: 12px; }
             .viewer3d-container { height: 350px; }
+            .reference-results-grid { grid-template-columns: 1fr; }
+            .processing-type-label { padding: 10px 14px; }
+            .pt-text { font-size: 13px; }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🏗️ Определение видов работ для конструктивных элементов</h1>
+            <h1>🏗️ Определение видов работ для элементов</h1>
         </header>
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('process')">🔄 Обработка</button>
+            <button class="tab-btn" onclick="switchTab('reference')">🧪 JSON-справочники</button>
             <button class="tab-btn" onclick="switchTab('history')">📚 История</button>
         </div>
         
@@ -544,7 +669,23 @@
             <div class="card" id="step0">
                 <div class="step-title">
                     <span class="step-number" id="step0Number">1</span>
-                    Загрузка файла с элементами конструктивных решений
+                    Загрузка файла с элементами
+                    <span class="pt-info-badge" id="ptBadgeStep0">КР</span>
+                </div>
+                
+                <div class="processing-type-selector">
+                    <label class="processing-type-label active" id="ptLabelKR">
+                        <input type="radio" name="processingType" value="KR" checked onchange="onProcessingTypeChange()">
+                        <span class="pt-icon">🏗️</span>
+                        <span class="pt-text">КР</span>
+                        <span class="pt-badge">Конструктивные решения</span>
+                    </label>
+                    <label class="processing-type-label" id="ptLabelAR">
+                        <input type="radio" name="processingType" value="AR" onchange="onProcessingTypeChange()">
+                        <span class="pt-icon">🏛️</span>
+                        <span class="pt-text">АР</span>
+                        <span class="pt-badge">Архитектурные решения</span>
+                    </label>
                 </div>
                 
                 <div class="upload-area" id="uploadArea">
@@ -571,6 +712,7 @@
                 <div class="step-title">
                     <span class="step-number" id="step1Number">2</span>
                     Выбор строк и параметров обработки
+                    <span class="pt-info-badge" id="ptBadgeStep1">КР</span>
                 </div>
                 <div class="flex-between mb-12">
                     <span id="previewInfo">Загружено: 0 строк</span>
@@ -614,10 +756,12 @@
                 </div>
                 <div class="progress-text" id="processingProgressText"></div>
             </div>
+            
             <div class="card" id="resultsCard" style="display:none;">
                 <div class="step-title">
                     <span class="step-number done">✓</span>
                     Результаты обработки
+                    <span class="pt-info-badge" id="ptBadgeResults">КР</span>
                 </div>
                 
                 <div class="run-selector" id="runSelector" style="display:none;">
@@ -650,6 +794,91 @@
                 </div>
             </div>
         </div>
+
+        <!-- Вкладка JSON-справочников -->
+        <div class="tab-content" id="referenceTab">
+            <div class="card">
+                <div class="step-title">
+                    <span class="step-number">🧪</span>
+                    Тестирование JSON-справочников
+                </div>
+                <div class="processing-type-selector" id="referenceTypeSelector">
+                    <label class="processing-type-label active" id="refPtLabelKR">
+                        <input type="radio" name="referenceProcessingType" value="KR" checked>
+                        <span class="pt-icon">🏗️</span>
+                        <span class="pt-text">КР</span>
+                        <span class="pt-badge">Конструктивные решения</span>
+                    </label>
+                    <label class="processing-type-label" id="refPtLabelAR">
+                        <input type="radio" name="referenceProcessingType" value="AR">
+                        <span class="pt-icon">🏛️</span>
+                        <span class="pt-text">АР</span>
+                        <span class="pt-badge">Архитектурные решения</span>
+                    </label>
+                </div>
+                <div class="upload-area" id="referenceUploadArea">
+                    <input type="file" id="referenceFileInput" accept=".ifc,.pdf" hidden>
+                    <div class="icon">📚</div>
+                    <div class="text">Нажмите или перетащите IFC/PDF</div>
+                </div>
+                <div id="referenceFileInfo" style="display:none;" class="file-info">
+                    <span>📄</span>
+                    <span class="name" id="referenceFileName"></span>
+                    <button class="btn btn-sm btn-danger" onclick="resetReferenceTest()">✕</button>
+                </div>
+                <div class="flex mt-12">
+                    <button class="btn btn-primary" id="referenceStartBtn" onclick="startReferenceBuild()" disabled>
+                        🚀 Сформировать справочники
+                    </button>
+                    <button class="btn btn-secondary" id="referenceRefreshBtn" onclick="refreshReferenceResult()" style="display:none;">
+                        🔄 Проверить сейчас
+                    </button>
+                </div>
+                <div class="reference-status" id="referenceStatusBox">
+                    <div class="reference-meta">
+                        <div>Сессия: <code id="referenceSessionId">—</code></div>
+                        <div>Статус: <strong id="referenceStatusText">Ожидание</strong></div>
+                    </div>
+                    <div class="progress-wrap" style="margin:8px 0;">
+                        <div class="progress-bar" id="referenceProgressBar"></div>
+                    </div>
+                    <div class="progress-text" id="referenceProgressText"></div>
+                </div>
+            </div>
+            <div class="card" id="referenceResultsCard" style="display:none;">
+                <div class="flex-between">
+                    <div class="step-title" style="margin-bottom:0;">
+                        <span class="step-number done">✓</span>
+                        Справочники готовы
+                    </div>
+                    <div class="flex gap-8">
+                        <button class="btn btn-sm btn-secondary" onclick="copyReferenceJson('elements')">📋 Копировать элементы</button>
+                        <button class="btn btn-sm btn-secondary" onclick="copyReferenceJson('grouped')">📋 Копировать группы</button>
+                    </div>
+                </div>
+                <div class="reference-meta mt-12">
+                    <div>Элементов: <strong id="referenceElementsCount">0</strong></div>
+                    <div>Групп: <strong id="referenceGroupsCount">0</strong></div>
+                </div>
+                <div class="reference-results-grid">
+                    <div class="reference-json-panel">
+                        <div class="reference-json-header">
+                            <strong>ifc_elements_output.json</strong>
+                            <button class="btn btn-sm btn-success" onclick="downloadReferenceJson('elements')">Скачать</button>
+                        </div>
+                        <pre id="referenceElementsJson"></pre>
+                    </div>
+                    <div class="reference-json-panel">
+                        <div class="reference-json-header">
+                            <strong>ifc_raw_elements_grouped.json</strong>
+                            <button class="btn btn-sm btn-success" onclick="downloadReferenceJson('grouped')">Скачать</button>
+                        </div>
+                        <pre id="referenceGroupedJson"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="tab-content" id="historyTab">
             <div class="card">
                 <div class="flex-between">
@@ -661,6 +890,7 @@
         </div>
     </div>
 
+    <!-- Модальные окна -->
     <div class="modal-overlay" id="previewModal">
         <div class="modal">
             <div class="modal-header">
@@ -751,208 +981,153 @@ let viewer3d = null;
 let pollingGeneration = 0;
 let isNewRunMode = false;
 let autoGroupEnabled = true;
+let currentProcessingType = 'KR';
+
+// Кеш для ленивой загрузки строк данных
+const rowElementCache = new Map();
+
+// Настройки производительности
+const PERF = {
+    BATCH_SIZE: 30,
+    BATCH_DELAY: 16,
+};
 
 const API_BASE = '/ifc-vor/api';
 
+// ========== Переключатель КР / АР ==========
+function onProcessingTypeChange() {
+    const selected = document.querySelector('input[name="processingType"]:checked');
+    if (!selected) return;
+    
+    currentProcessingType = selected.value;
+    
+    document.querySelectorAll('#processTab .processing-type-label').forEach(label => {
+        label.classList.toggle('active', label.querySelector('input').checked);
+    });
+    
+    updateProcessingTypeBadges();
+    
+    if (window._previewData && window._previewData.rows && window._previewData.rows.length > 0) {
+        if (isGrouped) {
+            autoGroupRows();
+        }
+    }
+    
+    const typeName = currentProcessingType === 'KR' ? 'Конструктивные решения' : 'Архитектурные решения';
+    showToast(`Режим: ${typeName}`, 'info');
+}
+
+function updateProcessingTypeBadges() {
+    const badgeText = currentProcessingType;
+    ['ptBadgeStep0', 'ptBadgeStep1', 'ptBadgeResults'].forEach(id => {
+        const badge = document.getElementById(id);
+        if (badge) badge.textContent = badgeText;
+    });
+}
+
 // ========== Состояние зума изображения чертежа ==========
 const blueprintZoom = {
-    scale: 1,
-    minScale: 0.1,
-    maxScale: 10,
-    x: 0,
-    y: 0,
-    baseScale: 1,
-    dragging: false,
-    lastX: 0,
-    lastY: 0,
-    inited: false
+    scale: 1, minScale: 0.1, maxScale: 10,
+    x: 0, y: 0, baseScale: 1,
+    dragging: false, lastX: 0, lastY: 0, inited: false
 };
 
-// ========== Правила геометрической группировки ==========
+// ========== Правила геометрической группировки (КР) ==========
 const GEOMETRY_GROUP_RULES = {
-    'IfcWall': {
-        field: 'Ширина, мм',
-        label: 'Толщина',
-        unit: 'мм',
-        ranges: [
-            { max: 100, label: 'до 100 мм' },
-            { max: 150, label: 'до 150 мм' },
-            { max: 200, label: 'до 200 мм' },
-            { max: 300, label: 'до 300 мм' },
-            { max: Infinity, label: 'более 300 мм' }
-        ]
-    },
-    'IfcSlab': {
-        field: 'Площадь, м2',
-        label: 'Площадь',
-        unit: 'м²',
-        ranges: [
-            { max: 10, label: 'до 10 м²' },
-            { max: 20, label: 'до 20 м²' },
-            { max: Infinity, label: 'более 20 м²' }
-        ]
-    },
-    'IfcColumn': {
-        field: 'Периметр, мм',
-        label: 'Периметр',
-        unit: 'мм',
-        ranges: [
-            { max: 1200, label: 'до 1200 мм' },
-            { max: Infinity, label: 'более 1200 мм' }
-        ],
-        sub_ranges: {
-            field: 'Ширина, мм',
-            label: 'Сторона',
-            unit: 'мм',
-            ranges: [
-                { max: 300, label: '≤ 300 мм' },
-                { max: 500, label: '≤ 500 мм' },
-                { max: Infinity, label: '> 500 мм' }
-            ]
-        }
-    },
-    'IfcBeam': {
-        field: 'Площадь, м2',
-        label: 'Площадь',
-        unit: 'м²',
-        ranges: [
-            { max: 10, label: 'до 10 м²' },
-            { max: 20, label: 'до 20 м²' },
-            { max: Infinity, label: 'более 20 м²' }
-        ]
-    },
-    'IfcStair': {
-        field: 'Объём, м3',
-        label: '',
-        unit: 'м³',
-        ranges: [
-            { max: Infinity, label: 'Все элементы' }
-        ]
-    },
-    'IfcStairFlight': {
-        field: 'Объём, м3',
-        label: '',
-        unit: 'м³',
-        ranges: [
-            { max: Infinity, label: 'Все элементы' }
-        ]
-    },
-    'IfcPile': {
-        field: 'Длина, мм',
-        label: 'Длина',
-        unit: 'мм',
-        ranges: [
-            { max: 8000, label: '6-8 м' },
-            { max: 10000, label: '9-10 м' },
-            { max: 12000, label: '11-12 м' },
-            { max: Infinity, label: 'более 12 м' }
-        ]
-    },
-    'IfcProxyElement': {
-        field: 'Объём, м3',
-        label: '',
-        unit: 'м³',
-        ranges: [
-            { max: Infinity, label: 'Все элементы' }
-        ]
-    },
-    'default': {
-        field: 'Объём, м3',
-        label: 'Объём',
-        unit: 'м³',
-        ranges: [
-            { max: 1, label: 'до 1 м³' },
-            { max: 5, label: 'до 5 м³' },
-            { max: Infinity, label: 'более 5 м³' }
-        ]
-    }
+    'IfcWall': { field: 'Ширина, мм', label: 'Толщина', unit: 'мм', ranges: [
+        { max: 100, label: 'до 100 мм' }, { max: 150, label: 'до 150 мм' },
+        { max: 200, label: 'до 200 мм' }, { max: 300, label: 'до 300 мм' },
+        { max: Infinity, label: 'более 300 мм' }
+    ]},
+    'IfcSlab': { field: 'Площадь, м2', label: 'Площадь', unit: 'м²', ranges: [
+        { max: 10, label: 'до 10 м²' }, { max: 20, label: 'до 20 м²' },
+        { max: Infinity, label: 'более 20 м²' }
+    ]},
+    'IfcColumn': { field: 'Периметр, мм', label: 'Периметр', unit: 'мм', ranges: [
+        { max: 1200, label: 'до 1200 мм' }, { max: Infinity, label: 'более 1200 мм' }
+    ], sub_ranges: { field: 'Ширина, мм', label: 'Сторона', unit: 'мм', ranges: [
+        { max: 300, label: '≤ 300 мм' }, { max: 500, label: '≤ 500 мм' },
+        { max: Infinity, label: '> 500 мм' }
+    ]}},
+    'IfcBeam': { field: 'Площадь, м2', label: 'Площадь', unit: 'м²', ranges: [
+        { max: 10, label: 'до 10 м²' }, { max: 20, label: 'до 20 м²' },
+        { max: Infinity, label: 'более 20 м²' }
+    ]},
+    'IfcStair': { field: 'Объём, м3', label: '', unit: 'м³', ranges: [
+        { max: Infinity, label: 'Все элементы' }
+    ]},
+    'IfcStairFlight': { field: 'Объём, м3', label: '', unit: 'м³', ranges: [
+        { max: Infinity, label: 'Все элементы' }
+    ]},
+    'IfcPile': { field: 'Длина, мм', label: 'Длина', unit: 'мм', ranges: [
+        { max: 8000, label: '6-8 м' }, { max: 10000, label: '9-10 м' },
+        { max: 12000, label: '11-12 м' }, { max: Infinity, label: 'более 12 м' }
+    ]},
+    'IfcProxyElement': { field: 'Объём, м3', label: '', unit: 'м³', ranges: [
+        { max: Infinity, label: 'Все элементы' }
+    ]},
+    'default': { field: 'Объём, м3', label: 'Объём', unit: 'м³', ranges: [
+        { max: 1, label: 'до 1 м³' }, { max: 5, label: 'до 5 м³' },
+        { max: Infinity, label: 'более 5 м³' }
+    ]}
 };
 
 const NO_GEOMETRY_GROUP_SUBSECTIONS = [
-    'Фундаментная плита',
-    'Фундамент под инженерное оборудование',
-    'Фундамент под башенный кран',
+    'Фундаментная плита', 'Фундамент под инженерное оборудование', 'Фундамент под башенный кран',
 ];
 
 const SECTION_STRUCTURE = {
-    'Подземная': {
-        label: 'Подземная часть здания (до отм. 0,000)',
-        other_label: 'Прочие элементы подземной части',
-        sections: [
-            {
-                name: 'Раздел 1. Монолитные ж/б конструкции. Фундаменты',
-                subsections: [
-                    { key: 'Фундаментная плита', patterns: ['фундаментная плита', 'фунд. плита', 'фундамент плита'], ifcTypes: ['IfcSlab'] },
-                    { key: 'Свайно-ростверковый фундамент', patterns: ['свай', 'ростверк'], ifcTypes: ['IfcSlab', 'IfcBeam', 'IfcPile'] },
-                    { key: 'Фундамент под инженерное оборудование', patterns: ['инженер', 'оборудование'], ifcTypes: ['IfcSlab'] },
-                    { key: 'Фундамент под башенный кран', patterns: ['башен', 'кран'], ifcTypes: ['IfcSlab', 'IfcBeam'] },
-                    { key: 'Устройство горизонтальной гидроизоляции', patterns: ['горизонт', 'гидроизол'], ifcTypes: ['IfcSlab'] },
-                    { key: 'Устройство деформационного шва', patterns: ['деформац', 'шов'], ifcTypes: ['IfcSlab', 'IfcWall'] }
-                ]
-            },
-            {
-                name: 'Раздел 2. Монолитные ж/б конструкции. Подземная часть здания',
-                subsections: [
-                    { key: 'Подземная часть здания. Стены', patterns: ['стен'], ifcTypes: ['IfcWall'] },
-                    { key: 'Подземная часть здания. Колонны', patterns: ['колонн'], ifcTypes: ['IfcColumn'] },
-                    { key: 'Подземная часть здания. Плиты перекрытия', patterns: ['перекрыт', 'плит'], ifcTypes: ['IfcSlab'] },
-                    { key: 'Подземная часть здания. Балки', patterns: ['балк', 'ригел'], ifcTypes: ['IfcBeam'] },
-                    { key: 'Подземная часть здания. Лестницы', patterns: ['лестн', 'марш', 'площадк', 'плм', 'лмн'], ifcTypes: ['IfcStair', 'IfcSlab', 'IfcStairFlight'] },
-                    { key: 'Подземная часть здания. Приямки', patterns: ['приям'], ifcTypes: ['IfcSlab', 'IfcWall'] },
-                    { key: 'Подземная часть здания. Вертикальная гидроизоляция', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] }
-                ]
-            }
-        ]
-    },
-    'Цоколь': {
-        label: 'Цокольная часть здания (отм. 0,000)',
-        other_label: 'Прочие элементы цокольной части',
-        sections: [
-            {
-                name: 'Раздел 1. Монолитные ж/б конструкции. Фундаменты',
-                subsections: [
-                    { key: 'Фундаментная плита', patterns: ['фундаментная плита', 'фунд. плита', 'фундамент плита'], ifcTypes: ['IfcSlab'] },
-                    { key: 'Свайно-ростверковый фундамент', patterns: ['свай', 'ростверк'], ifcTypes: ['IfcSlab', 'IfcBeam', 'IfcPile'] },
-                    { key: 'Фундамент под инженерное оборудование', patterns: ['инженер', 'оборудование'], ifcTypes: ['IfcSlab'] },
-                    { key: 'Фундамент под башенный кран', patterns: ['башен', 'кран'], ifcTypes: ['IfcSlab', 'IfcBeam'] },
-                    { key: 'Устройство горизонтальной гидроизоляции', patterns: ['горизонт', 'гидроизол'], ifcTypes: ['IfcSlab'] },
-                    { key: 'Устройство вертикальной гидроизоляции', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] },
-                    { key: 'Устройство деформационного шва', patterns: ['деформац', 'шов'], ifcTypes: ['IfcSlab', 'IfcWall'] }
-                ]
-            },
-            {
-                name: 'Раздел 2. Монолитные ж/б конструкции. Цокольная часть здания',
-                subsections: [
-                    { key: 'Цокольная часть здания. Стены', patterns: ['стен'], ifcTypes: ['IfcWall'] },
-                    { key: 'Цокольная часть здания. Колонны', patterns: ['колонн'], ifcTypes: ['IfcColumn'] },
-                    { key: 'Цокольная часть здания. Плиты перекрытия', patterns: ['перекрыт', 'плит'], ifcTypes: ['IfcSlab'] },
-                    { key: 'Цокольная часть здания. Балки', patterns: ['балк', 'ригел'], ifcTypes: ['IfcBeam'] },
-                    { key: 'Цокольная часть здания. Лестницы', patterns: ['лестн', 'марш', 'площадк', 'плм', 'лмн'], ifcTypes: ['IfcStair', 'IfcSlab', 'IfcStairFlight'] },
-                    { key: 'Цокольная часть здания. Приямки', patterns: ['приям'], ifcTypes: ['IfcSlab', 'IfcWall'] },
-                    { key: 'Цокольная часть здания. Вертикальная гидроизоляция', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] }
-                ]
-            }
-        ]
-    },
-    'Надземная': {
-        label: 'Надземная часть здания (выше отм. 0,000)',
-        other_label: 'Прочие элементы надземной части',
-        sections: [
-            {
-                name: 'Раздел 3. Монолитные ж/б конструкции. Надземная часть здания',
-                subsections: [
-                    { key: 'Надземная часть здания. Стены', patterns: ['стен'], ifcTypes: ['IfcWall'] },
-                    { key: 'Надземная часть здания. Перекрытия', patterns: ['перекрыт', 'плит'], ifcTypes: ['IfcSlab'] },
-                    { key: 'Надземная часть здания. Колонны', patterns: ['колонн'], ifcTypes: ['IfcColumn'] },
-                    { key: 'Надземная часть здания. Балки', patterns: ['балк', 'ригел'], ifcTypes: ['IfcBeam'] },
-                    { key: 'Надземная часть здания. Парапеты', patterns: ['парапет'], ifcTypes: ['IfcWall'] },
-                    { key: 'Надземная часть здания. Лестничные площадки', patterns: ['лестничн', 'площадк', 'плм', 'лмн'], ifcTypes: ['IfcSlab'] },
-                    { key: 'Надземная часть здания. Лестничные марши', patterns: ['лестничн', 'марш'], ifcTypes: ['IfcStair', 'IfcStairFlight'] },
-                    { key: 'Надземная часть здания. Вертикальная гидроизоляция', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] }
-                ]
-            }
-        ]
-    }
+    'Подземная': { label: 'Подземная часть здания (до отм. 0,000)', other_label: 'Прочие элементы подземной части', sections: [
+        { name: 'Раздел 1. Монолитные ж/б конструкции. Фундаменты', subsections: [
+            { key: 'Фундаментная плита', patterns: ['фундаментная плита', 'фунд. плита', 'фундамент плита'], ifcTypes: ['IfcSlab'] },
+            { key: 'Свайно-ростверковый фундамент', patterns: ['свай', 'ростверк'], ifcTypes: ['IfcSlab', 'IfcBeam', 'IfcPile'] },
+            { key: 'Фундамент под инженерное оборудование', patterns: ['инженер', 'оборудование'], ifcTypes: ['IfcSlab'] },
+            { key: 'Фундамент под башенный кран', patterns: ['башен', 'кран'], ifcTypes: ['IfcSlab', 'IfcBeam'] },
+            { key: 'Устройство горизонтальной гидроизоляции', patterns: ['горизонт', 'гидроизол'], ifcTypes: ['IfcSlab'] },
+            { key: 'Устройство деформационного шва', patterns: ['деформац', 'шов'], ifcTypes: ['IfcSlab', 'IfcWall'] }
+        ]},
+        { name: 'Раздел 2. Монолитные ж/б конструкции. Подземная часть здания', subsections: [
+            { key: 'Подземная часть здания. Стены', patterns: ['стен'], ifcTypes: ['IfcWall'] },
+            { key: 'Подземная часть здания. Колонны', patterns: ['колонн'], ifcTypes: ['IfcColumn'] },
+            { key: 'Подземная часть здания. Плиты перекрытия', patterns: ['перекрыт', 'плит'], ifcTypes: ['IfcSlab'] },
+            { key: 'Подземная часть здания. Балки', patterns: ['балк', 'ригел'], ifcTypes: ['IfcBeam'] },
+            { key: 'Подземная часть здания. Лестницы', patterns: ['лестн', 'марш', 'площадк', 'плм', 'лмн'], ifcTypes: ['IfcStair', 'IfcSlab', 'IfcStairFlight'] },
+            { key: 'Подземная часть здания. Приямки', patterns: ['приям'], ifcTypes: ['IfcSlab', 'IfcWall'] },
+            { key: 'Подземная часть здания. Вертикальная гидроизоляция', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] }
+        ]}
+    ]},
+    'Цоколь': { label: 'Цокольная часть здания (отм. 0,000)', other_label: 'Прочие элементы цокольной части', sections: [
+        { name: 'Раздел 1. Монолитные ж/б конструкции. Фундаменты', subsections: [
+            { key: 'Фундаментная плита', patterns: ['фундаментная плита', 'фунд. плита', 'фундамент плита'], ifcTypes: ['IfcSlab'] },
+            { key: 'Свайно-ростверковый фундамент', patterns: ['свай', 'ростверк'], ifcTypes: ['IfcSlab', 'IfcBeam', 'IfcPile'] },
+            { key: 'Фундамент под инженерное оборудование', patterns: ['инженер', 'оборудование'], ifcTypes: ['IfcSlab'] },
+            { key: 'Фундамент под башенный кран', patterns: ['башен', 'кран'], ifcTypes: ['IfcSlab', 'IfcBeam'] },
+            { key: 'Устройство горизонтальной гидроизоляции', patterns: ['горизонт', 'гидроизол'], ifcTypes: ['IfcSlab'] },
+            { key: 'Устройство вертикальной гидроизоляции', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] },
+            { key: 'Устройство деформационного шва', patterns: ['деформац', 'шов'], ifcTypes: ['IfcSlab', 'IfcWall'] }
+        ]},
+        { name: 'Раздел 2. Монолитные ж/б конструкции. Цокольная часть здания', subsections: [
+            { key: 'Цокольная часть здания. Стены', patterns: ['стен'], ifcTypes: ['IfcWall'] },
+            { key: 'Цокольная часть здания. Колонны', patterns: ['колонн'], ifcTypes: ['IfcColumn'] },
+            { key: 'Цокольная часть здания. Плиты перекрытия', patterns: ['перекрыт', 'плит'], ifcTypes: ['IfcSlab'] },
+            { key: 'Цокольная часть здания. Балки', patterns: ['балк', 'ригел'], ifcTypes: ['IfcBeam'] },
+            { key: 'Цокольная часть здания. Лестницы', patterns: ['лестн', 'марш', 'площадк', 'плм', 'лмн'], ifcTypes: ['IfcStair', 'IfcSlab', 'IfcStairFlight'] },
+            { key: 'Цокольная часть здания. Приямки', patterns: ['приям'], ifcTypes: ['IfcSlab', 'IfcWall'] },
+            { key: 'Цокольная часть здания. Вертикальная гидроизоляция', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] }
+        ]}
+    ]},
+    'Надземная': { label: 'Надземная часть здания (выше отм. 0,000)', other_label: 'Прочие элементы надземной части', sections: [
+        { name: 'Раздел 3. Монолитные ж/б конструкции. Надземная часть здания', subsections: [
+            { key: 'Надземная часть здания. Стены', patterns: ['стен'], ifcTypes: ['IfcWall'] },
+            { key: 'Надземная часть здания. Перекрытия', patterns: ['перекрыт', 'плит'], ifcTypes: ['IfcSlab'] },
+            { key: 'Надземная часть здания. Колонны', patterns: ['колонн'], ifcTypes: ['IfcColumn'] },
+            { key: 'Надземная часть здания. Балки', patterns: ['балк', 'ригел'], ifcTypes: ['IfcBeam'] },
+            { key: 'Надземная часть здания. Парапеты', patterns: ['парапет'], ifcTypes: ['IfcWall'] },
+            { key: 'Надземная часть здания. Лестничные площадки', patterns: ['лестничн', 'площадк', 'плм', 'лмн'], ifcTypes: ['IfcSlab'] },
+            { key: 'Надземная часть здания. Лестничные марши', patterns: ['лестничн', 'марш'], ifcTypes: ['IfcStair', 'IfcStairFlight'] },
+            { key: 'Надземная часть здания. Вертикальная гидроизоляция', patterns: ['вертикал', 'гидроизол'], ifcTypes: ['IfcWall'] }
+        ]}
+    ]}
 };
 
 // ========== Вкладки ==========
@@ -971,6 +1146,294 @@ function showToast(message, type = 'info') {
     toast.textContent = message;
     container.appendChild(toast);
     setTimeout(() => toast.remove(), 5000);
+}
+
+// ========== Тестирование JSON-справочников ==========
+const referenceUploadArea = document.getElementById('referenceUploadArea');
+const referenceFileInput = document.getElementById('referenceFileInput');
+let referenceSelectedFile = null;
+let referenceSessionId = null;
+let referencePollTimer = null;
+let referencePollGeneration = 0;
+let referenceResultData = null;
+
+referenceUploadArea.addEventListener('click', () => referenceFileInput.click());
+referenceUploadArea.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    referenceUploadArea.classList.add('dragover');
+});
+referenceUploadArea.addEventListener('dragleave', () => referenceUploadArea.classList.remove('dragover'));
+referenceUploadArea.addEventListener('drop', (event) => {
+    event.preventDefault();
+    referenceUploadArea.classList.remove('dragover');
+    if (event.dataTransfer.files.length) selectReferenceFile(event.dataTransfer.files[0]);
+});
+referenceFileInput.addEventListener('change', (event) => {
+    if (event.target.files.length) selectReferenceFile(event.target.files[0]);
+});
+
+// Обработчик переключения типа для reference-вкладки
+document.querySelectorAll('input[name="referenceProcessingType"]').forEach(radio => {
+    radio.addEventListener('change', function() {
+        document.querySelectorAll('#referenceTypeSelector .processing-type-label').forEach(label => {
+            label.classList.toggle('active', label.querySelector('input').checked);
+        });
+    });
+});
+
+function getReferenceProcessingType() {
+    const selected = document.querySelector('input[name="referenceProcessingType"]:checked');
+    return selected ? selected.value : 'KR';
+}
+
+function isSupportedReferenceFile(file) {
+    const name = (file?.name || '').toLowerCase();
+    return name.endsWith('.ifc') || name.endsWith('.pdf');
+}
+
+function stopReferencePolling() {
+    referencePollGeneration++;
+    if (referencePollTimer) {
+        clearTimeout(referencePollTimer);
+        referencePollTimer = null;
+    }
+}
+
+function selectReferenceFile(file) {
+    if (!isSupportedReferenceFile(file)) {
+        showToast('Поддерживаются файлы .ifc и .pdf', 'error');
+        return;
+    }
+    stopReferencePolling();
+    referenceSelectedFile = file;
+    referenceSessionId = null;
+    referenceResultData = null;
+    document.getElementById('referenceFileName').textContent = file.name;
+    document.getElementById('referenceFileInfo').style.display = 'flex';
+    document.getElementById('referenceStartBtn').disabled = false;
+    document.getElementById('referenceStartBtn').innerHTML = '🚀 Сформировать справочники';
+    document.getElementById('referenceRefreshBtn').style.display = 'none';
+    document.getElementById('referenceStatusBox').style.display = 'none';
+    document.getElementById('referenceResultsCard').style.display = 'none';
+}
+
+function resetReferenceTest() {
+    stopReferencePolling();
+    referenceSelectedFile = null;
+    referenceSessionId = null;
+    referenceResultData = null;
+    referenceFileInput.value = '';
+    document.getElementById('referenceFileInfo').style.display = 'none';
+    document.getElementById('referenceStartBtn').disabled = true;
+    document.getElementById('referenceStartBtn').innerHTML = '🚀 Сформировать справочники';
+    document.getElementById('referenceRefreshBtn').style.display = 'none';
+    document.getElementById('referenceStatusBox').style.display = 'none';
+    document.getElementById('referenceStatusBox').className = 'reference-status';
+    document.getElementById('referenceProgressBar').style.width = '0%';
+    document.getElementById('referenceResultsCard').style.display = 'none';
+    document.getElementById('referenceElementsJson').textContent = '';
+    document.getElementById('referenceGroupedJson').textContent = '';
+}
+
+async function parseApiError(response, fallback) {
+    const text = await response.text();
+    try {
+        const data = JSON.parse(text);
+        return data.detail || fallback;
+    } catch {
+        return text || fallback;
+    }
+}
+
+async function startReferenceBuild() {
+    if (!referenceSelectedFile) return;
+
+    stopReferencePolling();
+    const generation = referencePollGeneration;
+    const button = document.getElementById('referenceStartBtn');
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner"></span> Загрузка...';
+    document.getElementById('referenceResultsCard').style.display = 'none';
+
+    const formData = new FormData();
+    formData.append('file', referenceSelectedFile);
+    formData.append('processingType', getReferenceProcessingType());
+
+    try {
+        const response = await fetch(`${API_BASE}/reference`, {
+            method: 'POST',
+            body: formData
+        });
+        if (!response.ok) throw new Error(await parseApiError(response, 'Ошибка запуска'));
+
+        const data = await response.json();
+        if (generation !== referencePollGeneration) return;
+        referenceSessionId = data.sessionId;
+        document.getElementById('referenceSessionId').textContent = referenceSessionId;
+        document.getElementById('referenceStatusBox').style.display = 'block';
+        document.getElementById('referenceStatusBox').className = 'reference-status';
+        document.getElementById('referenceStatusText').textContent = 'В обработке';
+        document.getElementById('referenceProgressText').textContent = data.message || 'Обработка запущена';
+        document.getElementById('referenceProgressBar').style.width = '10%';
+        document.getElementById('referenceRefreshBtn').style.display = 'inline-block';
+        button.innerHTML = '⏳ Формирование...';
+        showToast('Формирование справочников запущено', 'success');
+        await pollReferenceSession(generation);
+    } catch (error) {
+        button.disabled = false;
+        button.innerHTML = '🚀 Сформировать справочники';
+        showToast(error.message, 'error');
+    }
+}
+
+function scheduleReferencePoll(generation) {
+    if (generation !== referencePollGeneration || !referenceSessionId) return;
+    referencePollTimer = setTimeout(() => pollReferenceSession(generation), 1500);
+}
+
+async function pollReferenceSession(generation = referencePollGeneration) {
+    if (!referenceSessionId || generation !== referencePollGeneration) return;
+    if (referencePollTimer) {
+        clearTimeout(referencePollTimer);
+        referencePollTimer = null;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/session/${referenceSessionId}/status`);
+        if (!response.ok) throw new Error(await parseApiError(response, 'Ошибка получения статуса'));
+        const status = await response.json();
+        if (generation !== referencePollGeneration) return;
+
+        const progress = Number.isFinite(Number(status.progress)) ? Number(status.progress) : 0;
+        document.getElementById('referenceProgressBar').style.width = `${Math.max(0, Math.min(100, progress))}%`;
+        document.getElementById('referenceProgressText').textContent = status.progressMessage || `Обработка: ${progress}%`;
+
+        if (status.status === 'error') {
+            showReferenceError(status.error || 'Неизвестная ошибка обработки');
+            return;
+        }
+        if (status.status === 'completed') {
+            await loadReferenceResult(generation);
+            return;
+        }
+
+        document.getElementById('referenceStatusText').textContent = 'В обработке';
+        scheduleReferencePoll(generation);
+    } catch (error) {
+        if (generation !== referencePollGeneration) return;
+        document.getElementById('referenceProgressText').textContent = `Ошибка проверки: ${error.message}. Повторяем...`;
+        scheduleReferencePoll(generation);
+    }
+}
+
+async function loadReferenceResult(generation = referencePollGeneration) {
+    const response = await fetch(`${API_BASE}/session/${referenceSessionId}/reference`);
+    if (generation !== referencePollGeneration) return;
+    if (response.status === 202) {
+        scheduleReferencePoll(generation);
+        return;
+    }
+    if (!response.ok) {
+        showReferenceError(await parseApiError(response, 'Ошибка получения результата'));
+        return;
+    }
+
+    referenceResultData = await response.json();
+    const elements = referenceResultData.ifcElementsOutput || [];
+    const grouped = referenceResultData.ifcRawElementsGrouped || [];
+    document.getElementById('referenceElementsCount').textContent = elements.length;
+    document.getElementById('referenceGroupsCount').textContent = grouped.length;
+    document.getElementById('referenceElementsJson').textContent = JSON.stringify(elements, null, 2);
+    document.getElementById('referenceGroupedJson').textContent = JSON.stringify(grouped, null, 2);
+    document.getElementById('referenceProgressBar').style.width = '100%';
+    document.getElementById('referenceProgressText').textContent = 'Оба JSON успешно сформированы';
+    document.getElementById('referenceStatusText').textContent = 'Завершено';
+    document.getElementById('referenceStatusBox').className = 'reference-status completed';
+    document.getElementById('referenceResultsCard').style.display = 'block';
+    document.getElementById('referenceRefreshBtn').style.display = 'none';
+    document.getElementById('referenceStartBtn').innerHTML = '✅ Готово';
+    stopReferencePolling();
+    showToast('JSON-справочники готовы', 'success');
+}
+
+function showReferenceError(message) {
+    stopReferencePolling();
+    document.getElementById('referenceStatusBox').style.display = 'block';
+    document.getElementById('referenceStatusBox').className = 'reference-status error';
+    document.getElementById('referenceStatusText').textContent = 'Ошибка';
+    document.getElementById('referenceProgressText').textContent = message;
+    document.getElementById('referenceRefreshBtn').style.display = 'none';
+    const button = document.getElementById('referenceStartBtn');
+    button.disabled = !referenceSelectedFile;
+    button.innerHTML = referenceSelectedFile ? '🔄 Запустить повторно' : '❌ Ошибка сессии';
+    showToast(message, 'error');
+}
+
+function refreshReferenceResult() {
+    if (!referenceSessionId) return;
+    if (referencePollTimer) clearTimeout(referencePollTimer);
+    referencePollTimer = null;
+    pollReferenceSession(referencePollGeneration);
+}
+
+function openReferenceSession(sessionId) {
+    stopReferencePolling();
+    referenceSelectedFile = null;
+    referenceResultData = null;
+    referenceSessionId = sessionId;
+    switchTab('reference');
+    document.getElementById('referenceFileInfo').style.display = 'none';
+    document.getElementById('referenceResultsCard').style.display = 'none';
+    document.getElementById('referenceStatusBox').style.display = 'block';
+    document.getElementById('referenceStatusBox').className = 'reference-status';
+    document.getElementById('referenceSessionId').textContent = sessionId;
+    document.getElementById('referenceStatusText').textContent = 'Проверка статуса';
+    document.getElementById('referenceProgressText').textContent = 'Загрузка данных сессии...';
+    document.getElementById('referenceRefreshBtn').style.display = 'inline-block';
+    document.getElementById('referenceStartBtn').disabled = true;
+    document.getElementById('referenceStartBtn').innerHTML = '⏳ Существующая сессия';
+    pollReferenceSession(referencePollGeneration);
+}
+
+function referenceJsonByKind(kind) {
+    if (!referenceResultData) return null;
+    return kind === 'elements'
+        ? referenceResultData.ifcElementsOutput
+        : referenceResultData.ifcRawElementsGrouped;
+}
+
+function downloadReferenceJson(kind) {
+    const data = referenceJsonByKind(kind);
+    if (!data) return;
+    const filename = kind === 'elements'
+        ? 'ifc_elements_output.json'
+        : 'ifc_raw_elements_grouped.json';
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+}
+
+async function copyReferenceJson(kind) {
+    const data = referenceJsonByKind(kind);
+    if (!data) return;
+    const text = JSON.stringify(data, null, 2);
+    try {
+        await navigator.clipboard.writeText(text);
+    } catch {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        textarea.remove();
+    }
+    showToast('JSON скопирован', 'success');
 }
 
 // ========== Загрузка файла ==========
@@ -1018,6 +1481,7 @@ async function uploadFile() {
     document.getElementById('uploadProgressWrap').style.display = 'block';
     const formData = new FormData();
     formData.append('file', selectedFile);
+    formData.append('processingType', currentProcessingType);
     try {
         const response = await fetch(`${API_BASE}/upload_ifc`, { method: 'POST', body: formData });
         if (!response.ok) {
@@ -1071,6 +1535,7 @@ async function onIfcProcessed(sessionId) {
     document.getElementById('uploadBtn').innerHTML = '✅ Обработано';
     document.getElementById('step1').classList.remove('disabled');
     document.getElementById('step1Number').textContent = isNewRunMode ? 'Выбор строк (новый запуск)' : '2';
+    updateProcessingTypeBadges();
     try {
         let preview_data = null;
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -1084,6 +1549,13 @@ async function onIfcProcessed(sessionId) {
             }
         }
         if (!preview_data) throw new Error('Не удалось загрузить данные');
+        
+        if (preview_data.processingType) {
+            currentProcessingType = preview_data.processingType;
+            const radio = document.querySelector(`input[name="processingType"][value="${currentProcessingType}"]`);
+            if (radio) { radio.checked = true; onProcessingTypeChange(); }
+        }
+        
         renderPreview(preview_data);
         if (preview_data.buildingHeight) document.getElementById('buildingHeight').value = preview_data.buildingHeight;
         const blueprintBtns = document.getElementById('blueprintButtons');
@@ -1101,149 +1573,75 @@ async function onIfcProcessed(sessionId) {
     }
 }
 
-// ========== Функция нового запуска ==========
 async function startNewRun() {
-    console.log('🔄 startNewRun вызвана');
+    if (!currentSessionId) { showToast('Нет активной сессии', 'warning'); return; }
     
-    if (!currentSessionId) { 
-        showToast('Нет активной сессии', 'warning'); 
-        return; 
-    }
-    
-    // Сбрасываем выбранные строки
     selectedRows.clear();
-    document.querySelectorAll('.group-checkbox,.row-checkbox').forEach(cb => {
-        if (cb) cb.checked = false;
-    });
+    document.querySelectorAll('.group-checkbox,.row-checkbox').forEach(cb => { if (cb) cb.checked = false; });
     
-    // Показываем карточку выбора строк
     const step1 = document.getElementById('step1');
     const resultsCard = document.getElementById('resultsCard');
     const processingWrap = document.getElementById('processingProgressWrap');
     const selectBtn = document.getElementById('selectRowsBtn');
     
-    if (!step1) {
-        console.error('❌ step1 не найден');
-        return;
-    }
-    
     step1.classList.remove('disabled');
     if (resultsCard) resultsCard.style.display = 'none';
     if (processingWrap) processingWrap.style.display = 'none';
     
-    // ВАЖНО: Обновляем текст кнопки
     if (selectBtn) {
         selectBtn.disabled = true;
         selectBtn.innerHTML = `🚀 Запустить обработку (<span id="selectedCount">0</span>)`;
     }
     
     isNewRunMode = true;
-    
-    // Обновляем UI (счётчик)
     updateSelectionUI();
+    updateProcessingTypeBadges();
     
-    // Загружаем данные предпросмотра
     try {
         const response = await fetch(`${API_BASE}/session/${currentSessionId}/preview`);
         if (response.ok) {
             const preview_data = await response.json();
-            renderPreview(preview_data);
-            if (preview_data.buildingHeight) {
-                const heightInput = document.getElementById('buildingHeight');
-                if (heightInput) heightInput.value = preview_data.buildingHeight;
+            if (preview_data.processingType) {
+                currentProcessingType = preview_data.processingType;
+                const radio = document.querySelector(`input[name="processingType"][value="${currentProcessingType}"]`);
+                if (radio) { radio.checked = true; onProcessingTypeChange(); }
             }
+            renderPreview(preview_data);
+            if (preview_data.buildingHeight) document.getElementById('buildingHeight').value = preview_data.buildingHeight;
             showToast(`Загружено ${preview_data.totalRows} строк. Выберите нужные.`, 'info');
         } else {
             showToast('Ошибка загрузки данных предпросмотра', 'error');
             return;
         }
     } catch (e) {
-        console.error('Ошибка загрузки preview:', e);
         showToast('Ошибка загрузки данных: ' + e.message, 'error');
         return;
     }
     
-    // Прокручиваем к таблице
     step1.scrollIntoView({ behavior: 'smooth' });
 }
 
 async function confirmRowSelection() {
-    console.log('🚀 confirmRowSelection вызвана');
-    console.log('  isNewRunMode:', isNewRunMode);
-    console.log('  isGrouped:', isGrouped);
-    console.log('  selectedRows.size:', selectedRows.size);
-    console.log('  selectedRows:', [...selectedRows]);
+    if (selectedRows.size === 0) { showToast('Выберите хотя бы одну строку', 'warning'); return; }
     
-    if (selectedRows.size === 0) { 
-        console.warn('⚠️ Нет выбранных строк');
-        showToast('Выберите хотя бы одну строку', 'warning'); 
-        return; 
-    }
-    
-    const heightInput = document.getElementById('buildingHeight');
-    if (!heightInput) {
-        showToast('Поле высоты не найдено', 'error');
-        return;
-    }
-    
-    const height = parseFloat(heightInput.value);
-    if (!height || height <= 0 || height > 10000) { 
-        console.warn('⚠️ Некорректная высота:', height);
-        showToast('Некорректная высота (допустимо: 1-10000 м)', 'warning'); 
-        return; 
-    }
+    const height = parseFloat(document.getElementById('buildingHeight').value);
+    if (!height || height <= 0 || height > 10000) { showToast('Некорректная высота (допустимо: 1-10000 м)', 'warning'); return; }
     
     const btn = document.getElementById('selectRowsBtn');
-    if (!btn) {
-        showToast('Кнопка запуска не найдена', 'error');
-        return;
-    }
-    
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Запуск...';
     
-    // Собираем данные о выбранных строках
     const selectedRowParts = {};
     const selectedRowMaterials = {};
     const allSelectedIndices = new Set();
     
-    console.log('=== ПРОВЕРКА rowMaterials ДО СБОРА ===');
-    console.log('  Всего записей в rowMaterials:', Object.keys(rowMaterials).length);
-    // Выведем первые 20 материалов
-    const sampleKeys = Object.keys(rowMaterials).slice(0, 20);
-    for (const k of sampleKeys) {
-        console.log(`  rowMaterials[${k}] = "${rowMaterials[k]}"`);
-    }
-    
     if (isGrouped) {
-        console.log('=== РЕЖИМ ГРУППИРОВКИ ===');
-        console.log('  Количество leafGroups:', Object.keys(leafGroups).length);
-        
-        // Для каждой leaf-группы
         Object.keys(leafGroups).forEach(groupId => {
             const indices = groupIndexMap[groupId];
             if (indices && indices.length > 0) {
                 const firstIndex = indices[0];
-                const isSelected = selectedRows.has(firstIndex);
-                
-                console.log(`\n  Группа ${groupId}:`);
-                console.log(`    firstIndex: ${firstIndex}`);
-                console.log(`    selected: ${isSelected}`);
-                console.log(`    количество элементов: ${indices.length}`);
-                console.log(`    индексы: [${indices.join(', ')}]`);
-                
-                if (isSelected) {
+                if (selectedRows.has(firstIndex)) {
                     const part = rowParts[firstIndex] || 'Надземная';
-                    console.log(`    part: "${part}"`);
-                    
-                    // Показываем материалы КАЖДОГО элемента группы
-                    console.log(`    Материалы элементов группы:`);
-                    indices.forEach(idx => {
-                        const mat = rowMaterials[idx] || '-';
-                        console.log(`      [${idx}]: "${mat}"`);
-                    });
-                    
-                    // Для КАЖДОГО элемента в группе — СВОЙ материал
                     indices.forEach(idx => {
                         selectedRowParts[idx] = part;
                         selectedRowMaterials[idx] = rowMaterials[idx] || '-';
@@ -1253,31 +1651,18 @@ async function confirmRowSelection() {
             }
         });
     } else {
-        console.log('=== ОБЫЧНЫЙ РЕЖИМ (без группировки) ===');
         selectedRows.forEach(index => {
             selectedRowParts[index] = rowParts[index] || 'Надземная';
             selectedRowMaterials[index] = rowMaterials[index] || '-';
             allSelectedIndices.add(index);
-            console.log(`  [${index}]: part="${selectedRowParts[index]}", material="${selectedRowMaterials[index]}"`);
         });
     }
     
-    console.log('\n=== ИТОГОВЫЕ ДАННЫЕ ДЛЯ ОТПРАВКИ ===');
-    console.log('  Всего выбрано индексов:', allSelectedIndices.size);
-    console.log('  selectedRowMaterials:');
-    const sortedIndices = [...allSelectedIndices].sort((a, b) => a - b);
-    // Показываем все материалы (или первые 30 если очень много)
-    
-    // Показываем прогресс
     const progressWrap = document.getElementById('processingProgressWrap');
-    const progressBar = document.getElementById('processingProgressBar');
-    const progressText = document.getElementById('processingProgressText');
-    
     if (progressWrap) progressWrap.style.display = 'block';
-    if (progressBar) progressBar.style.width = '0%';
-    if (progressText) progressText.textContent = 'Запуск обработки...';
+    document.getElementById('processingProgressBar').style.width = '0%';
+    document.getElementById('processingProgressText').textContent = 'Запуск обработки...';
     
-    // Выбираем правильный эндпоинт
     const endpoint = isNewRunMode 
         ? `${API_BASE}/session/${currentSessionId}/new_run`
         : `${API_BASE}/session/${currentSessionId}/select_rows`;
@@ -1288,24 +1673,9 @@ async function confirmRowSelection() {
         rowTypes: selectedRowParts,
         rowMaterials: selectedRowMaterials,
         buildingHeight: height,
-        groupedData: null
+        groupedData: null,
+        processingType: currentProcessingType
     };
-    
-    console.log('\n📤 ОТПРАВКА ЗАПРОСА:');
-    console.log('  endpoint:', endpoint);
-    console.log('  rowIndices count:', payload.rowIndices.length);
-    console.log('  rowMaterials count:', Object.keys(selectedRowMaterials).length);
-    console.log('  Уникальных материалов в payload:', new Set(Object.values(selectedRowMaterials)).size);
-    
-    // Выводим ТОЧНО отправляемый payload.rowMaterials (первые 30)
-    console.log('  payload.rowMaterials (первые 30):');
-    let count = 0;
-    for (const [idx, mat] of Object.entries(selectedRowMaterials)) {
-        if (count < 30) {
-            console.log(`    ${idx}: "${mat}"`);
-            count++;
-        }
-    }
     
     try {
         const response = await fetch(endpoint, {
@@ -1314,41 +1684,22 @@ async function confirmRowSelection() {
             body: JSON.stringify(payload)
         });
         
-        console.log('📥 ОТВЕТ:', response.status, response.statusText);
-        
-        const responseText = await response.text();
-        console.log('  тело ответа (первые 500 символов):', responseText.substring(0, 500));
-        
         if (!response.ok) {
+            const responseText = await response.text();
             let errorMessage = 'Ошибка сервера';
-            try { 
-                const errorData = JSON.parse(responseText); 
-                errorMessage = errorData.detail || errorMessage;
-            } catch { 
-                errorMessage = responseText || errorMessage;
-            }
+            try { const errorData = JSON.parse(responseText); errorMessage = errorData.detail || errorMessage; } catch { errorMessage = responseText || errorMessage; }
             throw new Error(errorMessage);
         }
         
-        const data = JSON.parse(responseText);
-        console.log('✅ УСПЕХ:', data);
-        
-        if (data.runId || data.run_id) {
-            currentRunId = data.runId || data.run_id;
-        }
+        const data = await response.json();
+        if (data.runId || data.run_id) currentRunId = data.runId || data.run_id;
         
         const runNumber = data.runNumber || data.run_number || '';
         const selectedCount = data.selectedRows || data.selected_rows || allSelectedIndices.size;
-        const message = runNumber 
-            ? `Запуск ${runNumber} начат (${selectedCount} строк)`
-            : `Обработка начата (${selectedCount} строк)`;
-        
-        showToast(message, 'success');
+        showToast(runNumber ? `Запуск ${runNumber} начат (${selectedCount} строк)` : `Обработка начата (${selectedCount} строк)`, 'success');
         btn.innerHTML = '✅ Обработка запущена';
         startProcessingPolling(currentSessionId);
-        
     } catch (e) {
-        console.error('❌ ОШИБКА:', e.message);
         showToast(e.message, 'error');
         btn.disabled = false;
         btn.innerHTML = `🚀 Запустить обработку (<span id="selectedCount">${selectedRows.size}</span>)`;
@@ -1386,170 +1737,105 @@ function startProcessingPolling(sessionId) {
 async function onProcessingComplete(sessionId) {
     document.getElementById('processingProgressBar').style.width = '100%';
     document.getElementById('processingProgressText').textContent = 'Обработка завершена';
+    updateProcessingTypeBadges();
     
     try {
         const response = await fetch(`${API_BASE}/session/${sessionId}`);
         if (!response.ok) throw new Error('Ошибка');
         const data = await response.json();
         
-        // Теперь data.files должен содержать файлы текущего запуска
         let files = data.files || [];
         currentRunId = data.current_run_id;
         
         renderResults(files, data);
         document.getElementById('resultsCard').style.display = 'block';
         showToast('Обработка завершена!', 'success');
-        
         await loadRuns();
-    } catch (e) { 
-        console.error('Ошибка в onProcessingComplete:', e);
-        showToast(e.message, 'error'); 
-    }
+    } catch (e) { showToast(e.message, 'error'); }
 }
 
 // ========== Управление запусками ==========
 async function loadRuns() {
     if (!currentSessionId) return;
     
-    console.log('📋 Загрузка списка запусков для сессии:', currentSessionId);
-    
     try {
         const response = await fetch(`${API_BASE}/session/${currentSessionId}/runs`);
-        console.log('  Статус ответа:', response.status);
-        
-        if (!response.ok) {
-            console.error('  Ошибка загрузки runs:', response.statusText);
-            return;
-        }
+        if (!response.ok) return;
         
         const data = await response.json();
-        console.log('  Данные runs:', JSON.stringify(data, null, 2));
-        
         const runs = data.runs || [];
         const currentRunIdFromServer = data.currentRunId || data.current_run_id || null;
-        
-        if (currentRunIdFromServer) {
-            currentRunId = currentRunIdFromServer;
-        }
+        if (currentRunIdFromServer) currentRunId = currentRunIdFromServer;
         
         const runSelector = document.getElementById('runSelector');
         const runSelect = document.getElementById('runSelect');
         const currentRunBadge = document.getElementById('currentRunBadge');
         
-        if (!runSelector || !runSelect) {
-            console.error('  Элементы runSelector не найдены в DOM!');
-            return;
-        }
+        if (!runSelector || !runSelect) return;
         
         if (runs.length > 1) {
             runSelector.style.display = 'flex';
-            
             runSelect.innerHTML = runs.map((run) => {
-                // Пробуем разные форматы даты
                 let dateStr = 'Дата неизвестна';
-                
-                // Проверяем все возможные имена полей с датой
                 const createdAt = run.createdAt || run.created_at || run.created || run.date || run.timestamp;
-                
                 if (createdAt) {
                     try {
-                        // Пробуем распарсить дату
                         const date = new Date(createdAt);
-                        
-                        // Проверяем, валидная ли дата
                         if (!isNaN(date.getTime())) {
-                            dateStr = date.toLocaleString('ru-RU', {
-                                year: 'numeric',
-                                month: '2-digit',
-                                day: '2-digit',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                            });
+                            dateStr = date.toLocaleString('ru-RU', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
                         } else {
-                            // Если невалидная — показываем как есть
                             dateStr = String(createdAt).substring(0, 19).replace('T', ' ');
                         }
-                    } catch (e) {
-                        dateStr = String(createdAt).substring(0, 19).replace('T', ' ');
-                    }
+                    } catch (e) { dateStr = String(createdAt).substring(0, 19).replace('T', ' '); }
                 }
                 
-                // Определяем иконку статуса
                 const status = run.status || 'unknown';
-                const statusIcon = status === 'completed' ? '✅' : 
-                                   status === 'processing' ? '⏳' : 
-                                   status === 'error' ? '❌' : '📋';
-                
-                // Определяем номер запуска
+                const statusIcon = status === 'completed' ? '✅' : status === 'processing' ? '⏳' : status === 'error' ? '❌' : '📋';
                 const runNumber = run.runNumber || run.run_number || run.number || '?';
-                
-                // Проверяем, это текущий запуск?
+                const ptLabel = run.processingType || run.processing_type || 'KR';
+                const ptIcon = ptLabel === 'AR' ? '🏛️' : '🏗️';
                 const runId = run.runId || run.run_id || run.id;
                 const isSelected = (runId === currentRunId);
                 
-                return `<option value="${runId}" ${isSelected ? 'selected' : ''}>
-                    ${statusIcon} Запуск ${runNumber} — ${dateStr} (${status})
-                </option>`;
+                return `<option value="${runId}" ${isSelected ? 'selected' : ''}>${statusIcon} ${ptIcon} Запуск ${runNumber} — ${dateStr} (${status})</option>`;
             }).join('');
             
-            // Обновляем бейдж текущего запуска
             if (currentRunBadge) {
-                const currentRun = runs.find(r => {
-                    const rid = r.runId || r.run_id || r.id;
-                    return rid === currentRunId;
-                });
-                
+                const currentRun = runs.find(r => { const rid = r.runId || r.run_id || r.id; return rid === currentRunId; });
                 if (currentRun) {
                     currentRunBadge.style.display = 'inline-block';
                     const rn = currentRun.runNumber || currentRun.run_number || '?';
-                    currentRunBadge.textContent = `Текущий: Запуск ${rn}`;
+                    const ptLabel = currentRun.processingType || currentRun.processing_type || 'KR';
+                    currentRunBadge.textContent = `Текущий: ${ptLabel} Запуск ${rn}`;
                 } else {
                     currentRunBadge.style.display = 'none';
                 }
             }
-            
-            console.log(`  Загружено ${runs.length} запусков`);
         } else {
             runSelector.style.display = 'none';
-            console.log('  Всего 1 или 0 запусков — селектор скрыт');
         }
-    } catch (e) {
-        console.error('  Ошибка загрузки runs:', e);
-    }
+    } catch (e) { console.error('Ошибка загрузки runs:', e); }
 }
 
 async function onRunSelectChange() {
     const runSelect = document.getElementById('runSelect');
     const selectedRunId = runSelect.value;
-    
     if (!selectedRunId || selectedRunId === currentRunId) return;
     
     try {
-        const response = await fetch(`${API_BASE}/session/${currentSessionId}/switch_run/${selectedRunId}`, {
-            method: 'POST'
-        });
-        
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Ошибка переключения');
-        }
+        const response = await fetch(`${API_BASE}/session/${currentSessionId}/switch_run/${selectedRunId}`, { method: 'POST' });
+        if (!response.ok) { const error = await response.json(); throw new Error(error.detail || 'Ошибка переключения'); }
         
         const data = await response.json();
         currentRunId = data.run_id;
         
         renderResults(data.files || [], { runs: [], current_run_id: currentRunId });
-        
-        if (data.building_height) {
-            document.getElementById('buildingHeight').value = data.building_height;
-        }
+        if (data.building_height) document.getElementById('buildingHeight').value = data.building_height;
         
         showToast(`Переключено на Запуск ${data.run_number}`, 'info');
-        
+        updateProcessingTypeBadges();
         await loadRuns();
-    } catch (e) {
-        showToast(e.message, 'error');
-        await loadRuns();
-    }
+    } catch (e) { showToast(e.message, 'error'); await loadRuns(); }
 }
 
 function renderResults(files, sessionData) {
@@ -1594,6 +1880,12 @@ function safeParseFloat(value) {
     return isNaN(num) ? 0 : num;
 }
 
+function cleanElementName(name) {
+    if (!name) return 'Без названия';
+    const cleaned = name.replace(/:\s*\d+$/, '').trim();
+    return cleaned || name.trim();
+}
+
 function getIfcType(typeRu, name) {
     const nameLower = (name || '').toLowerCase();
     const typeLower = (typeRu || '').toLowerCase();
@@ -1601,10 +1893,8 @@ function getIfcType(typeRu, name) {
     if (typeLower.includes('ifcproxy') || typeLower.includes('proxy')) return 'IfcProxyElement';
     if (nameLower.includes('отверсти') || nameLower.includes('проём') || nameLower.includes('проем') || nameLower.includes('окно') || nameLower.includes('двер')) return 'IfcOpening';
     if (nameLower.includes('труб')) return 'IfcProxyElement';
-    
     if (typeLower.includes('ifcpile')) return 'IfcPile';
     if (typeLower.includes('ifcstairflight')) return 'IfcStairFlight';
-    
     if (nameLower.includes('сва')) return 'IfcPile';
     if (nameLower.includes('плм') || nameLower.includes('лмн') || nameLower.includes('площадк')) return 'IfcSlab';
     if (nameLower.includes('стен') || nameLower.includes('парапет')) return 'IfcWall';
@@ -1613,13 +1903,11 @@ function getIfcType(typeRu, name) {
     if (nameLower.includes('лестн') || nameLower.includes('марш')) return 'IfcStair';
     if (nameLower.includes('площадк')) return 'IfcSlab';
     if (nameLower.includes('перекрыт') || nameLower.includes('плит') || nameLower.includes('приям') || nameLower.includes('фундамент')) return 'IfcSlab';
-    
     if (typeLower.includes('ifcwall')) return 'IfcWall';
     if (typeLower.includes('ifcslab')) return 'IfcSlab';
     if (typeLower.includes('ifccolumn')) return 'IfcColumn';
     if (typeLower.includes('ifcbeam')) return 'IfcBeam';
     if (typeLower.includes('ifcstair')) return 'IfcStair';
-    
     return 'default';
 }
 
@@ -1645,7 +1933,6 @@ function determineSubsection(typeRu, name, part) {
     const typeLower = (typeRu || '').toLowerCase();
     
     if (typeLower.includes('ifcproxy') || typeLower.includes('proxy')) return '__OTHER__';
-    
     const tempIfcType = getIfcType(typeRu, name);
     if (tempIfcType === 'IfcOpening') return '__OTHER__';
     if (nameLower.includes('труб')) return '__OTHER__';
@@ -1656,7 +1943,6 @@ function determineSubsection(typeRu, name, part) {
         return 'Надземная часть здания. Вертикальная гидроизоляция';
     }
     if (isHydroHorizontal(typeRu, name, tempIfcType)) return 'Устройство горизонтальной гидроизоляции';
-    
     if (nameLower.includes('сва') || typeLower.includes('ifcpile')) return 'Свайно-ростверковый фундамент';
     
     if (nameLower.includes('приям')) {
@@ -1671,12 +1957,10 @@ function determineSubsection(typeRu, name, part) {
         if (part === 'Подземная' || part === 'Цоколь') return part + ' часть здания. Лестницы';
         return 'Надземная часть здания. Лестничные марши';
     }
-
     if (nameLower.includes('плм')) {
         if (part === 'Подземная' || part === 'Цоколь') return part + ' часть здания. Лестницы';
         return 'Надземная часть здания. Лестничные площадки';
     }
-
     if (nameLower.includes('лмн')) {
         if (part === 'Подземная' || part === 'Цоколь') return part + ' часть здания. Лестницы';
         return 'Надземная часть здания. Лестничные площадки';
@@ -1704,9 +1988,7 @@ function determineSubsection(typeRu, name, part) {
     for (const section of partStructure.sections) {
         for (const subsection of section.subsections) {
             for (const pattern of subsection.patterns) {
-                if (nameLower.includes(pattern)) {
-                    return subsection.key;
-                }
+                if (nameLower.includes(pattern)) return subsection.key;
             }
         }
     }
@@ -1726,10 +2008,7 @@ function renderPreview(data) {
     const head = document.getElementById('previewHead');
     const body = document.getElementById('previewBody');
     
-    if (!head || !body) {
-        console.error('❌ Не найдены previewHead или previewBody');
-        return;
-    }
+    if (!head || !body) return;
     
     const typeFloorIdx = data.headers.indexOf('Тип_этажа');
     const materialIdx = data.headers.indexOf('Материал');
@@ -1749,8 +2028,8 @@ function renderPreview(data) {
         'Имя': 'Имя',
         'Тип элемента': 'Тип элемента',
         'Толщина, мм': findColumn('Ширина, мм') || 'Ширина, мм',
-        'Объём, м3': findColumn('Объём, м3') || findColumn('Объём, м3') || 'Объём, м3',
-        'Площадь, м2': findColumn('Площадь, м2') || findColumn('Площадь, м2') || 'Площадь, м2',
+        'Объём, м3': findColumn('Объём, м3') || 'Объём, м3',
+        'Площадь, м2': findColumn('Площадь, м2') || 'Площадь, м2',
     };
     
     head.innerHTML = '<tr>' +
@@ -1761,6 +2040,8 @@ function renderPreview(data) {
         '</tr>';
     
     body.innerHTML = '';
+    rowElementCache.clear();
+    
     allRowIndices = [];
     selectedRows.clear();
     rowParts = {};
@@ -1779,13 +2060,9 @@ function renderPreview(data) {
         
         if (data.savedTypes && data.savedTypes[index]) {
             const savedPart = data.savedTypes[index];
-            if (savedPart.includes('Цокол') || savedPart.includes('цокол')) {
-                defaultPart = 'Цоколь';
-            } else if (savedPart.includes('Подземн') || savedPart.includes('подземн')) {
-                defaultPart = 'Подземная';
-            } else if (savedPart.includes('Надземн') || savedPart.includes('надземн')) {
-                defaultPart = 'Надземная';
-            }
+            if (savedPart.includes('Цокол') || savedPart.includes('цокол')) defaultPart = 'Цоколь';
+            else if (savedPart.includes('Подземн') || savedPart.includes('подземн')) defaultPart = 'Подземная';
+            else if (savedPart.includes('Надземн') || savedPart.includes('надземн')) defaultPart = 'Надземная';
         }
         
         if ((!data.savedTypes || !data.savedTypes[index]) && typeFloorIdx !== -1 && row[typeFloorIdx] && row[typeFloorIdx] !== '-') {
@@ -1838,58 +2115,38 @@ function renderPreview(data) {
             </td>
             <td>
                 <select class="material-select" data-index="${index}" onchange="updateRowMaterial(${index}, this.value)" style="width:120px;">
-                    ${materialOptions.map(opt => 
-                        `<option value="${opt}" ${defaultMaterial === opt ? 'selected' : ''}>${opt}</option>`
-                    ).join('')}
+                    ${materialOptions.map(opt => `<option value="${opt}" ${defaultMaterial === opt ? 'selected' : ''}>${opt}</option>`).join('')}
                 </select>
             </td>
         `;
         body.appendChild(tr);
+        rowElementCache.set(index, tr);
     });
     
-    // Обновляем информацию о количестве строк
-    const previewInfo = document.getElementById('previewInfo');
-    if (previewInfo) {
-        previewInfo.textContent = `Загружено: ${data.totalRows} строк`;
-    }
-    
-    // Обновляем счётчик выбранных строк
+    document.getElementById('previewInfo').textContent = `Загружено: ${data.totalRows} строк`;
     updateSelectionUI();
     
-    // Обновляем кнопку
     const selectRowsBtn = document.getElementById('selectRowsBtn');
     if (selectRowsBtn) {
         selectRowsBtn.disabled = true;
         selectRowsBtn.innerHTML = `🚀 Запустить обработку (<span id="selectedCount">0</span>)`;
     }
     
-    // Показываем/скрываем кнопки группировки
-    const autoGroupBtn = document.getElementById('autoGroupBtn');
-    const ungroupBtn = document.getElementById('ungroupBtn');
-    if (autoGroupBtn) autoGroupBtn.style.display = 'none';
-    if (ungroupBtn) ungroupBtn.style.display = 'inline-block';
+    document.getElementById('autoGroupBtn').style.display = 'none';
+    document.getElementById('ungroupBtn').style.display = 'inline-block';
     
-    // === АВТО-ГРУППИРОВКА ПО УМОЛЧАНИЮ ===
     if (autoGroupEnabled && data.totalRows > 0) {
-        setTimeout(() => {
-            autoGroupRows();
-        }, 100);
+        setTimeout(() => { autoGroupRows(); }, 100);
     }
 }
 
-function updateRowMaterial(index, value) { 
-    rowMaterials[index] = value; 
-}
+function updateRowMaterial(index, value) { rowMaterials[index] = value; }
 
 function toggleRowSelection(index) {
     const cb = document.querySelector(`.row-checkbox[data-index="${index}"]`);
     if (!cb) return;
-    
-    if (cb.checked) {
-        selectedRows.add(index);
-    } else {
-        selectedRows.delete(index);
-    }
+    if (cb.checked) selectedRows.add(index);
+    else selectedRows.delete(index);
     updateSelectionUI();
 }
 
@@ -1898,19 +2155,14 @@ function setGlobalMaterial() {
     if (!material) return;
     
     if (isGrouped) {
-        // В режиме группировки обновляем материал для ВСЕХ элементов в выбранных группах
         selectedRows.forEach(firstIndex => {
-            // Находим группу, в которой firstIndex является первым элементом
             for (const [groupId, indices] of Object.entries(groupIndexMap)) {
                 if (indices && indices.length > 0 && indices[0] === firstIndex) {
-                    // Обновляем материал для ВСЕХ элементов группы
                     indices.forEach(idx => {
                         rowMaterials[idx] = material;
                         const ms = document.querySelector(`.material-select[data-index="${idx}"]`);
                         if (ms) {
-                            if (!Array.from(ms.options).some(o => o.value === material)) {
-                                ms.add(new Option(material, material));
-                            }
+                            if (!Array.from(ms.options).some(o => o.value === material)) ms.add(new Option(material, material));
                             ms.value = material;
                         }
                     });
@@ -1919,14 +2171,11 @@ function setGlobalMaterial() {
             }
         });
     } else {
-        // Обычный режим
         selectedRows.forEach(index => {
             rowMaterials[index] = material;
             const ms = document.querySelector(`.material-select[data-index="${index}"]`);
             if (ms) {
-                if (!Array.from(ms.options).some(o => o.value === material)) {
-                    ms.add(new Option(material, material));
-                }
+                if (!Array.from(ms.options).some(o => o.value === material)) ms.add(new Option(material, material));
                 ms.value = material;
             }
         });
@@ -1936,12 +2185,273 @@ function setGlobalMaterial() {
     document.getElementById('globalMaterialSelect').value = '';
 }
 
-// ========== Группировка ==========
+// ========== Управление группами ==========
+function toggleGroup(groupId) {
+    const directChildren = [];
+    
+    if (groupChildren[groupId]) {
+        groupChildren[groupId].forEach(childId => {
+            const childTr = document.querySelector(`tr[data-group-id="${childId}"]`);
+            if (childTr) directChildren.push(childTr);
+        });
+    }
+    
+    const indices = groupIndexMap[groupId];
+    let dataRows = [];
+    
+    if (indices) {
+        indices.forEach(index => {
+            let row = rowElementCache.get(index);
+            if (row && document.body.contains(row) && row.dataset.group === groupId) {
+                dataRows.push(row);
+            } else {
+                row = document.querySelector(`tr.group-row[data-index="${index}"]`) || 
+                      document.querySelector(`tr[data-row-index="${index}"]`);
+                if (row && row.dataset.group === groupId) dataRows.push(row);
+            }
+        });
+    }
+    
+    const allRows = [...directChildren, ...dataRows];
+    if (allRows.length === 0) return;
+    
+    const arrow = document.getElementById(groupId + '_arrow');
+    const isHidden = allRows[0].classList.contains('hidden-row');
+    
+    if (arrow) {
+        if (isHidden) {
+            arrow.classList.add('expanded');
+            arrow.textContent = '▼';
+        } else {
+            arrow.classList.remove('expanded');
+            arrow.textContent = '▶';
+        }
+    }
+    
+    for (const row of directChildren) {
+        if (isHidden) row.classList.remove('hidden-row');
+        else row.classList.add('hidden-row');
+    }
+    
+    if (dataRows.length > PERF.BATCH_SIZE) {
+        batchProcessRows(dataRows, isHidden, 0);
+    } else {
+        for (const row of dataRows) {
+            if (isHidden) row.classList.remove('hidden-row');
+            else row.classList.add('hidden-row');
+        }
+    }
+}
+
+function batchProcessRows(rows, isHidden, startIndex) {
+    const endIndex = Math.min(startIndex + PERF.BATCH_SIZE, rows.length);
+    
+    for (let i = startIndex; i < endIndex; i++) {
+        const row = rows[i];
+        if (isHidden) row.classList.remove('hidden-row');
+        else row.classList.add('hidden-row');
+    }
+    
+    if (endIndex < rows.length) {
+        setTimeout(() => {
+            requestAnimationFrame(() => {
+                batchProcessRows(rows, isHidden, endIndex);
+            });
+        }, PERF.BATCH_DELAY);
+    }
+}
+
+function hideNestedGroupsDeferred(groupId) {
+    if (!groupChildren[groupId]) return;
+    
+    const childrenToHide = [];
+    
+    groupChildren[groupId].forEach(childId => {
+        const childRow = document.querySelector(`tr[data-group-id="${childId}"]`);
+        if (childRow && !childRow.classList.contains('hidden-row')) {
+            childrenToHide.push(childRow);
+        }
+    });
+    
+    if (childrenToHide.length > PERF.BATCH_SIZE) {
+        batchProcessRows(childrenToHide, false, 0);
+    } else {
+        childrenToHide.forEach(row => row.classList.add('hidden-row'));
+    }
+    
+    groupChildren[groupId].forEach(childId => {
+        const childArrow = document.getElementById(childId + '_arrow');
+        if (childArrow) {
+            childArrow.classList.remove('expanded');
+            childArrow.textContent = '▶';
+        }
+    });
+}
+
+function hideAllNested(row) {
+    const groupId = row.dataset.groupId;
+    if (groupId) hideNestedGroupsDeferred(groupId);
+}
+
+function updateChildCheckboxes(groupId, checked) {
+    const indices = groupIndexMap[groupId];
+    if (indices) {
+        const batch = [];
+        indices.forEach(index => {
+            const row = rowElementCache.get(index);
+            if (row) batch.push(row);
+        });
+        updateCheckboxesBatch(batch, checked, 0);
+    }
+    if (groupChildren[groupId]) groupChildren[groupId].forEach(childId => updateChildCheckboxes(childId, checked));
+}
+
+function updateCheckboxesBatch(rows, checked, startIdx) {
+    const endIdx = Math.min(startIdx + 200, rows.length);
+    for (let i = startIdx; i < endIdx; i++) {
+        const cb = rows[i].querySelector('.row-checkbox');
+        if (cb) cb.checked = checked;
+    }
+    if (endIdx < rows.length) {
+        requestAnimationFrame(() => updateCheckboxesBatch(rows, checked, endIdx));
+    }
+}
+
+function toggleGroupSelection(groupId, checked) {
+    if (leafGroups[groupId]) {
+        const indices = groupIndexMap[groupId];
+        if (!indices || indices.length === 0) return;
+        const firstIndex = indices[0];
+        if (checked) selectedRows.add(firstIndex);
+        else selectedRows.delete(firstIndex);
+        updateChildCheckboxes(groupId, checked);
+    } else if (groupChildren[groupId]) {
+        const collectLeaves = (gid) => {
+            if (leafGroups[gid]) return [gid];
+            const leaves = [];
+            (groupChildren[gid] || []).forEach(child => leaves.push(...collectLeaves(child)));
+            return leaves;
+        };
+        
+        const leaves = collectLeaves(groupId);
+        leaves.forEach(leafId => {
+            const indices = groupIndexMap[leafId];
+            if (indices && indices.length > 0) {
+                if (checked) selectedRows.add(indices[0]);
+                else selectedRows.delete(indices[0]);
+            }
+            const leafCb = document.querySelector(`.group-checkbox[data-group-id="${leafId}"]`);
+            if (leafCb) leafCb.checked = checked;
+            updateChildCheckboxes(leafId, checked);
+        });
+    }
+    
+    [6, 5, 4, 3, 2, 1].forEach(lvl => {
+        Object.keys(groupLevel).forEach(gid => {
+            if (groupLevel[gid] !== lvl) return;
+            const cb = document.querySelector(`.group-checkbox[data-group-id="${gid}"]`);
+            if (!cb) return;
+            const children = groupChildren[gid] || [];
+            if (children.length > 0) {
+                cb.checked = children.every(cid => {
+                    const childCb = document.querySelector(`.group-checkbox[data-group-id="${cid}"]`);
+                    return childCb && childCb.checked;
+                });
+            }
+        });
+    });
+    
+    updateSelectionUI();
+}
+
+function ungroupRows() {
+    const data = window._previewData;
+    if (!data) return;
+    
+    groupIndexMap = {};
+    groupChildren = {};
+    groupParent = {};
+    groupLevel = {};
+    leafGroups = {};
+    isGrouped = false;
+    autoGroupEnabled = false;
+    rowElementCache.clear();
+    
+    renderPreview(data);
+    autoGroupEnabled = true;
+    
+    document.getElementById('autoGroupBtn').style.display = 'inline-block';
+    document.getElementById('ungroupBtn').style.display = 'none';
+    showToast('Группировка снята', 'info');
+}
+
+function selectAllRows() {
+    if (isGrouped) {
+        Object.keys(leafGroups).forEach(groupId => {
+            const indices = groupIndexMap[groupId];
+            if (indices && indices.length > 0) {
+                selectedRows.add(indices[0]);
+                const cb = document.querySelector(`.group-checkbox[data-group-id="${groupId}"]`);
+                if (cb) cb.checked = true;
+                updateChildCheckboxes(groupId, true);
+            }
+        });
+        [6, 5, 4, 3, 2, 1].forEach(lvl => {
+            Object.keys(groupLevel).forEach(gid => {
+                if (groupLevel[gid] !== lvl) return;
+                const cb = document.querySelector(`.group-checkbox[data-group-id="${gid}"]`);
+                if (!cb) return;
+                const children = groupChildren[gid] || [];
+                if (children.length > 0) {
+                    cb.checked = children.every(cid => {
+                        const childCb = document.querySelector(`.group-checkbox[data-group-id="${cid}"]`);
+                        return childCb && childCb.checked;
+                    });
+                }
+            });
+        });
+    } else {
+        document.querySelectorAll('.row-checkbox').forEach(cb => { cb.checked = true; selectedRows.add(parseInt(cb.dataset.index)); });
+    }
+    updateSelectionUI();
+}
+
+function deselectAllRows() {
+    selectedRows.clear();
+    document.querySelectorAll('.group-checkbox,.row-checkbox').forEach(cb => cb.checked = false);
+    updateSelectionUI();
+}
+
+function updateSelectionUI() {
+    const selectedCountSpan = document.getElementById('selectedCount');
+    if (selectedCountSpan) selectedCountSpan.textContent = selectedRows.size;
+    
+    const selectRowsBtn = document.getElementById('selectRowsBtn');
+    if (selectRowsBtn) {
+        selectRowsBtn.disabled = selectedRows.size === 0;
+        const countSpan = selectRowsBtn.querySelector('#selectedCount');
+        if (countSpan) countSpan.textContent = selectedRows.size;
+    }
+    
+    const previewInfo = document.getElementById('previewInfo');
+    if (previewInfo && window._previewData) {
+        previewInfo.textContent = `Загружено: ${window._previewData.totalRows} строк`;
+    }
+}
+
+// ========== Группировка для КР ==========
 function autoGroupRows() {
+    if (currentProcessingType === 'AR') {
+        autoGroupRowsAR();
+        return;
+    }
+    
     const data = window._previewData;
     if (!data) return;
     const body = document.getElementById('previewBody');
     const rows = Array.from(body.querySelectorAll('tr'));
+    
+    rowElementCache.clear();
     
     groupIndexMap = {};
     groupChildren = {};
@@ -1967,9 +2477,7 @@ function autoGroupRows() {
     };
     
     const getGeometryValue = (rule, rowIndex) => {
-        if (!rule || rule === 'default') {
-            return getVolume(rowIndex);
-        }
+        if (!rule || rule === 'default') return getVolume(rowIndex);
         const fieldIdx = data.headers.indexOf(rule.field);
         if (fieldIdx === -1) return getVolume(rowIndex);
         return safeParseFloat(data.rows[rowIndex]?.[fieldIdx]);
@@ -1980,15 +2488,12 @@ function autoGroupRows() {
         const index = parseInt(tr.dataset.rowIndex);
         
         const partSelect = tds[tds.length - 2]?.querySelector('select');
-        const materialSelect = tds[tds.length - 1]?.querySelector('select');
-        
         const part = partSelect ? partSelect.value : 'Надземная';
-        const material = materialSelect ? materialSelect.value : '-';
         const typeRu = typeRuIdx !== -1 ? (data.rows[index]?.[typeRuIdx] || 'Неизвестно') : 'Неизвестно';
         const name = nameIdx !== -1 ? (data.rows[index]?.[nameIdx] || '') : '';
         const subsection = determineSubsection(typeRu, name, part);
         const ifcType = getIfcType(typeRu, name);
-        return { tr, index, part, material, typeRu, name, subsection, ifcType };
+        return { tr, index, part, typeRu, name, subsection, ifcType };
     });
     
     body.innerHTML = '';
@@ -2044,7 +2549,6 @@ function autoGroupRows() {
             });
             
             if (sectionRows.length === 0) return;
-            
             sectionRows.forEach(rd => groupedIndices.add(rd.index));
             
             let sectionVolume = 0;
@@ -2192,19 +2696,11 @@ function autoGroupRows() {
                                 const value = getGeometryValue(rule, rd.index);
                                 let assigned = false;
                                 for (const rg of geoGroups) {
-                                    if (value <= rg.max) {
-                                        rg.rows.push(rd);
-                                        rg.indices.push(rd.index);
-                                        assigned = true;
-                                        break;
-                                    }
+                                    if (value <= rg.max) { rg.rows.push(rd); rg.indices.push(rd.index); assigned = true; break; }
                                 }
                                 if (!assigned) {
                                     const lastGroup = geoGroups[geoGroups.length - 1];
-                                    if (lastGroup) {
-                                        lastGroup.rows.push(rd);
-                                        lastGroup.indices.push(rd.index);
-                                    }
+                                    if (lastGroup) { lastGroup.rows.push(rd); lastGroup.indices.push(rd.index); }
                                 }
                             });
                             
@@ -2216,7 +2712,6 @@ function autoGroupRows() {
                                 
                                 let parentId = l3Id;
                                 let paddingLeft = 90;
-                                let geoLevel = 5;
                                 
                                 if (needIcfGroup) {
                                     const ifcId = 'IFC_' + (groupCounter++);
@@ -2228,14 +2723,10 @@ function autoGroupRows() {
                                     groupChildren[l3Id].push(ifcId);
                                     
                                     const ifcLabels = {
-                                        'IfcWall': '🧱 Стены',
-                                        'IfcSlab': '🔲 Плиты',
-                                        'IfcColumn': '🏛️ Колонны',
-                                        'IfcBeam': '〰️ Балки',
-                                        'IfcStair': '🪜 Лестницы',
-                                        'IfcStairFlight': '🪜 Лестничные марши',
-                                        'IfcPile': '🔩 Сваи',
-                                        'default': '📦 Прочее'
+                                        'IfcWall': '🧱 Стены', 'IfcSlab': '🔲 Плиты',
+                                        'IfcColumn': '🏛️ Колонны', 'IfcBeam': '〰️ Балки',
+                                        'IfcStair': '🪜 Лестницы', 'IfcStairFlight': '🪜 Лестничные марши',
+                                        'IfcPile': '🔩 Сваи', 'default': '📦 Прочее'
                                     };
                                     
                                     const ifcTr = document.createElement('tr');
@@ -2266,128 +2757,11 @@ function autoGroupRows() {
                                     
                                     parentId = ifcId;
                                     paddingLeft = 120;
-                                    geoLevel = 5;
-                                }
-                                
-                                if (rule.sub_ranges) {
-                                    const subRule = rule.sub_ranges;
-                                    
-                                    const subGeoGroups = {};
-                                    geoGroup.rows.forEach(rd => {
-                                        const val = safeParseFloat(data.rows[rd.index]?.[data.headers.indexOf(subRule.field)] ?? 0);
-                                        let assigned = false;
-                                        for (const rg of subRule.ranges) {
-                                            if (val <= rg.max) {
-                                                if (!subGeoGroups[rg.label]) subGeoGroups[rg.label] = { rows: [], indices: [] };
-                                                subGeoGroups[rg.label].rows.push(rd);
-                                                subGeoGroups[rg.label].indices.push(rd.index);
-                                                assigned = true;
-                                                break;
-                                            }
-                                        }
-                                        if (!assigned) {
-                                            const lastRg = subRule.ranges[subRule.ranges.length - 1];
-                                            if (!subGeoGroups[lastRg.label]) subGeoGroups[lastRg.label] = { rows: [], indices: [] };
-                                            subGeoGroups[lastRg.label].rows.push(rd);
-                                            subGeoGroups[lastRg.label].indices.push(rd.index);
-                                        }
-                                    });
-                                    
-                                    const geoId = 'GEO_' + (groupCounter++);
-                                    groupIndexMap[geoId] = geoGroup.indices;
-                                    groupLevel[geoId] = geoLevel;
-                                    groupParent[geoId] = parentId;
-                                    groupChildren[geoId] = [];
-                                    if (!groupChildren[parentId]) groupChildren[parentId] = [];
-                                    groupChildren[parentId].push(geoId);
-                                    
-                                    const firstIndex = geoGroup.indices[0];
-                                    
-                                    const geoTr = document.createElement('tr');
-                                    geoTr.className = 'group-row hidden-row';
-                                    geoTr.dataset.group = parentId;
-                                    geoTr.dataset.groupId = geoId;
-                                    geoTr.style.cssText = 'background:#ffffff !important;';
-                                    geoTr.onclick = function(e) {
-                                        if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                                        toggleGroup(geoId);
-                                    };
-                                    
-                                    geoTr.innerHTML = `
-                                        <td style="text-align:center; padding-left: ${paddingLeft}px;">
-                                            <span class="group-arrow" id="${geoId}_arrow">▶</span>
-                                            <input type="checkbox" class="group-checkbox" data-group-id="${geoId}" data-first-index="${firstIndex}">
-                                        </td>
-                                        <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
-                                            📏 ${rule.label}: ${geoGroup.label}
-                                            <span class="group-badge">×${geoGroup.rows.length}</span>
-                                            <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³</span>
-                                        </td>
-                                    `;
-                                    body.appendChild(geoTr);
-                                    
-                                    const geoCb = geoTr.querySelector('.group-checkbox');
-                                    geoCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(geoId, this.checked); });
-                                    
-                                    Object.keys(subGeoGroups).forEach(subLabel => {
-                                        const subGroup = subGeoGroups[subLabel];
-                                        let subVolume = 0;
-                                        subGroup.rows.forEach(rd => { subVolume += getVolume(rd.index); });
-                                        
-                                        const subGeoId = 'SUBGEO_' + (groupCounter++);
-                                        groupIndexMap[subGeoId] = subGroup.indices;
-                                        groupLevel[subGeoId] = geoLevel + 1;
-                                        groupParent[subGeoId] = geoId;
-                                        groupChildren[subGeoId] = [];
-                                        if (!groupChildren[geoId]) groupChildren[geoId] = [];
-                                        groupChildren[geoId].push(subGeoId);
-                                        leafGroups[subGeoId] = true;
-                                        
-                                        const firstSubIndex = subGroup.indices[0];
-                                        
-                                        const subGeoTr = document.createElement('tr');
-                                        subGeoTr.className = 'group-row hidden-row';
-                                        subGeoTr.dataset.group = geoId;
-                                        subGeoTr.dataset.groupId = subGeoId;
-                                        subGeoTr.style.cssText = 'background:#ffffff !important;';
-                                        subGeoTr.onclick = function(e) {
-                                            if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                                            toggleGroup(subGeoId);
-                                        };
-                                        
-                                        subGeoTr.innerHTML = `
-                                            <td style="text-align:center; padding-left: ${paddingLeft + 30}px;">
-                                                <span class="group-arrow" id="${subGeoId}_arrow">▶</span>
-                                                <input type="checkbox" class="group-checkbox" data-group-id="${subGeoId}" data-first-index="${firstSubIndex}">
-                                            </td>
-                                            <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
-                                                📐 ${subRule.label}: ${subLabel}
-                                                <span class="group-badge">×${subGroup.rows.length}</span>
-                                                <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${subVolume.toFixed(2)} м³</span>
-                                            </td>
-                                        `;
-                                        body.appendChild(subGeoTr);
-                                        
-                                        const subGeoCb = subGeoTr.querySelector('.group-checkbox');
-                                        subGeoCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(subGeoId, this.checked); });
-                                        
-                                        subGroup.rows.forEach(rd => {
-                                            rd.tr.classList.add('group-row', 'hidden-row');
-                                            rd.tr.dataset.group = subGeoId;
-                                            const firstTd = rd.tr.querySelector('td');
-                                            if (firstTd) firstTd.style.paddingLeft = (paddingLeft + 60) + 'px';
-                                            const cb = rd.tr.querySelector('.row-checkbox');
-                                            if (cb) { cb.style.display = 'none'; cb.checked = false; }
-                                            body.appendChild(rd.tr);
-                                        });
-                                    });
-                                    
-                                    return;
                                 }
                                 
                                 const geoId = 'GEO_' + (groupCounter++);
                                 groupIndexMap[geoId] = geoGroup.indices;
-                                groupLevel[geoId] = geoLevel;
+                                groupLevel[geoId] = needIcfGroup ? 5 : 4;
                                 groupParent[geoId] = parentId;
                                 groupChildren[geoId] = [];
                                 if (!groupChildren[parentId]) groupChildren[parentId] = [];
@@ -2444,7 +2818,6 @@ function autoGroupRows() {
             otherRows.forEach(rd => { otherVolume += getVolume(rd.index); });
             
             const otherLabel = partStructure.other_label || 'Прочие элементы';
-            
             const otherId = 'OTHER_' + (groupCounter++);
             groupIndexMap[otherId] = otherRows.map(r => r.index);
             groupLevel[otherId] = 2;
@@ -2484,9 +2857,7 @@ function autoGroupRows() {
                 const lastColon = nameKey.lastIndexOf(':');
                 if (lastColon !== -1) {
                     const after = nameKey.substring(lastColon + 1).trim();
-                    if (/^\d+$/.test(after)) {
-                        nameKey = nameKey.substring(0, lastColon).trim();
-                    }
+                    if (/^\d+$/.test(after)) nameKey = nameKey.substring(0, lastColon).trim();
                 }
                 if (!nameKey) nameKey = 'Без названия';
                 if (!byName[nameKey]) byName[nameKey] = [];
@@ -2548,239 +2919,226 @@ function autoGroupRows() {
     });
     
     Object.keys(leafGroups).forEach(key => {
-        if (groupChildren[key] && groupChildren[key].length > 0) {
-            delete leafGroups[key];
-        }
+        if (groupChildren[key] && groupChildren[key].length > 0) delete leafGroups[key];
     });
     
     document.getElementById('autoGroupBtn').style.display = 'none';
     document.getElementById('ungroupBtn').style.display = 'inline-block';
     updateSelectionUI();
-    showToast(`Сгруппировано: ${Object.keys(leafGroups).length} групп`, 'info');
+    showToast(`Сгруппировано (КР): ${Object.keys(leafGroups).length} групп`, 'info');
 }
 
-function toggleGroup(groupId) {
-    const directChildren = [];
-    
-    if (groupChildren[groupId]) {
-        groupChildren[groupId].forEach(childId => {
-            const childTr = document.querySelector(`tr[data-group-id="${childId}"]`);
-            if (childTr) directChildren.push(childTr);
-        });
-    }
-    
-    const indices = groupIndexMap[groupId];
-    if (indices) {
-        indices.forEach(index => {
-            const row = document.querySelector(`tr.group-row[data-index="${index}"]`) || 
-                       document.querySelector(`tr[data-row-index="${index}"]`);
-            if (row && row.dataset.group === groupId) directChildren.push(row);
-        });
-    }
-    
-    if (directChildren.length === 0) return;
-    
-    const arrow = document.getElementById(groupId + '_arrow');
-    const isHidden = directChildren[0].classList.contains('hidden-row');
-    
-    directChildren.forEach(row => {
-        if (isHidden) {
-            row.classList.remove('hidden-row');
-        } else {
-            row.classList.add('hidden-row');
-            hideAllNested(row);
-        }
-    });
-    
-    if (arrow) {
-        if (isHidden) {
-            arrow.classList.add('expanded');
-            arrow.textContent = '▼';
-        } else {
-            arrow.classList.remove('expanded');
-            arrow.textContent = '▶';
-        }
-    }
-}
-
-function hideAllNested(row) {
-    const groupId = row.dataset.groupId;
-    if (groupId) {
-        if (groupChildren[groupId]) {
-            groupChildren[groupId].forEach(childId => {
-                const childRow = document.querySelector(`tr[data-group-id="${childId}"]`);
-                if (childRow) {
-                    childRow.classList.add('hidden-row');
-                    const childArrow = document.getElementById(childId + '_arrow');
-                    if (childArrow) {
-                        childArrow.classList.remove('expanded');
-                        childArrow.textContent = '▶';
-                    }
-                    hideAllNested(childRow);
-                }
-            });
-        }
-        
-        const indices = groupIndexMap[groupId];
-        if (indices) {
-            indices.forEach(index => {
-                const elementRow = document.querySelector(`tr.group-row[data-index="${index}"]`) || 
-                                 document.querySelector(`tr[data-row-index="${index}"]`);
-                if (elementRow && elementRow.dataset.group === groupId) {
-                    elementRow.classList.add('hidden-row');
-                }
-            });
-        }
-    }
-}
-
-function updateChildCheckboxes(groupId, checked) {
-    const indices = groupIndexMap[groupId];
-    if (indices) {
-        indices.forEach(index => {
-            const row = document.querySelector(`tr.group-row[data-index="${index}"]`) || document.querySelector(`tr[data-row-index="${index}"]`);
-            if (row) { const cb = row.querySelector('.row-checkbox'); if (cb) cb.checked = checked; }
-        });
-    }
-    if (groupChildren[groupId]) groupChildren[groupId].forEach(childId => updateChildCheckboxes(childId, checked));
-}
-
-function toggleGroupSelection(groupId, checked) {
-    if (leafGroups[groupId]) {
-        const indices = groupIndexMap[groupId];
-        if (!indices || indices.length === 0) return;
-        const firstIndex = indices[0];
-        if (checked) selectedRows.add(firstIndex);
-        else selectedRows.delete(firstIndex);
-        updateChildCheckboxes(groupId, checked);
-    } else if (groupChildren[groupId]) {
-        const collectLeaves = (gid) => {
-            if (leafGroups[gid]) return [gid];
-            const leaves = [];
-            (groupChildren[gid] || []).forEach(child => {
-                leaves.push(...collectLeaves(child));
-            });
-            return leaves;
-        };
-        
-        const leaves = collectLeaves(groupId);
-        leaves.forEach(leafId => {
-            const indices = groupIndexMap[leafId];
-            if (indices && indices.length > 0) {
-                if (checked) selectedRows.add(indices[0]);
-                else selectedRows.delete(indices[0]);
-            }
-            const leafCb = document.querySelector(`.group-checkbox[data-group-id="${leafId}"]`);
-            if (leafCb) leafCb.checked = checked;
-            updateChildCheckboxes(leafId, checked);
-        });
-    }
-    
-    [6, 5, 4, 3, 2, 1].forEach(lvl => {
-        Object.keys(groupLevel).forEach(gid => {
-            if (groupLevel[gid] !== lvl) return;
-            const cb = document.querySelector(`.group-checkbox[data-group-id="${gid}"]`);
-            if (!cb) return;
-            const children = groupChildren[gid] || [];
-            if (children.length > 0) {
-                cb.checked = children.every(cid => {
-                    const childCb = document.querySelector(`.group-checkbox[data-group-id="${cid}"]`);
-                    return childCb && childCb.checked;
-                });
-            }
-        });
-    });
-    
-    updateSelectionUI();
-}
-
-function ungroupRows() {
+// ========== Группировка для АР ==========
+function autoGroupRowsAR() {
     const data = window._previewData;
     if (!data) return;
+    const body = document.getElementById('previewBody');
+    const rows = Array.from(body.querySelectorAll('tr'));
+    
+    rowElementCache.clear();
     
     groupIndexMap = {};
     groupChildren = {};
     groupParent = {};
     groupLevel = {};
     leafGroups = {};
-    isGrouped = false;
+    selectedRows.clear();
+    isGrouped = true;
     
-    // Временно отключаем авто-группировку
-    autoGroupEnabled = false;
+    const typeRuIdx = data.headers.indexOf('Тип элемента');
+    const nameIdx = data.headers.indexOf('Имя');
+    const typeFloorIdx = data.headers.indexOf('Тип_этажа');
+    const totalCols = 1 + 6 + 2;
     
-    // Перерисовываем таблицу без группировки
-    renderPreview(data);
+    function getPartFromFloorType(floorType) {
+        if (!floorType) return 'Надземная';
+        const floorLower = floorType.toLowerCase().trim();
+        
+        if (['подзем', 'подвал', 'basement', '-1'].some(w => floorLower.includes(w))) return 'Подземная';
+        if (['цокол', 'ground', 'нулев'].some(w => floorLower.includes(w))) return 'Цоколь';
+        if (['надзем', 'этаж', 'кровл', 'техническ', 'мансард'].some(w => floorLower.includes(w))) return 'Надземная';
+        
+        return 'Надземная';
+    }
     
-    // Включаем авто-группировку обратно для будущих загрузок
-    autoGroupEnabled = true;
+    const rowData = rows.map(tr => {
+        const tds = tr.querySelectorAll('td');
+        const index = parseInt(tr.dataset.rowIndex);
+        const typeRu = typeRuIdx !== -1 ? (data.rows[index]?.[typeRuIdx] || 'Неизвестно') : 'Неизвестно';
+        const name = nameIdx !== -1 ? cleanElementName(data.rows[index]?.[nameIdx] || '') : '';
+        const floorType = typeFloorIdx !== -1 ? (data.rows[index]?.[typeFloorIdx] || '') : '';
+        const part = getPartFromFloorType(floorType);
+        return { tr, index, typeRu, name, floorType, part };
+    });
     
-    document.getElementById('autoGroupBtn').style.display = 'inline-block';
-    document.getElementById('ungroupBtn').style.display = 'none';
-    showToast('Группировка снята', 'info');
-}
-
-function selectAllRows() {
-    if (isGrouped) {
-        Object.keys(leafGroups).forEach(groupId => {
-            const indices = groupIndexMap[groupId];
-            if (indices && indices.length > 0) {
-                selectedRows.add(indices[0]);
-                const cb = document.querySelector(`.group-checkbox[data-group-id="${groupId}"]`);
-                if (cb) cb.checked = true;
-                updateChildCheckboxes(groupId, true);
-            }
+    body.innerHTML = '';
+    let groupCounter = 0;
+    
+    const partOrder = ['Подземная', 'Цоколь', 'Надземная'];
+    
+    const partLabels = {
+        'Подземная': '🏗️ Подземная часть здания (до отм. 0,000)',
+        'Цоколь': '🏗️ Цокольная часть здания (отм. 0,000)',
+        'Надземная': '🏗️ Надземная часть здания (выше отм. 0,000)',
+    };
+    
+    const typeLabels = {
+        'IfcWall': '🧱 Стены', 'IfcWallStandardCase': '🧱 Стены',
+        'IfcSlab': '🔲 Плиты', 'IfcColumn': '🏛️ Колонны',
+        'IfcBeam': '〰️ Балки', 'IfcStair': '🪜 Лестницы',
+        'IfcStairFlight': '🪜 Лестничные марши', 'IfcDoor': '🚪 Двери',
+        'IfcWindow': '🪟 Окна', 'IfcRailing': '🛡️ Ограждения',
+        'IfcCovering': '🏗️ Покрытия', 'IfcBuildingElementProxy': '📦 Прочие элементы',
+        'IfcPile': '🔩 Сваи', 'IfcRamp': '🔄 Пандусы',
+        'IfcRoof': '🏠 Крыши', 'IfcCurtainWall': '🪟 Фасады',
+        'IfcFurnishingElement': '🪑 Мебель', 'IfcMember': 'Несущий элемент'
+    };
+    
+    partOrder.forEach(part => {
+        const partRows = rowData.filter(rd => rd.part === part);
+        if (partRows.length === 0) return;
+        
+        const l1Id = 'L1_' + (groupCounter++);
+        groupIndexMap[l1Id] = partRows.map(r => r.index);
+        groupLevel[l1Id] = 1;
+        groupChildren[l1Id] = [];
+        
+        const l1Tr = document.createElement('tr');
+        l1Tr.className = 'group-header';
+        l1Tr.dataset.groupId = l1Id;
+        l1Tr.style.cssText = 'background:#e2e8f0 !important;';
+        l1Tr.onclick = function(e) {
+            if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+            toggleGroup(l1Id);
+        };
+        
+        l1Tr.innerHTML = `
+            <td style="text-align:center;">
+                <span class="group-arrow" id="${l1Id}_arrow">▶</span>
+                <input type="checkbox" class="group-checkbox" data-group-id="${l1Id}">
+            </td>
+            <td colspan="${totalCols - 1}" style="font-weight:700; font-size:15px; color:#2d3748;">
+                ${partLabels[part]}
+                <span class="group-badge">×${partRows.length}</span>
+            </td>
+        `;
+        body.appendChild(l1Tr);
+        
+        const l1Cb = l1Tr.querySelector('.group-checkbox');
+        l1Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l1Id, this.checked); });
+        
+        const typeGroups = {};
+        partRows.forEach(rd => {
+            if (!typeGroups[rd.typeRu]) typeGroups[rd.typeRu] = [];
+            typeGroups[rd.typeRu].push(rd);
         });
-        [6, 5, 4, 3, 2, 1].forEach(lvl => {
-            Object.keys(groupLevel).forEach(gid => {
-                if (groupLevel[gid] !== lvl) return;
-                const cb = document.querySelector(`.group-checkbox[data-group-id="${gid}"]`);
-                if (!cb) return;
-                const children = groupChildren[gid] || [];
-                if (children.length > 0) {
-                    cb.checked = children.every(cid => {
-                        const childCb = document.querySelector(`.group-checkbox[data-group-id="${cid}"]`);
-                        return childCb && childCb.checked;
-                    });
-                }
+        
+        const sortedTypes = Object.keys(typeGroups).sort();
+        
+        sortedTypes.forEach(typeRu => {
+            const typeRows = typeGroups[typeRu];
+            
+            const l2Id = 'L2_' + (groupCounter++);
+            groupIndexMap[l2Id] = typeRows.map(r => r.index);
+            groupLevel[l2Id] = 2;
+            groupParent[l2Id] = l1Id;
+            groupChildren[l2Id] = [];
+            groupChildren[l1Id].push(l2Id);
+            
+            const l2Tr = document.createElement('tr');
+            l2Tr.className = 'group-row hidden-row';
+            l2Tr.dataset.group = l1Id;
+            l2Tr.dataset.groupId = l2Id;
+            l2Tr.style.cssText = 'background:#edf2f7 !important;';
+            l2Tr.onclick = function(e) {
+                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                toggleGroup(l2Id);
+            };
+            
+            l2Tr.innerHTML = `
+                <td style="text-align:center; padding-left: 30px;">
+                    <span class="group-arrow" id="${l2Id}_arrow">▶</span>
+                    <input type="checkbox" class="group-checkbox" data-group-id="${l2Id}">
+                </td>
+                <td colspan="${totalCols - 1}" style="font-weight:600; color:#4a5568;">
+                    ${typeLabels[typeRu] || typeRu}
+                    <span class="group-badge">×${typeRows.length}</span>
+                </td>
+            `;
+            body.appendChild(l2Tr);
+            
+            const l2Cb = l2Tr.querySelector('.group-checkbox');
+            l2Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l2Id, this.checked); });
+            
+            const nameGroups = {};
+            typeRows.forEach(rd => {
+                if (!nameGroups[rd.name]) nameGroups[rd.name] = [];
+                nameGroups[rd.name].push(rd);
+            });
+            
+            const sortedNames = Object.keys(nameGroups).sort();
+            
+            sortedNames.forEach(name => {
+                const nameRows = nameGroups[name];
+                
+                const l3Id = 'L3_' + (groupCounter++);
+                groupIndexMap[l3Id] = nameRows.map(r => r.index);
+                groupLevel[l3Id] = 3;
+                groupParent[l3Id] = l2Id;
+                groupChildren[l3Id] = [];
+                groupChildren[l2Id].push(l3Id);
+                leafGroups[l3Id] = true;
+                
+                const firstIndex = nameRows[0].index;
+                
+                const l3Tr = document.createElement('tr');
+                l3Tr.className = 'group-row hidden-row';
+                l3Tr.dataset.group = l2Id;
+                l3Tr.dataset.groupId = l3Id;
+                l3Tr.style.cssText = 'background:#f7fafc !important;';
+                l3Tr.onclick = function(e) {
+                    if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                    toggleGroup(l3Id);
+                };
+                
+                l3Tr.innerHTML = `
+                    <td style="text-align:center; padding-left: 60px;">
+                        <span class="group-arrow" id="${l3Id}_arrow">▶</span>
+                        <input type="checkbox" class="group-checkbox" data-group-id="${l3Id}" data-first-index="${firstIndex}">
+                    </td>
+                    <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
+                        📎 ${name}
+                        <span class="group-badge">×${nameRows.length}</span>
+                    </td>
+                `;
+                body.appendChild(l3Tr);
+                
+                const l3Cb = l3Tr.querySelector('.group-checkbox');
+                l3Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l3Id, this.checked); });
+                
+                nameRows.forEach(rd => {
+                    rd.tr.classList.add('group-row', 'hidden-row');
+                    rd.tr.dataset.group = l3Id;
+                    const firstTd = rd.tr.querySelector('td');
+                    if (firstTd) firstTd.style.paddingLeft = '90px';
+                    const cb = rd.tr.querySelector('.row-checkbox');
+                    if (cb) { cb.style.display = 'none'; cb.checked = false; }
+                    body.appendChild(rd.tr);
+                });
             });
         });
-    } else {
-        document.querySelectorAll('.row-checkbox').forEach(cb => { cb.checked = true; selectedRows.add(parseInt(cb.dataset.index)); });
-    }
+    });
+    
+    Object.keys(leafGroups).forEach(key => {
+        if (groupChildren[key] && groupChildren[key].length > 0) delete leafGroups[key];
+    });
+    
+    document.getElementById('autoGroupBtn').style.display = 'none';
+    document.getElementById('ungroupBtn').style.display = 'inline-block';
     updateSelectionUI();
+    showToast(`Сгруппировано (АР): ${Object.keys(leafGroups).length} групп`, 'info');
 }
 
-function deselectAllRows() {
-    selectedRows.clear();
-    document.querySelectorAll('.group-checkbox,.row-checkbox').forEach(cb => cb.checked = false);
-    updateSelectionUI();
-}
-
-function updateSelectionUI() {
-    // Безопасно обновляем счётчик в информационной строке
-    const selectedCountSpan = document.getElementById('selectedCount');
-    if (selectedCountSpan) {
-        selectedCountSpan.textContent = selectedRows.size;
-    }
-    
-    // Безопасно обновляем кнопку запуска
-    const selectRowsBtn = document.getElementById('selectRowsBtn');
-    if (selectRowsBtn) {
-        selectRowsBtn.disabled = selectedRows.size === 0;
-        
-        // Обновляем только span внутри кнопки, если он есть
-        const countSpan = selectRowsBtn.querySelector('#selectedCount');
-        if (countSpan) {
-            countSpan.textContent = selectedRows.size;
-        }
-    }
-    
-    // Безопасно обновляем текст в previewInfo
-    const previewInfo = document.getElementById('previewInfo');
-    if (previewInfo && window._previewData) {
-        previewInfo.textContent = `Загружено: ${window._previewData.totalRows} строк`;
-    }
-}
 // ========== Предпросмотр файлов ==========
 function previewResultFile(filename) {
     const overlay = document.getElementById('previewModal');
@@ -2833,16 +3191,10 @@ function _blueprintDims() {
 
 function _blueprintClamp() {
     const { cw, ch, iw, ih } = _blueprintDims();
-    if (iw <= cw) {
-        blueprintZoom.x = (cw - iw) / 2;
-    } else {
-        blueprintZoom.x = Math.min(0, Math.max(cw - iw, blueprintZoom.x));
-    }
-    if (ih <= ch) {
-        blueprintZoom.y = (ch - ih) / 2;
-    } else {
-        blueprintZoom.y = Math.min(0, Math.max(ch - ih, blueprintZoom.y));
-    }
+    if (iw <= cw) { blueprintZoom.x = (cw - iw) / 2; }
+    else { blueprintZoom.x = Math.min(0, Math.max(cw - iw, blueprintZoom.x)); }
+    if (ih <= ch) { blueprintZoom.y = (ch - ih) / 2; }
+    else { blueprintZoom.y = Math.min(0, Math.max(ch - ih, blueprintZoom.y)); }
 }
 
 function _blueprintZoomToPoint(newScale, mx, my) {
@@ -2924,8 +3276,7 @@ function _blueprintInitZoom() {
             const dy = e.touches[0].clientY - e.touches[1].clientY;
             const rect = container.getBoundingClientRect();
             touchState = {
-                mode: 'pinch',
-                dist: Math.hypot(dx, dy),
+                mode: 'pinch', dist: Math.hypot(dx, dy),
                 startScale: blueprintZoom.scale,
                 cx: (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left,
                 cy: (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top
@@ -2951,15 +3302,10 @@ function _blueprintInitZoom() {
         }
     }, { passive: false });
     container.addEventListener('touchend', function() { touchState = null; }, { passive: true });
-
     container.addEventListener('dblclick', function(e) {
         if (e.target.closest('.blueprint-zoom-toolbar')) return;
-        if (blueprintZoom.scale > 1.001) {
-            blueprintFitZoom();
-        } else {
-            const rect = container.getBoundingClientRect();
-            _blueprintZoomToPoint(1, e.clientX - rect.left, e.clientY - rect.top);
-        }
+        if (blueprintZoom.scale > 1.001) { blueprintFitZoom(); }
+        else { const rect = container.getBoundingClientRect(); _blueprintZoomToPoint(1, e.clientX - rect.left, e.clientY - rect.top); }
     });
 }
 
@@ -2987,9 +3333,7 @@ function showBlueprintImage() {
     img.onload = () => {
         loading.style.display = 'none';
         container.style.display = 'block';
-        blueprintZoom.scale = 1;
-        blueprintZoom.x = 0;
-        blueprintZoom.y = 0;
+        blueprintZoom.scale = 1; blueprintZoom.x = 0; blueprintZoom.y = 0;
         blueprintZoom.baseScale = _blueprintComputeBaseScale();
         blueprintFitZoom();
     };
@@ -3003,12 +3347,8 @@ function showBlueprintImage() {
 
 function closeBlueprintImage() {
     document.getElementById('blueprintImageModal').classList.remove('active');
-    const img = document.getElementById('blueprintImageContent');
-    img.src = '';
-    blueprintZoom.scale = 1;
-    blueprintZoom.x = 0;
-    blueprintZoom.y = 0;
-    blueprintZoom.dragging = false;
+    document.getElementById('blueprintImageContent').src = '';
+    blueprintZoom.scale = 1; blueprintZoom.x = 0; blueprintZoom.y = 0; blueprintZoom.dragging = false;
 }
 
 async function showMaterialsLegend() {
@@ -3032,23 +3372,17 @@ async function showMaterialsLegend() {
     }
 }
 
-function closeMaterialsLegend() {
-    document.getElementById('materialsLegendModal').classList.remove('active');
-}
+function closeMaterialsLegend() { document.getElementById('materialsLegendModal').classList.remove('active'); }
 
 function renderMarkdownTable(md) {
     const lines = md.trim().split('\n').filter(l => l.trim());
     if (lines.length < 2) return '<p>' + md + '</p>';
-    const parseRow = (line) => {
-        return line.split('|').map(c => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length);
-    };
+    const parseRow = (line) => line.split('|').map(c => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length);
     const headers = parseRow(lines[0]);
     const bodyRows = lines.slice(2).map(parseRow);
     let html = '<table style="width:100%;border-collapse:collapse;font-size:14px;">';
     html += '<thead><tr>' + headers.map(h => '<th style="padding:10px 12px;text-align:left;border-bottom:2px solid #e2e8f0;background:#f7fafc;font-weight:600;color:#4a5568;">' + h + '</th>').join('') + '</tr></thead>';
-    html += '<tbody>' + bodyRows.map(row => 
-        '<tr>' + row.map(cell => '<td style="padding:8px 12px;border-bottom:1px solid #f0f4f8;">' + cell + '</td>').join('') + '</tr>'
-    ).join('') + '</tbody>';
+    html += '<tbody>' + bodyRows.map(row => '<tr>' + row.map(cell => '<td style="padding:8px 12px;border-bottom:1px solid #f0f4f8;">' + cell + '</td>').join('') + '</tr>').join('') + '</tbody>';
     html += '</table>';
     return html;
 }
@@ -3203,9 +3537,15 @@ async function loadHistory() {
             return;
         }
         container.innerHTML = data.sessions.map(s => {
-            const cls = {ifc_processing:'status-processing',ifc_processed:'status-waiting',selecting_rows:'status-waiting',processing:'status-processing',completed:'status-completed',error:'status-error'}[s.status]||'status-waiting';
-            const txt = {ifc_processing:'Обработка IFC...',ifc_processed:'IFC обработан',selecting_rows:'Выбор строк',processing:'Обработка...',completed:'✅ Завершена',error:'❌ Ошибка'}[s.status]||s.status;
-            return `<div class="session-item"><div class="top"><span class="id">${s.sessionId.substring(0,8)}…</span><span class="status ${cls}">${txt}</span></div><div class="info"><span>📅 ${new Date(s.createdAt).toLocaleString('ru-RU')}</span>${s.ifcFileName?` · 📄 ${s.ifcFileName}`:''}${s.buildingHeight?` · 📏 ${s.buildingHeight}м`:''}${(s.files||[]).length?` · 📦 ${s.files.length} файлов`:''}</div><div class="actions"><button class="btn btn-sm btn-primary" onclick="restoreSession('${s.sessionId}')">Восстановить</button>${(s.files||[]).length?`<button class="btn btn-sm btn-success" onclick="downloadAllFiles('${s.sessionId}')">Скачать всё</button>`:''}<button class="btn btn-sm btn-danger" onclick="deleteSession('${s.sessionId}')">Удалить</button></div></div>`;
+            const cls = {ifc_processing:'status-processing',ifc_processed:'status-waiting',selecting_rows:'status-waiting',processing:'status-processing',completed:'status-completed',error:'status-error',reference_processing:'status-processing'}[s.status]||'status-waiting';
+            const txt = {ifc_processing:'Обработка IFC...',ifc_processed:'IFC обработан',selecting_rows:'Выбор строк',processing:'Обработка...',completed:'✅ Завершена',error:'❌ Ошибка',reference_processing:'JSON-справочники...'}[s.status]||s.status;
+            const ptLabel = s.processingType || s.processing_type || 'KR';
+            const ptIcon = ptLabel === 'AR' ? '🏛️' : '🏗️';
+            const isReference = s.isReferenceSession;
+            const primaryAction = isReference
+                ? `<button class="btn btn-sm btn-primary" onclick="openReferenceSession('${s.sessionId}')">Открыть JSON</button>`
+                : `<button class="btn btn-sm btn-primary" onclick="restoreSession('${s.sessionId}')">Восстановить</button>`;
+            return `<div class="session-item"><div class="top"><span class="id">${s.sessionId.substring(0,8)}…</span><span class="status ${cls}">${txt}</span></div><div class="info"><span>📅 ${new Date(s.createdAt).toLocaleString('ru-RU')}</span>${s.ifcFileName?` · 📄 ${s.ifcFileName}`:''}${s.buildingHeight?` · 📏 ${s.buildingHeight}м`:''}${(s.files||[]).length?` · 📦 ${s.files.length} файлов`:''} · ${ptIcon} ${ptLabel}${isReference?' · 🧪 Справочник':''}</div><div class="actions">${primaryAction}${(s.files||[]).length?`<button class="btn btn-sm btn-success" onclick="downloadAllFiles('${s.sessionId}')">Скачать всё</button>`:''}<button class="btn btn-sm btn-danger" onclick="deleteSession('${s.sessionId}')">Удалить</button></div></div>`;
         }).join('');
     } catch (e) { container.innerHTML = `<p style="color:#fc8181;">Ошибка: ${e.message}</p>`; }
 }
@@ -3220,17 +3560,18 @@ async function restoreSession(sessionId) {
         currentSessionId = sessionId;
         currentRunId = data.current_run_id || null;
         
-        console.log('🔄 Восстановление сессии:', data);
+        if (data.buildingHeight) document.getElementById('buildingHeight').value = data.buildingHeight;
         
-        if (data.buildingHeight) {
-            document.getElementById('buildingHeight').value = data.buildingHeight;
+        if (data.processingType || data.processing_type) {
+            currentProcessingType = data.processingType || data.processing_type;
+            const radio = document.querySelector(`input[name="processingType"][value="${currentProcessingType}"]`);
+            if (radio) { radio.checked = true; onProcessingTypeChange(); }
         }
         
         showToast('Сессия восстановлена', 'success');
         switchTab('process');
         
         if (data.status === 'completed') {
-            // Загружаем результаты
             const r = await fetch(`${API_BASE}/session/${sessionId}`);
             const s = await r.json();
             
@@ -3243,27 +3584,19 @@ async function restoreSession(sessionId) {
             renderResults(files, s);
             document.getElementById('resultsCard').style.display = 'block';
             document.getElementById('step1').classList.remove('disabled');
-            
-            // ВАЖНО: загружаем таблицу предпросмотра
             await onIfcProcessed(sessionId);
-            
             await loadRuns();
         } else if (data.status === 'selecting_rows' || data.status === 'ifc_processed') {
-            // Загружаем таблицу предпросмотра
             await onIfcProcessed(sessionId);
             document.getElementById('resultsCard').style.display = 'none';
         } else if (data.status === 'processing') {
-            // Загружаем таблицу и показываем прогресс
             await onIfcProcessed(sessionId);
             document.getElementById('processingProgressWrap').style.display = 'block';
             document.getElementById('selectRowsBtn').disabled = true;
             document.getElementById('selectRowsBtn').innerHTML = '✅ Обработка запущена';
             startProcessingPolling(sessionId);
         }
-    } catch (e) { 
-        console.error('Ошибка восстановления:', e);
-        showToast(e.message, 'error'); 
-    }
+    } catch (e) { showToast(e.message, 'error'); }
 }
 
 async function downloadAllFiles(sessionId) { window.location.href = `${API_BASE}/session/${sessionId}/download_all`; }
@@ -3281,6 +3614,17 @@ async function deleteSession(sessionId) {
 // ========== Инициализация ==========
 document.addEventListener('DOMContentLoaded', () => {
     loadHistory();
+    updateProcessingTypeBadges();
+    
+    // Обработчики для reference-вкладки
+    document.querySelectorAll('input[name="referenceProcessingType"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            document.querySelectorAll('#referenceTypeSelector .processing-type-label').forEach(label => {
+                label.classList.toggle('active', label.querySelector('input').checked);
+            });
+        });
+    });
+    
     document.getElementById('previewModal').addEventListener('click', function(e) { if (e.target === this) closePreview(); });
     document.getElementById('viewer3dModal').addEventListener('click', function(e) { if (e.target === this) close3DViewer(); });
     document.getElementById('blueprintImageModal').addEventListener('click', function(e) { if (e.target === this) closeBlueprintImage(); });

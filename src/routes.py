@@ -18,7 +18,8 @@ from src.schemas import (
     UploadResponse, StatusResponse, DeleteResponse,
     PreviewResponse, RestoreResponse, HealthResponse,
     SelectRowsResponse, FilterHeightResponse, NewRunResponse,
-    RunSwitchResponse, RunsListResponse,
+    RunSwitchResponse, RunsListResponse, ReferenceAcceptedResponse,
+    ReferenceBuildResponse,
 )
 
 logger = setup_logger(__name__)
@@ -132,10 +133,10 @@ def _get_manager() -> SessionManager:
     return _manager
 
 
-def _ok(schema_instance) -> Response:
+def _ok(schema_instance, status: int = 200) -> Response:
     return Response(
         schema_instance.model_dump_json(exclude_none=False, by_alias=True),
-        status=200,
+        status=status,
         mimetype="application/json",
     )
 
@@ -198,6 +199,12 @@ def upload_ifc():
         type: file
         required: true
         description: IFC-файл (.ifc) или PDF-чертёж (.pdf), максимум 500 МБ
+      - name: processingType
+        in: formData
+        type: string
+        required: false
+        default: "KR"
+        description: Тип обработки — KR (конструктивные решения) или AR (архитектурные решения)
     responses:
       200:
         description: Файл принят, сессия создана, обработка запущена
@@ -253,12 +260,19 @@ def upload_ifc():
     if size > max_size:
         return _err(ErrorResponse(detail=f"Файл слишком большой. Максимум {max_size // (1024*1024)} МБ"), 413)
 
+    # Получаем тип обработки (КР или АР)
+    processing_type = request.form.get("processingType", "KR").upper()
+    if processing_type not in ("KR", "AR"):
+        processing_type = "KR"
+    
+    logger.info(f"Загрузка файла {f.filename}, тип обработки: {processing_type}")
+
     try:
         if is_ifc:
-            result = _get_manager().process_ifc(f, f.filename)
+            result = _get_manager().process_ifc(f, f.filename, processing_type)
             result["source_type"] = "ifc"
         else:
-            result = _get_manager().process_pdf(f, f.filename)
+            result = _get_manager().process_pdf(f, f.filename, processing_type)
             result["source_type"] = "pdf"
         return _ok(UploadResponse(**result))
     except ValueError as e:
@@ -268,8 +282,241 @@ def upload_ifc():
         return _err(ErrorResponse(detail=f"Внутренняя ошибка: {str(e)}"), 500)
 
 
+@bp.route("/api/reference", methods=["POST"])
+def build_reference():
+    """
+    Запуск построения JSON-справочников из IFC или PDF.
+    ---
+    tags:
+      - reference
+    consumes:
+      - multipart/form-data
+    parameters:
+      - name: file
+        in: formData
+        type: file
+        required: true
+        description: IFC-файл (.ifc) или PDF-чертёж (.pdf), максимум 500 МБ
+      - name: processingType
+        in: formData
+        type: string
+        required: false
+        default: "KR"
+        description: Тип обработки — KR (конструктивные решения) или AR (архитектурные решения)
+    responses:
+      202:
+        description: Файл принят, построение запущено
+        schema:
+          type: object
+          properties:
+            sessionId:
+              type: string
+            sourceType:
+              type: string
+              enum: [ifc, pdf]
+            status:
+              type: string
+              example: reference_processing
+            message:
+              type: string
+      400:
+        description: Файл отсутствует или имеет неподдерживаемый формат
+      413:
+        description: Файл превышает допустимый размер
+      500:
+        description: Внутренняя ошибка сервера
+    """
+    if "file" not in request.files:
+        return _err(ErrorResponse(detail="Файл не передан"), 400)
+
+    uploaded_file = request.files["file"]
+    if not uploaded_file.filename:
+        return _err(ErrorResponse(detail="Пустое имя файла"), 400)
+
+    extension = os.path.splitext(uploaded_file.filename)[1].lower()
+    if extension not in (".ifc", ".pdf"):
+        return _err(ErrorResponse(detail="Поддерживаются файлы .ifc и .pdf"), 400)
+
+    uploaded_file.seek(0, 2)
+    size = uploaded_file.tell()
+    uploaded_file.seek(0)
+
+    max_size = 500 * 1024 * 1024
+    if size > max_size:
+        return _err(
+            ErrorResponse(
+                detail=f"Файл слишком большой. Максимум {max_size // (1024 * 1024)} МБ"
+            ),
+            413,
+        )
+
+    # Получаем тип обработки для справочников
+    processing_type = request.form.get("processingType", "KR").upper()
+    if processing_type not in ("KR", "AR"):
+        processing_type = "KR"
+    
+    logger.info(f"Запуск построения справочников: {uploaded_file.filename}, тип: {processing_type}")
+
+    try:
+        result = _get_manager().build_reference(
+            uploaded_file, uploaded_file.filename, processing_type
+        )
+        response = _ok(ReferenceAcceptedResponse(**result), status=202)
+        response.headers["Location"] = (
+            f"/ifc-vor/api/session/{result['session_id']}/reference"
+        )
+        response.headers["Retry-After"] = "2"
+        return response
+    except ValueError as exc:
+        return _err(ErrorResponse(detail=str(exc)), 400)
+    except Exception as exc:
+        logger.error(f"Ошибка запуска построения справочника: {exc}", exc_info=True)
+        return _err(ErrorResponse(detail=f"Внутренняя ошибка: {exc}"), 500)
+
+
+@bp.route("/api/session/<session_id>/reference", methods=["GET"])
+def get_reference_result(session_id: str):
+    """
+    Получение результата построения JSON-справочников.
+    ---
+    tags:
+      - reference
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+    responses:
+      200:
+        description: Оба JSON-справочника готовы
+        schema:
+          type: object
+          properties:
+            sessionId:
+              type: string
+            sourceType:
+              type: string
+            ifcElementsOutput:
+              type: array
+              items:
+                type: object
+            ifcRawElementsGrouped:
+              type: array
+              items:
+                type: object
+      202:
+        description: Обработка ещё выполняется
+      404:
+        description: Сессия не найдена
+      409:
+        description: Сессия создана не справочной ручкой
+      422:
+        description: Ошибка фоновой обработки
+    """
+    if not session_id or len(session_id) < 8:
+        return _err(ErrorResponse(detail="Некорректный ID сессии"), 400)
+
+    manager = _get_manager()
+    session = manager.get(session_id)
+    if not session:
+        return _err(ErrorResponse(detail="Сессия не найдена"), 404)
+    if not session.get("is_reference_session"):
+        return _err(
+            ErrorResponse(detail="Сессия не относится к построению справочников"),
+            409,
+        )
+    if session.get("status") == "error":
+        return _err(
+            ErrorResponse(
+                detail=session.get("error") or "Ошибка построения справочников"
+            ),
+            422,
+        )
+
+    try:
+        result = manager.get_reference_result(session_id)
+        if result is None:
+            response = _ok(
+                ReferenceAcceptedResponse(
+                    session_id=session_id,
+                    source_type=session.get("source_type", ""),
+                    status=session.get("status", "reference_processing"),
+                    message=session.get(
+                        "progress_message",
+                        "Формирование JSON-справочников выполняется",
+                    ),
+                ),
+                status=202,
+            )
+            response.headers["Retry-After"] = "2"
+            return response
+        return _ok(ReferenceBuildResponse(**result))
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        logger.warning(f"Не удалось получить JSON-справочники: {exc}", exc_info=True)
+        return _err(ErrorResponse(detail=str(exc)), 422)
+    except KeyError:
+        return _err(ErrorResponse(detail="Сессия не найдена"), 404)
+
+
 @bp.route("/api/sessions", methods=["GET"])
 def list_sessions():
+    """
+    Список всех сессий обработки.
+    ---
+    tags:
+      - sessions
+    responses:
+      200:
+        description: Массив сессий
+        schema:
+          type: object
+          properties:
+            sessions:
+              type: array
+              items:
+                $ref: '#/definitions/SessionFull'
+            total:
+              type: integer
+    definitions:
+      SessionFile:
+        type: object
+        properties:
+          path:
+            type: string
+          filename:
+            type: string
+          size:
+            type: integer
+          downloadUrl:
+            type: string
+      SessionFull:
+        type: object
+        properties:
+          sessionId:
+            type: string
+          createdAt:
+            type: string
+          status:
+            type: string
+          ifcFileName:
+            type: string
+          excelFileName:
+            type: string
+          buildingHeight:
+            type: number
+          files:
+            type: array
+            items:
+              $ref: '#/definitions/SessionFile'
+          progress:
+            type: integer
+          progressMessage:
+            type: string
+          hasResults:
+            type: boolean
+          error:
+            type: string
+    """
     try:
         raw = _get_manager().list_sessions()
         sessions = [SessionFull(**s) for s in raw]
@@ -281,6 +528,43 @@ def list_sessions():
 
 @bp.route("/api/session/<session_id>/status", methods=["GET"])
 def get_status(session_id: str):
+    """
+    Краткий статус сессии (для поллинга).
+    ---
+    tags:
+      - sessions
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+        description: ID сессии
+    responses:
+      200:
+        description: Статус сессии
+        schema:
+          type: object
+          properties:
+            sessionId:
+              type: string
+            status:
+              type: string
+              enum: [ifc_processing, selecting_rows, processing, completed, error]
+            realStatus:
+              type: string
+            progress:
+              type: integer
+            progressMessage:
+              type: string
+            error:
+              type: string
+            hasResults:
+              type: boolean
+      400:
+        description: Некорректный ID сессии
+      404:
+        description: Сессия не найдена
+    """
     if not session_id or len(session_id) < 8:
         return _err(ErrorResponse(detail="Некорректный ID сессии"), 400)
 
@@ -291,6 +575,7 @@ def get_status(session_id: str):
     status_mapping = {
         "ifc_processing": "processing",
         "pdf_processing": "processing",
+        "reference_processing": "processing",
         "ifc_processed": "selecting_rows",
         "selecting_rows": "selecting_rows",
         "filtering_type": "filtering_type",
@@ -417,6 +702,9 @@ def restore_session(session_id: str):
               type: array
               items:
                 $ref: '#/definitions/SessionFile'
+            processingType:
+              type: string
+              example: "KR"
       400:
         description: Некорректный ID
       404:
@@ -455,6 +743,7 @@ def restore_session(session_id: str):
         source_type=s.get("source_type"),
         runs=s.get("runs", []),
         current_run_id=s.get("current_run_id"),
+        processing_type=s.get("processing_type", "KR"),
     ))
 
 
@@ -491,6 +780,8 @@ def preview_excel(session_id: str):
               type: integer
             savedTypes:
               type: object
+            processingType:
+              type: string
       404:
         description: Сессия или файл не найдены
       500:
@@ -533,8 +824,6 @@ def preview_excel(session_id: str):
             df = pd.read_csv(excel_path)
         else:
             df = pd.read_excel(excel_path)
-          
-        #df = df.drop(['GlobalId'], axis=1, errors='ignore')
     except Exception as e:
         return _err(ErrorResponse(detail=f"Ошибка чтения файла: {str(e)}"), 500)
 
@@ -553,7 +842,7 @@ def preview_excel(session_id: str):
         if f == "materials_colors.md":
             has_materials_md = True
 
-        # После чтения основного Excel
+    # После чтения основного Excel
     building_height = None
     try:
         xls = pd.ExcelFile(excel_path)
@@ -611,6 +900,7 @@ def preview_excel(session_id: str):
         source_type=source_type,
         has_blueprint_image=has_blueprint_image,
         has_materials_md=has_materials_md,
+        processing_type=s.get("processing_type", "KR"),
     ))
 
 
@@ -771,6 +1061,7 @@ def get_blueprint_image(session_id: str):
             break
 
     if not image_path or not os.path.exists(image_path):
+        logger.warning(f"Изображение чертежа не найдено для сессии {session_id}. image_path={image_path}")
         return _err(ErrorResponse(detail="Изображение чертежа не найдено"), 404)
 
     return send_file(os.path.abspath(image_path), mimetype="image/png")
@@ -778,6 +1069,28 @@ def get_blueprint_image(session_id: str):
 
 @bp.route("/api/session/<session_id>/materials_md", methods=["GET"])
 def get_materials_md(session_id: str):
+    """
+    Получить условные обозначения материалов (markdown) для PDF-сессии.
+    ---
+    tags:
+      - files
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+        description: ID сессии
+    responses:
+      200:
+        description: Markdown-таблица условных обозначений
+        schema:
+          type: object
+          properties:
+            markdown:
+              type: string
+      404:
+        description: Сессия или файл не найдены
+    """
     if not session_id:
         return _err(ErrorResponse(detail="ID сессии не указан"), 400)
 
@@ -915,6 +1228,59 @@ def download_all(session_id: str):
 
 @bp.route("/api/session/<session_id>/select_rows", methods=["POST"])
 def select_rows(session_id: str):
+    """
+    Выбор строк и запуск обработки.
+    ---
+    tags:
+      - processing
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+        description: ID сессии (должна быть в статусе selecting_rows)
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required:
+            - rowIndices
+          properties:
+            rowIndices:
+              type: array
+              items:
+                type: integer
+              description: Индексы выбранных строк (0-based)
+            allRows:
+              type: boolean
+              description: Выбрать все строки
+              default: false
+            rowTypes:
+              type: object
+              description: "Часть здания для каждой строки: {row_index: 'Надземная'|'Подземная'|'Цоколь'}"
+            rowMaterials:
+              type: object
+              description: "Материал для каждой строки: {row_index: 'Бетон'|'Цемент'|'Кирпич'|'Дерево'|...}"
+            buildingHeight:
+              type: number
+              description: Высота здания в метрах (1-10000)
+            groupedData:
+              type: object
+            processingType:
+              type: string
+              enum: ["KR", "AR"]
+              default: "KR"
+    responses:
+      200:
+        description: Обработка запущена
+      400:
+        description: Ошибка валидации
+      404:
+        description: Сессия не найдена
+      500:
+        description: Ошибка сервера
+    """
     if not session_id:
         return _err(ErrorResponse(detail="ID сессии не указан"), 400)
 
@@ -928,6 +1294,11 @@ def select_rows(session_id: str):
     row_materials = data.get("rowMaterials", data.get("row_materials", {}))
     building_height = data.get("buildingHeight", data.get("building_height"))
     grouped_data = data.get("groupedData", data.get("grouped_data", {}))
+    processing_type = data.get("processingType", "KR").upper()
+
+    # Валидация processing_type
+    if processing_type not in ("KR", "AR"):
+        processing_type = "KR"
 
     if not all_rows and (not row_indices or len(row_indices) == 0):
         return _err(ErrorResponse(detail="Выберите хотя бы одну строку"), 400)
@@ -955,6 +1326,7 @@ def select_rows(session_id: str):
                 return _err(ErrorResponse(detail=f"Некорректный индекс строки в материалах: {key}"), 400)
         row_materials = validated_materials
 
+    # Валидация частей здания
     if row_types:
         validated_types = {}
         valid_parts = {"Надземная", "Подземная", "Цоколь"}
@@ -968,6 +1340,8 @@ def select_rows(session_id: str):
                 return _err(ErrorResponse(detail=f"Некорректный индекс строки в частях здания: {key}"), 400)
         row_types = validated_types
 
+    logger.info(f"select_rows: session={session_id}, строк={len(row_indices)}, тип={processing_type}")
+
     try:
         result = _get_manager().select_rows(
             session_id, 
@@ -976,7 +1350,8 @@ def select_rows(session_id: str):
             row_types, 
             row_materials,
             building_height, 
-            grouped_data
+            grouped_data,
+            processing_type
         )
         return _ok(SelectRowsResponse(**result))
     except KeyError:
@@ -1024,6 +1399,10 @@ def new_run(session_id: str):
               type: number
             groupedData:
               type: object
+            processingType:
+              type: string
+              enum: ["KR", "AR"]
+              default: "KR"
     responses:
       200:
         description: Новый запуск создан
@@ -1044,6 +1423,11 @@ def new_run(session_id: str):
     row_materials = data.get("rowMaterials", data.get("row_materials", {}))
     building_height = data.get("buildingHeight", data.get("building_height"))
     grouped_data = data.get("groupedData", data.get("grouped_data", {}))
+    processing_type = data.get("processingType", "KR").upper()
+
+    # Валидация processing_type
+    if processing_type not in ("KR", "AR"):
+        processing_type = "KR"
 
     if not row_indices or len(row_indices) == 0:
         return _err(ErrorResponse(detail="Выберите хотя бы одну строку"), 400)
@@ -1058,6 +1442,8 @@ def new_run(session_id: str):
         except (ValueError, TypeError):
             return _err(ErrorResponse(detail="Некорректное значение высоты"), 400)
 
+    logger.info(f"new_run: session={session_id}, строк={len(row_indices)}, тип={processing_type}")
+
     try:
         result = _get_manager().new_run(
             session_id,
@@ -1065,7 +1451,8 @@ def new_run(session_id: str):
             row_types or {},
             row_materials or {},
             building_height,
-            grouped_data or {}
+            grouped_data or {},
+            processing_type
         )
         return _ok(NewRunResponse(**result))
     except KeyError:
@@ -1155,6 +1542,28 @@ def switch_run(session_id: str, run_id: str):
 
 @bp.route("/api/session/<session_id>/filter_height", methods=["POST"])
 def filter_by_height(session_id: str):
+    """
+    Фильтрация элементов по высоте здания.
+    ---
+    tags:
+      - processing
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            buildingHeight:
+              type: number
+    responses:
+      200:
+        description: Фильтрация выполнена
+    """
     if not session_id:
         return _err(ErrorResponse(detail="ID сессии не указан"), 400)
 

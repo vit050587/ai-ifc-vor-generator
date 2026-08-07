@@ -18,7 +18,7 @@ from src.services.third_etap import third_step
 from src.services.fourth_etap import fourth_step
 from src.services.pdf_processor import process_pdf
 from src.services.serializer import _make_glb_file
-from src.services.group_excel import process_ifc_excel
+from src.services.group_excel import process_ifc_excel, process_ifc_excel_ar
 
 from openpyxl import load_workbook
 
@@ -45,6 +45,10 @@ class SessionManager:
         # Инициализируем PromptManager
         self.prompt_manager = PromptManager()
         self.prompt_manager.load_all()
+    
+    # =====================================================================
+    #  БАЗОВЫЕ МЕТОДЫ (load/save/update/get/delete)
+    # =====================================================================
     
     def _load(self) -> None:
         if os.path.exists(self.sessions_file):
@@ -118,7 +122,6 @@ class SessionManager:
                 runs = s.get("runs", [])
                 for run in runs:
                     if run.get("run_id") == current_run_id:
-                        # Подставляем файлы текущего запуска в основной список
                         s["files"] = run.get("files", [])
                         break
             
@@ -164,7 +167,6 @@ class SessionManager:
     def _decorate_files(self, session: Dict[str, Any]) -> None:
         sid = session.get("session_id")
         
-        # Декорируем файлы текущего запуска
         current_run_id = session.get("current_run_id")
         if current_run_id:
             runs = session.get("runs", [])
@@ -174,7 +176,6 @@ class SessionManager:
                         if isinstance(f, dict):
                             f["download_url"] = f"/ifc-vor/api/session/{sid}/download/{f.get('filename', '')}"
         
-        # Оставляем старую логику для обратной совместимости
         for f in session.get("files", []):
             if isinstance(f, dict):
                 f["download_url"] = f"/ifc-vor/api/session/{sid}/download/{f.get('filename', '')}"
@@ -187,7 +188,6 @@ class SessionManager:
         if not s:
             return None
         
-        # Сначала ищем в файлах текущего запуска
         current_run_id = s.get("current_run_id")
         if current_run_id:
             runs = s.get("runs", [])
@@ -197,7 +197,6 @@ class SessionManager:
                         if f.get("filename") == filename:
                             return f.get("path")
         
-        # Fallback: ищем в старых файлах сессии
         for f in s.get("files", []):
             if f.get("filename") == filename:
                 return f.get("path")
@@ -208,7 +207,6 @@ class SessionManager:
         original_dir = os.path.join(session_dir, 'original')
         os.makedirs(original_dir, exist_ok=True)
         
-        # Файлы, которые нужно переместить в original/
         patterns_to_move = [
             r'^original_.*\.(ifc|pdf)$',
             r'^ДЛЯ_СМЕТЧИКА_.*\.xlsx$',
@@ -218,22 +216,16 @@ class SessionManager:
             r'^materials_colors\.md$',
         ]
         
-        moved_files = []
         for f in os.listdir(session_dir):
             fpath = os.path.join(session_dir, f)
             if not os.path.isfile(fpath):
                 continue
             
-            should_move = False
-            for pattern in patterns_to_move:
-                if re.match(pattern, f):
-                    should_move = True
-                    break
+            should_move = any(re.match(p, f) for p in patterns_to_move)
             
             if should_move:
                 dst = os.path.join(original_dir, f)
                 shutil.move(fpath, dst)
-                moved_files.append(f)
                 logger.info(f"Перемещён в original/: {f}")
         
         return original_dir
@@ -250,34 +242,206 @@ class SessionManager:
         if not os.path.exists(original_dir):
             return s.get("excel_file_path")
         
-        # Ищем Excel для сметчика в original/
-        # ВАЖНО: предпочитаем 'исправленный' (имеет лист 'Данные'),
-        # пропускаем 'сокращенный' (у него дефолтный лист 'Sheet1')
+        # Приоритет: исправленный (имеет лист 'Данные')
         for f in os.listdir(original_dir):
             if 'ДЛЯ_СМЕТЧИКА' in f and 'исправленный' in f and f.endswith('.xlsx'):
                 return os.path.join(original_dir, f)
         
+        # Затем любой ДЛЯ_СМЕТЧИКА (кроме сокращенного)
         for f in os.listdir(original_dir):
             if 'ДЛЯ_СМЕТЧИКА' in f and 'сокращенный' not in f.lower() and f.endswith('.xlsx'):
                 return os.path.join(original_dir, f)
         
-        # Fallback: любой Excel (кроме сокращенного)
+        # Затем любой Excel (кроме сокращенного)
         for f in os.listdir(original_dir):
             if 'сокращенный' not in f.lower() and f.endswith('.xlsx'):
                 return os.path.join(original_dir, f)
         
-        # Last resort: любой Excel
+        # Last resort
         for f in os.listdir(original_dir):
             if f.endswith('.xlsx'):
                 return os.path.join(original_dir, f)
         
         return s.get("excel_file_path")
     
-    # ========== Обработка IFC ==========
+    @staticmethod
+    def _read_reference_json(path: str) -> List[Dict[str, Any]]:
+        if not os.path.isfile(path):
+            raise RuntimeError(f"Не сформирован файл {os.path.basename(path)}")
+        with open(path, "r", encoding="utf-8") as stream:
+            data = json.load(stream)
+        if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+            raise RuntimeError(f"Файл {os.path.basename(path)} должен содержать массив объектов")
+        return data
     
-    def process_ifc(self, file, original_name: str) -> Dict[str, Any]:
+    # =====================================================================
+    #  JSON-СПРАВОЧНИКИ (reference)
+    # =====================================================================
+    
+    def build_reference(self, file, original_name: str, processing_type: str = "KR") -> Dict[str, Any]:
+        """Запуск построения JSON-справочников из IFC или PDF."""
         if not file or not original_name:
             raise ValueError("Отсутствует файл или имя файла")
+
+        extension = os.path.splitext(original_name)[1].lower()
+        if extension not in (".ifc", ".pdf"):
+            raise ValueError("Поддерживаются файлы .ifc и .pdf")
+
+        processing_type = processing_type.upper()
+        if processing_type not in ("KR", "AR"):
+            processing_type = "KR"
+
+        source_type = extension[1:]
+        safe_name = secure_filename(original_name) or f"uploaded_file{extension}"
+        session_id = str(uuid.uuid4())
+        session_dir = os.path.join(self.output_folder, session_id)
+        os.makedirs(session_dir, exist_ok=True)
+
+        source_path = os.path.join(session_dir, f"original_{safe_name}")
+        try:
+            file.save(source_path)
+            if not os.path.isfile(source_path) or os.path.getsize(source_path) == 0:
+                raise ValueError("Ошибка сохранения файла")
+        except Exception:
+            logger.error("Ошибка сохранения файла для справочника", exc_info=True)
+            raise
+
+        session = {
+            "session_id": session_id,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "source_type": source_type,
+            "status": "reference_processing",
+            "processing_type": processing_type,
+            "ifc_file_name": original_name if source_type == "ifc" else None,
+            "ifc_file_path": source_path if source_type == "ifc" else None,
+            "pdf_file_name": original_name if source_type == "pdf" else None,
+            "pdf_file_path": source_path if source_type == "pdf" else None,
+            "excel_file_name": None,
+            "excel_file_path": None,
+            "selected_rows": None,
+            "construction_types": {},
+            "construction_materials": {},
+            "grouped_data": {},
+            "building_height": None,
+            "files": [],
+            "runs": [],
+            "current_run_id": None,
+            "error": None,
+            "progress": 10,
+            "progress_message": "Формирование JSON-справочников...",
+            "has_results": False,
+            "is_reference_session": True,
+        }
+
+        with self._state_lock:
+            self._sessions[session_id] = session
+            self._save()
+
+        thread = threading.Thread(
+            target=self._build_reference_bg,
+            args=(session_id, source_path, source_type, processing_type),
+            daemon=True,
+            name=f"Reference-{source_type.upper()}-{session_id[:8]}",
+        )
+        try:
+            thread.start()
+        except Exception as exc:
+            self._update(
+                session_id,
+                status="error",
+                error=f"{type(exc).__name__}: {exc}",
+                progress_message="Не удалось запустить фоновую обработку",
+            )
+            raise
+
+        return {
+            "session_id": session_id,
+            "source_type": source_type,
+            "status": "reference_processing",
+            "message": "Файл принят, формирование JSON-справочников запущено",
+        }
+
+    def _build_reference_bg(self, session_id: str, source_path: str, source_type: str, processing_type: str = "KR") -> None:
+        try:
+            session_dir = os.path.join(self.output_folder, session_id)
+            self._update_progress(session_id, 20, "Извлечение и группировка элементов...")
+
+            if source_type == "ifc":
+                from src.services.ifc_reference_builder import build_reference_from_ifc
+                build_reference_from_ifc(source_path, session_dir, processing_type)
+            else:
+                process_pdf(
+                    source_path,
+                    output_folder=session_dir,
+                    reference_only=True,
+                    processing_type=processing_type,
+                )
+
+            elements_path = os.path.join(session_dir, "ifc_elements_output.json")
+            grouped_path = os.path.join(session_dir, "ifc_raw_elements_grouped.json")
+            self._read_reference_json(elements_path)
+            self._read_reference_json(grouped_path)
+
+            files = [
+                {"path": elements_path, "filename": "ifc_elements_output.json", "size": os.path.getsize(elements_path)},
+                {"path": grouped_path, "filename": "ifc_raw_elements_grouped.json", "size": os.path.getsize(grouped_path)},
+            ]
+
+            with self._state_lock:
+                current = self._sessions.get(session_id)
+                if current is not None:
+                    current["status"] = "completed"
+                    current["files"] = files
+                    current["progress"] = 100
+                    current["progress_message"] = "JSON-справочники сформированы"
+                    current["has_results"] = True
+                    self._save()
+        except Exception as exc:
+            error_msg = f"{type(exc).__name__}: {exc}"
+            logger.error(f"Ошибка построения JSON-справочников для сессии {session_id}", exc_info=True)
+            self._update(
+                session_id,
+                status="error",
+                error=error_msg,
+                progress_message="Ошибка формирования JSON-справочников",
+            )
+
+    def get_reference_result(self, session_id: str) -> Optional[Dict[str, Any]]:
+        session = self.get(session_id)
+        if not session:
+            raise KeyError("Сессия не найдена")
+        if not session.get("is_reference_session"):
+            raise ValueError("Сессия не относится к построению справочников")
+        if session.get("status") == "reference_processing":
+            return None
+        if session.get("status") == "error":
+            raise RuntimeError(session.get("error") or "Ошибка построения справочников")
+        if session.get("status") != "completed":
+            return None
+
+        session_dir = os.path.join(self.output_folder, session_id)
+        return {
+            "session_id": session_id,
+            "source_type": session.get("source_type", ""),
+            "ifc_elements_output": self._read_reference_json(
+                os.path.join(session_dir, "ifc_elements_output.json")
+            ),
+            "ifc_raw_elements_grouped": self._read_reference_json(
+                os.path.join(session_dir, "ifc_raw_elements_grouped.json")
+            ),
+        }
+
+    # =====================================================================
+    #  ОБРАБОТКА IFC
+    # =====================================================================
+    
+    def process_ifc(self, file, original_name: str, processing_type: str = "KR") -> Dict[str, Any]:
+        if not file or not original_name:
+            raise ValueError("Отсутствует файл или имя файла")
+        
+        processing_type = processing_type.upper()
+        if processing_type not in ("KR", "AR"):
+            processing_type = "KR"
         
         safe_name = secure_filename(original_name)
         if not safe_name:
@@ -303,6 +467,7 @@ class SessionManager:
             "created_at": datetime.utcnow().isoformat() + "Z",
             "source_type": "ifc",
             "status": "ifc_processing",
+            "processing_type": processing_type,
             "ifc_file_name": original_name,
             "ifc_file_path": ifc_path,
             "excel_file_name": None,
@@ -317,7 +482,7 @@ class SessionManager:
             "current_run_id": None,
             "error": None,
             "progress": 0,
-            "progress_message": "Начало обработки IFC...",
+            "progress_message": f"Начало обработки IFC ({processing_type})...",
             "has_results": False,
         }
         
@@ -327,7 +492,7 @@ class SessionManager:
         
         thread = threading.Thread(
             target=self._process_ifc_bg,
-            args=(session_id, ifc_path),
+            args=(session_id, ifc_path, processing_type),
             daemon=True,
             name=f"IFC-Processing-{session_id[:8]}"
         )
@@ -336,36 +501,32 @@ class SessionManager:
         return {
             "session_id": session_id,
             "status": "ifc_processing",
-            "message": "IFC файл принят, начата обработка",
+            "message": f"IFC файл принят, начата обработка ({processing_type})",
         }
     
-    def _process_ifc_bg(self, session_id: str, ifc_path: str) -> None:
+    def _process_ifc_bg(self, session_id: str, ifc_path: str, processing_type: str = "KR") -> None:
         try:
             self._update_progress(session_id, 5, "Проверка IFC файла...")
             
             if not os.path.exists(ifc_path):
                 raise FileNotFoundError(f"IFC файл не найден: {ifc_path}")
             
-            self._update_progress(session_id, 10, "Обработка IFC файла...")
-            
             session_dir = os.path.join(self.output_folder, session_id)
             
-            # Шаг 0: zero_step
+            self._update_progress(session_id, 10, f"Обработка IFC файла ({processing_type})...")
             self._update_progress(session_id, 20, "Извлечение элементов из IFC...")
             zero_step(ifc_path, output_folder=session_dir)
 
-            # Формируем ifc_elements_output.json и ifc_raw_elements_grouped.json/.xlsx
-            # (аналогично пайплайну PDF из pdf_processor.py)
+            # Формируем справочные JSON
             try:
                 from src.services.ifc_reference_builder import build_reference_from_ifc
-                build_reference_from_ifc(ifc_path, session_dir)
+                build_reference_from_ifc(ifc_path, session_dir, processing_type)
             except Exception as e:
                 logger.warning(f"Не удалось сформировать JSON-файлы справочника для IFC: {e}", exc_info=True)
 
             self._update_progress(session_id, 80, "Проверка результатов...")
             
             excel_for_smetchik = os.path.join(session_dir, 'ДЛЯ_СМЕТЧИКА_исправленный.xlsx')
-            excel_all_data = os.path.join(session_dir, 'IFC_ВСЕ_ДАННЫЕ_исправленный.xlsx')
             
             if not os.path.exists(excel_for_smetchik):
                 excel_files = [f for f in os.listdir(session_dir) if f.endswith(('.xlsx', '.xls'))]
@@ -376,7 +537,7 @@ class SessionManager:
             
             # Создаём GLB модель
             try:
-                glb_filename = _make_glb_file(ifc_path, session_dir)
+                _make_glb_file(ifc_path, session_dir)
             except Exception as e:
                 logger.warning(f'Не удалось создать файл 3D модели: {e}')
             
@@ -401,15 +562,13 @@ class SessionManager:
             if not excel_path:
                 raise RuntimeError("Не удалось сохранить Excel файл")
             
-            file_size = os.path.getsize(excel_path)
-            
             with self._state_lock:
                 if session_id in self._sessions:
                     self._sessions[session_id]["excel_file_name"] = excel_filename
                     self._sessions[session_id]["excel_file_path"] = excel_path
                     self._sessions[session_id]["status"] = "ifc_processed"
                     self._sessions[session_id]["progress"] = 100
-                    self._sessions[session_id]["progress_message"] = "Обработка завершена. Выберите строки и типы конструкций."
+                    self._sessions[session_id]["progress_message"] = f"Обработка завершена ({processing_type}). Выберите строки."
                     self._save()
             
         except Exception as e:
@@ -418,12 +577,17 @@ class SessionManager:
             logger.error(f"Ошибка обработки IFC для сессии {session_id}:\n{traceback.format_exc()}")
             self._update(session_id, status="error", error=error_msg)
     
-    # ========== Обработка PDF ==========
+    # =====================================================================
+    #  ОБРАБОТКА PDF
+    # =====================================================================
     
-    def process_pdf(self, file, original_name: str) -> Dict[str, Any]:
-        """Загрузка PDF-файла и запуск фоновой обработки чертежа"""
+    def process_pdf(self, file, original_name: str, processing_type: str = "KR") -> Dict[str, Any]:
         if not file or not original_name:
             raise ValueError("Отсутствует файл или имя файла")
+        
+        processing_type = processing_type.upper()
+        if processing_type not in ("KR", "AR"):
+            processing_type = "KR"
         
         safe_name = secure_filename(original_name)
         if not safe_name:
@@ -449,6 +613,7 @@ class SessionManager:
             "created_at": datetime.utcnow().isoformat() + "Z",
             "source_type": "pdf",
             "status": "pdf_processing",
+            "processing_type": processing_type,
             "pdf_file_name": original_name,
             "pdf_file_path": pdf_path,
             "ifc_file_name": None,
@@ -465,7 +630,7 @@ class SessionManager:
             "current_run_id": None,
             "error": None,
             "progress": 0,
-            "progress_message": "Начало обработки PDF...",
+            "progress_message": f"Начало обработки PDF ({processing_type})...",
             "has_results": False,
         }
     
@@ -475,7 +640,7 @@ class SessionManager:
         
         thread = threading.Thread(
             target=self._process_pdf_bg,
-            args=(session_id, pdf_path),
+            args=(session_id, pdf_path, processing_type),
             daemon=True,
             name=f"PDF-Processing-{session_id[:8]}"
         )
@@ -484,42 +649,33 @@ class SessionManager:
         return {
             "session_id": session_id,
             "status": "pdf_processing",
-            "message": "PDF файл принят, начата обработка",
+            "message": f"PDF файл принят, начата обработка ({processing_type})",
         }
     
-    def _process_pdf_bg(self, session_id: str, pdf_path: str) -> None:
+    def _process_pdf_bg(self, session_id: str, pdf_path: str, processing_type: str = "KR") -> None:
         try:
-            self._update_progress(session_id, 5, "Извлечение элементов из чертежа...")
-            
             if not os.path.exists(pdf_path):
                 raise FileNotFoundError(f"PDF файл не найден: {pdf_path}")
             
-            self._update_progress(session_id, 10, "Извлечение элементов из чертежа...")
-            
             session_dir = os.path.join(self.output_folder, session_id)
             
-            # Обработка PDF через ai-blueprint-to-ifc пайплайн с обновлением прогресса
             self._update_progress(session_id, 20, "Извлечение элементов из чертежа...")
             result = self._process_pdf_with_progress(session_id, pdf_path, session_dir)
             
-            self._update_progress(session_id, 90, "Извлечение элементов из чертежа...")
+            self._update_progress(session_id, 90, "Проверка результатов...")
             
             excel_for_smetchik = result["excel_smetchik_path"]
             excel_all_data = result["excel_all_data_path"]
             
-            # Перезаписываем переменные на новые пути в случае нескольких листов с данными
             excel_for_smetchik, excel_all_data = self._check_and_merge_sheets(
-                excel_for_smetchik, 
-                excel_all_data
+                excel_for_smetchik, excel_all_data
             )
             
             if not os.path.exists(excel_for_smetchik):
                 raise RuntimeError("Не удалось найти созданный Excel файл")
             
-            # Перемещаем исходные файлы в original/
             original_dir = self._prepare_original_dir(session_dir)
             
-            # Находим Excel в original/
             excel_path = None
             for f in os.listdir(original_dir):
                 if 'ДЛЯ_СМЕТЧИКА' in f and f.endswith('.xlsx'):
@@ -537,15 +693,13 @@ class SessionManager:
             if not excel_path:
                 raise RuntimeError("Не удалось найти Excel файл в original/")
             
-            file_size = os.path.getsize(excel_path)
-            
             with self._state_lock:
                 if session_id in self._sessions:
                     self._sessions[session_id]["excel_file_name"] = excel_filename
                     self._sessions[session_id]["excel_file_path"] = excel_path
                     self._sessions[session_id]["status"] = "ifc_processed"
                     self._sessions[session_id]["progress"] = 100
-                    self._sessions[session_id]["progress_message"] = "Обработка завершена. Выберите строки и типы конструкций."
+                    self._sessions[session_id]["progress_message"] = f"Обработка завершена ({processing_type}). Выберите строки."
                     self._save()
                     
         except Exception as e:
@@ -555,90 +709,69 @@ class SessionManager:
             self._update(session_id, status="error", error=error_msg)
     
     def _check_and_merge_sheets(self, excel_for_smetchik, excel_all_data):
-        """
-        Проверяет наличие листов формата Данные_0, Данные_1 и т.д.
-        Если такие есть - объединяет их в общий файл и возвращает новые пути
-        """
-        
         def get_numbered_sheets(filepath):
-            """Получает список листов формата Данные_ЧИСЛО"""
             wb = load_workbook(filepath, read_only=True)
             sheet_names = wb.sheetnames
             wb.close()
-            
             pattern = re.compile(r'^Данные_\d+$')
             return [name for name in sheet_names if pattern.match(name)]
         
         def merge_sheets_to_file(source_filepath, output_filename):
-            """Объединяет все листы Данные_* в один файл"""
             numbered_sheets = get_numbered_sheets(source_filepath)
-            
             if not numbered_sheets:
                 return source_filepath
-            
             all_data = []
             for sheet_name in numbered_sheets:
                 df = pd.read_excel(source_filepath, sheet_name=sheet_name)
                 df['Источник_лист'] = sheet_name
                 all_data.append(df)
-            
             merged_df = pd.concat(all_data, ignore_index=True)
-            
             output_path = os.path.join(os.path.dirname(source_filepath), output_filename)
             merged_df.to_excel(output_path, sheet_name='Данные', index=False)
-            
             return output_path
         
-        new_for_smetchik = merge_sheets_to_file(
-            excel_for_smetchik, 
-            'ДЛЯ_СМЕТЧИКА_объединенный.xlsx'
+        return (
+            merge_sheets_to_file(excel_for_smetchik, 'ДЛЯ_СМЕТЧИКА_объединенный.xlsx'),
+            merge_sheets_to_file(excel_all_data, 'IFC_ВСЕ_ДАННЫЕ_объединенный.xlsx'),
         )
-        
-        new_all_data = merge_sheets_to_file(
-            excel_all_data, 
-            'IFC_ВСЕ_ДАННЫЕ_объединенный.xlsx'
-        )
-        
-        return new_for_smetchik, new_all_data
     
     def _process_pdf_with_progress(self, session_id: str, pdf_path: str, session_dir: str) -> Dict[str, str]:
-        """
-        Обработка PDF с пошаговым обновлением прогресса.
-        """
         last_update_time = [0]
         min_interval = 2.0
         
         def progress_callback(stage_name: str, progress_percent: int):
             import time
             current_time = time.time()
-            
             if current_time - last_update_time[0] < min_interval and progress_percent < 100:
                 return
-            
             last_update_time[0] = current_time
             self._update_progress(session_id, progress_percent, stage_name)
         
         result = process_pdf(pdf_path, output_folder=session_dir, progress_callback=progress_callback)
         self._update_progress(session_id, 90, "Проверка результатов...")
-        
         return result
     
-    # ========== Новый метод: создание повторного запуска ==========
+    # =====================================================================
+    #  ЗАПУСКИ (runs)
+    # =====================================================================
     
     def new_run(self, session_id: str, row_indices: List[int], 
                 construction_types: Dict[int, str] = None,
                 construction_materials: Dict[int, str] = None,
                 building_height: float = None, 
-                grouped_data: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Создать новый запуск обработки без повторной обработки IFC/PDF"""
+                grouped_data: Dict[str, Any] = None,
+                processing_type: str = "KR") -> Dict[str, Any]:
         
         s = self.get(session_id)
         if not s:
             raise KeyError("Сессия не найдена")
         
-        # РАСШИРЯЕМ допустимые статусы — ДОБАВЛЯЕМ completed
+        processing_type = processing_type.upper()
+        if processing_type not in ("KR", "AR"):
+            processing_type = "KR"
+        
         if s["status"] not in ("ifc_processed", "selecting_rows", "completed"):
-            raise RuntimeError(f"Неверный статус сессии: {s['status']}. Ожидается: ifc_processed, selecting_rows или completed")
+            raise RuntimeError(f"Неверный статус сессии: {s['status']}")
         
         if not row_indices:
             raise ValueError("Необходимо выбрать хотя бы одну строку")
@@ -647,20 +780,17 @@ class SessionManager:
         if not row_indices:
             raise ValueError("Некорректные индексы строк")
         
-        # Находим исходный Excel
         excel_path = self._get_original_excel_path(session_id)
         
-        # FALLBACK: если original/ нет (старые сессии), используем текущий Excel
         if not excel_path or not os.path.exists(excel_path):
             logger.warning(f"original/ не найден, использую excel_file_path из сессии")
             excel_path = s.get("excel_file_path")
         
         if not excel_path or not os.path.exists(excel_path):
-            raise RuntimeError(f"Исходный Excel файл не найден. Проверьте директорию сессии.")
+            raise RuntimeError(f"Исходный Excel файл не найден")
         
-        logger.info(f"Новый запуск: сессия={session_id}, Excel={excel_path}, строк={len(row_indices)}")
+        logger.info(f"Новый запуск: сессия={session_id}, Excel={excel_path}, строк={len(row_indices)}, тип={processing_type}")
         
-        # Создаём новую поддиректорию для запуска
         run_id = str(uuid.uuid4())
         runs = s.get('runs', [])
         run_number = len(runs) + 1
@@ -668,44 +798,33 @@ class SessionManager:
         run_dir = os.path.join(session_dir, f'run_{run_number:03d}')
         os.makedirs(run_dir, exist_ok=True)
         
-        # Копируем исходный Excel в директорию запуска
         run_excel_name = os.path.basename(excel_path)
         run_excel_path = os.path.join(run_dir, run_excel_name)
         shutil.copy2(excel_path, run_excel_path)
-        logger.info(f"Excel скопирован в: {run_excel_path}")
         
-        # Также копируем IFC_ВСЕ_ДАННЫЕ если есть
+        # Копируем IFC_ВСЕ_ДАННЫЕ и GLB
         original_dir = os.path.join(session_dir, 'original')
         search_dir = original_dir if os.path.exists(original_dir) else session_dir
         
         for f in os.listdir(search_dir):
             if 'IFC_ВСЕ_ДАННЫЕ' in f and f.endswith('.xlsx'):
-                src = os.path.join(search_dir, f)
-                dst = os.path.join(run_dir, f)
-                shutil.copy2(src, dst)
-                logger.info(f"IFC_ВСЕ_ДАННЫЕ скопирован в: {dst}")
+                shutil.copy2(os.path.join(search_dir, f), os.path.join(run_dir, f))
                 break
-            # Также копируем GLB файлы в run_dir
+        
         for f in os.listdir(search_dir):
             if f.endswith('.glb'):
-                src = os.path.join(search_dir, f)
-                dst = os.path.join(run_dir, f)
-                shutil.copy2(src, dst)
-                logger.info(f"GLB скопирован в: {dst}")
-                break  # Обычно один GLB файл
-
-        # Копируем сокращённый файл для сметчика если есть
+                shutil.copy2(os.path.join(search_dir, f), os.path.join(run_dir, f))
+                break
+        
         for f in os.listdir(search_dir):
             if 'сокращенный' in f.lower() and f.endswith('.xlsx'):
-                src = os.path.join(search_dir, f)
-                dst = os.path.join(run_dir, f)
-                shutil.copy2(src, dst)
-                logger.info(f"Сокращённый файл скопирован в: {dst}")
+                shutil.copy2(os.path.join(search_dir, f), os.path.join(run_dir, f))
                 break
         
         run = {
             "run_id": run_id,
             "run_number": run_number,
+            "processing_type": processing_type,
             "status": "processing",
             "selected_rows": row_indices,
             "construction_types": construction_types or {},
@@ -722,17 +841,16 @@ class SessionManager:
             session_id,
             current_run_id=run_id,
             runs=runs,
-            status="processing",  # ВАЖНО: меняем статус сессии
+            status="processing",
             progress=0,
-            progress_message=f"Запуск {run_number}: выбрано {len(row_indices)} строк"
+            progress_message=f"Запуск {run_number} ({processing_type}): выбрано {len(row_indices)} строк"
         )
         
-        # Запускаем пайплайн в поддиректории run_dir
         thread = threading.Thread(
             target=self._run_processing_pipeline_in_run,
             args=(session_id, run_id, run_number, run_dir, run_excel_path, 
                 row_indices, construction_types or {}, construction_materials or {}, 
-                building_height),
+                building_height, processing_type),
             daemon=True,
             name=f"Pipeline-Run{run_number}-{session_id[:8]}"
         )
@@ -742,23 +860,19 @@ class SessionManager:
             "session_id": session_id,
             "run_id": run_id,
             "run_number": run_number,
+            "processing_type": processing_type,
             "status": "processing",
             "selected_rows": len(row_indices),
-            "message": f"Запуск {run_number}: выбрано {len(row_indices)} строк, начата обработка"
+            "message": f"Запуск {run_number} ({processing_type}): выбрано {len(row_indices)} строк, начата обработка"
         }
     
     def switch_run(self, session_id: str, run_id: str) -> Dict[str, Any]:
-        """Переключиться на другой запуск"""
         s = self.get(session_id)
         if not s:
             raise KeyError("Сессия не найдена")
         
         runs = s.get('runs', [])
-        target_run = None
-        for run in runs:
-            if run.get('run_id') == run_id:
-                target_run = run
-                break
+        target_run = next((r for r in runs if r.get('run_id') == run_id), None)
         
         if not target_run:
             raise ValueError(f"Запуск {run_id} не найден")
@@ -769,17 +883,16 @@ class SessionManager:
             "session_id": session_id,
             "run_id": run_id,
             "run_number": target_run.get('run_number'),
+            "processing_type": target_run.get('processing_type', 'KR'),
             "status": target_run.get('status'),
             "files": target_run.get('files', []),
             "building_height": target_run.get('building_height'),
         }
     
     def get_run(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
-        """Получить данные конкретного запуска"""
         s = self.get(session_id)
         if not s:
             return None
-        
         runs = s.get('runs', [])
         for run in runs:
             if run.get('run_id') == run_id:
@@ -787,19 +900,16 @@ class SessionManager:
         return None
     
     def list_runs(self, session_id: str) -> List[Dict[str, Any]]:
-        """Получить список всех запусков сессии"""
         s = self.get(session_id)
         if not s:
             return []
         return s.get('runs', [])
     
-    # ========== Этап 1: Выбор строк (старый метод для совместимости) ==========
-    
     def select_rows(self, session_id: str, row_indices: List[int], 
                     all_rows: bool = False, row_types: Dict[int, str] = None,
                     row_materials: Dict[int, str] = None,
-                    building_height: float = None, grouped_data: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Выбор строк с автоматическим созданием первого запуска (run_001)"""
+                    building_height: float = None, grouped_data: Dict[str, Any] = None,
+                    processing_type: str = "KR") -> Dict[str, Any]:
         s = self.get(session_id)
         if not s:
             raise KeyError("Сессия не найдена")
@@ -819,41 +929,36 @@ class SessionManager:
             excel_path = self._get_original_excel_path(session_id)
             if not excel_path or not os.path.exists(excel_path):
                 raise RuntimeError("Excel файл не найден")
-            
             try:
                 df = pd.read_excel(excel_path)
                 row_indices = list(range(len(df)))
             except Exception as e:
                 raise RuntimeError(f"Ошибка чтения Excel файла: {str(e)}")
         
-        # Если это первый запуск, используем new_run
-        runs = s.get('runs', [])
-        if not runs:
-            return self.new_run(
-                session_id, row_indices, 
-                row_types or {}, row_materials or {},
-                building_height, grouped_data or {}
-            )
-        else:
-            return self.new_run(
-                session_id, row_indices,
-                row_types or {}, row_materials or {},
-                building_height, grouped_data or {}
-            )
+        return self.new_run(
+            session_id, row_indices, 
+            row_types or {}, row_materials or {},
+            building_height, grouped_data or {},
+            processing_type
+        )
     
     def _run_processing_pipeline_in_run(self, session_id: str, run_id: str, 
                                          run_number: int, run_dir: str,
                                          excel_path: str, row_indices: List[int],
                                          construction_types: Dict[int, str],
                                          construction_materials: Dict[int, str],
-                                         building_height: float = None) -> None:
-        """Запуск полного пайплайна обработки в изолированной директории запуска"""
+                                         building_height: float = None,
+                                         processing_type: str = "KR") -> None:
         try:
-            # ===== Применяем материалы к Excel в директории запуска =====
+            processing_type = processing_type.upper()
+            if processing_type not in ("KR", "AR"):
+                processing_type = "KR"
+            
+            logger.info(f"Запуск пайплайна: run={run_number}, тип={processing_type}")
+            
+            # Применяем материалы
             if construction_materials:
                 try:
-                    logger.info(f"Применяем материалы к файлу: {excel_path}")
-                    
                     wb = load_workbook(excel_path)
                     ws = wb['Данные']
                     
@@ -879,21 +984,17 @@ class SessionManager:
                     
                     wb.close()
                     
-                    materials_file = os.path.join(run_dir, 'materials.json')
-                    with open(materials_file, 'w', encoding='utf-8') as f:
+                    with open(os.path.join(run_dir, 'materials.json'), 'w', encoding='utf-8') as f:
                         json.dump(construction_materials, f, ensure_ascii=False, indent=2)
-                        
                 except Exception as e:
                     logger.error(f"Ошибка при применении материалов к Excel: {e}")
             
-            # ===== Фильтрация + группировка =====
+            # Фильтрация
             self._update_progress(session_id, 5, f"Запуск {run_number}: Фильтрация элементов...")
             
             df_original = pd.read_excel(excel_path, sheet_name='Данные')
             unique_indices = sorted(set(row_indices))
-            
             df_filtered = df_original.iloc[unique_indices].reset_index(drop=True)
-
             
             filtered_path = os.path.join(run_dir, 'filtered_elements.xlsx')
             with pd.ExcelWriter(filtered_path, engine='openpyxl') as writer:
@@ -901,12 +1002,15 @@ class SessionManager:
             
             logger.info(f"Отфильтровано {len(df_filtered)} элементов из {len(df_original)}")
             
-            # ===== Группировка =====
-            self._update_progress(session_id, 10, f"Запуск {run_number}: Группировка элементов...")
+            # Группировка (разная для КР и АР)
+            self._update_progress(session_id, 10, f"Запуск {run_number}: Группировка элементов ({processing_type})...")
             
-            group_result = process_ifc_excel(filtered_path, run_dir)
+            if processing_type == "AR":
+                group_result = process_ifc_excel_ar(filtered_path, run_dir)
+            else:
+                group_result = process_ifc_excel(filtered_path, run_dir)
             
-            # Ищем IFC_ВСЕ_ДАННЫЕ в original/ директории
+            # Кешируем дерево проекта в original/
             session_dir = os.path.join(self.output_folder, session_id)
             original_dir = os.path.join(session_dir, 'original')
             all_data_path = None
@@ -918,13 +1022,18 @@ class SessionManager:
                         break
             
             if all_data_path and os.path.exists(all_data_path):
-                all_project_tree = process_ifc_excel(all_data_path, run_dir)
-                whole_tree = all_project_tree['excel']
+                os.makedirs(original_dir, exist_ok=True)
+                
+                if processing_type == "AR":
+                    all_project_tree = process_ifc_excel_ar(all_data_path, original_dir)
+                else:
+                    all_project_tree = process_ifc_excel(all_data_path, original_dir)
+                
+                whole_tree_src = all_project_tree['excel']
                 whole_tree_dst = os.path.join(run_dir, 'Дерево_проекта.xlsx')
-                if os.path.exists(whole_tree) and whole_tree != whole_tree_dst:
-                    if os.path.exists(whole_tree_dst):
-                        os.remove(whole_tree_dst)
-                    os.rename(whole_tree, whole_tree_dst)
+                if os.path.exists(whole_tree_src):
+                    shutil.copy2(whole_tree_src, whole_tree_dst)
+                    logger.info(f"Дерево проекта скопировано из кеша в {whole_tree_dst}")
             
             tree_excel_src = group_result['excel']
             tree_excel_dst = os.path.join(run_dir, 'Дерево_проекта_выбранные_элементы.xlsx')
@@ -934,8 +1043,7 @@ class SessionManager:
                 os.rename(tree_excel_src, tree_excel_dst)
             
             # Загружаем JSON с группами
-            json_path = group_result['json']
-            with open(json_path, 'r', encoding='utf-8') as f:
+            with open(group_result['json'], 'r', encoding='utf-8') as f:
                 groups = json.load(f)
             
             # Собираем листовые группы
@@ -952,9 +1060,7 @@ class SessionManager:
                 return result
             
             leaf_groups = collect_leaf_groups(groups)
-            logger.info(f"Найдено {len(leaf_groups)} групп последнего уровня")
             
-            # Создаём ДЛЯ_СМЕТЧИКА_сгруппированный.xlsx
             smetchik_rows = []
             for group in leaf_groups:
                 first_element = dict(group.get('first_element', {}))
@@ -964,10 +1070,8 @@ class SessionManager:
                 row_data['Количество_в_группе_grouped'] = group.get('count', 1)
                 
                 for area_name, area_value in group.get('total_areas', {}).items():
-                    if area_name.endswith('_grouped'):
-                        row_data[area_name] = area_value
-                    else:
-                        row_data[f'{area_name}_grouped'] = area_value
+                    key = area_name if area_name.endswith('_grouped') else f'{area_name}_grouped'
+                    row_data[key] = area_value
                 
                 row_data['Название_группы'] = group.get('name', '')
                 row_data['Уровень_группы'] = group.get('level', 0)
@@ -981,12 +1085,18 @@ class SessionManager:
             grouped_cols = [c for c in df_smetchik.columns if c.endswith('_grouped')]
             info_cols = ['Название_группы', 'Уровень_группы', 'Индексы_элементов']
             other_cols = [c for c in df_smetchik.columns if c not in grouped_cols and c not in info_cols]
-            df_smetchik = df_smetchik[other_cols + grouped_cols + info_cols]
+            
+            for col in info_cols + grouped_cols:
+                if col not in df_smetchik.columns:
+                    df_smetchik[col] = ''
+            
+            existing_other = [c for c in other_cols if c in df_smetchik.columns]
+            existing_grouped = [c for c in grouped_cols if c in df_smetchik.columns]
+            existing_info = [c for c in info_cols if c in df_smetchik.columns]
+            df_smetchik = df_smetchik[existing_other + existing_grouped + existing_info]
             
             with pd.ExcelWriter(smetchik_path, engine='openpyxl') as writer:
                 df_smetchik.to_excel(writer, sheet_name='Данные', index=False)
-            
-            logger.info(f"Создан файл для сметчика: {len(df_smetchik)} строк (групп)")
             
             # Определяем часть здания для каждой группы
             new_construction_types = {}
@@ -1000,22 +1110,19 @@ class SessionManager:
                 
                 if parts_in_group:
                     part_counts = Counter(parts_in_group)
-                    most_common_part = part_counts.most_common(1)[0][0]
-                    new_construction_types[str(i)] = most_common_part
+                    new_construction_types[str(i)] = part_counts.most_common(1)[0][0]
                 else:
                     new_construction_types[str(i)] = 'Надземная'
             
-            parts_file = os.path.join(run_dir, 'building_parts.json')
-            with open(parts_file, 'w', encoding='utf-8') as f:
+            with open(os.path.join(run_dir, 'building_parts.json'), 'w', encoding='utf-8') as f:
                 json.dump(new_construction_types, f, ensure_ascii=False, indent=2)
             
             # Обновляем пути для этапов
             excel_path = smetchik_path
             row_indices = list(range(len(df_smetchik)))
             
-            # ===== Этапы 1-4 =====
+            # Этапы 1-4
             self._update_progress(session_id, 20, f"Запуск {run_number}: Этап 1 — Анализ через LLM...")
-            
             first_step(
                 prompt_manager=self.prompt_manager,
                 file=excel_path,
@@ -1029,30 +1136,25 @@ class SessionManager:
             self._update_progress(session_id, 60, f"Запуск {run_number}: Этап 3 — Фильтрация по высоте...")
             third_step(input_folder=run_dir, building_height=building_height)
             
-            self._update_progress(session_id, 90, f"Запуск {run_number}: Этап 4 — Формирование перечня...")
-            fourth_step(input_folder=run_dir)
+            self._update_progress(session_id, 90, f"Запуск {run_number}: Этап 4 — Формирование перечня ({processing_type})...")
+            fourth_step(input_folder=run_dir, processing_type=processing_type)
             
             self._update_progress(session_id, 95, f"Запуск {run_number}: Сохранение результатов...")
             
             # Собираем финальные файлы
             final_files = []
-            skip_patterns = [
-                'filtered_elements.xlsx', 'building_parts.json', 'materials.json',
-            ]
+            skip_patterns = {'filtered_elements.xlsx', 'building_parts.json', 'materials.json'}
             
             for f in os.listdir(run_dir):
                 fpath = os.path.join(run_dir, f)
                 if os.path.isfile(fpath):
-                    # Пропускаем служебные файлы
                     if f in skip_patterns:
                         continue
-                    if f.endswith('_grouped.json'):
+                    if f.endswith('json'):
                         continue
                     if f.startswith('Нормализованные_данные_элемента_') or f.endswith('.ifc'):
                         continue
-                    if f.startswith('Промежуточные_работы_') or f.startswith('height') or \
-                       f.startswith('Финальный') or f.startswith('Подобранные') or \
-                       f.startswith('Все_найденные'):
+                    if any(f.startswith(p) for p in ['Промежуточные_работы_', 'height', 'Финальный', 'Подобранные', 'Все_найденные']):
                         continue
                     
                     final_files.append({
@@ -1063,14 +1165,12 @@ class SessionManager:
             
             final_files.sort(key=lambda x: x['filename'])
             
-            # Добавляем справочные файлы из корня сессии
-            # (создаются при начальной обработке IFC/PDF в ifc_reference_builder)
-            reference_files = [
+            # Добавляем справочные JSON из корня сессии
+            for src_name, display_name in [
                 ("ifc_elements_output.json", "все элементы.json"),
                 ("ifc_raw_elements_grouped.json", "группы элементов.json"),
                 ("ifc_raw_elements_grouped.xlsx", "группы элементов.xlsx"),
-            ]
-            for src_name, display_name in reference_files:
+            ]:
                 src_path = os.path.join(session_dir, src_name)
                 if os.path.isfile(src_path):
                     final_files.append({
@@ -1079,7 +1179,7 @@ class SessionManager:
                         "size": os.path.getsize(src_path),
                     })
             
-            # Обновляем run в сессии
+            # Обновляем run
             with self._state_lock:
                 if session_id in self._sessions:
                     runs = self._sessions[session_id].get('runs', [])
@@ -1094,7 +1194,7 @@ class SessionManager:
                     self._sessions[session_id]['status'] = 'completed'
                     self._sessions[session_id]['has_results'] = True
                     self._sessions[session_id]['progress'] = 100
-                    self._sessions[session_id]['progress_message'] = f"Запуск {run_number} завершён"
+                    self._sessions[session_id]['progress_message'] = f"Запуск {run_number} ({processing_type}) завершён"
                     self._save()
             
         except Exception as e:
@@ -1113,7 +1213,9 @@ class SessionManager:
                     self._sessions[session_id]['runs'] = runs
                     self._save()
     
-    # ========== Фильтрация по высоте (старый метод) ==========
+    # =====================================================================
+    #  ФИЛЬТРАЦИЯ ПО ВЫСОТЕ
+    # =====================================================================
     
     def filter_by_height(self, session_id: str, building_height: float) -> Dict[str, Any]:
         s = self.get(session_id)

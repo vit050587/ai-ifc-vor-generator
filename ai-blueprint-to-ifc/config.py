@@ -4,17 +4,25 @@ from pathlib import Path
 import logging
 from typing import Literal
 
-
-class BlueprintSettings(BaseModel):
-    tile_size: int = 720
-    zoom: float = Field(default=6 * (tile_size / 720), gt=0)
-    tile_overlap: float = Field(default=37, ge=0, lt=100)
-
-
-class WallDetectionSettings(BaseModel):
+class BaseWallDetectionProfile(BaseModel):
     confidence: float = Field(default=0.4, ge=0, le=1)
     iou: float = Field(default=0.9, ge=0, le=1)
+    tile_overlap: float = Field(default=37, ge=0, lt=100)
+    model_name: Path = Path("yolo_walls_obb.pt")
+
+
+class WallDetectionProfile(BaseWallDetectionProfile):
     image_size: int = Field(default=736, gt=0)
+    tile_size: int = 720
+    zoom: float = Field(default=6 * (tile_size / 720), gt=0)
+    tiles_dir: Path = Path("blueprint_tiles")
+
+
+class UnhatchedWallDetectionProfile(BaseWallDetectionProfile):
+    image_size: int = Field(default=896, gt=0)
+    tile_size: int = 896
+    zoom: float = Field(default=6 * (tile_size / 896), gt=0)
+    tiles_dir: Path = Path("unhatched_tiles")
 
 
 class WallMergeSettings(BaseModel):
@@ -79,7 +87,6 @@ class Settings(BaseSettings):
 
     MODELS_DIR: Path = Path("models")
     TG_MODEL_DIR: str = "GreenMap/qwen3-vl-4b-ru-blueprint-extractor"
-    YOLO_WALLS_MODEL: Path = MODELS_DIR / "yolo_walls_obb.pt"
     YOLO_LAYOUT_MODEL: Path = MODELS_DIR / "yolo_layout.pt"
     YOLO_LEGEND_LAYOUT_MODEL: Path = MODELS_DIR / "yolo_legend_layout.pt"
     DINO_HATCHING_MODEL: Path = MODELS_DIR / "dino_hatching.pt"
@@ -106,8 +113,8 @@ class Settings(BaseSettings):
     TRANSFORMERS_LOCALS_FILES_ONLY:bool = False
     TRANSFORMERS_CUDA_NUM:int = 0
 
-    BLUEPRINT: BlueprintSettings = Field(default_factory=BlueprintSettings)
-    WALL_DETECTION: WallDetectionSettings = Field(default_factory=WallDetectionSettings)
+    WALL_DETECTION: WallDetectionProfile = Field(default_factory=WallDetectionProfile)
+    UNHATCHED_WALL_DETECTION: UnhatchedWallDetectionProfile = Field(default_factory=UnhatchedWallDetectionProfile)
     WALL_MERGE: WallMergeSettings = Field(default_factory=WallMergeSettings)
     WALL_TRIM: WallTrimSettings = Field(default_factory=WallTrimSettings)
 

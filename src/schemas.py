@@ -26,7 +26,8 @@ class SessionFull(CamelModel):
     session_id: str
     created_at: str
     status: str
-    source_type: Optional[str] = None  # "ifc" или "pdf"
+    source_type: Optional[str] = None
+    processing_type: str = "KR"  # ← ДОБАВЛЕНО: тип обработки (KR/AR)
     ifc_file_name: Optional[str] = None
     pdf_file_name: Optional[str] = None
     excel_file_name: Optional[str] = None
@@ -38,6 +39,7 @@ class SessionFull(CamelModel):
     progress: int = 0
     progress_message: str = ""
     has_results: bool = False
+    is_reference_session: bool = False
     # Поля для поддержки множественных запусков
     runs: Optional[List[Dict[str, Any]]] = None
     current_run_id: Optional[str] = None
@@ -52,14 +54,31 @@ class UploadResponse(CamelModel):
     session_id: str
     status: str
     source_type: str  # "ifc" или "pdf"
+    processing_type: str = "KR"
     message: str
+
+
+class ReferenceAcceptedResponse(CamelModel):
+    session_id: str
+    source_type: str
+    status: str
+    message: str
+
+
+class ReferenceBuildResponse(CamelModel):
+    session_id: str
+    source_type: str
+    ifc_elements_output: List[Dict[str, Any]]
+    ifc_raw_elements_grouped: List[Dict[str, Any]]
 
 
 class SelectRowsRequest(CamelModel):
     row_indices: List[int]
     all_rows: bool = False
     row_types: Dict[str, str] = {}
+    row_materials: Dict[str, str] = {}
     building_height: Optional[float] = None
+    processing_type: str = "KR"
 
 
 class FilterHeightRequest(CamelModel):
@@ -90,6 +109,7 @@ class PreviewResponse(CamelModel):
     preview_rows: Optional[int] = None
     building_height: Optional[float] = None  
     source_type: Optional[str] = None
+    processing_type: str = "KR"
     has_blueprint_image: bool = False
     has_materials_md: bool = False
 
@@ -105,7 +125,7 @@ class RestoreResponse(CamelModel):
     building_height: Optional[float] = None
     selected_rows_count: int = 0
     source_type: Optional[str] = None
-    # Поля для поддержки множественных запусков
+    processing_type: str = "KR"
     runs: Optional[List[Dict[str, Any]]] = None
     current_run_id: Optional[str] = None
 
@@ -114,6 +134,7 @@ class SelectRowsResponse(CamelModel):
     session_id: str
     status: str
     selected_rows: int
+    processing_type: str = "KR"
     message: str
 
 
@@ -136,14 +157,16 @@ class RunInfo(CamelModel):
     run_id: str
     run_number: int
     status: str
+    processing_type: str = "KR"
     selected_rows: Optional[List[int]] = None
     construction_types: Dict[str, str] = {}
     construction_materials: Dict[str, str] = {}
     building_height: Optional[float] = None
     grouped_data: Dict[str, Any] = {}
     files: List[SessionFile] = []
-    created_at: str  # ← должно быть created_at (snake_case)
+    created_at: str
     error: Optional[str] = None
+
 
 class NewRunRequest(CamelModel):
     """Запрос на создание нового запуска"""
@@ -152,6 +175,7 @@ class NewRunRequest(CamelModel):
     row_materials: Dict[str, str] = {}
     building_height: Optional[float] = None
     grouped_data: Optional[Dict[str, Any]] = None
+    processing_type: str = "KR"  # ← ДОБАВЛЕНО
 
 
 class NewRunResponse(CamelModel):
@@ -160,6 +184,7 @@ class NewRunResponse(CamelModel):
     run_id: str
     run_number: int
     status: str
+    processing_type: str = "KR"
     selected_rows: int
     message: str
 
@@ -169,6 +194,7 @@ class RunSwitchResponse(CamelModel):
     session_id: str
     run_id: str
     run_number: Optional[int] = None
+    processing_type: str = "KR"
     status: Optional[str] = None
     files: List[SessionFile] = []
     building_height: Optional[float] = None

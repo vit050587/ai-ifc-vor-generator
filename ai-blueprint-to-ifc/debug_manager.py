@@ -98,7 +98,7 @@ def save_blueprint_walls_by_material(
     fill_opacity: float,
     confidence: float | None = None,
     save_md: bool = True,
-    zoom: float = settings.BLUEPRINT.zoom
+    zoom: float = settings.WALL_DETECTION.zoom
 ):
     grouped_walls: dict[str, list[dict]] = {}
     material_colors: dict[str, str] = {}

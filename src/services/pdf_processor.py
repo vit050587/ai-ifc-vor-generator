@@ -12,7 +12,7 @@ import shutil
 import time
 import threading
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
 from src.core.logger import setup_logger
 
@@ -21,8 +21,30 @@ logger = setup_logger(__name__)
 # Абсолютный путь к папке ai-blueprint-to-ifc
 _BLUEPRINT_DIR = Path(__file__).resolve().parent.parent.parent / "ai-blueprint-to-ifc"
 
+_PDF_PROCESS_LOCK = threading.Lock()
 
-def process_pdf(pdf_path: str, output_folder: str, progress_callback=None) -> Dict[str, str]:
+
+def process_pdf(
+    pdf_path: str,
+    output_folder: str,
+    progress_callback=None,
+    reference_only: bool = False,
+) -> Dict[str, Any]:
+    with _PDF_PROCESS_LOCK:
+        return _process_pdf_unlocked(
+            pdf_path,
+            output_folder,
+            progress_callback=progress_callback,
+            reference_only=reference_only,
+        )
+
+
+def _process_pdf_unlocked(
+    pdf_path: str,
+    output_folder: str,
+    progress_callback=None,
+    reference_only: bool = False,
+) -> Dict[str, Any]:
     """
     Обрабатывает PDF-чертёж и создаёт Excel-файлы с конструктивными элементами.
 
@@ -31,11 +53,16 @@ def process_pdf(pdf_path: str, output_folder: str, progress_callback=None) -> Di
         output_folder: папка для сохранения результатов.
         progress_callback: опциональная функция для обновления прогресса.
             Вызывается с аргументами (stage_name: str, progress_percent: int)
+        reference_only: завершить обработку сразу после формирования двух
+            JSON-справочников, не создавая дополнительные Excel/PNG/MD-файлы.
 
     Возвращает:
-        Словарь с путями к созданным Excel-файлам:
+        Словарь с путями к созданным файлам. В полном режиме:
         - excel_all_data_path — IFC_ВСЕ_ДАННЫЕ_исправленный.xlsx
         - excel_smetchik_path — ДЛЯ_СМЕТЧИКА_исправленный.xlsx
+        В reference_only-режиме:
+        - elements_json_path — ifc_elements_output.json
+        - grouped_json_path — ifc_raw_elements_grouped.json
     """
     # Конвертируем в Path если строка, затем обратно в строку для консистентности
     pdf_path_obj = Path(pdf_path) if isinstance(pdf_path, str) else pdf_path
@@ -225,7 +252,19 @@ def process_pdf(pdf_path: str, output_folder: str, progress_callback=None) -> Di
             from src.services.ifc_reference_builder import build_reference_from_pdf
             build_reference_from_pdf(df_all, output_folder_str)
         except Exception as e:
+            if reference_only:
+                raise
             logger.warning(f"Не удалось сформировать JSON-файлы справочника для PDF: {e}", exc_info=True)
+
+        if reference_only:
+            return {
+                "elements_json_path": os.path.join(
+                    output_folder_str, "ifc_elements_output.json"
+                ),
+                "grouped_json_path": os.path.join(
+                    output_folder_str, "ifc_raw_elements_grouped.json"
+                ),
+            }
 
         # Заполняем пропуски
         df_all = df_all.fillna("-")

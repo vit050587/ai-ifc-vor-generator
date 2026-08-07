@@ -58,11 +58,11 @@ class Processor:
             drawings = [None]
 
         results = []
-        legend_row_items = None
+        self.legend_row_items = None
         if legends:
             self.legend_layout_processor.parse_legend([legend["object"]["bbox"] for legend in legends])
-            legend_row_items = self.legend_layout_processor.get_legend_row_items(min_inside_ratio=settings.LEGEND_LAYOUT_MIN_INSIDE_RATIO)
-            self.hatching_processor.specify_legends(legend_row_items)
+            self.legend_row_items = self.legend_layout_processor.get_legend_row_items(min_inside_ratio=settings.LEGEND_LAYOUT_MIN_INSIDE_RATIO)
+            self.hatching_processor.specify_legends(self.legend_row_items)
         else:
             logger.info("Легенда не найдена")
 
@@ -72,49 +72,27 @@ class Processor:
         for i, drawing in enumerate(drawings):
             blueprint_scale = self._choose_drawing_scale(global_blueprint_scale, (drawing or {}).get("scale", None))
 
-            # Вычисляем приближение для обрабатываемого чертежа
-            zoom_for_drawing = settings.BLUEPRINT.zoom * ((blueprint_scale[1] / blueprint_scale[0]) / (self.reference_scale[1] / self.reference_scale[0]))
-            if zoom_for_drawing < 1 or zoom_for_drawing > 30:
-                logger.warning(f"Неверный коэффициент приближения {zoom_for_drawing} используется {settings.BLUEPRINT.zoom}")
-                zoom_for_drawing = settings.BLUEPRINT.zoom
-                
-            self.walls_processor = WallsProcessor(self.PDF_PATH, self.pdf_processor, zoom_for_drawing)
-            walls_processors.append(self.walls_processor)
+            drawing_result = self._process_drawing(i, blueprint_scale, settings.WALL_DETECTION, drawings)
+            all_walls_bboxes_pix += drawing_result["walls_for_full_drawing"]
+            walls_processors.append(drawing_result["walls_processor"])
 
-            folder_name = str(i)
-            walls_bboxes_pix = self._process_walls(i, drawings, zoom_for_drawing)
-
-            debug_manager.save_walls_highlighted(folder_name, walls_bboxes_pix, self.pdf_processor)
-
-            self.hatching_processor.process(walls_bboxes_pix, zoom_for_drawing)
-            legend_row_items, hatching_confidence = self._retry_hatching_without_detected_legend(
-                walls_bboxes_pix,
-                zoom_for_drawing,
-                legend_row_items,
-            )
-
-            logger.info(f"Уверенность обработки штриховок для чертежа {i}: {round((hatching_confidence if hatching_confidence else 0) * 100, 1)}%")
-
-            walls_bboxes_pix = self._prepare_walls(walls_bboxes_pix)
-            all_walls_bboxes_pix += walls_bboxes_pix
-
-            painted_image_debug, materials_colors_md_debug = debug_manager.save_blueprint_walls_by_material(folder_name, walls_bboxes_pix, self.pdf_processor, f"page_{self.PDF_PATH.stem}_materials.png", legend_row_items or [], fill_opacity=0.5, zoom=zoom_for_drawing)
-            walls_bboxes_mm = self.walls_processor.scale_walls_coords(walls_bboxes_pix, blueprint_scale)
-
-            result = {
-                "walls": self._form_walls_result(walls_bboxes_mm),
-            }
-
-            debug_manager.save_walls_result(folder_name, result)
-
-            results.append(result)
-            result_object["drawings"].append({"painted_image": painted_image_debug, "materials_colors_md": materials_colors_md_debug, "result": result})
+            results.append(drawing_result["result"])
+            result_object["drawings"].append({"painted_image": drawing_result["painted_image"], "materials_colors_md": drawing_result["materials_colors_md"], "result": drawing_result["result"]})
 
         blueprint_processing_confidence = self._get_overall_confidence(walls_processors)
-        painted_image_debug, materials_colors_md_debug = debug_manager.save_blueprint_walls_by_material("full", all_walls_bboxes_pix, self.pdf_processor, f"page_{self.PDF_PATH.stem}_materials.png", legend_row_items or [], fill_opacity=0.5, confidence=blueprint_processing_confidence, zoom=zoom_for_drawing)
+        painted_image_debug, materials_colors_md_debug = debug_manager.save_blueprint_walls_by_material(
+            "full",
+            all_walls_bboxes_pix, 
+            self.pdf_processor, 
+            f"page_{self.PDF_PATH.stem}_materials.png", 
+            self.legend_row_items or [], 
+            fill_opacity=0.5, 
+            confidence=blueprint_processing_confidence, 
+            zoom=settings.WALL_DETECTION.zoom
+        )
         result_object["full_drawing"] = {"painted_image": painted_image_debug, "materials_colors_md": materials_colors_md_debug}
 
-        self.drawing_statistics.save_deleted_walls(legend_row_items or [])
+        self.drawing_statistics.save_deleted_walls(self.legend_row_items or [])
         
         logger.info(f"Итоговый confidence обработки для чертежа: {round((blueprint_processing_confidence if blueprint_processing_confidence else 0) * 100, 1)}%")
         result_object["confidence"] = blueprint_processing_confidence
@@ -124,6 +102,58 @@ class Processor:
         save_result(results)
 
         return result_object
+
+    def _process_drawing(self, i: int, blueprint_scale: Tuple[int, int], wall_detection_settings, drawings: list):
+        # Вычисляем приближение для обрабатываемого чертежа
+        zoom_for_drawing = wall_detection_settings.zoom * ((blueprint_scale[1] / blueprint_scale[0]) / (self.reference_scale[1] / self.reference_scale[0]))
+        if zoom_for_drawing < 1 or zoom_for_drawing > 30:
+            logger.warning(f"Неверный коэффициент приближения {zoom_for_drawing} используется {wall_detection_settings.zoom}")
+            zoom_for_drawing = wall_detection_settings.zoom
+            
+        walls_processor = WallsProcessor(self.PDF_PATH, wall_detection_settings, self.pdf_processor, zoom_for_drawing)
+
+        folder_name = str(i)
+        walls_bboxes_pix = self._process_walls(i, drawings, walls_processor, zoom_for_drawing)
+
+        debug_manager.save_walls_highlighted(folder_name, walls_bboxes_pix, self.pdf_processor)
+
+        self.hatching_processor.process(walls_bboxes_pix, zoom_for_drawing)
+        self.legend_row_items, hatching_confidence = self._retry_hatching_without_detected_legend(
+            walls_bboxes_pix,
+            zoom_for_drawing,
+            self.legend_row_items,
+        )
+
+        logger.info(f"Уверенность обработки штриховок для чертежа {i}: {round((hatching_confidence if hatching_confidence else 0) * 100, 1)}%")
+
+        walls_bboxes_pix = self._prepare_walls(walls_bboxes_pix)
+        walls_for_full_drawing = copy.deepcopy(walls_bboxes_pix)
+
+        painted_image_debug, materials_colors_md_debug = debug_manager.save_blueprint_walls_by_material(
+            folder_name, 
+            walls_bboxes_pix, 
+            self.pdf_processor, 
+            f"page_{self.PDF_PATH.stem}_materials.png", 
+            self.legend_row_items or [], 
+            fill_opacity=0.5, 
+            zoom=zoom_for_drawing
+        )
+        walls_bboxes_mm = walls_processor.scale_walls_coords(walls_bboxes_pix, blueprint_scale)
+
+        result = {
+            "walls": self._form_walls_result(walls_bboxes_mm),
+        }
+
+        debug_manager.save_walls_result(folder_name, result)
+
+        return {
+            "painted_image": painted_image_debug, 
+            "materials_colors_md": materials_colors_md_debug, 
+            "result": result, 
+            "walls_for_full_drawing": walls_for_full_drawing, 
+            "walls_processor": walls_processor
+        }
+        
 
     def _retry_hatching_without_detected_legend(self, walls, zoom, legend_row_items):
         hatching_confidence = self.drawing_statistics.get_last_processing_confidence()
@@ -212,10 +242,10 @@ class Processor:
         for i, wall in enumerate(walls):
             wall["id"] = f"W{i}"
     
-    def _process_walls(self, drawing_index, drawings, zoom: float):
+    def _process_walls(self, drawing_index, drawings, walls_processor: WallsProcessor, zoom: float):
         folder_name = str(drawing_index)
 
-        walls_on_blueprint = self.walls_processor.get_walls_cords(drawing_index, drawings, self.layout_processor)
+        walls_on_blueprint = walls_processor.get_walls_cords(drawing_index, drawings, self.layout_processor)
         walls_on_blueprint_number = len(walls_on_blueprint)
         if not walls_on_blueprint_number:
             return []

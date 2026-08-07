@@ -255,7 +255,7 @@ class HatchingProcessor:
         if self.pdf_processor is None:
             raise ValueError("PdfProcessor is required to crop walls")
 
-        target_zoom = (self.zoom or settings.BLUEPRINT.zoom) * 2
+        target_zoom = (self.zoom or settings.WALL_DETECTION.zoom) * 2
         bbox_pdf = wall.get("bbox_pdf")
         if bbox_pdf is None:
             raise ValueError("Wall must contain bbox_pdf to crop at a different zoom")

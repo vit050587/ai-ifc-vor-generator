@@ -36,6 +36,48 @@ STOP_WORDS = {'и', 'в', 'на', 'с', 'по', 'к', 'у', 'о', 'от', 'дл�
               'цоколь', 'кровля', 'подвал', 'мансарда', 'техническая'}
 
 
+# ========== Промпты ==========
+
+PROMPT_AR = """Ты — эксперт-сметчик по архитектурным решениям. Выбери наиболее подходящие работы для создания архитектурного элемента в здании.
+
+{element_info}
+
+## ВАЖНОЕ ПРАВИЛО:
+Ты МОЖЕШЬ выбирать работы ТОЛЬКО из списка ниже.
+НЕЛЬЗЯ придумывать свои названия работ.
+НУЖНО брать названия ТОЧНО ТАК, КАК ОНИ НАПИСАНЫ в списке.
+
+## ОСОБЕННОСТИ АРХИТЕКТУРНЫХ РЕШЕНИЙ:
+- Для стен учитывай отделку (штукатурка, шпаклёвка, окраска, облицовка, обои)
+- Для перекрытий — устройство полов (стяжка, покрытие, гидроизоляция, подложка)
+- Для дверей — монтаж дверных блоков, установка откосов, наличников, фурнитуры, окраска
+- Для окон — монтаж оконных блоков, установка откосов, подоконников, отливов, москитных сеток
+- Для покрытий — кровельные работы, утепление, пароизоляция, водосточная система
+- Для ограждений — монтаж, окраска, антикоррозийная обработка
+- Учитывай материалы: кирпич, газобетон, керамические блоки, гипсокартон, стекло, пластик, дерево
+- Если материал не указан — выбирай наиболее распространённый вариант для данного типа элемента
+- Для внутренних стен добавляй отделочные работы с двух сторон
+- Для наружных стен добавляй фасадные работы и утепление если применимо
+
+## ОСОБОЕ ВНИМАНИЕ:
+Работы с пометкой [источник: база_знаний_фраза] ОБЯЗАТЕЛЬНО должны быть включены.
+
+## СПИСОК ДОСТУПНЫХ РАБОТ:
+{works_text}
+
+## ФОРМАТ ОТВЕТА (ТОЛЬКО JSON):
+{{
+  "выбранные_работы": [
+    {{
+      "наименование": "ТОЧНОЕ НАЗВАНИЕ ИЗ СПИСКА",
+      "обоснование": "почему подходит",
+      "категория": "подготовительные/монтажные/отделочные/изоляционные/кровельные/фасадные/заполнение проёмов/остекление/другие"
+    }}
+  ],
+  "рекомендация": "краткий вывод"
+}}"""
+
+
 def safe_float(value, default=0.0):
     """
     Безопасное преобразование значения во float.
@@ -86,30 +128,20 @@ def safe_float(value, default=0.0):
     
     # Обработка запятых и точек
     if ',' in text and '.' in text:
-        # Если есть и точка, и запятая — последний знак (точка или запятая) считается десятичным разделителем
-        # Если запятая после точки — это разделитель тысяч в десятичной части, что маловероятно
-        # Поэтому: если точка последняя — она десятичный разделитель, запятая — разделитель тысяч
-        # Если запятая последняя — она десятичный разделитель, точка — разделитель тысяч
         last_dot = text.rfind('.')
         last_comma = text.rfind(',')
         if last_dot > last_comma:
-            # Точка последняя — она десятичный разделитель
             text = text.replace(',', '')
         else:
-            # Запятая последняя — она десятичный разделитель
             text = text.replace('.', '').replace(',', '.')
     elif ',' in text:
-        # Только запятые
         parts = text.split(',')
         if len(parts) == 2:
-            # Одна запятая — всегда считаем десятичным разделителем (132,500000 → 132.500000)
             text = text.replace(',', '.')
         else:
-            # Множественные запятые — это разделители тысяч: "1,234,567"
             text = text.replace(',', '')
     
     # Ищем число: опциональный минус, цифры, опциональная точка с цифрами
-    # Поддерживаем научную нотацию: 1.5e-3
     pattern = r'(-?[\d]+(?:\.[\d]+)?(?:[eE][+-]?[\d]+)?)'
     match = re.search(pattern, text)
     
@@ -119,7 +151,7 @@ def safe_float(value, default=0.0):
         except (ValueError, TypeError):
             pass
     
-    # Если не нашли — пробуем убрать всё лишнее, оставив цифры, точку и минус
+    # Если не нашли — пробуем убрать всё лишнее
     cleaned = ''
     for i, char in enumerate(text):
         if char.isdigit():
@@ -243,7 +275,7 @@ def _find_column_with_volume(data, marker, extra_marker):
     return ''
 
 
-def _process_one_element(normalized_data, row_number, output_folder):
+def _process_one_element(normalized_data, row_number, output_folder, processing_type="KR"):
     """Обработка одного элемента: поиск работ по материалу + базе знаний"""
 
     # Данные элемента
@@ -282,7 +314,7 @@ def _process_one_element(normalized_data, row_number, output_folder):
         logger.warning(f"Файл работ не найден для строки {row_number}")
         return
 
-    logger.info(f"Обработка элемента {row_number}: материал={material_name}, IFC={ifc_type}")
+    logger.info(f"Обработка элемента {row_number}: материал={material_name}, IFC={ifc_type}, тип={processing_type}")
 
     df_works = pd.read_excel(works_file)
 
@@ -515,7 +547,11 @@ def _process_one_element(normalized_data, row_number, output_folder):
         print('Информации по работам по материалу нет')
 
 
-    prompt = f"""Ты — эксперт-сметчик. Выбери наиболее подходящие работы для создания строительного элемента в здании.
+    # === Выбор промпта в зависимости от типа обработки ===
+    if processing_type == "AR":
+        prompt = PROMPT_AR.format(element_info=element_info, works_text=works_text)
+    else:
+        prompt = f"""Ты — эксперт-сметчик. Выбери наиболее подходящие работы для создания строительного элемента в здании.
 
 {element_info}  
 
@@ -549,6 +585,7 @@ def _process_one_element(normalized_data, row_number, output_folder):
   ],
   "рекомендация": "краткий вывод"
 }}"""
+
     try:
         print(f'Материал: {material_base_works_str}')
         prompt += f"""\n Перед тем как дать ответ, проверь, что в выбранных работах есть все работы из списка: {material_base_works_str}."""
@@ -684,7 +721,8 @@ def _process_one_element(normalized_data, row_number, output_folder):
             },
             'ключевые_слова_из_материала': all_words,
             'ключевые_фразы_из_базы': knowledge_phrases if ifc_type in KNOWLEDGE_BASE else [],
-            'найденные_работы': sorted_works
+            'найденные_работы': sorted_works,
+            'тип_обработки': processing_type
         }
         all_json_filename = os.path.join(output_folder, f'Все_найденные_работы_{row_number}.json')
         with open(all_json_filename, 'w', encoding='utf-8') as f:
@@ -692,7 +730,7 @@ def _process_one_element(normalized_data, row_number, output_folder):
 
         logger.info(f"Сохранено: {output_filename}")
 
-    except KeyboardInterrupt as e:
+    except Exception as e:
         logger.error(f"Ошибка LLM для элемента {row_number}: {e}")
         if 'answer' in locals():
             logger.error(f"Ответ LLM: {answer[:500]}")
@@ -816,9 +854,9 @@ def merge_final_worklists(input_folder):
         return None
 
 
-def fourth_step(input_folder):
+def fourth_step(input_folder, processing_type="KR"):
     """Четвёртый этап: подбор работ по материалу + базе знаний"""
-    logger.info("НАЧАТ ЧЕТВЁРТЫЙ ЭТАП")
+    logger.info(f"НАЧАТ ЧЕТВЁРТЫЙ ЭТАП (тип: {processing_type})")
 
     count = sum(1 for f in os.listdir(input_folder)
                 if f.endswith('.json') and f.startswith('Нормализованные_данные'))
@@ -835,12 +873,11 @@ def fourth_step(input_folder):
                 logger.info(f"Загрузка нормализованных данных из {filename}")
                 try:
                     data = json.load(file)
-                    _process_one_element(data, row_number, input_folder)
+                    _process_one_element(data, row_number, input_folder, processing_type)
                     logger.info(f"Обработан файл: {filename}")
                 except json.JSONDecodeError:
                     logger.warning(f"Ошибка чтения JSON в файле: {filename}")
     
     merge_final_worklists(input_folder)
 
-
-    logger.info("ЧЕТВЁРТЫЙ ЭТАП ЗАВЕРШЕН")
+    logger.info(f"ЧЕТВЁРТЫЙ ЭТАП ЗАВЕРШЕН (тип: {processing_type})")

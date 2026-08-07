@@ -2,16 +2,26 @@
 IFC Elements Grouping Pipeline
 Input: Excel file with IFC elements
 Output: Excel file with hierarchical grouping + JSON file
+
+Поддерживает два режима:
+- КР (Конструктивные решения): иерархия Часть здания → Раздел → Подраздел → Геометрия → Материал
+- АР (Архитектурные решения): иерархия Часть здания → Тип элемента → Очищенное имя
 """
 
 import pandas as pd
 import json
 import re
+import os
+import time
 from typing import List, Dict, Any
 from collections import defaultdict
 from pathlib import Path
 import openpyxl
 from openpyxl.utils import get_column_letter
+
+from src.core.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 # ========== Configuration ==========
@@ -114,7 +124,6 @@ GEOMETRY_GROUP_RULES = {
     }
 }
 
-# Подразделы, для которых НЕ применяется геометрическая группировка
 NO_GEOMETRY_GROUP_SUBSECTIONS = [
     'Фундаментная плита',
     'Фундамент под инженерное оборудование',
@@ -202,6 +211,23 @@ SECTION_STRUCTURE = {
     }
 }
 
+IFC_TYPE_LABELS = {
+    'IfcWall': 'Стены',
+    'IfcWallStandardCase': 'Стены',
+    'IfcSlab': 'Плиты',
+    'IfcColumn': 'Колонны',
+    'IfcBeam': 'Балки',
+    'IfcStair': 'Лестницы',
+    'IfcStairFlight': 'Лестничные марши',
+    'IfcDoor': 'Двери',
+    'IfcWindow': 'Окна',
+    'IfcRailing': 'Ограждения',
+    'IfcCovering': 'Покрытия',
+    'IfcBuildingElementProxy': 'Прочие элементы',
+    'IfcPile': 'Сваи',
+    'IfcRamp': 'Пандусы',
+}
+
 
 # ========== Utility Functions ==========
 def safe_parse_float(value: Any) -> float:
@@ -227,6 +253,13 @@ def round_value(value: float, column_name: str) -> float:
         return round(value, 2)
 
 
+def clean_element_name(name: str) -> str:
+    if not name or not isinstance(name, str):
+        return 'Без названия'
+    cleaned = re.sub(r':\s*\d+$', '', name).strip()
+    return cleaned or name.strip()
+
+
 # ========== Classification Functions ==========
 def get_ifc_type(type_ru: str, name: str) -> str:
     name_lower = name.lower() if name else ''
@@ -241,13 +274,11 @@ def get_ifc_type(type_ru: str, name: str) -> str:
     if 'труб' in name_lower:
         return 'IfcProxyElement'
     
-    # Проверка по ТИПУ (до проверки по имени)
     if 'ifcpile' in type_lower:
         return 'IfcPile'
     if 'ifcstairflight' in type_lower:
         return 'IfcStairFlight'
     
-    # Проверка по ИМЕНИ
     if 'сва' in name_lower:
         return 'IfcPile'
     
@@ -282,9 +313,7 @@ def get_ifc_type(type_ru: str, name: str) -> str:
 
 
 def is_hydro_vertical(type_ru: str, name: str, ifc_type: str) -> bool:
-    """Определяет, относится ли элемент к ВЕРТИКАЛЬНОЙ гидроизоляции (стены)"""
     name_lower = name.lower() if name else ''
-    # Вертикальная = гидроизоляция + стена (или вертикальная в названии)
     has_hydro = 'гидроизол' in name_lower
     has_vertical = 'вертикал' in name_lower
     has_wall = 'стен' in name_lower or ifc_type == 'IfcWall'
@@ -293,7 +322,6 @@ def is_hydro_vertical(type_ru: str, name: str, ifc_type: str) -> bool:
 
 
 def is_hydro_horizontal(type_ru: str, name: str, ifc_type: str) -> bool:
-    """Определяет, относится ли элемент к ГОРИЗОНТАЛЬНОЙ гидроизоляции (плиты/перекрытия)"""
     name_lower = name.lower() if name else ''
     has_hydro = 'гидроизол' in name_lower
     has_fundament_or_slab = any(w in name_lower for w in ['фундамент', 'фунд. плита', 'фундаментная', 'плит', 'перекрыт']) or ifc_type == 'IfcSlab'
@@ -306,14 +334,11 @@ def determine_subsection(type_ru: str, name: str, part: str) -> str:
     name_lower = name.lower() if name else ''
     type_lower = type_ru.lower() if type_ru else ''
     
-    # Сначала определяем ifc_type для гидроизоляции
     temp_ifc_type = get_ifc_type(type_ru, name)
     
-    # Проверка на IfcProxyElement — всегда в «Прочие элементы»
     if 'ifcproxy' in type_lower or 'proxy' in type_lower:
         return '__OTHER__'
     
-    temp_ifc_type = get_ifc_type(type_ru, name)
     if temp_ifc_type == 'IfcOpening':
         return '__OTHER__'
     
@@ -321,7 +346,6 @@ def determine_subsection(type_ru: str, name: str, part: str) -> str:
         return '__OTHER__'
     
     if is_hydro_vertical(type_ru, name, temp_ifc_type):
-        # Гидроизоляция стен → в Раздел 2
         if part == 'Подземная':
             return 'Подземная часть здания. Вертикальная гидроизоляция'
         elif part == 'Цоколь':
@@ -342,19 +366,16 @@ def determine_subsection(type_ru: str, name: str, part: str) -> str:
     if 'парапет' in name_lower:
         return 'Надземная часть здания. Парапеты'
     
-    # Лестничные марши по ifcType (IfcStairFlight)
     if temp_ifc_type == 'IfcStairFlight':
         if part in ('Подземная', 'Цоколь'):
             return f'{part} часть здания. Лестницы'
         return 'Надземная часть здания. Лестничные марши'
     
-    # Лестничные площадки (Плм)
     if 'плм' in name_lower:
         if part in ('Подземная', 'Цоколь'):
             return f'{part} часть здания. Лестницы'
         return 'Надземная часть здания. Лестничные площадки'
     
-    # ЛМн без признаков марша — площадка
     if 'лмн' in name_lower:
         if part in ('Подземная', 'Цоколь'):
             return f'{part} часть здания. Лестницы'
@@ -394,7 +415,7 @@ def determine_subsection(type_ru: str, name: str, part: str) -> str:
     return '__OTHER__'
 
 
-# ========== Core Grouping Logic ==========
+# ========== Core Grouping Logic (КР) ==========
 class ElementData:
     def __init__(self, index: int, row: Dict[str, Any], headers: List[str]):
         self.index = index
@@ -409,127 +430,222 @@ class ElementData:
 
 
 def group_elements(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[str, Any]]:
-    """
-    Группировка элементов по иерархии.
-    """
-    sum_columns = [h for h in headers if any(keyword in h.lower() for keyword in ['объём', 'объем', 'площадь', 'стоимость'])]
+    """Группировка элементов по иерархии (для КР). Оптимизированная версия с pandas."""
     
-    def get_part_from_floor_type(floor_type: str) -> str:
-        if not floor_type:
+    volume_col = None
+    for h in headers:
+        h_lower = h.lower()
+        if 'netvolume' in h_lower or ('объём' in h_lower and 'м3' in h_lower):
+            volume_col = h
+            break
+    
+    sum_columns = [h for h in headers if any(kw in h.lower() for kw in ['объём', 'объем', 'площадь', 'стоимость'])]
+    
+    df = pd.DataFrame(rows)
+    
+    if volume_col and volume_col in df.columns:
+        df[volume_col] = pd.to_numeric(df[volume_col], errors='coerce').fillna(0)
+    
+    def get_part(floor_type):
+        if not floor_type or pd.isna(floor_type):
             return 'Надземная'
-        
-        floor_lower = floor_type.lower().strip()
-        
-        if any(w in floor_lower for w in ['подзем', 'подвал', 'basement', '-1']):
+        fl = str(floor_type).lower().strip()
+        if any(w in fl for w in ['подзем', 'подвал', 'basement', '-1']):
             return 'Подземная'
-        if any(w in floor_lower for w in ['цокол', 'ground', 'нулев']):
+        if any(w in fl for w in ['цокол', 'ground', 'нулев']):
             return 'Цоколь'
-        if any(w in floor_lower for w in ['надзем', 'этаж', 'кровл', 'техническ', 'мансард']):
+        if any(w in fl for w in ['надзем', 'этаж', 'кровл', 'техническ', 'мансард']):
             return 'Надземная'
-        
         return 'Надземная'
     
-    def get_material_group(elem: ElementData) -> str:
-        material = str(elem.row.get('Материал', ''))
-        if not material or material == '-' or material == '':
+    def get_subsection(row):
+        type_ru = str(row.get('Тип элемента', ''))
+        name = str(row.get('Имя', ''))
+        part = row['_part']
+        return determine_subsection(type_ru, name, part)
+    
+    def get_ifc_type_row(row):
+        return get_ifc_type(str(row.get('Тип элемента', '')), str(row.get('Имя', '')))
+    
+    df['_part'] = df['Тип_этажа'].apply(get_part) if 'Тип_этажа' in df.columns else 'Надземная'
+    df['_subsection'] = df.apply(get_subsection, axis=1)
+    df['_ifc_type'] = df.apply(get_ifc_type_row, axis=1)
+    
+    def create_group(name, level, group_df, children=None):
+        indices = sorted(group_df.index.tolist())
+        
+        if volume_col and volume_col in group_df.columns:
+            vol_series = pd.to_numeric(group_df[volume_col], errors='coerce').fillna(0)
+            volume = round(vol_series.sum(), 2)
+        else:
+            volume = 0.0
+        
+        areas = {}
+        for col in sum_columns:
+            if 'площадь' in col.lower() and col in group_df.columns:
+                area_series = pd.to_numeric(group_df[col], errors='coerce').fillna(0)
+                total = area_series.sum()
+                if total > 0:
+                    areas[col] = round(total, 2)
+        
+        first_elem = rows[indices[0]] if indices else {}
+        
+        return {
+            'name': name, 'level': level, 'indices': indices,
+            'total_volume': volume, 'total_areas': areas,
+            'first_element': dict(first_elem), 'count': len(indices),
+            'children': children or []
+        }
+    
+    def get_material_group(row):
+        material = str(row.get('Материал', ''))
+        if not material or material == '-' or material == '' or pd.isna(row.get('Материал')):
             return 'Материал: не указан'
         return f'Материал: {material}'
     
-    def get_concrete_group(elem: ElementData) -> str:
-        concrete_grade = str(elem.row.get('ExpCheck_MaterialConcrete_MGE_ConcreteGrade', ''))
-        water_resist = str(elem.row.get('ExpCheck_MaterialConcrete_MGE_WaterResist', ''))
-        freeze_durability = str(elem.row.get('ExpCheck_MaterialConcrete_MGE_FreezeDurability', ''))
+    def get_concrete_group(row):
+        concrete = str(row.get('ExpCheck_MaterialConcrete_MGE_ConcreteGrade', ''))
+        water = str(row.get('ExpCheck_MaterialConcrete_MGE_WaterResist', ''))
+        freeze = str(row.get('ExpCheck_MaterialConcrete_MGE_FreezeDurability', ''))
         
         parts = []
-        if concrete_grade and concrete_grade != '-' and concrete_grade != '':
-            parts.append(concrete_grade)
-        if water_resist and water_resist != '-' and water_resist != '':
-            parts.append(f"W{water_resist}" if not water_resist.startswith('W') else water_resist)
-        if freeze_durability and freeze_durability != '-' and freeze_durability != '':
-            parts.append(f"F{freeze_durability}" if not freeze_durability.startswith('F') else freeze_durability)
+        if concrete and concrete != '-' and concrete != '' and concrete != 'nan':
+            parts.append(concrete)
+        if water and water != '-' and water != '' and water != 'nan':
+            parts.append(f"W{water}" if not water.startswith('W') else water)
+        if freeze and freeze != '-' and freeze != '' and freeze != 'nan':
+            parts.append(f"F{freeze}" if not freeze.startswith('F') else freeze)
         
-        if parts:
-            return f"Бетон: {', '.join(parts)}"
-        else:
-            return "Бетон: без характеристик"
+        return f"Бетон: {', '.join(parts)}" if parts else "Бетон: без характеристик"
     
-    def get_name_group(elem: ElementData) -> str:
-        """Группировка по имени (для прочих элементов)"""
-        name = elem.name.strip() if elem.name else 'Без названия'
-        # Очищаем имя от ID в конце (после последнего двоеточия)
+    def get_name_key(row):
+        name = str(row.get('Имя', '')).strip()
+        if not name:
+            return 'Без названия'
         last_colon = name.rfind(':')
         if last_colon != -1:
-            after = name[last_colon+1:].strip()
+            after = name[last_colon + 1:].strip()
             if after.isdigit():
                 name = name[:last_colon].strip()
         return name if name else 'Без названия'
     
-    def apply_material_concrete_grouping(parent_group: dict, elems: List[ElementData], 
-                                         mat_level: int, concrete_level: int) -> None:
-        """Группировка по материалу, затем по бетону внутри каждого материала"""
-        material_groups = defaultdict(list)
-        for e in elems:
-            mat_key = get_material_group(e)
-            material_groups[mat_key].append(e)
+    def apply_material_concrete(group_df, parent_group, mat_level, concrete_level):
+        if len(group_df) == 0:
+            return
         
-        if len(material_groups) == 1:
-            # Один материал — группируем сразу по бетону
-            concrete_groups = defaultdict(list)
-            for e in elems:
-                concrete_key = get_concrete_group(e)
-                concrete_groups[concrete_key].append(e)
+        group_df = group_df.copy()
+        group_df['_mat'] = group_df.apply(get_material_group, axis=1)
+        mat_groups = group_df.groupby('_mat')
+        
+        if len(mat_groups) == 1:
+            group_df['_conc'] = group_df.apply(get_concrete_group, axis=1)
+            conc_groups = group_df.groupby('_conc')
             
-            if len(concrete_groups) == 1:
-                # Один бетон — не создаём лишних уровней
-                return
-            else:
-                for concrete_key, concrete_elements in concrete_groups.items():
-                    concrete_group = create_group(concrete_key, concrete_level, concrete_elements)
-                    if concrete_group:
-                        parent_group['children'].append(concrete_group)
+            if len(conc_groups) > 1:
+                for conc_name, conc_df in conc_groups:
+                    g = create_group(conc_name, concrete_level, conc_df)
+                    if g:
+                        parent_group['children'].append(g)
         else:
-            # Несколько материалов
-            for mat_key, mat_elements in material_groups.items():
-                mat_group = create_group(mat_key, mat_level, mat_elements)
-                if not mat_group:
+            for mat_name, mat_df in mat_groups:
+                mat_group = create_group(mat_name, mat_level, mat_df)
+                if mat_group:
+                    mat_df = mat_df.copy()
+                    mat_df['_conc'] = mat_df.apply(get_concrete_group, axis=1)
+                    conc_groups = mat_df.groupby('_conc')
+                    
+                    if len(conc_groups) > 1:
+                        for conc_name, conc_df in conc_groups:
+                            g = create_group(conc_name, concrete_level, conc_df)
+                            if g:
+                                mat_group['children'].append(g)
+                    
+                    parent_group['children'].append(mat_group)
+    
+    result = []
+    part_order = ['Подземная', 'Цоколь', 'Надземная']
+    
+    for part in part_order:
+        part_df = df[df['_part'] == part]
+        if len(part_df) == 0:
+            continue
+        
+        part_structure = SECTION_STRUCTURE.get(part)
+        if not part_structure:
+            continue
+        
+        part_group = create_group(part_structure['label'], 1, part_df)
+        
+        other_mask = part_df['_subsection'].isin(['__OTHER__']) | part_df['_ifc_type'].isin(['IfcProxyElement', 'IfcOpening'])
+        regular_df = part_df[~other_mask]
+        other_df = part_df[other_mask]
+        
+        for section in part_structure['sections']:
+            section_keys = [sub['key'] for sub in section['subsections']]
+            section_df = regular_df[regular_df['_subsection'].isin(section_keys)]
+            
+            if len(section_df) == 0:
+                continue
+            
+            section_group = create_group(section['name'], 2, section_df)
+            
+            for subsection in section['subsections']:
+                sub_df = section_df[section_df['_subsection'] == subsection['key']]
+                if len(sub_df) == 0:
                     continue
                 
-                concrete_groups = defaultdict(list)
-                for e in mat_elements:
-                    concrete_key = get_concrete_group(e)
-                    concrete_groups[concrete_key].append(e)
+                sub_group = create_group(subsection['key'], 3, sub_df)
                 
-                if len(concrete_groups) > 1:
-                    for concrete_key, concrete_elements in concrete_groups.items():
-                        concrete_group = create_group(concrete_key, concrete_level, concrete_elements)
-                        if concrete_group:
-                            mat_group['children'].append(concrete_group)
+                skip_geometry = subsection['key'] in NO_GEOMETRY_GROUP_SUBSECTIONS
                 
-                parent_group['children'].append(mat_group)
-    
-    elements = []
-    
-    for i, row in enumerate(rows):
-        floor_type = str(row.get('Тип_этажа', ''))
-        part = get_part_from_floor_type(floor_type)
+                if skip_geometry:
+                    apply_material_concrete(sub_df, sub_group, 4, 5)
+                else:
+                    elems = []
+                    for idx in sub_df.index:
+                        row = rows[idx]
+                        e = ElementData(idx, row, headers)
+                        e.part = part
+                        e.subsection = subsection['key']
+                        e.ifc_type = get_ifc_type(str(row.get('Тип элемента', '')), str(row.get('Имя', '')))
+                        elems.append(e)
+                    
+                    _add_geometry_groups(sub_group, elems, headers, volume_col)
+                
+                if sub_group['children']:
+                    section_group['children'].append(sub_group)
+            
+            if section_group['children']:
+                part_group['children'].append(section_group)
         
-        type_ru = str(row.get('Тип элемента', 'Неизвестно'))
-        name = str(row.get('Имя', ''))
+        if len(other_df) > 0:
+            other_group = create_group(part_structure.get('other_label', 'Прочие элементы'), 2, other_df)
+            
+            other_df = other_df.copy()
+            other_df['_name_key'] = other_df.apply(get_name_key, axis=1)
+            for name_key, name_df in other_df.groupby('_name_key'):
+                name_group = create_group(name_key, 3, name_df)
+                apply_material_concrete(name_df, name_group, 4, 5)
+                if name_group['children']:
+                    other_group['children'].append(name_group)
+            
+            if other_group['children']:
+                part_group['children'].append(other_group)
         
-        elem = ElementData(i, row, headers)
-        elem.part = part
-        elem.subsection = determine_subsection(type_ru, name, part)
-        
-        elements.append(elem)
+        result.append(part_group)
     
-    def get_volume(elem: ElementData) -> float:
-        for h in headers:
-            h_lower = h.lower()
-            if 'netvolume' in h_lower or ('объём' in h_lower and 'м3' in h_lower):
-                return safe_parse_float(elem.row.get(h, 0))
-        return 0.0
+    return result
+
+
+def _add_geometry_groups(parent_group, elems, headers, volume_col):
+    """Добавляет геометрическую группировку к родительской группе"""
     
-    def get_geometry_value(rule: dict, elem: ElementData) -> float:
+    def get_volume(elem):
+        if volume_col is None:
+            return 0.0
+        return safe_parse_float(elem.row.get(volume_col, 0))
+    
+    def get_geometry_value(rule, elem):
         if not rule or not rule.get('field'):
             return get_volume(elem)
         field = rule['field']
@@ -537,215 +653,224 @@ def group_elements(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[
             return get_volume(elem)
         return safe_parse_float(elem.row.get(field, 0))
     
-    def calculate_areas(elems: List[ElementData]) -> dict:
-        areas = {}
-        for col in sum_columns:
-            if 'площадь' in col.lower():
-                total = sum(safe_parse_float(e.row.get(col, 0)) for e in elems)
-                if total > 0:
-                    areas[col] = round_value(total, col)
-        return areas
-    
-    def create_group(name: str, level: int, elems: List[ElementData], children: List[dict] = None) -> dict:
-        if not elems:
+    def create_geo_group(name, level, elems_list):
+        if not elems_list:
             return None
-        volume = sum(get_volume(e) for e in elems)
+        volume = sum(get_volume(e) for e in elems_list)
+        indices = sorted([e.index for e in elems_list])
         return {
-            'name': name,
-            'level': level,
-            'indices': sorted([e.index for e in elems]),
-            'total_volume': round(volume, 2),
-            'total_areas': calculate_areas(elems),
-            'first_element': dict(elems[0].row) if elems else {},
-            'count': len(elems),
-            'children': children or []
+            'name': name, 'level': level, 'indices': indices,
+            'total_volume': round(volume, 2), 'total_areas': {},
+            'first_element': dict(elems_list[0].row) if elems_list else {},
+            'count': len(elems_list), 'children': []
         }
+    
+    def apply_mat_conc(elems_list, parent):
+        """Группировка по материалу/бетону для геометрических групп"""
+        mat_groups = defaultdict(list)
+        for e in elems_list:
+            material = str(e.row.get('Материал', ''))
+            mat_key = f'Материал: {material}' if material and material != '-' else 'Материал: не указан'
+            mat_groups[mat_key].append(e)
+        
+        if len(mat_groups) == 1:
+            conc_groups = defaultdict(list)
+            for e in elems_list:
+                conc_key = _get_concrete_key(e)
+                conc_groups[conc_key].append(e)
+            if len(conc_groups) > 1:
+                for conc_key, conc_elems in conc_groups.items():
+                    g = create_geo_group(conc_key, 7, conc_elems)
+                    if g:
+                        parent['children'].append(g)
+        else:
+            for mat_key, mat_elems in mat_groups.items():
+                mat_group = create_geo_group(mat_key, 6, mat_elems)
+                if not mat_group:
+                    continue
+                conc_groups = defaultdict(list)
+                for e in mat_elems:
+                    conc_key = _get_concrete_key(e)
+                    conc_groups[conc_key].append(e)
+                if len(conc_groups) > 1:
+                    for conc_key, conc_elems in conc_groups.items():
+                        g = create_geo_group(conc_key, 7, conc_elems)
+                        if g:
+                            mat_group['children'].append(g)
+                parent['children'].append(mat_group)
+    
+    def _get_concrete_key(elem):
+        concrete = str(elem.row.get('ExpCheck_MaterialConcrete_MGE_ConcreteGrade', ''))
+        water = str(elem.row.get('ExpCheck_MaterialConcrete_MGE_WaterResist', ''))
+        freeze = str(elem.row.get('ExpCheck_MaterialConcrete_MGE_FreezeDurability', ''))
+        parts = []
+        if concrete and concrete != '-' and concrete != '' and concrete != 'nan':
+            parts.append(concrete)
+        if water and water != '-' and water != '' and water != 'nan':
+            parts.append(f"W{water}" if not water.startswith('W') else water)
+        if freeze and freeze != '-' and freeze != '' and freeze != 'nan':
+            parts.append(f"F{freeze}" if not freeze.startswith('F') else freeze)
+        return f"Бетон: {', '.join(parts)}" if parts else "Бетон: без характеристик"
+    
+    ifc_groups = {}
+    for e in elems:
+        if e.ifc_type not in ifc_groups:
+            ifc_groups[e.ifc_type] = []
+        ifc_groups[e.ifc_type].append(e)
+    
+    need_ifc_group = len(ifc_groups) > 1
+    
+    for ifc_type, ifc_elements in ifc_groups.items():
+        rule = GEOMETRY_GROUP_RULES.get(ifc_type, GEOMETRY_GROUP_RULES['default'])
+        current_parent = parent_group
+        
+        if need_ifc_group:
+            ifc_labels = {
+                'IfcWall': 'Стены', 'IfcSlab': 'Плиты',
+                'IfcColumn': 'Колонны', 'IfcBeam': 'Балки',
+                'IfcStair': 'Лестницы', 'IfcStairFlight': 'Лестничные марши',
+                'IfcPile': 'Сваи', 'default': 'Прочее'
+            }
+            ifc_group = create_geo_group(ifc_labels.get(ifc_type, ifc_type), 4, ifc_elements)
+            if ifc_group:
+                parent_group['children'].append(ifc_group)
+                current_parent = ifc_group
+        
+        geo_groups = {}
+        for rg in rule['ranges']:
+            geo_groups[rg['label']] = []
+        
+        for e in ifc_elements:
+            value = get_geometry_value(rule, e)
+            assigned = False
+            for rg in rule['ranges']:
+                if value <= rg['max']:
+                    geo_groups[rg['label']].append(e)
+                    assigned = True
+                    break
+            if not assigned:
+                geo_groups[rule['ranges'][-1]['label']].append(e)
+        
+        for geo_label, geo_elements in geo_groups.items():
+            if not geo_elements:
+                continue
+            
+            rule_label = str(rule.get('label', '')).strip()
+            geo_name = f'{rule_label}: {geo_label}' if rule_label else geo_label
+            
+            if rule.get('sub_ranges'):
+                sub_rule = rule['sub_ranges']
+                sub_geo_groups = defaultdict(list)
+                for e in geo_elements:
+                    val = safe_parse_float(e.row.get(sub_rule['field'], 0))
+                    assigned = False
+                    for rg in sub_rule['ranges']:
+                        if val <= rg['max']:
+                            sub_geo_groups[rg['label']].append(e)
+                            assigned = True
+                            break
+                    if not assigned:
+                        sub_geo_groups[sub_rule['ranges'][-1]['label']].append(e)
+                
+                for sub_label, sub_elems in sub_geo_groups.items():
+                    if not sub_elems:
+                        continue
+                    sub_geo_group = create_geo_group(f'{sub_rule["label"]}: {sub_label}', 5, sub_elems)
+                    if sub_geo_group:
+                        apply_mat_conc(sub_elems, sub_geo_group)
+                        current_parent['children'].append(sub_geo_group)
+            else:
+                geo_group = create_geo_group(geo_name, 5, geo_elements)
+                if geo_group:
+                    apply_mat_conc(geo_elements, geo_group)
+                    current_parent['children'].append(geo_group)
+
+
+# ========== Core Grouping Logic (АР) ==========
+def group_elements_ar(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[str, Any]]:
+    """
+    Группировка элементов для Архитектурных Решений.
+    Иерархия: Часть здания → Тип элемента → Очищенное имя
+    """
+    
+    df = pd.DataFrame(rows)
+    
+    volume_col_name = None
+    for h in headers:
+        h_lower = h.lower()
+        if 'netvolume' in h_lower or ('объём' in h_lower and 'м3' in h_lower):
+            volume_col_name = h
+            break
+    
+    if volume_col_name and volume_col_name in df.columns:
+        df[volume_col_name] = pd.to_numeric(df[volume_col_name], errors='coerce').fillna(0)
+    
+    def get_part(floor_type):
+        if not floor_type or pd.isna(floor_type):
+            return 'Надземная'
+        fl = str(floor_type).lower().strip()
+        if any(w in fl for w in ['подзем', 'подвал', 'basement', '-1']):
+            return 'Подземная'
+        if any(w in fl for w in ['цокол', 'ground', 'нулев']):
+            return 'Цоколь'
+        return 'Надземная'
+    
+    if 'Тип_этажа' in df.columns:
+        df['_part'] = df['Тип_этажа'].apply(get_part)
+    else:
+        df['_part'] = 'Надземная'
+    
+    df['_type'] = df['Тип элемента'].fillna('Неизвестно').astype(str)
+    df['_name'] = df['Имя'].apply(clean_element_name)
     
     result = []
     part_order = ['Подземная', 'Цоколь', 'Надземная']
+    part_labels = {
+        'Подземная': 'Подземная часть здания (до отм. 0,000)',
+        'Цоколь': 'Цокольная часть здания (отм. 0,000)',
+        'Надземная': 'Надземная часть здания (выше отм. 0,000)',
+    }
     
     for part in part_order:
-        part_elements = [e for e in elements if e.part == part]
-        
-        if not part_elements:
+        part_data = df[df['_part'] == part]
+        if len(part_data) == 0:
             continue
         
-        part_structure = SECTION_STRUCTURE.get(part)
-        if not part_structure:
-            continue
+        part_indices = part_data.index.tolist()
+        part_volume = round(part_data[volume_col_name].sum(), 2) if volume_col_name else 0.0
         
-        part_group = create_group(part_structure['label'], 1, part_elements)
-        if not part_group:
-            continue
-        
-        # Разделяем на «обычные» и «прочие» (IfcProxyElement, IfcOpening, __OTHER__)
-        regular_elements = []
-        other_elements = []
-        
-        for e in part_elements:
-            if e.subsection == '__OTHER__' or e.ifc_type in ('IfcProxyElement', 'IfcOpening'):
-                other_elements.append(e)
-            else:
-                regular_elements.append(e)
-        
-        # Обрабатываем обычные элементы по разделам
-        for section in part_structure['sections']:
-            section_elements = []
-            section_subsections = defaultdict(list)
+        type_groups = []
+        for type_ru in sorted(part_data['_type'].unique()):
+            type_data = part_data[part_data['_type'] == type_ru]
+            type_indices = type_data.index.tolist()
+            type_volume = round(type_data[volume_col_name].sum(), 2) if volume_col_name else 0.0
             
-            for e in regular_elements:
-                for sub in section['subsections']:
-                    if e.subsection == sub['key']:
-                        section_elements.append(e)
-                        section_subsections[sub['key']].append(e)
-                        break
-            
-            if not section_elements:
-                continue
-            
-            section_group = create_group(section['name'], 2, section_elements)
-            if not section_group:
-                continue
-            
-            for subsection_key, subsection_elements in section_subsections.items():
-                subsection_group = create_group(subsection_key, 3, subsection_elements)
-                if not subsection_group:
-                    continue
+            name_groups = []
+            for name in sorted(type_data['_name'].unique()):
+                name_data = type_data[type_data['_name'] == name]
+                indices = name_data.index.tolist()
+                name_volume = round(name_data[volume_col_name].sum(), 2) if volume_col_name else 0.0
                 
-                skip_geometry = subsection_key in NO_GEOMETRY_GROUP_SUBSECTIONS
-                
-                if skip_geometry:
-                    # Без геометрической группировки — сразу материал/бетон
-                    apply_material_concrete_grouping(subsection_group, subsection_elements, 4, 5)
-                else:
-                    ifc_groups = defaultdict(list)
-                    for e in subsection_elements:
-                        ifc_groups[e.ifc_type].append(e)
-                    
-                    need_ifc_group = len(ifc_groups) > 1
-                    
-                    for ifc_type, ifc_elements in ifc_groups.items():
-                        rule = GEOMETRY_GROUP_RULES.get(ifc_type, GEOMETRY_GROUP_RULES['default'])
-                        
-                        parent = subsection_group
-                        
-                        if need_ifc_group:
-                            ifc_labels = {
-                                'IfcWall': 'Стены',
-                                'IfcSlab': 'Плиты',
-                                'IfcColumn': 'Колонны',
-                                'IfcBeam': 'Балки',
-                                'IfcStair': 'Лестницы',
-                                'IfcStairFlight': 'Лестничные марши',
-                                'IfcPile': 'Сваи',
-                                'default': 'Прочее'
-                            }
-                            ifc_group = create_group(ifc_labels.get(ifc_type, ifc_type), 4, ifc_elements)
-                            if ifc_group:
-                                parent['children'].append(ifc_group)
-                                parent = ifc_group
-                        
-                        geo_groups = defaultdict(list)
-                        for e in ifc_elements:
-                            value = get_geometry_value(rule, e)
-                            assigned = False
-                            for rg in rule['ranges']:
-                                if value <= rg['max']:
-                                    geo_groups[rg['label']].append(e)
-                                    assigned = True
-                                    break
-                            if not assigned:
-                                geo_groups[rule['ranges'][-1]['label']].append(e)
-                        
-                        for geo_label, geo_elements in geo_groups.items():
-                            if not geo_elements:
-                                continue
-                            
-                            geo_group = create_group(f'{rule["label"]}: {geo_label}', 5, geo_elements)
-                            if not geo_group:
-                                continue
-                            
-                            if rule.get('sub_ranges'):
-                                sub_rule = rule['sub_ranges']
-                                
-                                sub_geo_groups = defaultdict(list)
-                                for e in geo_elements:
-                                    val = safe_parse_float(e.row.get(sub_rule['field'], 0))
-                                    assigned = False
-                                    for rg in sub_rule['ranges']:
-                                        if val <= rg['max']:
-                                            sub_geo_groups[rg['label']].append(e)
-                                            assigned = True
-                                            break
-                                    if not assigned:
-                                        sub_geo_groups[sub_rule['ranges'][-1]['label']].append(e)
-                                
-                                for sub_label, sub_elems in sub_geo_groups.items():
-                                    if not sub_elems:
-                                        continue
-                                    
-                                    sub_geo_group = create_group(
-                                        f'{sub_rule["label"]}: {sub_label}', 6, sub_elems
-                                    )
-                                    if not sub_geo_group:
-                                        continue
-                                    
-                                    # Группировка по материалу/бетону внутри sub_geo_group
-                                    apply_material_concrete_grouping(sub_geo_group, sub_elems, 7, 8)
-                                    
-                                    geo_group['children'].append(sub_geo_group)
-                                
-                                if geo_group['children']:
-                                    parent['children'].append(geo_group)
-                            else:
-                                # Группировка по материалу/бетону внутри geo_group
-                                apply_material_concrete_grouping(geo_group, geo_elements, 6, 7)
-                                parent['children'].append(geo_group)
-                
-                if subsection_group['children']:
-                    section_group['children'].append(subsection_group)
-                elif subsection_elements:
-                    apply_material_concrete_grouping(subsection_group, subsection_elements, 4, 5)
-                    if subsection_group['children']:
-                        section_group['children'].append(subsection_group)
+                name_groups.append({
+                    'name': name, 'level': 3, 'indices': sorted(indices),
+                    'total_volume': name_volume, 'total_areas': {},
+                    'first_element': rows[indices[0]] if indices else {},
+                    'count': len(indices), 'children': []
+                })
             
-            if section_group['children']:
-                part_group['children'].append(section_group)
+            type_groups.append({
+                'name': IFC_TYPE_LABELS.get(type_ru, type_ru), 'level': 2,
+                'indices': sorted(type_indices), 'total_volume': type_volume,
+                'total_areas': {}, 'first_element': rows[type_indices[0]] if type_indices else {},
+                'count': len(type_indices), 'children': name_groups
+            })
         
-        # Если нет разделов с детьми, но есть обычные элементы
-        if not part_group['children'] and regular_elements:
-            by_subsection = defaultdict(list)
-            for e in regular_elements:
-                by_subsection[e.subsection].append(e)
-            
-            for sub_key, sub_elems in by_subsection.items():
-                sub_group = create_group(sub_key, 2, sub_elems)
-                if sub_group:
-                    apply_material_concrete_grouping(sub_group, sub_elems, 3, 4)
-                    if sub_group['children']:
-                        part_group['children'].append(sub_group)
-        
-        # Обрабатываем ПРОЧИЕ элементы
-        if other_elements:
-            other_group = create_group(part_structure.get('other_label', 'Прочие элементы'), 2, other_elements)
-            if other_group:
-                # Группируем прочие элементы по имени
-                by_name = defaultdict(list)
-                for e in other_elements:
-                    name_key = get_name_group(e)
-                    by_name[name_key].append(e)
-                
-                for name_key, name_elems in by_name.items():
-                    name_group = create_group(name_key, 3, name_elems)
-                    if name_group:
-                        apply_material_concrete_grouping(name_group, name_elems, 4, 5)
-                        if name_group['children']:
-                            other_group['children'].append(name_group)
-                
-                if other_group['children']:
-                    part_group['children'].append(other_group)
-        
-        result.append(part_group)
+        result.append({
+            'name': part_labels.get(part, part), 'level': 1,
+            'indices': sorted(part_indices), 'total_volume': part_volume,
+            'total_areas': {}, 'first_element': rows[part_indices[0]] if part_indices else {},
+            'count': len(part_indices), 'children': type_groups
+        })
     
     return result
 
@@ -758,12 +883,8 @@ def create_excel_report(groups: List[Dict], headers: List[str], rows: List[Dict]
     ws.title = "Группировка"
     
     columns = [
-        ('Уровень', 8),
-        ('Название группы', 60),
-        ('Кол-во элементов', 15),
-        ('Общий объём, м³', 18),
-        ('Индексы элементов (№ п/п)', 40),
-        ('Первый элемент', 12),
+        ('Уровень', 8), ('Название группы', 60), ('Кол-во элементов', 15),
+        ('Общий объём, м³', 18), ('Индексы элементов (№ п/п)', 40), ('Первый элемент', 12),
     ]
     
     for header in headers:
@@ -804,15 +925,13 @@ def create_excel_report(groups: List[Dict], headers: List[str], rows: List[Dict]
         
         indices = group.get('indices', [])
         if indices:
-            first_index = sorted(indices)[0] + 1
-            ws.cell(row=row_num, column=6, value=first_index)
+            ws.cell(row=row_num, column=6, value=sorted(indices)[0] + 1)
         else:
             ws.cell(row=row_num, column=6, value='')
         
         first = group.get('first_element', {})
         for col_idx, header in enumerate(headers, 7):
-            value = first.get(header, '')
-            ws.cell(row=row_num, column=col_idx, value=value)
+            ws.cell(row=row_num, column=col_idx, value=first.get(header, ''))
         
         area_start_col = 7 + len(headers)
         for i, area_name in enumerate(sorted(area_columns)):
@@ -866,41 +985,91 @@ def create_excel_report(groups: List[Dict], headers: List[str], rows: List[Dict]
     return output_path
 
 
-# ========== Main Function ==========
-def process_ifc_excel(input_excel_path: str, output_dir: str = None) -> Dict[str, str]:
+# ========== Кеширование на диске ==========
+
+def _get_cached_or_compute(input_excel_path: str, output_dir: str, 
+                           processing_type: str, group_func, suffix: str) -> Dict[str, str]:
     """
-    Process IFC Excel file and create grouped output.
-    
-    Args:
-        input_excel_path: Path to input Excel file
-        output_dir: Output directory (default: same as input file)
-    
-    Returns:
-        Dict with paths to output files: {'excel': '...', 'json': '...'}
+    Проверяет, существует ли уже результат группировки на диске.
+    Если да и входной файл не изменился — возвращает готовые пути.
+    Если нет — вычисляет группировку.
     """
-    input_path = Path(input_excel_path)
-    if not input_path.exists():
-        raise FileNotFoundError(f"Input file not found: {input_excel_path}")
-    
-    output_dir = Path(output_dir) if output_dir else input_path.parent
+    output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
+    input_path = Path(input_excel_path)
     base_name = input_path.stem
-    excel_output = output_dir / f"{base_name}_grouped.xlsx"
-    json_output = output_dir / f"{base_name}_grouped.json"
+    excel_output = output_dir / f"{base_name}_grouped{suffix}.xlsx"
+    json_output = output_dir / f"{base_name}_grouped{suffix}.json"
     
-    df = pd.read_excel(input_path)
+    if os.path.exists(str(excel_output)) and os.path.exists(str(json_output)):
+        input_mtime = os.path.getmtime(str(input_path))
+        output_mtime = os.path.getmtime(str(excel_output))
+        
+        if output_mtime >= input_mtime:
+            logger.info(f"Группировка ({processing_type}) уже существует, пропускаем "
+                       f"({os.path.getsize(str(excel_output)) / 1024:.0f} KB)")
+            return {
+                'excel': str(excel_output),
+                'json': str(json_output)
+            }
+        else:
+            logger.info(f"Входной файл изменился, пересчитываем группировку ({processing_type})")
+    
+    logger.info(f"Вычисление группировки ({processing_type})...")
+    start_time = time.time()
+    
+    df = pd.read_excel(input_excel_path)
     headers = df.columns.tolist()
     rows = df.to_dict('records')
     
-    groups = group_elements(rows, headers)
+    groups = group_func(rows, headers)
     
     create_excel_report(groups, headers, rows, str(excel_output))
     
     with open(json_output, 'w', encoding='utf-8') as f:
-        json.dump(groups, f, ensure_ascii=False, indent=2)
+        json.dump(groups, f, ensure_ascii=False, indent=2, default=str)
+    
+    elapsed = time.time() - start_time
+    logger.info(f"Группировка ({processing_type}) вычислена за {elapsed:.1f} сек "
+               f"({os.path.getsize(str(excel_output)) / 1024:.0f} KB)")
     
     return {
         'excel': str(excel_output),
         'json': str(json_output)
     }
+
+
+# ========== Main Functions ==========
+def process_ifc_excel(input_excel_path: str, output_dir: str = None) -> Dict[str, str]:
+    """Process IFC Excel file and create grouped output (для КР). С кешированием на диске."""
+    input_path = Path(input_excel_path)
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input file not found: {input_excel_path}")
+    
+    output_dir = output_dir or str(input_path.parent)
+    
+    return _get_cached_or_compute(
+        input_excel_path=input_excel_path,
+        output_dir=output_dir,
+        processing_type='KR',
+        group_func=group_elements,
+        suffix=''
+    )
+
+
+def process_ifc_excel_ar(input_excel_path: str, output_dir: str = None) -> Dict[str, str]:
+    """Process IFC Excel file and create grouped output (для АР). С кешированием на диске."""
+    input_path = Path(input_excel_path)
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input file not found: {input_excel_path}")
+    
+    output_dir = output_dir or str(input_path.parent)
+    
+    return _get_cached_or_compute(
+        input_excel_path=input_excel_path,
+        output_dir=output_dir,
+        processing_type='AR',
+        group_func=group_elements_ar,
+        suffix='_AR'
+    )

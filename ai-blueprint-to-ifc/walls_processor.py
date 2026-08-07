@@ -9,23 +9,25 @@ from config import settings
 from rectangle_utils import rectangles_to_yolo_obb, get_two_points_bbox
 
 class WallsProcessor:
-    def __init__(self, pdf_path, pdf_processor: PdfProcessor | None = None, zoom: float | None = None):
+    def __init__(self, pdf_path, detection_settings, pdf_processor: PdfProcessor | None = None, zoom: float | None = None, model: Path | None = None):
         self.PDF_PATH = pdf_path
+        self.detection_settings = detection_settings
+
         if pdf_processor:
             self.pdf_proc = pdf_processor
         else:
             self.pdf_proc = PdfProcessor(self.PDF_PATH)
         
-        self.yolo_service = YoloService(settings.YOLO_WALLS_MODEL)
-        self.tiles_path = settings.DEBUG_DIR / "blueprint_tiles"
+        self.yolo_service = YoloService(model or settings.MODELS_DIR / detection_settings.model_name)
+        self.tiles_path = settings.DEBUG_DIR / self.detection_settings.tiles_dir
         self.tiles_path.mkdir(parents=True, exist_ok=True)
 
-        self.zoom = zoom or settings.BLUEPRINT.zoom
+        self.zoom = zoom or self.detection_settings.zoom
 
         self.walls = None
 
-    def _get_blueprint_crops(self, drawing_bbox: dict | None, exclude_bboxes: list | None = None):
-        blueprint = settings.BLUEPRINT
+    def _get_blueprint_crops(self, drawing_index: int, drawing_bbox: dict | None, exclude_bboxes: list | None = None):
+        blueprint = self.detection_settings
         tiles = self.pdf_proc.split_image_to_tiles(
             drawing_bbox,
             blueprint.tile_size,
@@ -36,7 +38,7 @@ class WallsProcessor:
         )
 
         for i, tile in enumerate(tiles):
-            image_path = self.tiles_path / f"page_{self.PDF_PATH.parent.name}_{self.PDF_PATH.stem}_tile_{i}.png"
+            image_path = self.tiles_path / f"page_{self.PDF_PATH.parent.name}_{self.PDF_PATH.stem}_{drawing_index}_tile_{i}.png"
             tile["image"].save(image_path)
 
         return tiles
@@ -57,9 +59,9 @@ class WallsProcessor:
                 layouts_bboxes.append(layout["object"]["bbox"])
 
         drawing_bbox_2points = get_two_points_bbox(drawings_bboxes[drawing_index])
-        tiles = self._get_blueprint_crops(drawing_bbox_2points, exclude_bboxes=(drawings_bboxes[:drawing_index] + drawings_bboxes[drawing_index + 1:] + layouts_bboxes))
+        tiles = self._get_blueprint_crops(drawing_index, drawing_bbox_2points, exclude_bboxes=(drawings_bboxes[:drawing_index] + drawings_bboxes[drawing_index + 1:] + layouts_bboxes))
         walls = []
-        detection = settings.WALL_DETECTION
+        detection = self.detection_settings
 
         for i, tile in enumerate(tqdm(tiles, desc="Обработка плиток", unit="tile")):
             walls_bboxes_raw = self.yolo_service.detect(

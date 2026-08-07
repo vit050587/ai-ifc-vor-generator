@@ -469,7 +469,7 @@ def build_elements_json_output(df: pd.DataFrame) -> List[Dict[str, Any]]:
 
         # 3. Геометрическая характеристика (нормализованный диапазон)
         geo_name, geo_range = _get_geometry_range_for_element(element_data, ifc_type)
-        if geo_range:
+        if geo_name and geo_range:
             characteristics.append({
                 'name': geo_name,
                 'values': [
@@ -938,7 +938,7 @@ def build_reference_output(
         # Ищем геометрический диапазон по всему пути, а не только в имени листовой группы.
         # Листовая группа может называться 'Бетон: В35', а геометрия — в родителе 'Площадь: более 20 м²'.
         geo_name, geo_range = _extract_geometry_range_from_path(path, geo_label)
-        if geo_range:
+        if geo_name and geo_range:
             characteristics.append({
                 'name': geo_name,
                 'values': [
@@ -995,9 +995,10 @@ def build_reference_output(
 
         # Оригинальное геометрическое значение
         orig_geo = _get_original_geometry(first, ifc_type)
-        if orig_geo is not None:
+        original_geo_name = geo_name or geo_label
+        if orig_geo is not None and original_geo_name:
             additional.append({
-                'name': geo_name or geo_label,
+                'name': original_geo_name,
                 'values': [{'strValue': str(orig_geo)}],
             })
 
