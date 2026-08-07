@@ -738,8 +738,11 @@
                     </table>
                 </div>
                 <div class="flex gap-8 mt-12" id="blueprintButtons" style="display:none;">
-                    <button class="btn btn-secondary" onclick="showBlueprintImage()">📐 Посмотреть на чертеже</button>
-                    <button class="btn btn-secondary" onclick="showMaterialsLegend()">🎨 Условные обозначения</button>
+                    <button class="btn btn-secondary" id="btnBlueprintImage" onclick="showBlueprintImage()">📐 Посмотреть на чертеже</button>
+                    <button class="btn btn-secondary" id="btnMaterialsLegend" onclick="showMaterialsLegend()">🎨 Условные обозначения</button>
+                    <button class="btn btn-secondary" id="btnViewElementsJson" style="display:none;" onclick="showSessionJsonFile('ifc_elements_output.json')">📄 Элементы (JSON)</button>
+                    <button class="btn btn-secondary" id="btnViewGroupedJson" style="display:none;" onclick="showSessionJsonFile('ifc_raw_elements_grouped.json')">📊 Группы (JSON)</button>
+                    <button class="btn btn-secondary" id="btnViewGroupedXlsx" style="display:none;" onclick="previewResultFile('ifc_raw_elements_grouped.xlsx')">📥 Группы (XLSX)</button>
                 </div>
                 <div class="params-row mt-20">
                     <div>
@@ -895,7 +898,10 @@
         <div class="modal">
             <div class="modal-header">
                 <h3 id="previewModalTitle">Предпросмотр файла</h3>
-                <button class="modal-close" onclick="closePreview()">✕</button>
+                <div class="flex gap-8">
+                    <button class="btn btn-sm btn-primary" onclick="downloadCurrentViewFile()">Скачать</button>
+                    <button class="modal-close" onclick="closePreview()">✕</button>
+                </div>
             </div>
             <div class="modal-body">
                 <p id="previewModalInfo" style="margin-bottom:12px; color:#718096;"></p>
@@ -942,6 +948,22 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="sessionJsonModal">
+        <div class="modal" style="max-width:1000px;">
+            <div class="modal-header">
+                <h3 id="sessionJsonTitle">Просмотр JSON</h3>
+                <div class="flex gap-8">
+                    <button class="btn btn-sm btn-primary" onclick="downloadCurrentViewFile()">Скачать</button>
+                    <button class="modal-close" onclick="closeSessionJsonModal()">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div id="sessionJsonLoading" style="padding:40px;color:#718096;text-align:center;">Загрузка...</div>
+                <pre id="sessionJsonContent" style="display:none;max-height:70vh;overflow:auto;background:#f7fafc;padding:16px;border-radius:8px;font-size:13px;line-height:1.5;"></pre>
+            </div>
+        </div>
+    </div>
+
     <div class="modal-overlay" id="viewer3dModal">
         <div class="modal" style="max-width:900px;">
             <div class="modal-header">
@@ -982,13 +1004,14 @@ let pollingGeneration = 0;
 let isNewRunMode = false;
 let autoGroupEnabled = true;
 let currentProcessingType = 'KR';
+let currentViewFilename = null;
 
 // Кеш для ленивой загрузки строк данных
 const rowElementCache = new Map();
 
 // Настройки производительности
 const PERF = {
-    BATCH_SIZE: 30,
+    BATCH_SIZE: 50,
     BATCH_DELAY: 16,
 };
 
@@ -1560,7 +1583,17 @@ async function onIfcProcessed(sessionId) {
         if (preview_data.buildingHeight) document.getElementById('buildingHeight').value = preview_data.buildingHeight;
         const blueprintBtns = document.getElementById('blueprintButtons');
         if (blueprintBtns) {
-            blueprintBtns.style.display = (preview_data.sourceType === 'pdf' && (preview_data.hasBlueprintImage || preview_data.hasMaterialsMd)) ? 'flex' : 'none';
+            const isPdf = preview_data.sourceType === 'pdf';
+            const hasPdfExtras = isPdf && (preview_data.hasBlueprintImage || preview_data.hasMaterialsMd);
+            const hasRefFiles = preview_data.hasIfcElementsJson || preview_data.hasIfcGroupedJson || preview_data.hasIfcGroupedXlsx;
+            blueprintBtns.style.display = (hasPdfExtras || hasRefFiles) ? 'flex' : 'none';
+
+            // Для PDF показываем все кнопки, для IFC — только JSON/XLSX
+            document.getElementById('btnBlueprintImage').style.display = isPdf ? '' : 'none';
+            document.getElementById('btnMaterialsLegend').style.display = isPdf ? '' : 'none';
+            document.getElementById('btnViewElementsJson').style.display = preview_data.hasIfcElementsJson ? '' : 'none';
+            document.getElementById('btnViewGroupedJson').style.display = preview_data.hasIfcGroupedJson ? '' : 'none';
+            document.getElementById('btnViewGroupedXlsx').style.display = preview_data.hasIfcGroupedXlsx ? '' : 'none';
         }
         showToast(`Загружено ${preview_data.totalRows} строк`, 'success');
         
@@ -2440,6 +2473,7 @@ function updateSelectionUI() {
 }
 
 // ========== Группировка для КР ==========
+// ========== Группировка для КР ==========
 function autoGroupRows() {
     if (currentProcessingType === 'AR') {
         autoGroupRowsAR();
@@ -2488,6 +2522,8 @@ function autoGroupRows() {
         const index = parseInt(tr.dataset.rowIndex);
         
         const partSelect = tds[tds.length - 2]?.querySelector('select');
+        const materialSelect = tds[tds.length - 1]?.querySelector('select');
+        
         const part = partSelect ? partSelect.value : 'Надземная';
         const typeRu = typeRuIdx !== -1 ? (data.rows[index]?.[typeRuIdx] || 'Неизвестно') : 'Неизвестно';
         const name = nameIdx !== -1 ? (data.rows[index]?.[nameIdx] || '') : '';
@@ -2690,21 +2726,100 @@ function autoGroupRows() {
                         const rule = GEOMETRY_GROUP_RULES[ifcType] || GEOMETRY_GROUP_RULES['default'];
                         
                         if (rule && rule.ranges && rule.ranges.length > 0) {
-                            const geoGroups = rule.ranges.map(r => ({ ...r, rows: [], indices: [] }));
+                            // ===== НОВАЯ ЛОГИКА С ПОДДЕРЖКОЙ sub_ranges =====
+                            
+                            // Шаг 1: Основная группировка по первому параметру
+                            const mainGroups = rule.ranges.map(r => ({ 
+                                label: r.label, 
+                                max: r.max, 
+                                rows: [], 
+                                indices: [] 
+                            }));
                             
                             ifcRows.forEach(rd => {
                                 const value = getGeometryValue(rule, rd.index);
                                 let assigned = false;
-                                for (const rg of geoGroups) {
-                                    if (value <= rg.max) { rg.rows.push(rd); rg.indices.push(rd.index); assigned = true; break; }
+                                for (const mg of mainGroups) {
+                                    if (value <= mg.max) { 
+                                        mg.rows.push(rd); 
+                                        mg.indices.push(rd.index); 
+                                        assigned = true; 
+                                        break; 
+                                    }
                                 }
                                 if (!assigned) {
-                                    const lastGroup = geoGroups[geoGroups.length - 1];
-                                    if (lastGroup) { lastGroup.rows.push(rd); lastGroup.indices.push(rd.index); }
+                                    const lastMg = mainGroups[mainGroups.length - 1];
+                                    if (lastMg) { 
+                                        lastMg.rows.push(rd); 
+                                        lastMg.indices.push(rd.index); 
+                                    }
                                 }
                             });
                             
-                            geoGroups.forEach((geoGroup) => {
+                            // Шаг 2: Если есть sub_ranges, создаём подгруппы внутри каждой основной группы
+                            const finalGeoGroups = [];
+                            
+                            if (rule.sub_ranges) {
+                                mainGroups.forEach(mainGroup => {
+                                    if (mainGroup.rows.length === 0) return;
+                                    
+                                    const subRanges = rule.sub_ranges.ranges.map(r => ({
+                                        label: r.label,
+                                        max: r.max,
+                                        rows: [],
+                                        indices: []
+                                    }));
+                                    
+                                    mainGroup.rows.forEach(rd => {
+                                        const subFieldIdx = data.headers.indexOf(rule.sub_ranges.field);
+                                        let subValue = 0;
+                                        if (subFieldIdx !== -1 && data.rows[rd.index]) {
+                                            subValue = safeParseFloat(data.rows[rd.index][subFieldIdx]);
+                                        }
+                                        
+                                        let assigned = false;
+                                        for (const sg of subRanges) {
+                                            if (subValue <= sg.max) {
+                                                sg.rows.push(rd);
+                                                sg.indices.push(rd.index);
+                                                assigned = true;
+                                                break;
+                                            }
+                                        }
+                                        if (!assigned) {
+                                            const lastSg = subRanges[subRanges.length - 1];
+                                            if (lastSg) {
+                                                lastSg.rows.push(rd);
+                                                lastSg.indices.push(rd.index);
+                                            }
+                                        }
+                                    });
+                                    
+                                    subRanges.forEach(subGroup => {
+                                        if (subGroup.rows.length > 0) {
+                                            finalGeoGroups.push({
+                                                rows: subGroup.rows,
+                                                indices: subGroup.indices,
+                                                label: `${mainGroup.label} → ${rule.sub_ranges.label}: ${subGroup.label}`
+                                            });
+                                        }
+                                    });
+                                });
+                            } else {
+                                // Без sub_ranges — используем основные группы как есть
+                                mainGroups.forEach(mainGroup => {
+                                    if (mainGroup.rows.length > 0) {
+                                        finalGeoGroups.push({
+                                            rows: mainGroup.rows,
+                                            indices: mainGroup.indices,
+                                            label: mainGroup.label
+                                        });
+                                    }
+                                });
+                            }
+                            
+                            // Шаг 3: Создаём DOM-элементы для каждой финальной группы
+                            finalGeoGroups.forEach((geoGroup) => {
                                 if (geoGroup.rows.length === 0) return;
                                 
                                 let geoVolume = 0;
@@ -2812,6 +2927,7 @@ function autoGroupRows() {
             });
         });
         
+        // Прочие элементы
         const otherRows = partRows.filter(rd => !groupedIndices.has(rd.index));
         if (otherRows.length > 0) {
             let otherVolume = 0;
@@ -2927,7 +3043,6 @@ function autoGroupRows() {
     updateSelectionUI();
     showToast(`Сгруппировано (КР): ${Object.keys(leafGroups).length} групп`, 'info');
 }
-
 // ========== Группировка для АР ==========
 function autoGroupRowsAR() {
     const data = window._previewData;
@@ -3142,6 +3257,7 @@ function autoGroupRowsAR() {
 // ========== Предпросмотр файлов ==========
 function previewResultFile(filename) {
     const overlay = document.getElementById('previewModal');
+    currentViewFilename = filename;
     document.getElementById('previewModalTitle').textContent = filename;
     document.getElementById('previewModalInfo').textContent = 'Загрузка...';
     document.getElementById('previewModalHead').innerHTML = '';
@@ -3169,6 +3285,47 @@ function previewResultFile(filename) {
 }
 
 function closePreview() { document.getElementById('previewModal').classList.remove('active'); }
+
+// ========== Просмотр/скачивание JSON-справочников сессии ==========
+async function showSessionJsonFile(filename) {
+    if (!currentSessionId) { showToast('Нет активной сессии', 'warning'); return; }
+    const overlay = document.getElementById('sessionJsonModal');
+    currentViewFilename = filename;
+    const loading = document.getElementById('sessionJsonLoading');
+    const content = document.getElementById('sessionJsonContent');
+    document.getElementById('sessionJsonTitle').textContent = '📄 ' + filename;
+    loading.style.display = 'block';
+    loading.textContent = 'Загрузка...';
+    loading.style.color = '#718096';
+    content.style.display = 'none';
+    overlay.classList.add('active');
+    try {
+        const response = await fetch(`${API_BASE}/session/${currentSessionId}/download/${encodeURIComponent(filename)}`);
+        if (!response.ok) throw new Error('Не удалось загрузить файл');
+        const data = await response.json();
+        content.textContent = JSON.stringify(data, null, 2);
+        loading.style.display = 'none';
+        content.style.display = 'block';
+    } catch (e) {
+        loading.textContent = 'Ошибка: ' + e.message;
+        loading.style.color = '#fc8181';
+    }
+}
+
+function closeSessionJsonModal() {
+    document.getElementById('sessionJsonModal').classList.remove('active');
+    document.getElementById('sessionJsonContent').textContent = '';
+}
+
+function downloadSessionFile(filename) {
+    if (!currentSessionId) { showToast('Нет активной сессии', 'warning'); return; }
+    window.open(`${API_BASE}/session/${currentSessionId}/download/${encodeURIComponent(filename)}`, '_blank');
+}
+
+function downloadCurrentViewFile() {
+    if (!currentViewFilename) { showToast('Нет файла для скачивания', 'warning'); return; }
+    downloadSessionFile(currentViewFilename);
+}
 
 // ========== Зум чертежа ==========
 function _blueprintApplyTransform() {
@@ -3629,11 +3786,13 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('viewer3dModal').addEventListener('click', function(e) { if (e.target === this) close3DViewer(); });
     document.getElementById('blueprintImageModal').addEventListener('click', function(e) { if (e.target === this) closeBlueprintImage(); });
     document.getElementById('materialsLegendModal').addEventListener('click', function(e) { if (e.target === this) closeMaterialsLegend(); });
+    document.getElementById('sessionJsonModal').addEventListener('click', function(e) { if (e.target === this) closeSessionJsonModal(); });
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
             closePreview();
             closeBlueprintImage();
             closeMaterialsLegend();
+            closeSessionJsonModal();
             close3DViewer();
         }
     });

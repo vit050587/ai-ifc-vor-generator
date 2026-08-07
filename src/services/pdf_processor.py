@@ -29,6 +29,7 @@ def process_pdf(
     output_folder: str,
     progress_callback=None,
     reference_only: bool = False,
+    processing_type: str = "KR",
 ) -> Dict[str, Any]:
     with _PDF_PROCESS_LOCK:
         return _process_pdf_unlocked(
@@ -36,6 +37,7 @@ def process_pdf(
             output_folder,
             progress_callback=progress_callback,
             reference_only=reference_only,
+            processing_type=processing_type,
         )
 
 
@@ -44,6 +46,7 @@ def _process_pdf_unlocked(
     output_folder: str,
     progress_callback=None,
     reference_only: bool = False,
+    processing_type: str = "KR",
 ) -> Dict[str, Any]:
     """
     Обрабатывает PDF-чертёж и создаёт Excel-файлы с конструктивными элементами.
@@ -250,7 +253,7 @@ def _process_pdf_unlocked(
         # (аналогично пайплайну IFC из ifc_reference_builder.py)
         try:
             from src.services.ifc_reference_builder import build_reference_from_pdf
-            build_reference_from_pdf(df_all, output_folder_str)
+            build_reference_from_pdf(df_all, output_folder_str, processing_type)
         except Exception as e:
             if reference_only:
                 raise

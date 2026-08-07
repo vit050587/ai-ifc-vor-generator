@@ -429,8 +429,11 @@ class ElementData:
         self.ifc_type = get_ifc_type(self.type_ru, self.name)
 
 
-def group_elements(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[str, Any]]:
-    """Группировка элементов по иерархии (для КР). Оптимизированная версия с pandas."""
+def group_elements(rows: List[Dict[str, Any]], headers: List[str], use_new_grouping: bool = False) -> List[Dict[str, Any]]:
+    """Группировка элементов по иерархии (для КР). Оптимизированная версия с pandas.
+    
+    use_new_grouping=True — упрощённая геометрическая группировка из group_excel_new.py.
+    """
     
     volume_col = None
     for h in headers:
@@ -476,7 +479,10 @@ def group_elements(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[
         
         if volume_col and volume_col in group_df.columns:
             vol_series = pd.to_numeric(group_df[volume_col], errors='coerce').fillna(0)
-            volume = round(vol_series.sum(), 2)
+            # НОВАЯ ВЕРСИЯ: float() — иначе np.int64/np.float64 попадут в JSON как строки
+            # (json.dump(default=str) в _get_cached_or_compute), что ломает
+            # build_reference_output (round() по строке).
+            volume = float(round(vol_series.sum(), 2))
         else:
             volume = 0.0
         
@@ -486,7 +492,7 @@ def group_elements(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[
                 area_series = pd.to_numeric(group_df[col], errors='coerce').fillna(0)
                 total = area_series.sum()
                 if total > 0:
-                    areas[col] = round(total, 2)
+                    areas[col] = float(round(total, 2))
         
         first_elem = rows[indices[0]] if indices else {}
         
@@ -610,7 +616,7 @@ def group_elements(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[
                         e.ifc_type = get_ifc_type(str(row.get('Тип элемента', '')), str(row.get('Имя', '')))
                         elems.append(e)
                     
-                    _add_geometry_groups(sub_group, elems, headers, volume_col)
+                    _add_geometry_groups(sub_group, elems, headers, volume_col, use_new_grouping=use_new_grouping)
                 
                 if sub_group['children']:
                     section_group['children'].append(sub_group)
@@ -637,8 +643,25 @@ def group_elements(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[
     return result
 
 
-def _add_geometry_groups(parent_group, elems, headers, volume_col):
-    """Добавляет геометрическую группировку к родительской группе"""
+def group_elements_new(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[str, Any]]:
+    """Группировка элементов (для КР) с упрощённой геометрической логикой из group_excel_new.py.
+
+    Отличия от group_elements:
+    - фиксированные уровни: ifc-группа = 4, геометрические/подгруппы = 5;
+    - подгруппы sub_ranges добавляются напрямую в родителя (без промежуточной группы);
+    - float()-приведение значений объёмов/площадей для корректной JSON-сериализации.
+    """
+    return group_elements(rows, headers, use_new_grouping=True)
+
+
+def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_grouping=False):
+    """Добавляет геометрическую группировку к родительской группе с поддержкой sub_ranges.
+
+    use_new_grouping=True — упрощённая логика из group_excel_new.py:
+    фиксированные уровни (4/5), подгруппы sub_ranges добавляются напрямую в родителя.
+    use_new_grouping=False (по умолчанию) — старая логика: динамический base_level,
+    промежуточная основная группа с вложенными подгруппами.
+    """
     
     def get_volume(elem):
         if volume_col is None:
@@ -660,7 +683,8 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col):
         indices = sorted([e.index for e in elems_list])
         return {
             'name': name, 'level': level, 'indices': indices,
-            'total_volume': round(volume, 2), 'total_areas': {},
+            # НОВАЯ ВЕРСИЯ: float() — чтобы значения корректно сериализовались в JSON
+            'total_volume': float(round(volume, 2)), 'total_areas': {},
             'first_element': dict(elems_list[0].row) if elems_list else {},
             'count': len(elems_list), 'children': []
         }
@@ -723,6 +747,7 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col):
     for ifc_type, ifc_elements in ifc_groups.items():
         rule = GEOMETRY_GROUP_RULES.get(ifc_type, GEOMETRY_GROUP_RULES['default'])
         current_parent = parent_group
+        base_level = 4
         
         if need_ifc_group:
             ifc_labels = {
@@ -731,11 +756,15 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col):
                 'IfcStair': 'Лестницы', 'IfcStairFlight': 'Лестничные марши',
                 'IfcPile': 'Сваи', 'default': 'Прочее'
             }
-            ifc_group = create_geo_group(ifc_labels.get(ifc_type, ifc_type), 4, ifc_elements)
+            ifc_group = create_geo_group(ifc_labels.get(ifc_type, ifc_type), base_level, ifc_elements)
             if ifc_group:
                 parent_group['children'].append(ifc_group)
                 current_parent = ifc_group
+                # НОВАЯ ВЕРСИЯ: фиксированные уровни (4/5), base_level не увеличиваем
+                if not use_new_grouping:
+                    base_level += 1
         
+        # Шаг 1: Основная группировка по ranges
         geo_groups = {}
         for rg in rule['ranges']:
             geo_groups[rg['label']] = []
@@ -751,6 +780,7 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col):
             if not assigned:
                 geo_groups[rule['ranges'][-1]['label']].append(e)
         
+        # Шаг 2: Создание групп с учётом sub_ranges
         for geo_label, geo_elements in geo_groups.items():
             if not geo_elements:
                 continue
@@ -758,9 +788,12 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col):
             rule_label = str(rule.get('label', '')).strip()
             geo_name = f'{rule_label}: {geo_label}' if rule_label else geo_label
             
-            if rule.get('sub_ranges'):
+            # Если есть sub_ranges и элементов больше 1 (старая логика)
+            if rule.get('sub_ranges') and len(geo_elements) > 1:
                 sub_rule = rule['sub_ranges']
                 sub_geo_groups = defaultdict(list)
+                
+                # Распределяем по sub_ranges
                 for e in geo_elements:
                     val = safe_parse_float(e.row.get(sub_rule['field'], 0))
                     assigned = False
@@ -772,19 +805,50 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col):
                     if not assigned:
                         sub_geo_groups[sub_rule['ranges'][-1]['label']].append(e)
                 
-                for sub_label, sub_elems in sub_geo_groups.items():
-                    if not sub_elems:
+                if use_new_grouping:
+                    # НОВАЯ ВЕРСИЯ: подгруппы добавляются напрямую в родителя
+                    # (без промежуточной основной группы), уровень фиксированный 5
+                    for sub_label, sub_elems in sub_geo_groups.items():
+                        if not sub_elems:
+                            continue
+                        sub_geo_group = create_geo_group(f'{sub_rule["label"]}: {sub_label}', 5, sub_elems)
+                        if sub_geo_group:
+                            apply_mat_conc(sub_elems, sub_geo_group)
+                            current_parent['children'].append(sub_geo_group)
+                else:
+                    # СТАРАЯ ВЕРСИЯ: промежуточная основная группа с вложенными подгруппами
+                    main_geo_group = create_geo_group(geo_name, base_level, geo_elements)
+                    if not main_geo_group:
                         continue
-                    sub_geo_group = create_geo_group(f'{sub_rule["label"]}: {sub_label}', 5, sub_elems)
-                    if sub_geo_group:
-                        apply_mat_conc(sub_elems, sub_geo_group)
-                        current_parent['children'].append(sub_geo_group)
+                    
+                    # Создаём подгруппы
+                    has_subgroups = False
+                    for sub_label, sub_elems in sub_geo_groups.items():
+                        if not sub_elems:
+                            continue
+                        
+                        sub_name = f'{sub_rule["label"]}: {sub_label}'
+                        sub_geo_group = create_geo_group(sub_name, base_level + 1, sub_elems)
+                        if sub_geo_group:
+                            apply_mat_conc(sub_elems, sub_geo_group)
+                            main_geo_group['children'].append(sub_geo_group)
+                            has_subgroups = True
+                    
+                    # Добавляем основную группу, только если есть подгруппы
+                    if has_subgroups:
+                        current_parent['children'].append(main_geo_group)
+                    else:
+                        # Если подгруппы не создались — добавляем как обычную группу
+                        apply_mat_conc(geo_elements, main_geo_group)
+                        current_parent['children'].append(main_geo_group)
             else:
-                geo_group = create_geo_group(geo_name, 5, geo_elements)
+                # Обычная группа без sub_ranges
+                # НОВАЯ ВЕРСИЯ: фиксированный уровень 5, старая: base_level
+                level = 5 if use_new_grouping else base_level
+                geo_group = create_geo_group(geo_name, level, geo_elements)
                 if geo_group:
                     apply_mat_conc(geo_elements, geo_group)
                     current_parent['children'].append(geo_group)
-
 
 # ========== Core Grouping Logic (АР) ==========
 def group_elements_ar(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[str, Any]]:
@@ -837,19 +901,22 @@ def group_elements_ar(rows: List[Dict[str, Any]], headers: List[str]) -> List[Di
             continue
         
         part_indices = part_data.index.tolist()
-        part_volume = round(part_data[volume_col_name].sum(), 2) if volume_col_name else 0.0
+        # НОВАЯ ВЕРСИЯ: float() — чтобы значения корректно сериализовались в JSON
+        part_volume = float(round(part_data[volume_col_name].sum(), 2)) if volume_col_name else 0.0
         
         type_groups = []
         for type_ru in sorted(part_data['_type'].unique()):
             type_data = part_data[part_data['_type'] == type_ru]
             type_indices = type_data.index.tolist()
-            type_volume = round(type_data[volume_col_name].sum(), 2) if volume_col_name else 0.0
+            # НОВАЯ ВЕРСИЯ: float() — чтобы значения корректно сериализовались в JSON
+            type_volume = float(round(type_data[volume_col_name].sum(), 2)) if volume_col_name else 0.0
             
             name_groups = []
             for name in sorted(type_data['_name'].unique()):
                 name_data = type_data[type_data['_name'] == name]
                 indices = name_data.index.tolist()
-                name_volume = round(name_data[volume_col_name].sum(), 2) if volume_col_name else 0.0
+                # НОВАЯ ВЕРСИЯ: float() — чтобы значения корректно сериализовались в JSON
+                name_volume = float(round(name_data[volume_col_name].sum(), 2)) if volume_col_name else 0.0
                 
                 name_groups.append({
                     'name': name, 'level': 3, 'indices': sorted(indices),
@@ -1073,3 +1140,29 @@ def process_ifc_excel_ar(input_excel_path: str, output_dir: str = None) -> Dict[
         group_func=group_elements_ar,
         suffix='_AR'
     )
+
+
+def process_ifc_excel_new(input_excel_path: str, output_dir: str = None) -> Dict[str, str]:
+    """Process IFC Excel file и создать grouped output (для КР) с новой упрощённой логикой
+    геометрической группировки (как в group_excel_new.py). С кешированием на диске."""
+    input_path = Path(input_excel_path)
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input file not found: {input_excel_path}")
+    
+    output_dir = output_dir or str(input_path.parent)
+    
+    return _get_cached_or_compute(
+        input_excel_path=input_excel_path,
+        output_dir=output_dir,
+        processing_type='KR',
+        group_func=group_elements_new,
+        suffix='_new'
+    )
+
+
+def process_ifc_excel_ar_new(input_excel_path: str, output_dir: str = None) -> Dict[str, str]:
+    """Process IFC Excel file и создать grouped output (для АР) с новой логикой из group_excel_new.py.
+
+    В новой версии group_elements_ar идентична старой (за исключением float()-фиксов,
+    которые уже применены к process_ifc_excel_ar), поэтому переиспользуем её."""
+    return process_ifc_excel_ar(input_excel_path, output_dir)

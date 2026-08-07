@@ -834,6 +834,9 @@ def preview_excel(session_id: str):
     # Проверяем наличие чертежа и условных обозначений
     has_blueprint_image = False
     has_materials_md = False
+    has_ifc_elements_json = False
+    has_ifc_grouped_json = False
+    has_ifc_grouped_xlsx = False
     source_type = s.get("source_type")
     
     for f in os.listdir(search_dir) if os.path.exists(search_dir) else []:
@@ -841,6 +844,12 @@ def preview_excel(session_id: str):
             has_blueprint_image = True
         if f == "materials_colors.md":
             has_materials_md = True
+
+    # JSON/XLSX-справочники лежат в корне директории сессии
+    if os.path.exists(session_dir):
+        has_ifc_elements_json = os.path.exists(os.path.join(session_dir, "ifc_elements_output.json"))
+        has_ifc_grouped_json = os.path.exists(os.path.join(session_dir, "ifc_raw_elements_grouped.json"))
+        has_ifc_grouped_xlsx = os.path.exists(os.path.join(session_dir, "ifc_raw_elements_grouped.xlsx"))
 
     # После чтения основного Excel
     building_height = None
@@ -900,6 +909,9 @@ def preview_excel(session_id: str):
         source_type=source_type,
         has_blueprint_image=has_blueprint_image,
         has_materials_md=has_materials_md,
+        has_ifc_elements_json=has_ifc_elements_json,
+        has_ifc_grouped_json=has_ifc_grouped_json,
+        has_ifc_grouped_xlsx=has_ifc_grouped_xlsx,
         processing_type=s.get("processing_type", "KR"),
     ))
 
@@ -954,6 +966,12 @@ def preview_result(session_id: str, filename: str):
         return _err(ErrorResponse(detail="Некорректное имя файла"), 400)
 
     path = _get_manager().file_path(session_id, filename)
+    if not path or not os.path.exists(path):
+        # Fallback: ищем файл в корне директории сессии
+        session_dir = os.path.join(_get_manager().output_folder, session_id)
+        fallback_path = os.path.join(session_dir, filename)
+        if os.path.exists(fallback_path) and os.path.isfile(fallback_path):
+            path = fallback_path
     if not path or not os.path.exists(path):
         return _err(ErrorResponse(detail="Файл не найден"), 404)
 
@@ -1153,6 +1171,12 @@ def download_file(session_id: str, filename: str):
         return _err(ErrorResponse(detail="Некорректное имя файла"), 400)
 
     path = _get_manager().file_path(session_id, filename)
+    if not path or not os.path.exists(path):
+        # Fallback: ищем файл в корне директории сессии
+        session_dir = os.path.join(_get_manager().output_folder, session_id)
+        fallback_path = os.path.join(session_dir, filename)
+        if os.path.exists(fallback_path) and os.path.isfile(fallback_path):
+            path = fallback_path
     if not path or not os.path.exists(path):
         return _err(ErrorResponse(detail="Файл не найден"), 404)
 

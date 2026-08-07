@@ -33,6 +33,7 @@ from src.services.group_excel import (
     get_ifc_type,
     safe_parse_float,
     process_ifc_excel,
+    process_ifc_excel_ar,
     is_hydro_vertical,
     is_hydro_horizontal,
 )
@@ -783,10 +784,14 @@ def extract_elements_from_ifc(ifc_path: str, output_folder: str) -> str:
 def group_elements_by_type(
     input_excel_path: str,
     output_folder: str,
+    processing_type: str = "KR",
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], str, str]:
     """
-    Группирует элементы через process_ifc_excel() — точно тот же путь,
-    что использует веб-интерфейс при нажатии «Авто-группировка».
+    Группирует элементы через process_ifc_excel()/process_ifc_excel_ar() —
+    точно тот же путь, что использует веб-интерфейс при нажатии «Авто-группировка».
+
+    Для АР используется process_ifc_excel_ar (другой набор правил группировки),
+    для КР — process_ifc_excel.
 
     Вход:  путь к Excel-файлу с листом 'Данные'
     Выход: (листовые_группы, полное_дерево_групп, путь_к_grouped_json, путь_к_grouped_xlsx)
@@ -795,10 +800,17 @@ def group_elements_by_type(
         logger.warning(f"Excel файл не найден: {input_excel_path}")
         return [], [], '', ''
 
-    logger.info(f"Группировка через process_ifc_excel: {input_excel_path}")
+    processing_type = processing_type.upper()
+    if processing_type not in ("KR", "AR"):
+        processing_type = "KR"
 
-    # Вызываем ту же функцию, что и веб-интерфейс
-    group_result = process_ifc_excel(input_excel_path, output_folder)
+    # Вызываем ту же функцию, что и веб-интерфейс (разная для КР и АР)
+    if processing_type == "AR":
+        logger.info(f"Группировка (АР) через process_ifc_excel_ar: {input_excel_path}")
+        group_result = process_ifc_excel_ar(input_excel_path, output_folder)
+    else:
+        logger.info(f"Группировка (КР) через process_ifc_excel: {input_excel_path}")
+        group_result = process_ifc_excel(input_excel_path, output_folder)
 
     grouped_json_path = group_result['json']
     grouped_excel_path = group_result['excel']
@@ -898,7 +910,10 @@ def build_reference_output(
         )
 
         # ---- Формируем totalMeasure ----
-        total_volume = group.get('total_volume', 0)
+        # Значения total_volume/total_areas приходят из JSON-дерева групп
+        # (json.dump(default=str)) и могут быть строками вместо чисел —
+        # numpy-скаляры np.int64 сериализуются в строки. Парсим их как числа.
+        total_volume = safe_parse_float(group.get('total_volume', 0))
         total_areas = group.get('total_areas', {})
 
         if total_volume and total_volume > 0:
@@ -907,7 +922,9 @@ def build_reference_output(
             measure_unit = 'м³'
         elif total_areas:
             measure_type = 'area'
-            measure_value = round(list(total_areas.values())[0], 2)
+            measure_value = round(
+                safe_parse_float(next(iter(total_areas.values()))), 2
+            )
             measure_unit = 'м²'
         else:
             measure_type = 'count'
@@ -1041,13 +1058,15 @@ def build_reference_output(
 #  ГЛАВНАЯ ТОЧКА ВХОДА (ОРКЕСТРАТОР)
 # =====================================================================
 
-def build_reference_from_ifc(ifc_path: str, output_folder: str) -> List[Dict[str, Any]]:
+def build_reference_from_ifc(ifc_path: str, output_folder: str, processing_type: str = "KR") -> List[Dict[str, Any]]:
     """
     Главная функция: запускает полный пайплайн построения справочной структуры.
 
     Аргументы:
         ifc_path — путь к IFC-файлу
         output_folder — папка для сохранения результатов
+        processing_type — тип обработки: "KR" (конструктив) или "AR" (архитектура).
+            Влияет на выбор функции группировки (process_ifc_excel / process_ifc_excel_ar).
 
     Возвращает:
         Массив объектов в формате ifc_reference_output.json
@@ -1055,6 +1074,11 @@ def build_reference_from_ifc(ifc_path: str, output_folder: str) -> List[Dict[str
     logger.info("=" * 60)
     logger.info("НАЧАТО ПОСТРОЕНИЕ СПРАВОЧНОЙ СТРУКТУРЫ ИЗ IFC")
     logger.info("=" * 60)
+
+    processing_type = processing_type.upper()
+    if processing_type not in ("KR", "AR"):
+        processing_type = "KR"
+    logger.info(f"Тип обработки: {processing_type}")
 
     # Создаём папку, если её нет
     os.makedirs(output_folder, exist_ok=True)
@@ -1068,7 +1092,9 @@ def build_reference_from_ifc(ifc_path: str, output_folder: str) -> List[Dict[str
 
     # Этап B: Группировка (через process_ifc_excel — тот же путь, что в веб-интерфейсе)
     logger.info("\n--- ЭТАП B: Группировка элементов ---")
-    leaf_groups, full_groups, grouped_json_path, grouped_excel_path = group_elements_by_type(excel_path, output_folder)
+    leaf_groups, full_groups, grouped_json_path, grouped_excel_path = group_elements_by_type(
+        excel_path, output_folder, processing_type
+    )
     if not leaf_groups:
         logger.error("Не удалось сгруппировать элементы")
         return []
@@ -1078,16 +1104,21 @@ def build_reference_from_ifc(ifc_path: str, output_folder: str) -> List[Dict[str
     result = build_reference_output(leaf_groups, full_groups)
 
     # --- Перезаписываем ifc_raw_elements_grouped.json и .xlsx новым форматом ---
-    # process_ifc_excel() создал их в формате дерева групп.
-    # Перезаписываем в формате справочника (как требует ТЗ).
+    # process_ifc_excel()/process_ifc_excel_ar() создали их в формате дерева групп
+    # (для АР — с суффиксом _AR). Перезаписываем в формате справочника (как требует ТЗ)
+    # и всегда под стандартными именами (без суффикса), чтобы веб-интерфейс и
+    # session_manager находили файлы по одному пути.
     # Это безопасно: веб-интерфейс использует filtered_elements_grouped.json,
     # а не ifc_raw_elements_grouped.json.
+    final_json_path = os.path.join(output_folder, 'ifc_raw_elements_grouped.json')
+    final_excel_path = os.path.join(output_folder, 'ifc_raw_elements_grouped.xlsx')
+
     if grouped_json_path and result:
         # JSON
-        with open(grouped_json_path, 'w', encoding='utf-8') as f:
+        with open(final_json_path, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2, default=str)
         logger.info(
-            f"Файл {os.path.basename(grouped_json_path)} перезаписан "
+            f"Файл {os.path.basename(final_json_path)} перезаписан "
             f"в формате справочника ({len(result)} групп)"
         )
 
@@ -1112,9 +1143,9 @@ def build_reference_from_ifc(ifc_path: str, output_folder: str) -> List[Dict[str
 
         if xlsx_rows:
             df = _prepare_xlsx_df(xlsx_rows)
-            df.to_excel(grouped_excel_path, index=False)
+            df.to_excel(final_excel_path, index=False)
             logger.info(
-                f"Файл {os.path.basename(grouped_excel_path)} перезаписан "
+                f"Файл {os.path.basename(final_excel_path)} перезаписан "
                 f"в формате справочника ({len(result)} групп)"
             )
 
@@ -1135,7 +1166,7 @@ def build_reference_from_ifc(ifc_path: str, output_folder: str) -> List[Dict[str
 #  ФУНКЦИЯ ДЛЯ PDF: ФОРМИРОВАНИЕ ifc_elements_output.json И ifc_raw_elements_grouped.json
 # =====================================================================
 
-def build_reference_from_pdf(df: pd.DataFrame, output_folder: str) -> List[Dict[str, Any]]:
+def build_reference_from_pdf(df: pd.DataFrame, output_folder: str, processing_type: str = "KR") -> List[Dict[str, Any]]:
     """
     Формирует ifc_elements_output.json и ifc_raw_elements_grouped.json
     из DataFrame, полученного при обработке PDF-чертежа.
@@ -1146,6 +1177,7 @@ def build_reference_from_pdf(df: pd.DataFrame, output_folder: str) -> List[Dict[
     Аргументы:
         df — DataFrame с данными элементов из PDF (формат form_result_df)
         output_folder — папка для сохранения результатов
+        processing_type — тип обработки: "KR" (конструктив) или "AR" (архитектура)
 
     Возвращает:
         Массив объектов в формате ifc_reference_output.json (через build_reference_output)
@@ -1153,6 +1185,11 @@ def build_reference_from_pdf(df: pd.DataFrame, output_folder: str) -> List[Dict[
     logger.info("=" * 60)
     logger.info("ФОРМИРОВАНИЕ JSON-ФАЙЛОВ ИЗ PDF-ЧЕРТЕЖА")
     logger.info("=" * 60)
+
+    processing_type = processing_type.upper()
+    if processing_type not in ("KR", "AR"):
+        processing_type = "KR"
+    logger.info(f"Тип обработки: {processing_type}")
 
     os.makedirs(output_folder, exist_ok=True)
 
@@ -1230,7 +1267,7 @@ def build_reference_from_pdf(df: pd.DataFrame, output_folder: str) -> List[Dict[
     # ---- Этап 3: Группировка через process_ifc_excel ----
     logger.info("--- Этап 3: Группировка элементов ---")
     leaf_groups, full_groups, grouped_json_path, grouped_excel_path = group_elements_by_type(
-        xlsx_path, output_folder
+        xlsx_path, output_folder, processing_type
     )
     if not leaf_groups:
         logger.warning("Группировка не дала результатов, удаляем временный файл")
@@ -1242,12 +1279,17 @@ def build_reference_from_pdf(df: pd.DataFrame, output_folder: str) -> List[Dict[
     logger.info("--- Этап 4: Формирование выходного формата ---")
     result = build_reference_output(leaf_groups, full_groups)
 
-    # Перезаписываем ifc_raw_elements_grouped.json в формате справочника
+    # Перезаписываем ifc_raw_elements_grouped.json/.xlsx в формате справочника
+    # и всегда под стандартными именами (без суффикса _AR), чтобы веб-интерфейс
+    # и session_manager находили файлы по одному пути.
+    final_json_path = os.path.join(output_folder, 'ifc_raw_elements_grouped.json')
+    final_excel_path = os.path.join(output_folder, 'ifc_raw_elements_grouped.xlsx')
+
     if grouped_json_path and result:
-        with open(grouped_json_path, 'w', encoding='utf-8') as f:
+        with open(final_json_path, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2, default=str)
         logger.info(
-            f"Файл {os.path.basename(grouped_json_path)} перезаписан "
+            f"Файл {os.path.basename(final_json_path)} перезаписан "
             f"в формате справочника ({len(result)} групп)"
         )
 
@@ -1272,9 +1314,9 @@ def build_reference_from_pdf(df: pd.DataFrame, output_folder: str) -> List[Dict[
 
         if xlsx_rows:
             df_out = _prepare_xlsx_df(xlsx_rows)
-            df_out.to_excel(grouped_excel_path, index=False)
+            df_out.to_excel(final_excel_path, index=False)
             logger.info(
-                f"Файл {os.path.basename(grouped_excel_path)} перезаписан "
+                f"Файл {os.path.basename(final_excel_path)} перезаписан "
                 f"в формате справочника ({len(result)} групп)"
             )
 

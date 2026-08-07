@@ -3,6 +3,7 @@
 import ifcopenshell
 import pandas as pd
 import os
+import re
 
 from src.core.logger import setup_logger
 
@@ -11,6 +12,7 @@ logger = setup_logger("zero_step")
  
 element_types = [
     ('IfcWall', 'Стены'),
+    ('IfcFooting', 'Перекрытия'),
     ('IfcWallStandardCase', 'Стены'),
     ('IfcSlab', 'Перекрытия'),
     ('IfcColumn', 'Колонны'),
@@ -19,8 +21,15 @@ element_types = [
     ('IfcStairFlight', 'Лестницы'),
     ('IfcRamp', 'Пандусы'),
     ('IfcBuildingElementProxy', 'Прочие_элементы'),
-    ('ifcCovering', 'Покрытие'),
-    ('ifcPile', 'Свая')
+    ('IfcCovering', 'Покрытие'),
+    ('IfcPile', 'Сваи'),
+    ('IfcWindow', 'Окна'),
+    ('IfcDoor', 'Двери'),
+    ('IfcCurtainWall', 'Стены'),
+    ('IfcRoof', 'Кровля'),
+    ('IfcRailing', 'Перила'),
+    ('IfcFurnishingElement', 'Мебель'),
+    ('IfcMember', 'Конструктивные_элементы'),
 ]
 
 # Список специфических свойств для извлечения
@@ -419,6 +428,164 @@ def analyze_qto_properties(ifc_file_path):
             print(f"     • {qty_name} ({qty_data['type']}) - {qty_data['count']} использований")
     
     return all_qto_properties
+
+
+def parse_name(name: str, ifc_class: str):
+    """
+    Извлекает геометрические параметры из имени элемента
+    
+    Для стен и перекрытий: ищет толщину в мм
+    Для колонн: ищет размеры AxB, возвращает ширину (мин. размер) и периметр в мм
+    Для балок: ищет размеры AxB, возвращает ширину (мин. размер)
+    """
+    if not name or name == '-':
+        return None
+    
+    result = {}
+    
+    if ifc_class in ["IfcWall", "IfcWallStandardCase"]:
+        # Ищем толщину стены: 100мм, 200 мм, t=100 и т.д.
+        patterns = [
+            r'(?:толщина|t)[\s=]*(\d{2,3})\s?мм',  # толщина 100мм или t=100
+            r'\b(\d{2,3})\s?мм\b',                   # просто 100мм
+            r'\b(\d{2,3})mm\b',                      # 100mm
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, name, re.IGNORECASE)
+            if match:
+                result['Ширина, мм'] = float(match.group(1))
+                break
+
+    elif ifc_class == "IfcSlab":
+        # Ищем толщину перекрытия
+        patterns = [
+            r'(?:толщина|t|h)[\s=]*(\d{2,3})\s?мм',
+            r'\b(\d{2,3})\s?мм\b',
+            r'\b(\d{2,3})mm\b',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, name, re.IGNORECASE)
+            if match:
+                result['Ширина, мм'] = float(match.group(1))
+                break
+
+    elif ifc_class == "IfcColumn":
+        # Ищем размеры колонны: 400x400, 400х400, 400*400, 400/400
+        patterns = [
+            r'(\d{2,4})\s?[xх\*]\s?(\d{2,4})',
+            r'(\d{2,4})/(\d{2,4})',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, name, re.IGNORECASE)
+            if match:
+                a = float(match.group(1))
+                b = float(match.group(2))
+                result['Ширина, мм'] = min(a, b)
+                result['Периметр, мм'] = 2 * (a + b)  # Периметр в миллиметрах
+                break
+
+    elif ifc_class == "IfcBeam":
+        # Ищем размеры балки: 200x400, 200х400, bxh 200x400
+        patterns = [
+            r'(\d{2,4})\s?[xх\*]\s?(\d{2,4})',
+            r'b\s?[xх\*]\s?h\s?(\d{2,4})\s?[xх\*]\s?(\d{2,4})',  # bxh 200x400
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, name, re.IGNORECASE)
+            if match:
+                a = float(match.group(1))
+                b = float(match.group(2))
+                # Для балки ширина - это обычно меньший размер
+                result['Ширина, мм'] = min(a, b)
+                break
+    
+    return result if result else None
+
+
+def fill_missing_from_name(df):
+    """
+    Заполняет пропуски в геометрических параметрах, извлекая данные из имени элемента
+    
+    Для стен: заполняет 'Ширина, мм'
+    Для перекрытий: заполняет 'Ширина, мм'
+    Для колонн: заполняет 'Ширина, мм' и 'Периметр, мм'
+    Для балок: заполняет 'Ширина, мм'
+    """
+    logger.info("Заполнение пропусков в геометрических параметрах из имени элемента...")
+    
+    filled_count = {
+        'Стены': 0,
+        'Перекрытия': 0,
+        'Колонны': 0,
+        'Балки': 0
+    }
+    
+    for idx, row in df.iterrows():
+        name = row.get('Имя', '-')
+        ifc_class = row.get('Тип элемента', '')
+        
+        # Пропускаем, если нет имени или класс не поддерживается
+        if name == '-' or ifc_class not in ['IfcWall', 'IfcWallStandardCase', 'IfcSlab', 'IfcColumn', 'IfcBeam']:
+            continue
+        
+        # Извлекаем параметры из имени
+        extracted = parse_name(name, ifc_class)
+        
+        if extracted is None:
+            continue
+        
+        # Заполняем пропуски в зависимости от типа элемента
+        if ifc_class in ['IfcWall', 'IfcWallStandardCase'] and 'Ширина, мм' in extracted:
+            if row.get('Ширина, мм') == '-' or pd.isna(row.get('Ширина, мм')):
+                df.at[idx, 'Ширина, мм'] = extracted['Ширина, мм']
+                filled_count['Стены'] += 1
+                logger.debug(f"Стена '{name}': заполнена Ширина = {extracted['Ширина, мм']} мм")
+        
+        elif ifc_class == 'IfcSlab' and 'Ширина, мм' in extracted:
+            if row.get('Ширина, мм') == '-' or pd.isna(row.get('Ширина, мм')):
+                df.at[idx, 'Ширина, мм'] = extracted['Ширина, мм']
+                filled_count['Перекрытия'] += 1
+                logger.debug(f"Перекрытие '{name}': заполнена Ширина = {extracted['Ширина, мм']} мм")
+        
+        elif ifc_class == 'IfcColumn':
+            column_filled = False
+            # Заполняем Ширину
+            if 'Ширина, мм' in extracted:
+                if row.get('Ширина, мм') == '-' or pd.isna(row.get('Ширина, мм')):
+                    df.at[idx, 'Ширина, мм'] = extracted['Ширина, мм']
+                    column_filled = True
+                    logger.debug(f"Колонна '{name}': заполнена Ширина = {extracted['Ширина, мм']} мм")
+            
+            # Заполняем Периметр (в миллиметрах)
+            if 'Периметр, мм' in extracted:
+                if row.get('Периметр, мм') == '-' or pd.isna(row.get('Периметр, мм')):
+                    df.at[idx, 'Периметр, мм'] = extracted['Периметр, мм']
+                    column_filled = True
+                    logger.debug(f"Колонна '{name}': заполнен Периметр = {extracted['Периметр, мм']} мм")
+            
+            if column_filled:
+                filled_count['Колонны'] += 1
+        
+        elif ifc_class == 'IfcBeam' and 'Ширина, мм' in extracted:
+            if row.get('Ширина, мм') == '-' or pd.isna(row.get('Ширина, мм')):
+                df.at[idx, 'Ширина, мм'] = extracted['Ширина, мм']
+                filled_count['Балки'] += 1
+                logger.debug(f"Балка '{name}': заполнена Ширина = {extracted['Ширина, мм']} мм")
+    
+    # Выводим статистику
+    logger.info("Статистика заполнения пропусков из имени элемента:")
+    total_filled = 0
+    for element_type, count in filled_count.items():
+        if count > 0:
+            logger.info(f"  • {element_type}: заполнено {count} элементов")
+            total_filled += count
+    
+    if total_filled == 0:
+        logger.info("  • Пропусков для заполнения из имени не найдено")
+    else:
+        logger.info(f"  • Всего заполнено: {total_filled} элементов")
+    
+    return df
 
 
 def zero_step(ifc_file, output_folder=None):
@@ -1012,10 +1179,15 @@ def zero_step(ifc_file, output_folder=None):
     df['Длина, мм'] = df.apply(lambda row: get_geometry_value(row, 'ДЛИНА'), axis=1)
     df['Ширина, мм'] = df.apply(lambda row: get_geometry_value(row, 'ШИРИНА'), axis=1)
     df['Высота, мм'] = df.apply(lambda row: get_geometry_value(row, 'ВЫСОТА'), axis=1)
-    df['Периметр, м'] = df.apply(lambda row: get_geometry_value(row, 'ПЕРИМЕТР', convert_to_m=True), axis=1)
+    df['Периметр, мм'] = df.apply(lambda row: get_geometry_value(row, 'ПЕРИМЕТР', convert_to_m=False), axis=1)
     df['Площадь, м2'] = df.apply(lambda row: get_geometry_value(row, 'ПЛОЩАДЬ'), axis=1)
     df['Объём, м3'] = df.apply(lambda row: get_geometry_value(row, 'ОБЪЕМ', convert_to_m3=True), axis=1)
     df['ReinforcementVolumeRatio'] = df.apply(lambda row: get_geometry_value(row, 'ReinforcementVolumeRatio'), axis=1)
+    
+    # ============================================================================
+    # ЗАПОЛНЯЕМ ПРОПУСКИ В ГЕОМЕТРИЧЕСКИХ ПАРАМЕТРАХ ИЗ ИМЕНИ ЭЛЕМЕНТА
+    # ============================================================================
+    df = fill_missing_from_name(df)
     
     # Удаляем технические столбцы
     cols_to_drop = ['Глубина_выдавливания_мм', 'Координата_X_мм', 'Координата_Y_мм', 'Координата_Z_мм']
@@ -1043,13 +1215,13 @@ def zero_step(ifc_file, output_folder=None):
     df_short['GlobalId'] = df['GlobalId']
     df_short['Материал'] = df['Материал']
     df_short['Этаж'] = df['Этаж']
-    df_short['Тип этажа'] = df['Тип_этажа']
+    df_short['Тип_этажа'] = df['Тип_этажа']
     
     # Добавляем агрегированные геометрические столбцы
     df_short['Длина, мм'] = df['Длина, мм']
-    df_short['Толщина, мм'] = df['Ширина, мм']
+    df_short['Толщина, мм'] = df['Ширина, мм']  # Используем Ширину как Толщину
     df_short['Высота, мм'] = df['Высота, мм']
-    df_short['Периметр, м'] = df['Периметр, м']
+    df_short['Периметр, мм'] = df['Периметр, мм']
     df_short['Площадь (Gross), м2'] = df['Площадь, м2']  
     df_short['Объем (Net), м3'] = df['Объём, м3']
     df_short['ReinforcementVolumeRatio'] = df['ReinforcementVolumeRatio']
@@ -1098,7 +1270,7 @@ def zero_step(ifc_file, output_folder=None):
             smetchik_cols.append(col)
     
     # Добавляем агрегированные столбцы
-    aggregated_cols = ['Длина, мм', 'Ширина, мм', 'Высота, мм', 'Периметр, м', 'Площадь, м2', 'Объём, м3', 'ReinforcementVolumeRatio']
+    aggregated_cols = ['Длина, мм', 'Ширина, мм', 'Высота, мм', 'Периметр, мм', 'Площадь, м2', 'Объём, м3', 'ReinforcementVolumeRatio']
     for col in aggregated_cols:
         if col in df.columns and col not in smetchik_cols:
             smetchik_cols.append(col)

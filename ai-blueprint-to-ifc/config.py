@@ -7,13 +7,13 @@ from typing import Literal
 class BaseWallDetectionProfile(BaseModel):
     confidence: float = Field(default=0.4, ge=0, le=1)
     iou: float = Field(default=0.9, ge=0, le=1)
-    tile_overlap: float = Field(default=37, ge=0, lt=100)
+    tile_overlap: float = Field(default=47, ge=0, lt=100)
     model_name: Path = Path("yolo_walls_obb.pt")
 
 
 class WallDetectionProfile(BaseWallDetectionProfile):
-    image_size: int = Field(default=736, gt=0)
-    tile_size: int = 720
+    image_size: int = Field(default=896, gt=0)
+    tile_size: int = 896
     zoom: float = Field(default=6 * (tile_size / 720), gt=0)
     tiles_dir: Path = Path("blueprint_tiles")
 
