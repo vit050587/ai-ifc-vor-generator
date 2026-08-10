@@ -2057,7 +2057,7 @@ function toggleGroup(groupId) {
     
     const isExpanding = !arrow.classList.contains('expanded');
     
-    // Меняем стрелку мгновенно
+    // Меняем стрелку
     if (isExpanding) {
         arrow.classList.add('expanded');
         arrow.textContent = '▼';
@@ -2066,58 +2066,44 @@ function toggleGroup(groupId) {
         arrow.textContent = '▶';
     }
     
-    // КОЛЛЕКЦИОНИРУЕМ все строки для переключения
+    // Собираем строки для переключения
     const rowsToToggle = [];
     
     // Дочерние группы
-    const children = groupChildren[groupId] || [];
-    for (let i = 0; i < children.length; i++) {
-        const childRow = document.querySelector(`tr[data-group-id="${children[i]}"]`);
-        if (childRow) {
-            rowsToToggle.push(childRow);
-            // Сворачиваем вложенные группы при закрытии
-            if (!isExpanding) {
-                const childArrow = document.getElementById(children[i] + '_arrow');
-                if (childArrow) {
-                    childArrow.classList.remove('expanded');
-                    childArrow.textContent = '▶';
+    if (groupChildren[groupId]) {
+        groupChildren[groupId].forEach(childId => {
+            const childRow = document.querySelector(`tr[data-group-id="${childId}"]`);
+            if (childRow) {
+                rowsToToggle.push(childRow);
+                if (!isExpanding) {
+                    const childArrow = document.getElementById(childId + '_arrow');
+                    if (childArrow) {
+                        childArrow.classList.remove('expanded');
+                        childArrow.textContent = '▶';
+                    }
                 }
             }
-        }
+        });
     }
     
-    // Строки данных - используем ТОЛЬКО кеш или быстрый поиск по индексу
+    // Строки данных - только из кеша
     const indices = groupIndexMap[groupId];
-    if (indices && indices.length > 0) {
-        // Получаем tbody
-        const tbody = document.getElementById('previewBody');
-        // Получаем ВСЕ строки tbody
-        const allRows = tbody.getElementsByTagName('tr');
-        
-        // Проходим по индексам и собираем строки
-        for (let i = 0; i < indices.length; i++) {
-            const index = indices[i];
-            // Ищем строку в кеше
+    if (indices) {
+        indices.forEach(index => {
             const row = rowElementCache.get(index);
             if (row && row.dataset.group === groupId) {
                 rowsToToggle.push(row);
             }
-        }
+        });
     }
     
     if (rowsToToggle.length === 0) return;
     
-    // МГНОВЕННОЕ переключение через requestAnimationFrame
+    // Применяем изменения в одном кадре
     requestAnimationFrame(() => {
-        // Используем фрагмент для минимизации reflow
+        const method = isExpanding ? 'remove' : 'add';
         for (let i = 0; i < rowsToToggle.length; i++) {
-            const row = rowsToToggle[i];
-            row.style.display = isExpanding ? 'table-row' : 'none';
-            if (isExpanding) {
-                row.classList.remove('hidden-row');
-            } else {
-                row.classList.add('hidden-row');
-            }
+            rowsToToggle[i].classList[method]('hidden-row');
         }
     });
 }
@@ -2263,110 +2249,236 @@ function updateSelectionUI() {
 // ========== Группировка для КР ==========
 function autoGroupRows() {
     if (currentProcessingType === 'AR') { autoGroupRowsAR(); return; }
+    
     const data = window._previewData;
     if (!data) return;
     const body = document.getElementById('previewBody');
-    const rows = Array.from(body.querySelectorAll('tr'));
-    rowElementCache.clear();
-    groupIndexMap = {}; groupChildren = {}; groupParent = {}; groupLevel = {}; leafGroups = {};
-    selectedRows.clear(); isGrouped = true;
+    
+    // Сбрасываем структуру групп, но НЕ кеш строк
+    groupIndexMap = {};
+    groupChildren = {};
+    groupParent = {};
+    groupLevel = {};
+    leafGroups = {};
+    selectedRows.clear();
+    isGrouped = true;
+    
     const typeRuIdx = data.headers.indexOf('Тип элемента');
     const nameIdx = data.headers.indexOf('Имя');
-    const volumeIdx = data.headers.findIndex(h => h.toLowerCase().includes('объём, м3') || h.includes('Объём, м3'));
+    const volumeIdx = data.headers.findIndex(h => 
+        h.toLowerCase().includes('объём, м3') || h.includes('Объём, м3')
+    );
+    
     const totalCols = 1 + 6 + 2;
+    
     const getVolume = (rowIndex) => {
         if (volumeIdx === -1) return 0;
         const row = data.rows[rowIndex];
         return row ? safeParseFloat(row[volumeIdx]) : 0;
     };
+    
     const getGeometryValue = (rule, rowIndex) => {
         if (!rule || rule === 'default') return getVolume(rowIndex);
         const fieldIdx = data.headers.indexOf(rule.field);
         if (fieldIdx === -1) return getVolume(rowIndex);
         return safeParseFloat(data.rows[rowIndex]?.[fieldIdx]);
     };
-    const rowData = rows.map(tr => {
-        const tds = tr.querySelectorAll('td');
+    
+    // Собираем данные о строках
+    const rowData = [];
+    const allTrs = body.querySelectorAll('tr');
+    
+    allTrs.forEach(tr => {
         const index = parseInt(tr.dataset.rowIndex);
+        if (isNaN(index)) return;
+        
+        const tds = tr.querySelectorAll('td');
         const partSelect = tds[tds.length - 2]?.querySelector('select');
         const part = partSelect ? partSelect.value : 'Надземная';
         const typeRu = typeRuIdx !== -1 ? (data.rows[index]?.[typeRuIdx] || 'Неизвестно') : 'Неизвестно';
         const name = nameIdx !== -1 ? (data.rows[index]?.[nameIdx] || '') : '';
         const subsection = determineSubsection(typeRu, name, part);
         const ifcType = getIfcType(typeRu, name);
-        return { tr, index, part, typeRu, name, subsection, ifcType };
+        
+        rowData.push({ tr, index, part, typeRu, name, subsection, ifcType });
     });
+    
     body.innerHTML = '';
     let groupCounter = 0;
     const partOrder = ['Подземная', 'Цоколь', 'Надземная'];
+    
     partOrder.forEach(part => {
         const partRows = rowData.filter(rd => rd.part === part);
         if (partRows.length === 0) return;
+        
         const partStructure = SECTION_STRUCTURE[part];
         if (!partStructure) return;
+        
         let partVolume = 0;
         partRows.forEach(rd => { partVolume += getVolume(rd.index); });
+        
+        // Уровень 1: Часть здания
         const l1Id = 'L1_' + (groupCounter++);
         groupIndexMap[l1Id] = partRows.map(r => r.index);
-        groupLevel[l1Id] = 1; groupChildren[l1Id] = [];
+        groupLevel[l1Id] = 1;
+        groupChildren[l1Id] = [];
+        
         const l1Tr = document.createElement('tr');
-        l1Tr.className = 'group-header'; l1Tr.dataset.groupId = l1Id;
-        l1Tr.style.cssText = 'background:#e2e8f0 !important;';
-        l1Tr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(l1Id); };
-        l1Tr.innerHTML = `<td style="text-align:center;"><span class="group-arrow" id="${l1Id}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${l1Id}"></td><td colspan="${totalCols - 1}" style="font-weight:700;font-size:15px;color:#2d3748;">🏗️ ${partStructure.label}<span class="group-badge">×${partRows.length}</span><span style="font-size:11px;color:#4a5568;margin-left:12px;">Σ Объём: ${partVolume.toFixed(2)} м³</span></td>`;
+        l1Tr.className = 'group-header';
+        l1Tr.dataset.groupId = l1Id;
+        l1Tr.style.cssText = 'background:#e2e8f0 !important; cursor:pointer;';
+        l1Tr.onclick = function(e) {
+            if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+            toggleGroup(l1Id);
+        };
+        
+        l1Tr.innerHTML = `
+            <td style="text-align:center;">
+                <span class="group-arrow" id="${l1Id}_arrow">▶</span>
+                <input type="checkbox" class="group-checkbox" data-group-id="${l1Id}">
+            </td>
+            <td colspan="${totalCols - 1}" style="font-weight:700; font-size:15px; color:#2d3748;">
+                🏗️ ${partStructure.label}
+                <span class="group-badge">×${partRows.length}</span>
+                <span style="font-size:11px; color:#4a5568; margin-left:12px;">Σ Объём: ${partVolume.toFixed(2)} м³</span>
+            </td>
+        `;
         body.appendChild(l1Tr);
+        
         const l1Cb = l1Tr.querySelector('.group-checkbox');
         l1Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l1Id, this.checked); });
+        
         const groupedIndices = new Set();
+        
+        // Уровень 2: Разделы
         partStructure.sections.forEach(section => {
-            const sectionRows = partRows.filter(rd => section.subsections.some(sub => sub.key === rd.subsection));
+            const sectionRows = partRows.filter(rd => {
+                return section.subsections.some(sub => sub.key === rd.subsection);
+            });
+            
             if (sectionRows.length === 0) return;
             sectionRows.forEach(rd => groupedIndices.add(rd.index));
+            
             let sectionVolume = 0;
             sectionRows.forEach(rd => { sectionVolume += getVolume(rd.index); });
+            
             const l2Id = 'L2_' + (groupCounter++);
             groupIndexMap[l2Id] = sectionRows.map(r => r.index);
-            groupLevel[l2Id] = 2; groupParent[l2Id] = l1Id; groupChildren[l2Id] = []; groupChildren[l1Id].push(l2Id);
+            groupLevel[l2Id] = 2;
+            groupParent[l2Id] = l1Id;
+            groupChildren[l2Id] = [];
+            groupChildren[l1Id].push(l2Id);
+            
             const l2Tr = document.createElement('tr');
-            l2Tr.className = 'group-row hidden-row'; l2Tr.dataset.group = l1Id; l2Tr.dataset.groupId = l2Id;
-            l2Tr.style.cssText = 'background:#edf2f7 !important;';
-            l2Tr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(l2Id); };
-            l2Tr.innerHTML = `<td style="text-align:center;padding-left:30px;"><span class="group-arrow" id="${l2Id}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${l2Id}"></td><td colspan="${totalCols - 1}" style="font-weight:600;color:#4a5568;">📋 ${section.name}<span class="group-badge">×${sectionRows.length}</span><span style="font-size:11px;color:#718096;margin-left:12px;">Σ Объём: ${sectionVolume.toFixed(2)} м³</span></td>`;
+            l2Tr.className = 'group-row hidden-row';
+            l2Tr.dataset.group = l1Id;
+            l2Tr.dataset.groupId = l2Id;
+            l2Tr.style.cssText = 'background:#edf2f7 !important; cursor:pointer;';
+            l2Tr.onclick = function(e) {
+                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                toggleGroup(l2Id);
+            };
+            
+            l2Tr.innerHTML = `
+                <td style="text-align:center; padding-left: 30px;">
+                    <span class="group-arrow" id="${l2Id}_arrow">▶</span>
+                    <input type="checkbox" class="group-checkbox" data-group-id="${l2Id}">
+                </td>
+                <td colspan="${totalCols - 1}" style="font-weight:600; color:#4a5568;">
+                    📋 ${section.name}
+                    <span class="group-badge">×${sectionRows.length}</span>
+                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${sectionVolume.toFixed(2)} м³</span>
+                </td>
+            `;
             body.appendChild(l2Tr);
+            
             const l2Cb = l2Tr.querySelector('.group-checkbox');
             l2Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l2Id, this.checked); });
+            
+            // Уровень 3: Подразделы
             section.subsections.forEach(subsection => {
                 const subsectionRows = sectionRows.filter(rd => rd.subsection === subsection.key);
                 if (subsectionRows.length === 0) return;
+                
                 let subsectionVolume = 0;
                 subsectionRows.forEach(rd => { subsectionVolume += getVolume(rd.index); });
+                
                 const l3Id = 'L3_' + (groupCounter++);
                 groupIndexMap[l3Id] = subsectionRows.map(r => r.index);
-                groupLevel[l3Id] = 3; groupParent[l3Id] = l2Id; groupChildren[l3Id] = []; groupChildren[l2Id].push(l3Id);
+                groupLevel[l3Id] = 3;
+                groupParent[l3Id] = l2Id;
+                groupChildren[l3Id] = [];
+                groupChildren[l2Id].push(l3Id);
+                
                 const l3Tr = document.createElement('tr');
-                l3Tr.className = 'group-row hidden-row'; l3Tr.dataset.group = l2Id; l3Tr.dataset.groupId = l3Id;
-                l3Tr.style.cssText = 'background:#f7fafc !important;';
-                l3Tr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(l3Id); };
-                l3Tr.innerHTML = `<td style="text-align:center;padding-left:60px;"><span class="group-arrow" id="${l3Id}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${l3Id}"></td><td colspan="${totalCols - 1}" style="font-weight:500;color:#4a5568;">📐 ${subsection.key}<span class="group-badge">×${subsectionRows.length}</span><span style="font-size:11px;color:#718096;margin-left:12px;">Σ Объём: ${subsectionVolume.toFixed(2)} м³</span></td>`;
+                l3Tr.className = 'group-row hidden-row';
+                l3Tr.dataset.group = l2Id;
+                l3Tr.dataset.groupId = l3Id;
+                l3Tr.style.cssText = 'background:#f7fafc !important; cursor:pointer;';
+                l3Tr.onclick = function(e) {
+                    if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                    toggleGroup(l3Id);
+                };
+                
+                l3Tr.innerHTML = `
+                    <td style="text-align:center; padding-left: 60px;">
+                        <span class="group-arrow" id="${l3Id}_arrow">▶</span>
+                        <input type="checkbox" class="group-checkbox" data-group-id="${l3Id}">
+                    </td>
+                    <td colspan="${totalCols - 1}" style="font-weight:500; color:#4a5568;">
+                        📐 ${subsection.key}
+                        <span class="group-badge">×${subsectionRows.length}</span>
+                        <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${subsectionVolume.toFixed(2)} м³</span>
+                    </td>
+                `;
                 body.appendChild(l3Tr);
+                
                 const l3Cb = l3Tr.querySelector('.group-checkbox');
                 l3Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l3Id, this.checked); });
+                
+                // Проверяем, нужно ли пропускать геометрическую группировку
                 const skipGeometry = NO_GEOMETRY_GROUP_SUBSECTIONS.includes(subsection.key);
+                
                 if (skipGeometry) {
+                    // Без геометрической группировки - все элементы в одну группу
                     const geoId = 'GEO_' + (groupCounter++);
                     groupIndexMap[geoId] = subsectionRows.map(r => r.index);
-                    groupLevel[geoId] = 4; groupParent[geoId] = l3Id; groupChildren[geoId] = [];
+                    groupLevel[geoId] = 4;
+                    groupParent[geoId] = l3Id;
+                    groupChildren[geoId] = [];
                     if (!groupChildren[l3Id]) groupChildren[l3Id] = [];
-                    groupChildren[l3Id].push(geoId); leafGroups[geoId] = true;
+                    groupChildren[l3Id].push(geoId);
+                    leafGroups[geoId] = true;
+                    
                     const firstIndex = subsectionRows[0].index;
+                    
                     const geoTr = document.createElement('tr');
-                    geoTr.className = 'group-row hidden-row'; geoTr.dataset.group = l3Id; geoTr.dataset.groupId = geoId;
-                    geoTr.style.cssText = 'background:#ffffff !important;';
-                    geoTr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(geoId); };
-                    geoTr.innerHTML = `<td style="text-align:center;padding-left:90px;"><span class="group-arrow" id="${geoId}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${geoId}" data-first-index="${firstIndex}"></td><td colspan="${totalCols - 1}" style="color:#2b6cb0;font-weight:500;">📏 Все элементы<span class="group-badge">×${subsectionRows.length}</span><span style="font-size:11px;color:#718096;margin-left:12px;">Σ Объём: ${subsectionVolume.toFixed(2)} м³</span></td>`;
+                    geoTr.className = 'group-row hidden-row';
+                    geoTr.dataset.group = l3Id;
+                    geoTr.dataset.groupId = geoId;
+                    geoTr.style.cssText = 'background:#ffffff !important; cursor:pointer;';
+                    geoTr.onclick = function(e) {
+                        if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                        toggleGroup(geoId);
+                    };
+                    
+                    geoTr.innerHTML = `
+                        <td style="text-align:center; padding-left: 90px;">
+                            <span class="group-arrow" id="${geoId}_arrow">▶</span>
+                            <input type="checkbox" class="group-checkbox" data-group-id="${geoId}" data-first-index="${firstIndex}">
+                        </td>
+                        <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
+                            📏 Все элементы
+                            <span class="group-badge">×${subsectionRows.length}</span>
+                            <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${subsectionVolume.toFixed(2)} м³</span>
+                        </td>
+                    `;
                     body.appendChild(geoTr);
+                    
                     const geoCb = geoTr.querySelector('.group-checkbox');
                     geoCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(geoId, this.checked); });
+                    
+                    // Добавляем строки
                     subsectionRows.forEach(rd => {
                         rd.tr.classList.add('group-row', 'hidden-row');
                         rd.tr.dataset.group = geoId;
@@ -2374,81 +2486,209 @@ function autoGroupRows() {
                         if (firstTd) firstTd.style.paddingLeft = '120px';
                         const cb = rd.tr.querySelector('.row-checkbox');
                         if (cb) { cb.style.display = 'none'; cb.checked = false; }
+                        rowElementCache.set(rd.index, rd.tr);
                         body.appendChild(rd.tr);
                     });
                 } else {
+                    // С геометрической группировкой
                     const ifcGroups = {};
                     subsectionRows.forEach(rd => {
                         if (!ifcGroups[rd.ifcType]) ifcGroups[rd.ifcType] = [];
                         ifcGroups[rd.ifcType].push(rd);
                     });
+                    
                     const needIcfGroup = Object.keys(ifcGroups).length > 1;
+                    
                     Object.keys(ifcGroups).forEach(ifcType => {
                         const ifcRows = ifcGroups[ifcType];
                         const rule = GEOMETRY_GROUP_RULES[ifcType] || GEOMETRY_GROUP_RULES['default'];
+                        
                         if (rule && rule.ranges && rule.ranges.length > 0) {
-                            const mainGroups = rule.ranges.map(r => ({ label: r.label, max: r.max, rows: [], indices: [] }));
+                            // Группируем по основным диапазонам
+                            const mainGroups = rule.ranges.map(r => ({ 
+                                label: r.label, 
+                                max: r.max, 
+                                rows: [], 
+                                indices: [] 
+                            }));
+                            
                             ifcRows.forEach(rd => {
                                 const value = getGeometryValue(rule, rd.index);
                                 let assigned = false;
-                                for (const mg of mainGroups) { if (value <= mg.max) { mg.rows.push(rd); mg.indices.push(rd.index); assigned = true; break; } }
-                                if (!assigned) { const lastMg = mainGroups[mainGroups.length - 1]; if (lastMg) { lastMg.rows.push(rd); lastMg.indices.push(rd.index); } }
+                                for (const mg of mainGroups) {
+                                    if (value <= mg.max) { 
+                                        mg.rows.push(rd); 
+                                        mg.indices.push(rd.index); 
+                                        assigned = true; 
+                                        break; 
+                                    }
+                                }
+                                if (!assigned) {
+                                    const lastMg = mainGroups[mainGroups.length - 1];
+                                    if (lastMg) { 
+                                        lastMg.rows.push(rd); 
+                                        lastMg.indices.push(rd.index); 
+                                    }
+                                }
                             });
+                            
+                            // Если есть sub_ranges - разбиваем дальше
                             const finalGeoGroups = [];
+                            
                             if (rule.sub_ranges) {
                                 mainGroups.forEach(mainGroup => {
                                     if (mainGroup.rows.length === 0) return;
-                                    const subRanges = rule.sub_ranges.ranges.map(r => ({ label: r.label, max: r.max, rows: [], indices: [] }));
+                                    
+                                    const subRanges = rule.sub_ranges.ranges.map(r => ({
+                                        label: r.label,
+                                        max: r.max,
+                                        rows: [],
+                                        indices: []
+                                    }));
+                                    
                                     mainGroup.rows.forEach(rd => {
                                         const subFieldIdx = data.headers.indexOf(rule.sub_ranges.field);
                                         let subValue = 0;
-                                        if (subFieldIdx !== -1 && data.rows[rd.index]) subValue = safeParseFloat(data.rows[rd.index][subFieldIdx]);
+                                        if (subFieldIdx !== -1 && data.rows[rd.index]) {
+                                            subValue = safeParseFloat(data.rows[rd.index][subFieldIdx]);
+                                        }
+                                        
                                         let assigned = false;
-                                        for (const sg of subRanges) { if (subValue <= sg.max) { sg.rows.push(rd); sg.indices.push(rd.index); assigned = true; break; } }
-                                        if (!assigned) { const lastSg = subRanges[subRanges.length - 1]; if (lastSg) { lastSg.rows.push(rd); lastSg.indices.push(rd.index); } }
+                                        for (const sg of subRanges) {
+                                            if (subValue <= sg.max) {
+                                                sg.rows.push(rd);
+                                                sg.indices.push(rd.index);
+                                                assigned = true;
+                                                break;
+                                            }
+                                        }
+                                        if (!assigned) {
+                                            const lastSg = subRanges[subRanges.length - 1];
+                                            if (lastSg) {
+                                                lastSg.rows.push(rd);
+                                                lastSg.indices.push(rd.index);
+                                            }
+                                        }
                                     });
+                                    
                                     subRanges.forEach(subGroup => {
-                                        if (subGroup.rows.length > 0) finalGeoGroups.push({ rows: subGroup.rows, indices: subGroup.indices, label: `${mainGroup.label} → ${rule.sub_ranges.label}: ${subGroup.label}` });
+                                        if (subGroup.rows.length > 0) {
+                                            finalGeoGroups.push({
+                                                rows: subGroup.rows,
+                                                indices: subGroup.indices,
+                                                label: `${mainGroup.label} → ${rule.sub_ranges.label}: ${subGroup.label}`
+                                            });
+                                        }
                                     });
                                 });
-                            } else mainGroups.forEach(mainGroup => { if (mainGroup.rows.length > 0) finalGeoGroups.push({ rows: mainGroup.rows, indices: mainGroup.indices, label: mainGroup.label }); });
+                            } else {
+                                mainGroups.forEach(mainGroup => {
+                                    if (mainGroup.rows.length > 0) {
+                                        finalGeoGroups.push({
+                                            rows: mainGroup.rows,
+                                            indices: mainGroup.indices,
+                                            label: mainGroup.label
+                                        });
+                                    }
+                                });
+                            }
+                            
+                            // Создаем DOM-элементы для каждой финальной группы
                             finalGeoGroups.forEach((geoGroup) => {
                                 if (geoGroup.rows.length === 0) return;
+                                
                                 let geoVolume = 0;
                                 geoGroup.rows.forEach(rd => { geoVolume += getVolume(rd.index); });
+                                
                                 let parentId = l3Id;
                                 let paddingLeft = 90;
+                                
+                                // Если нужно - добавляем уровень IFC типа
                                 if (needIcfGroup) {
                                     const ifcId = 'IFC_' + (groupCounter++);
                                     groupIndexMap[ifcId] = geoGroup.indices;
-                                    groupLevel[ifcId] = 4; groupParent[ifcId] = l3Id; groupChildren[ifcId] = [];
+                                    groupLevel[ifcId] = 4;
+                                    groupParent[ifcId] = l3Id;
+                                    groupChildren[ifcId] = [];
                                     if (!groupChildren[l3Id]) groupChildren[l3Id] = [];
                                     groupChildren[l3Id].push(ifcId);
-                                    const ifcLabels = { 'IfcWall': '🧱 Стены', 'IfcSlab': '🔲 Плиты', 'IfcColumn': '🏛️ Колонны', 'IfcBeam': '〰️ Балки', 'IfcStair': '🪜 Лестницы', 'IfcStairFlight': '🪜 Лестничные марши', 'IfcPile': '🔩 Сваи', 'default': '📦 Прочее' };
+                                    
+                                    const ifcLabels = {
+                                        'IfcWall': '🧱 Стены', 'IfcSlab': '🔲 Плиты',
+                                        'IfcColumn': '🏛️ Колонны', 'IfcBeam': '〰️ Балки',
+                                        'IfcStair': '🪜 Лестницы', 'IfcStairFlight': '🪜 Лестничные марши',
+                                        'IfcPile': '🔩 Сваи', 'default': '📦 Прочее'
+                                    };
+                                    
                                     const ifcTr = document.createElement('tr');
-                                    ifcTr.className = 'group-row hidden-row'; ifcTr.dataset.group = l3Id; ifcTr.dataset.groupId = ifcId;
-                                    ifcTr.style.cssText = 'background:#f0f4f8 !important;';
-                                    ifcTr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(ifcId); };
-                                    ifcTr.innerHTML = `<td style="text-align:center;padding-left:90px;"><span class="group-arrow" id="${ifcId}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${ifcId}"></td><td colspan="${totalCols - 1}" style="font-weight:500;color:#4a5568;">${ifcLabels[ifcType] || ifcType}<span class="group-badge">×${geoGroup.rows.length}</span><span style="font-size:11px;color:#718096;margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³</span></td>`;
+                                    ifcTr.className = 'group-row hidden-row';
+                                    ifcTr.dataset.group = l3Id;
+                                    ifcTr.dataset.groupId = ifcId;
+                                    ifcTr.style.cssText = 'background:#f0f4f8 !important; cursor:pointer;';
+                                    ifcTr.onclick = function(e) {
+                                        if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                                        toggleGroup(ifcId);
+                                    };
+                                    
+                                    ifcTr.innerHTML = `
+                                        <td style="text-align:center; padding-left: 90px;">
+                                            <span class="group-arrow" id="${ifcId}_arrow">▶</span>
+                                            <input type="checkbox" class="group-checkbox" data-group-id="${ifcId}">
+                                        </td>
+                                        <td colspan="${totalCols - 1}" style="font-weight:500; color:#4a5568;">
+                                            ${ifcLabels[ifcType] || ifcType}
+                                            <span class="group-badge">×${geoGroup.rows.length}</span>
+                                            <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³</span>
+                                        </td>
+                                    `;
                                     body.appendChild(ifcTr);
+                                    
                                     const ifcCb = ifcTr.querySelector('.group-checkbox');
                                     ifcCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(ifcId, this.checked); });
-                                    parentId = ifcId; paddingLeft = 120;
+                                    
+                                    parentId = ifcId;
+                                    paddingLeft = 120;
                                 }
+                                
+                                // Финальная геометрическая группа
                                 const geoId = 'GEO_' + (groupCounter++);
                                 groupIndexMap[geoId] = geoGroup.indices;
-                                groupLevel[geoId] = needIcfGroup ? 5 : 4; groupParent[geoId] = parentId; groupChildren[geoId] = [];
+                                groupLevel[geoId] = needIcfGroup ? 5 : 4;
+                                groupParent[geoId] = parentId;
+                                groupChildren[geoId] = [];
                                 if (!groupChildren[parentId]) groupChildren[parentId] = [];
-                                groupChildren[parentId].push(geoId); leafGroups[geoId] = true;
+                                groupChildren[parentId].push(geoId);
+                                leafGroups[geoId] = true;
+                                
                                 const firstIndex = geoGroup.indices[0];
+                                
                                 const geoTr = document.createElement('tr');
-                                geoTr.className = 'group-row hidden-row'; geoTr.dataset.group = parentId; geoTr.dataset.groupId = geoId;
-                                geoTr.style.cssText = 'background:#ffffff !important;';
-                                geoTr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(geoId); };
-                                geoTr.innerHTML = `<td style="text-align:center;padding-left:${paddingLeft}px;"><span class="group-arrow" id="${geoId}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${geoId}" data-first-index="${firstIndex}"></td><td colspan="${totalCols - 1}" style="color:#2b6cb0;font-weight:500;">📏 ${rule.label}: ${geoGroup.label}<span class="group-badge">×${geoGroup.rows.length}</span><span style="font-size:11px;color:#718096;margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³</span></td>`;
+                                geoTr.className = 'group-row hidden-row';
+                                geoTr.dataset.group = parentId;
+                                geoTr.dataset.groupId = geoId;
+                                geoTr.style.cssText = 'background:#ffffff !important; cursor:pointer;';
+                                geoTr.onclick = function(e) {
+                                    if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                                    toggleGroup(geoId);
+                                };
+                                
+                                geoTr.innerHTML = `
+                                    <td style="text-align:center; padding-left: ${paddingLeft}px;">
+                                        <span class="group-arrow" id="${geoId}_arrow">▶</span>
+                                        <input type="checkbox" class="group-checkbox" data-group-id="${geoId}" data-first-index="${firstIndex}">
+                                    </td>
+                                    <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
+                                        📏 ${rule.label}: ${geoGroup.label}
+                                        <span class="group-badge">×${geoGroup.rows.length}</span>
+                                        <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³</span>
+                                    </td>
+                                `;
                                 body.appendChild(geoTr);
+                                
                                 const geoCb = geoTr.querySelector('.group-checkbox');
                                 geoCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(geoId, this.checked); });
+                                
+                                // Добавляем строки данных
                                 geoGroup.rows.forEach(rd => {
                                     rd.tr.classList.add('group-row', 'hidden-row');
                                     rd.tr.dataset.group = geoId;
@@ -2456,6 +2696,7 @@ function autoGroupRows() {
                                     if (firstTd) firstTd.style.paddingLeft = (paddingLeft + 30) + 'px';
                                     const cb = rd.tr.querySelector('.row-checkbox');
                                     if (cb) { cb.style.display = 'none'; cb.checked = false; }
+                                    rowElementCache.set(rd.index, rd.tr);
                                     body.appendChild(rd.tr);
                                 });
                             });
@@ -2464,47 +2705,103 @@ function autoGroupRows() {
                 }
             });
         });
+        
+        // Прочие элементы
         const otherRows = partRows.filter(rd => !groupedIndices.has(rd.index));
         if (otherRows.length > 0) {
             let otherVolume = 0;
             otherRows.forEach(rd => { otherVolume += getVolume(rd.index); });
+            
             const otherLabel = partStructure.other_label || 'Прочие элементы';
             const otherId = 'OTHER_' + (groupCounter++);
             groupIndexMap[otherId] = otherRows.map(r => r.index);
-            groupLevel[otherId] = 2; groupParent[otherId] = l1Id; groupChildren[otherId] = []; groupChildren[l1Id].push(otherId);
+            groupLevel[otherId] = 2;
+            groupParent[otherId] = l1Id;
+            groupChildren[otherId] = [];
+            groupChildren[l1Id].push(otherId);
+            
             const otherTr = document.createElement('tr');
-            otherTr.className = 'group-row hidden-row'; otherTr.dataset.group = l1Id; otherTr.dataset.groupId = otherId;
-            otherTr.style.cssText = 'background:#fefcbf !important;';
-            otherTr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(otherId); };
-            otherTr.innerHTML = `<td style="text-align:center;padding-left:30px;"><span class="group-arrow" id="${otherId}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${otherId}"></td><td colspan="${totalCols - 1}" style="font-weight:600;color:#975a16;">📦 ${otherLabel}<span class="group-badge">×${otherRows.length}</span><span style="font-size:11px;color:#718096;margin-left:12px;">Σ Объём: ${otherVolume.toFixed(2)} м³</span></td>`;
+            otherTr.className = 'group-row hidden-row';
+            otherTr.dataset.group = l1Id;
+            otherTr.dataset.groupId = otherId;
+            otherTr.style.cssText = 'background:#fefcbf !important; cursor:pointer;';
+            otherTr.onclick = function(e) {
+                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                toggleGroup(otherId);
+            };
+            
+            otherTr.innerHTML = `
+                <td style="text-align:center; padding-left: 30px;">
+                    <span class="group-arrow" id="${otherId}_arrow">▶</span>
+                    <input type="checkbox" class="group-checkbox" data-group-id="${otherId}">
+                </td>
+                <td colspan="${totalCols - 1}" style="font-weight:600; color:#975a16;">
+                    📦 ${otherLabel}
+                    <span class="group-badge">×${otherRows.length}</span>
+                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${otherVolume.toFixed(2)} м³</span>
+                </td>
+            `;
             body.appendChild(otherTr);
+            
             const otherCb = otherTr.querySelector('.group-checkbox');
             otherCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(otherId, this.checked); });
+            
+            // Группируем прочие по имени
             const byName = {};
             otherRows.forEach(rd => {
                 let nameKey = (rd.name || '').trim();
                 const lastColon = nameKey.lastIndexOf(':');
-                if (lastColon !== -1) { const after = nameKey.substring(lastColon + 1).trim(); if (/^\d+$/.test(after)) nameKey = nameKey.substring(0, lastColon).trim(); }
+                if (lastColon !== -1) {
+                    const after = nameKey.substring(lastColon + 1).trim();
+                    if (/^\d+$/.test(after)) nameKey = nameKey.substring(0, lastColon).trim();
+                }
                 if (!nameKey) nameKey = 'Без названия';
                 if (!byName[nameKey]) byName[nameKey] = [];
                 byName[nameKey].push(rd);
             });
+            
             Object.keys(byName).forEach(nameKey => {
                 const nameRows = byName[nameKey];
                 let nameVolume = 0;
                 nameRows.forEach(rd => { nameVolume += getVolume(rd.index); });
+                
                 const nameId = 'NAME_' + (groupCounter++);
                 groupIndexMap[nameId] = nameRows.map(r => r.index);
-                groupLevel[nameId] = 3; groupParent[nameId] = otherId; groupChildren[nameId] = []; groupChildren[otherId].push(nameId); leafGroups[nameId] = true;
+                groupLevel[nameId] = 3;
+                groupParent[nameId] = otherId;
+                groupChildren[nameId] = [];
+                groupChildren[otherId].push(nameId);
+                leafGroups[nameId] = true;
+                
                 const firstIndex = nameRows[0].index;
+                
                 const nameTr = document.createElement('tr');
-                nameTr.className = 'group-row hidden-row'; nameTr.dataset.group = otherId; nameTr.dataset.groupId = nameId;
-                nameTr.style.cssText = 'background:#ffffff !important;';
-                nameTr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(nameId); };
-                nameTr.innerHTML = `<td style="text-align:center;padding-left:60px;"><span class="group-arrow" id="${nameId}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${nameId}" data-first-index="${firstIndex}"></td><td colspan="${totalCols - 1}" style="color:#2b6cb0;font-weight:500;">📎 ${nameKey}<span class="group-badge">×${nameRows.length}</span><span style="font-size:11px;color:#718096;margin-left:12px;">Σ Объём: ${nameVolume.toFixed(2)} м³</span></td>`;
+                nameTr.className = 'group-row hidden-row';
+                nameTr.dataset.group = otherId;
+                nameTr.dataset.groupId = nameId;
+                nameTr.style.cssText = 'background:#ffffff !important; cursor:pointer;';
+                nameTr.onclick = function(e) {
+                    if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                    toggleGroup(nameId);
+                };
+                
+                nameTr.innerHTML = `
+                    <td style="text-align:center; padding-left: 60px;">
+                        <span class="group-arrow" id="${nameId}_arrow">▶</span>
+                        <input type="checkbox" class="group-checkbox" data-group-id="${nameId}" data-first-index="${firstIndex}">
+                    </td>
+                    <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
+                        📎 ${nameKey}
+                        <span class="group-badge">×${nameRows.length}</span>
+                        <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${nameVolume.toFixed(2)} м³</span>
+                    </td>
+                `;
                 body.appendChild(nameTr);
+                
                 const nameCb = nameTr.querySelector('.group-checkbox');
                 nameCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(nameId, this.checked); });
+                
+                // Добавляем строки
                 nameRows.forEach(rd => {
                     rd.tr.classList.add('group-row', 'hidden-row');
                     rd.tr.dataset.group = nameId;
@@ -2512,16 +2809,17 @@ function autoGroupRows() {
                     if (firstTd) firstTd.style.paddingLeft = '90px';
                     const cb = rd.tr.querySelector('.row-checkbox');
                     if (cb) { cb.style.display = 'none'; cb.checked = false; }
+                    rowElementCache.set(rd.index, rd.tr);
                     body.appendChild(rd.tr);
                 });
             });
         }
     });
-    Object.keys(leafGroups).forEach(key => { if (groupChildren[key] && groupChildren[key].length > 0) delete leafGroups[key]; });
+    
     document.getElementById('autoGroupBtn').style.display = 'none';
     document.getElementById('ungroupBtn').style.display = 'inline-block';
     updateSelectionUI();
-    showToast(`Сгруппировано (КР): ${Object.keys(leafGroups).length} групп`, 'info');
+    showToast(`Сгруппировано (КР): ${Object.keys(groupIndexMap).length} групп`, 'info');
 }
 
 // ========== Группировка для АР ==========
