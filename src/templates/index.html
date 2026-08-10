@@ -753,6 +753,7 @@
                     <button class="btn btn-secondary" id="btnViewElementsJson" style="display:none;" onclick="showSessionJsonFile('ifc_elements_output.json')">📄 Элементы (JSON)</button>
                     <button class="btn btn-secondary" id="btnViewGroupedJson" style="display:none;" onclick="showSessionJsonFile('ifc_raw_elements_grouped.json')">📊 Группы (JSON)</button>
                     <button class="btn btn-secondary" id="btnViewGroupedXlsx" style="display:none;" onclick="previewResultFile('ifc_raw_elements_grouped.xlsx')">📥 Группы (XLSX)</button>
+                    <button class="btn btn-secondary" id="btnView3dModel" style="display:none;" onclick="open3dModelViewer()">🧊 3D модель</button>
                 </div>
                 <div class="params-row mt-20">
                     <div>
@@ -1016,6 +1017,7 @@ let isNewRunMode = false;
 let autoGroupEnabled = true;
 let currentProcessingType = 'KR';
 let currentViewFilename = null;
+let _previewLoadInFlight = false;
 
 // Кеш для ленивой загрузки строк данных
 const rowElementCache = new Map();
@@ -1506,6 +1508,7 @@ async function uploadFile() {
 function startStatusPolling(sessionId) {
     if (currentStatusInterval) { clearInterval(currentStatusInterval); currentStatusInterval = null; }
     const gen = ++pollingGeneration;
+    let statusHandled = false;
     currentStatusInterval = setInterval(async () => {
         if (gen !== pollingGeneration) return;
         try {
@@ -1523,19 +1526,25 @@ function startStatusPolling(sessionId) {
             const isProcessing = data.status === 'processing' || data.status === 'ifc_processing' || data.status === 'pdf_processing';
             const dotHtml = isProcessing && data.progress < 100 ? '<span class="progress-dot"></span>' : '';
             progressText.innerHTML = dotHtml + (data.progressMessage || `Обработка: ${data.progress}%`);
-            if (data.status === 'selecting_rows') { clearInterval(currentStatusInterval); currentStatusInterval = null; onIfcProcessed(sessionId); }
-            else if (data.status === 'error') { clearInterval(currentStatusInterval); currentStatusInterval = null; showToast('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'error'); document.getElementById('uploadBtn').disabled = false; document.getElementById('uploadBtn').innerHTML = 'Загрузить и обработать'; }
-            else if (data.status === 'completed') { clearInterval(currentStatusInterval); currentStatusInterval = null; onProcessingComplete(sessionId); }
+            // statusHandled защищает от повторного вызова onIfcProcessed при наложенных тиках
+            if (data.status === 'selecting_rows') { clearInterval(currentStatusInterval); currentStatusInterval = null; if (!statusHandled) { statusHandled = true; onIfcProcessed(sessionId); } }
+            else if (data.status === 'error') { clearInterval(currentStatusInterval); currentStatusInterval = null; if (!statusHandled) { statusHandled = true; showToast('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'error'); document.getElementById('uploadBtn').disabled = false; document.getElementById('uploadBtn').innerHTML = 'Загрузить и обработать'; } }
+            else if (data.status === 'completed') { clearInterval(currentStatusInterval); currentStatusInterval = null; if (!statusHandled) { statusHandled = true; onProcessingComplete(sessionId); } }
         } catch (e) { console.error('Status polling error:', e); }
     }, 1000);
 }
 
 async function onIfcProcessed(sessionId) {
-    document.getElementById('uploadBtn').innerHTML = '✅ Обработано';
-    document.getElementById('step1').classList.remove('disabled');
-    document.getElementById('step1Number').textContent = isNewRunMode ? 'Выбор строк (новый запуск)' : '2';
-    updateProcessingTypeBadges();
+    // Защита от повторного входа: наложенные тики поллинга или повторный
+    // вызов (например, из restoreSession) не должны перерисовывать превью
+    // заново — это приводило к «самопроизвольной» разгруппировке и спаму toast.
+    if (_previewLoadInFlight) return;
+    _previewLoadInFlight = true;
     try {
+        document.getElementById('uploadBtn').innerHTML = '✅ Обработано';
+        document.getElementById('step1').classList.remove('disabled');
+        document.getElementById('step1Number').textContent = isNewRunMode ? 'Выбор строк (новый запуск)' : '2';
+        updateProcessingTypeBadges();
         let preview_data = null;
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
@@ -1546,24 +1555,29 @@ async function onIfcProcessed(sessionId) {
             } catch (e) { if (attempt < 2) await new Promise(r => setTimeout(r, 500 * (attempt + 1))); }
         }
         if (!preview_data) throw new Error('Не удалось загрузить данные');
+        // Устанавливаем тип обработки БЕЗ onProcessingTypeChange(): он пере-группирует
+        // устаревшие данные из window._previewData и показывает лишние toast-сообщения
+        // «Режим: …» / «Сгруппировано: …». Группировка будет выполнена один раз в renderPreview.
         if (preview_data.processingType) {
             currentProcessingType = preview_data.processingType;
             const radio = document.querySelector(`input[name="processingType"][value="${currentProcessingType}"]`);
-            if (radio) { radio.checked = true; onProcessingTypeChange(); }
+            if (radio) { radio.checked = true; updateProcessingTypeBadges(); }
         }
         renderPreview(preview_data);
         if (preview_data.buildingHeight) document.getElementById('buildingHeight').value = preview_data.buildingHeight;
         const blueprintBtns = document.getElementById('blueprintButtons');
         if (blueprintBtns) {
             const isPdf = preview_data.sourceType === 'pdf';
+            const isIfc = preview_data.sourceType === 'ifc';
             const hasPdfExtras = isPdf && (preview_data.hasBlueprintImage || preview_data.hasMaterialsMd);
             const hasRefFiles = preview_data.hasIfcElementsJson || preview_data.hasIfcGroupedJson || preview_data.hasIfcGroupedXlsx;
-            blueprintBtns.style.display = (hasPdfExtras || hasRefFiles) ? 'flex' : 'none';
+            blueprintBtns.style.display = (hasPdfExtras || hasRefFiles || isIfc) ? 'flex' : 'none';
             document.getElementById('btnBlueprintImage').style.display = isPdf ? '' : 'none';
             document.getElementById('btnMaterialsLegend').style.display = isPdf ? '' : 'none';
             document.getElementById('btnViewElementsJson').style.display = preview_data.hasIfcElementsJson ? '' : 'none';
             document.getElementById('btnViewGroupedJson').style.display = preview_data.hasIfcGroupedJson ? '' : 'none';
             document.getElementById('btnViewGroupedXlsx').style.display = preview_data.hasIfcGroupedXlsx ? '' : 'none';
+            document.getElementById('btnView3dModel').style.display = isIfc ? '' : 'none';
         }
         showToast(`Загружено ${preview_data.totalRows} строк`, 'success');
         if (isNewRunMode) {
@@ -1572,6 +1586,8 @@ async function onIfcProcessed(sessionId) {
         }
     } catch (e) {
         showToast(e.message, 'error');
+    } finally {
+        _previewLoadInFlight = false;
     }
 }
 
@@ -1602,7 +1618,7 @@ async function startNewRun() {
             if (preview_data.processingType) {
                 currentProcessingType = preview_data.processingType;
                 const radio = document.querySelector(`input[name="processingType"][value="${currentProcessingType}"]`);
-                if (radio) { radio.checked = true; onProcessingTypeChange(); }
+                if (radio) { radio.checked = true; updateProcessingTypeBadges(); }
             }
             renderPreview(preview_data);
             if (preview_data.buildingHeight) document.getElementById('buildingHeight').value = preview_data.buildingHeight;
@@ -1695,6 +1711,7 @@ async function confirmRowSelection() {
 function startProcessingPolling(sessionId) {
     if (currentStatusInterval) { clearInterval(currentStatusInterval); currentStatusInterval = null; }
     const gen = ++pollingGeneration;
+    let statusHandled = false;
     currentStatusInterval = setInterval(async () => {
         if (gen !== pollingGeneration) return;
         try {
@@ -1707,12 +1724,15 @@ function startProcessingPolling(sessionId) {
             const progressText = document.getElementById('processingProgressText');
             progressBar.style.width = data.progress + '%';
             progressText.textContent = data.progressMessage || `Обработка: ${data.progress}%`;
-            if (data.status === 'completed') { clearInterval(currentStatusInterval); currentStatusInterval = null; onProcessingComplete(sessionId); }
+            if (data.status === 'completed') { clearInterval(currentStatusInterval); currentStatusInterval = null; if (!statusHandled) { statusHandled = true; onProcessingComplete(sessionId); } }
             else if (data.status === 'error') {
                 clearInterval(currentStatusInterval); currentStatusInterval = null;
-                showToast('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'error');
-                document.getElementById('selectRowsBtn').disabled = false;
-                document.getElementById('selectRowsBtn').innerHTML = `🚀 Запустить обработку (<span id="selectedCount">${selectedRows.size}</span>)`;
+                if (!statusHandled) {
+                    statusHandled = true;
+                    showToast('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'error');
+                    document.getElementById('selectRowsBtn').disabled = false;
+                    document.getElementById('selectRowsBtn').innerHTML = `🚀 Запустить обработку (<span id="selectedCount">${selectedRows.size}</span>)`;
+                }
             }
         } catch (e) { console.error('Polling error:', e); }
     }, 2000);
@@ -3190,6 +3210,51 @@ function renderMarkdownTable(md) {
 }
 
 // ========== 3D просмотр ==========
+// 3D модель создаётся по запросу пользователя (кнопка «3D модель»)
+async function open3dModelViewer() {
+    if (!currentSessionId) { showToast('Нет активной сессии', 'warning'); return; }
+    const overlay = document.getElementById('viewer3dModal');
+    const container = document.getElementById('viewer3dContainer');
+    const loading = document.getElementById('viewer3dLoading');
+    document.getElementById('viewer3dTitle').textContent = '🧊 3D модель';
+    overlay.classList.add('active');
+    loading.style.display = 'block';
+    loading.textContent = '⏳ Идёт создание 3D модели...';
+    loading.style.color = '#718096';
+    if (viewer3d) {
+        if (viewer3d._resizeHandler) window.removeEventListener('resize', viewer3d._resizeHandler);
+        try { viewer3d.renderer.dispose(); } catch(e) {}
+        viewer3d = null;
+    }
+    container.innerHTML = ''; container.appendChild(loading);
+    try {
+        const resp = await fetch(`${API_BASE}/session/${currentSessionId}/3d_model`, { method: 'POST' });
+        if (!resp.ok) {
+            let detail = 'Ошибка создания 3D модели';
+            try { detail = (await resp.json()).detail || detail; } catch(e) {}
+            throw new Error(detail);
+        }
+        let data = await resp.json();
+        // Ждём завершения фоновой генерации GLB
+        while (data.status === 'creating') {
+            await new Promise(r => setTimeout(r, 2000));
+            const sResp = await fetch(`${API_BASE}/session/${currentSessionId}/3d_model/status`);
+            if (!sResp.ok) throw new Error('Ошибка получения статуса');
+            data = await sResp.json();
+        }
+        if (data.status === 'error') throw new Error(data.error || 'Ошибка создания 3D модели');
+        if (data.status === 'ready') {
+            await previewGlbFile(data.filename || '3Dmodel.glb');
+        } else {
+            throw new Error('Не удалось создать 3D модель');
+        }
+    } catch (e) {
+        console.error('3D creation error:', e);
+        loading.textContent = '❌ ' + (e.message || 'Ошибка создания 3D модели');
+        loading.style.color = '#e53e3e';
+    }
+}
+
 async function previewGlbFile(filename) {
     const overlay = document.getElementById('viewer3dModal');
     const container = document.getElementById('viewer3dContainer');
@@ -3333,7 +3398,7 @@ async function restoreSession(sessionId) {
         if (data.processingType || data.processing_type) {
             currentProcessingType = data.processingType || data.processing_type;
             const radio = document.querySelector(`input[name="processingType"][value="${currentProcessingType}"]`);
-            if (radio) { radio.checked = true; onProcessingTypeChange(); }
+            if (radio) { radio.checked = true; updateProcessingTypeBadges(); }
         }
         showToast('Сессия восстановлена', 'success');
         switchTab('process');

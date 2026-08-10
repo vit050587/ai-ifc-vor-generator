@@ -36,6 +36,7 @@ class SessionManager:
         self.koefs_xlsx = koefs_xlsx
         self._sessions: Dict[str, Dict[str, Any]] = {}
         self._state_lock = threading.RLock()
+        self._glb_threads: Dict[str, threading.Thread] = {}
         self._load()
         
         os.makedirs(upload_folder, exist_ok=True)
@@ -535,13 +536,9 @@ class SessionManager:
                 else:
                     raise RuntimeError("Не удалось найти созданный Excel файл")
             
-            # Создаём GLB модель
-            try:
-                _make_glb_file(ifc_path, session_dir)
-            except Exception as e:
-                logger.warning(f'Не удалось создать файл 3D модели: {e}')
-            
             # Перемещаем исходные файлы в original/
+            # Примечание: GLB-модель больше не создаётся автоматически.
+            # Она формируется по запросу пользователя (кнопка "3D модель").
             original_dir = self._prepare_original_dir(session_dir)
             
             # Находим Excel в original/
@@ -1239,3 +1236,154 @@ class SessionManager:
             "building_height": building_height,
             "message": f"Высота обновлена: {building_height}м"
         }
+
+    # =====================================================================
+    #  3D МОДЕЛЬ (GLB) ПО ЗАПРОСУ
+    # =====================================================================
+
+    def _get_ifc_path(self, session_id: str) -> Optional[str]:
+        """Находит путь к исходному IFC файлу сессии."""
+        s = self.get(session_id)
+        if not s:
+            return None
+
+        # 1. Путь, сохранённый в сессии
+        ifc_path = s.get("ifc_file_path")
+        if ifc_path and os.path.exists(ifc_path) and os.path.isfile(ifc_path):
+            return ifc_path
+
+        session_dir = os.path.join(self.output_folder, session_id)
+        original_dir = os.path.join(session_dir, 'original')
+
+        # 2. Ищем в original/
+        if os.path.isdir(original_dir):
+            for f in os.listdir(original_dir):
+                if f.startswith('original_') and f.endswith('.ifc'):
+                    p = os.path.join(original_dir, f)
+                    if os.path.isfile(p):
+                        return p
+
+        # 3. Ищем в корне сессии
+        if os.path.isdir(session_dir):
+            for f in os.listdir(session_dir):
+                if f.startswith('original_') and f.endswith('.ifc'):
+                    p = os.path.join(session_dir, f)
+                    if os.path.isfile(p):
+                        return p
+
+        return None
+
+    def _find_glb_path(self, session_id: str) -> Optional[str]:
+        """Ищет уже созданный GLB файл в директории сессии."""
+        session_dir = os.path.join(self.output_folder, session_id)
+        original_dir = os.path.join(session_dir, 'original')
+
+        for d in (session_dir, original_dir):
+            if os.path.isdir(d):
+                p = os.path.join(d, '3Dmodel.glb')
+                if os.path.isfile(p) and os.path.getsize(p) > 0:
+                    return p
+        return None
+
+    def ensure_3d_model(self, session_id: str) -> Dict[str, Any]:
+        """Запускает генерацию GLB по запросу (только для IFC-сессий).
+
+        Если файл уже существует — возвращает ready.
+        Если генерация уже идёт — возвращает creating.
+        Иначе запускает фоновый поток и возвращает creating.
+        """
+        s = self.get(session_id)
+        if not s:
+            raise KeyError("Сессия не найдена")
+
+        if s.get("source_type") != "ifc":
+            raise ValueError("3D модель доступна только для IFC файлов")
+
+        # Файл уже готов
+        existing = self._find_glb_path(session_id)
+        if existing:
+            return {
+                "status": "ready",
+                "filename": "3Dmodel.glb",
+                "size": os.path.getsize(existing),
+                "download_url": f"/ifc-vor/api/session/{session_id}/download/3Dmodel.glb",
+            }
+
+        # Генерация уже идёт
+        thread = self._glb_threads.get(session_id)
+        if thread is not None and thread.is_alive():
+            return {"status": "creating", "filename": "3Dmodel.glb"}
+
+        ifc_path = self._get_ifc_path(session_id)
+        if not ifc_path:
+            raise RuntimeError("Исходный IFC файл не найден")
+
+        session_dir = os.path.join(self.output_folder, session_id)
+        os.makedirs(session_dir, exist_ok=True)
+
+        self._update(session_id, glb_status="creating", glb_error=None)
+
+        bg_thread = threading.Thread(
+            target=self._generate_3d_model_bg,
+            args=(session_id, ifc_path, session_dir),
+            daemon=True,
+            name=f"GLB-Generation-{session_id[:8]}"
+        )
+        self._glb_threads[session_id] = bg_thread
+        bg_thread.start()
+
+        return {"status": "creating", "filename": "3Dmodel.glb"}
+
+    def get_3d_model_status(self, session_id: str) -> Dict[str, Any]:
+        """Возвращает текущий статус генерации GLB."""
+        s = self.get(session_id)
+        if not s:
+            raise KeyError("Сессия не найдена")
+
+        existing = self._find_glb_path(session_id)
+        if existing:
+            return {
+                "status": "ready",
+                "filename": "3Dmodel.glb",
+                "size": os.path.getsize(existing),
+                "download_url": f"/ifc-vor/api/session/{session_id}/download/3Dmodel.glb",
+            }
+
+        status = s.get("glb_status")
+        if status == "error":
+            return {
+                "status": "error",
+                "error": s.get("glb_error") or "Ошибка создания 3D модели",
+            }
+        if status == "creating":
+            return {"status": "creating", "filename": "3Dmodel.glb"}
+        return {"status": "none", "filename": "3Dmodel.glb"}
+
+    def _generate_3d_model_bg(self, session_id: str, ifc_path: str, session_dir: str) -> None:
+        """Фоновая генерация GLB-модели из IFC."""
+        try:
+            _make_glb_file(ifc_path, session_dir)
+            glb_path = os.path.join(session_dir, '3Dmodel.glb')
+
+            with self._state_lock:
+                if session_id in self._sessions:
+                    files = self._sessions[session_id].get("files", [])
+                    files = [f for f in files if f.get("filename") != "3Dmodel.glb"]
+                    files.append({
+                        "path": glb_path,
+                        "filename": "3Dmodel.glb",
+                        "size": os.path.getsize(glb_path),
+                    })
+                    self._sessions[session_id]["files"] = files
+                    self._sessions[session_id]["glb_status"] = "ready"
+                    self._sessions[session_id]["glb_error"] = None
+                    self._save()
+            logger.info(f"3D модель успешно создана для сессии {session_id}")
+        except Exception as e:
+            import traceback
+            logger.error(
+                f"Ошибка создания 3D модели для сессии {session_id}:\n{traceback.format_exc()}"
+            )
+            self._update(session_id, glb_status="error", glb_error=str(e))
+        finally:
+            self._glb_threads.pop(session_id, None)

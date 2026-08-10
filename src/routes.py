@@ -1618,3 +1618,94 @@ def filter_by_height(session_id: str):
     except Exception as e:
         logger.error(f"Ошибка фильтрации по высоте: {e}", exc_info=True)
         return _err(ErrorResponse(detail=f"Ошибка сервера: {str(e)}"), 500)
+
+
+@bp.route("/api/session/<session_id>/3d_model", methods=["POST"])
+def create_3d_model(session_id: str):
+    """
+    Создание 3D модели (GLB) по запросу пользователя.
+    Файл формируется только для IFC-сессий и только при вызове этой ручки.
+    ---
+    tags:
+      - files
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+        description: ID сессии
+    responses:
+      200:
+        description: Статус создания 3D модели
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [creating, ready]
+            filename:
+              type: string
+            downloadUrl:
+              type: string
+      400:
+        description: 3D модель недоступна для этой сессии
+      404:
+        description: Сессия не найдена
+      500:
+        description: Внутренняя ошибка
+    """
+    if not session_id:
+        return _err(ErrorResponse(detail="ID сессии не указан"), 400)
+
+    try:
+        result = _get_manager().ensure_3d_model(session_id)
+        return jsonify(result), 200
+    except KeyError:
+        return _err(ErrorResponse(detail="Сессия не найдена"), 404)
+    except ValueError as e:
+        return _err(ErrorResponse(detail=str(e)), 400)
+    except Exception as e:
+        logger.error(f"Ошибка создания 3D модели: {e}", exc_info=True)
+        return _err(ErrorResponse(detail=f"Ошибка сервера: {str(e)}"), 500)
+
+
+@bp.route("/api/session/<session_id>/3d_model/status", methods=["GET"])
+def get_3d_model_status(session_id: str):
+    """
+    Статус создания 3D модели (GLB).
+    ---
+    tags:
+      - files
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+        description: ID сессии
+    responses:
+      200:
+        description: Статус генерации 3D модели
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [none, creating, ready, error]
+            filename:
+              type: string
+            error:
+              type: string
+      404:
+        description: Сессия не найдена
+    """
+    if not session_id:
+        return _err(ErrorResponse(detail="ID сессии не указан"), 400)
+
+    try:
+        result = _get_manager().get_3d_model_status(session_id)
+        return jsonify(result), 200
+    except KeyError:
+        return _err(ErrorResponse(detail="Сессия не найдена"), 404)
+    except Exception as e:
+        logger.error(f"Ошибка получения статуса 3D модели: {e}", exc_info=True)
+        return _err(ErrorResponse(detail=f"Ошибка сервера: {str(e)}"), 500)
