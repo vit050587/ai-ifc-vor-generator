@@ -2086,11 +2086,15 @@ function toggleGroup(groupId) {
         });
     }
     
-    // Строки данных - только из кеша
+    // Строки данных - из кеша, с fallback на DOM-запрос
     const indices = groupIndexMap[groupId];
     if (indices) {
         indices.forEach(index => {
-            const row = rowElementCache.get(index);
+            let row = rowElementCache.get(index);
+            if (!row) {
+                row = document.querySelector(`tr[data-row-index="${index}"]`);
+                if (row) rowElementCache.set(index, row);
+            }
             if (row && row.dataset.group === groupId) {
                 rowsToToggle.push(row);
             }
@@ -2139,7 +2143,14 @@ function updateChildCheckboxes(groupId, checked) {
     const indices = groupIndexMap[groupId];
     if (indices) {
         const batch = [];
-        indices.forEach(index => { const row = rowElementCache.get(index); if (row) batch.push(row); });
+        indices.forEach(index => {
+            let row = rowElementCache.get(index);
+            if (!row) {
+                row = document.querySelector(`tr[data-row-index="${index}"]`);
+                if (row) rowElementCache.set(index, row);
+            }
+            if (row) batch.push(row);
+        });
         updateCheckboxesBatch(batch, checked, 0);
     }
     if (groupChildren[groupId]) groupChildren[groupId].forEach(childId => updateChildCheckboxes(childId, checked));
@@ -2927,6 +2938,7 @@ function autoGroupRowsAR() {
                     if (firstTd) firstTd.style.paddingLeft = '90px';
                     const cb = rd.tr.querySelector('.row-checkbox');
                     if (cb) { cb.style.display = 'none'; cb.checked = false; }
+                    rowElementCache.set(rd.index, rd.tr);
                     body.appendChild(rd.tr);
                 });
             });
