@@ -641,6 +641,15 @@
             white-space: pre;
             tab-size: 2;
         }
+        #sessionJsonContent {
+            max-height: 70vh;
+            overflow: auto;
+            background: #f7fafc;
+            padding: 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.5;
+        }
         @media (max-width: 768px) {
             .card { padding: 16px; }
             header { padding: 16px; }
@@ -665,6 +674,7 @@
             <button class="tab-btn" onclick="switchTab('history')">📚 История</button>
         </div>
         
+        <!-- Вкладка Обработка -->
         <div class="tab-content active" id="processTab">
             <div class="card" id="step0">
                 <div class="step-title">
@@ -882,6 +892,7 @@
             </div>
         </div>
 
+        <!-- Вкладка История -->
         <div class="tab-content" id="historyTab">
             <div class="card">
                 <div class="flex-between">
@@ -959,7 +970,7 @@
             </div>
             <div class="modal-body">
                 <div id="sessionJsonLoading" style="padding:40px;color:#718096;text-align:center;">Загрузка...</div>
-                <pre id="sessionJsonContent" style="display:none;max-height:70vh;overflow:auto;background:#f7fafc;padding:16px;border-radius:8px;font-size:13px;line-height:1.5;"></pre>
+                <pre id="sessionJsonContent" style="display:none;"></pre>
             </div>
         </div>
     </div>
@@ -1048,7 +1059,7 @@ function updateProcessingTypeBadges() {
     });
 }
 
-// ========== Состояние зума изображения чертежа ==========
+// ========== Состояние зума ==========
 const blueprintZoom = {
     scale: 1, minScale: 0.1, maxScale: 10,
     x: 0, y: 0, baseScale: 1,
@@ -1191,9 +1202,7 @@ referenceUploadArea.addEventListener('drop', (event) => {
     referenceUploadArea.classList.remove('dragover');
     if (event.dataTransfer.files.length) selectReferenceFile(event.dataTransfer.files[0]);
 });
-referenceFileInput.addEventListener('change', (event) => {
-    if (event.target.files.length) selectReferenceFile(event.target.files[0]);
-});
+referenceFileInput.addEventListener('change', (e) => { if (e.target.files.length) selectReferenceFile(e.target.files[0]); });
 
 // Обработчик переключения типа для reference-вкладки
 document.querySelectorAll('input[name="referenceProcessingType"]').forEach(radio => {
@@ -1216,17 +1225,11 @@ function isSupportedReferenceFile(file) {
 
 function stopReferencePolling() {
     referencePollGeneration++;
-    if (referencePollTimer) {
-        clearTimeout(referencePollTimer);
-        referencePollTimer = null;
-    }
+    if (referencePollTimer) { clearTimeout(referencePollTimer); referencePollTimer = null; }
 }
 
 function selectReferenceFile(file) {
-    if (!isSupportedReferenceFile(file)) {
-        showToast('Поддерживаются файлы .ifc и .pdf', 'error');
-        return;
-    }
+    if (!isSupportedReferenceFile(file)) { showToast('Поддерживаются файлы .ifc и .pdf', 'error'); return; }
     stopReferencePolling();
     referenceSelectedFile = file;
     referenceSessionId = null;
@@ -1260,12 +1263,7 @@ function resetReferenceTest() {
 
 async function parseApiError(response, fallback) {
     const text = await response.text();
-    try {
-        const data = JSON.parse(text);
-        return data.detail || fallback;
-    } catch {
-        return text || fallback;
-    }
+    try { const data = JSON.parse(text); return data.detail || fallback; } catch { return text || fallback; }
 }
 
 async function startReferenceBuild() {
@@ -1330,16 +1328,8 @@ async function pollReferenceSession(generation = referencePollGeneration) {
         const progress = Number.isFinite(Number(status.progress)) ? Number(status.progress) : 0;
         document.getElementById('referenceProgressBar').style.width = `${Math.max(0, Math.min(100, progress))}%`;
         document.getElementById('referenceProgressText').textContent = status.progressMessage || `Обработка: ${progress}%`;
-
-        if (status.status === 'error') {
-            showReferenceError(status.error || 'Неизвестная ошибка обработки');
-            return;
-        }
-        if (status.status === 'completed') {
-            await loadReferenceResult(generation);
-            return;
-        }
-
+        if (status.status === 'error') { showReferenceError(status.error || 'Неизвестная ошибка обработки'); return; }
+        if (status.status === 'completed') { await loadReferenceResult(generation); return; }
         document.getElementById('referenceStatusText').textContent = 'В обработке';
         scheduleReferencePoll(generation);
     } catch (error) {
@@ -1420,41 +1410,27 @@ function openReferenceSession(sessionId) {
 
 function referenceJsonByKind(kind) {
     if (!referenceResultData) return null;
-    return kind === 'elements'
-        ? referenceResultData.ifcElementsOutput
-        : referenceResultData.ifcRawElementsGrouped;
+    return kind === 'elements' ? referenceResultData.ifcElementsOutput : referenceResultData.ifcRawElementsGrouped;
 }
 
 function downloadReferenceJson(kind) {
     const data = referenceJsonByKind(kind);
     if (!data) return;
-    const filename = kind === 'elements'
-        ? 'ifc_elements_output.json'
-        : 'ifc_raw_elements_grouped.json';
+    const filename = kind === 'elements' ? 'ifc_elements_output.json' : 'ifc_raw_elements_grouped.json';
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
+    const a = document.createElement('a'); a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 }
 
 async function copyReferenceJson(kind) {
     const data = referenceJsonByKind(kind);
     if (!data) return;
     const text = JSON.stringify(data, null, 2);
-    try {
-        await navigator.clipboard.writeText(text);
-    } catch {
-        const textarea = document.createElement('textarea');
-        textarea.value = text;
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand('copy');
-        textarea.remove();
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+        const ta = document.createElement('textarea'); ta.value = text;
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
     }
     showToast('JSON скопирован', 'success');
 }
@@ -1567,18 +1543,14 @@ async function onIfcProcessed(sessionId) {
                 if (!response.ok) throw new Error('Ошибка');
                 preview_data = await response.json();
                 break;
-            } catch (e) {
-                if (attempt < 2) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-            }
+            } catch (e) { if (attempt < 2) await new Promise(r => setTimeout(r, 500 * (attempt + 1))); }
         }
         if (!preview_data) throw new Error('Не удалось загрузить данные');
-        
         if (preview_data.processingType) {
             currentProcessingType = preview_data.processingType;
             const radio = document.querySelector(`input[name="processingType"][value="${currentProcessingType}"]`);
             if (radio) { radio.checked = true; onProcessingTypeChange(); }
         }
-        
         renderPreview(preview_data);
         if (preview_data.buildingHeight) document.getElementById('buildingHeight').value = preview_data.buildingHeight;
         const blueprintBtns = document.getElementById('blueprintButtons');
@@ -1587,8 +1559,6 @@ async function onIfcProcessed(sessionId) {
             const hasPdfExtras = isPdf && (preview_data.hasBlueprintImage || preview_data.hasMaterialsMd);
             const hasRefFiles = preview_data.hasIfcElementsJson || preview_data.hasIfcGroupedJson || preview_data.hasIfcGroupedXlsx;
             blueprintBtns.style.display = (hasPdfExtras || hasRefFiles) ? 'flex' : 'none';
-
-            // Для PDF показываем все кнопки, для IFC — только JSON/XLSX
             document.getElementById('btnBlueprintImage').style.display = isPdf ? '' : 'none';
             document.getElementById('btnMaterialsLegend').style.display = isPdf ? '' : 'none';
             document.getElementById('btnViewElementsJson').style.display = preview_data.hasIfcElementsJson ? '' : 'none';
@@ -1596,7 +1566,6 @@ async function onIfcProcessed(sessionId) {
             document.getElementById('btnViewGroupedXlsx').style.display = preview_data.hasIfcGroupedXlsx ? '' : 'none';
         }
         showToast(`Загружено ${preview_data.totalRows} строк`, 'success');
-        
         if (isNewRunMode) {
             document.getElementById('resultsCard').style.display = 'none';
             document.getElementById('processingProgressWrap').style.display = 'none';
@@ -1608,15 +1577,12 @@ async function onIfcProcessed(sessionId) {
 
 async function startNewRun() {
     if (!currentSessionId) { showToast('Нет активной сессии', 'warning'); return; }
-    
     selectedRows.clear();
     document.querySelectorAll('.group-checkbox,.row-checkbox').forEach(cb => { if (cb) cb.checked = false; });
-    
     const step1 = document.getElementById('step1');
     const resultsCard = document.getElementById('resultsCard');
     const processingWrap = document.getElementById('processingProgressWrap');
     const selectBtn = document.getElementById('selectRowsBtn');
-    
     step1.classList.remove('disabled');
     if (resultsCard) resultsCard.style.display = 'none';
     if (processingWrap) processingWrap.style.display = 'none';
@@ -1629,7 +1595,6 @@ async function startNewRun() {
     isNewRunMode = true;
     updateSelectionUI();
     updateProcessingTypeBadges();
-    
     try {
         const response = await fetch(`${API_BASE}/session/${currentSessionId}/preview`);
         if (response.ok) {
@@ -1642,32 +1607,21 @@ async function startNewRun() {
             renderPreview(preview_data);
             if (preview_data.buildingHeight) document.getElementById('buildingHeight').value = preview_data.buildingHeight;
             showToast(`Загружено ${preview_data.totalRows} строк. Выберите нужные.`, 'info');
-        } else {
-            showToast('Ошибка загрузки данных предпросмотра', 'error');
-            return;
-        }
-    } catch (e) {
-        showToast('Ошибка загрузки данных: ' + e.message, 'error');
-        return;
-    }
-    
+        } else { showToast('Ошибка загрузки данных предпросмотра', 'error'); return; }
+    } catch (e) { showToast('Ошибка загрузки данных: ' + e.message, 'error'); return; }
     step1.scrollIntoView({ behavior: 'smooth' });
 }
 
 async function confirmRowSelection() {
     if (selectedRows.size === 0) { showToast('Выберите хотя бы одну строку', 'warning'); return; }
-    
     const height = parseFloat(document.getElementById('buildingHeight').value);
     if (!height || height <= 0 || height > 10000) { showToast('Некорректная высота (допустимо: 1-10000 м)', 'warning'); return; }
-    
     const btn = document.getElementById('selectRowsBtn');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Запуск...';
-    
     const selectedRowParts = {};
     const selectedRowMaterials = {};
     const allSelectedIndices = new Set();
-    
     if (isGrouped) {
         Object.keys(leafGroups).forEach(groupId => {
             const indices = groupIndexMap[groupId];
@@ -1690,7 +1644,6 @@ async function confirmRowSelection() {
             allSelectedIndices.add(index);
         });
     }
-    
     const progressWrap = document.getElementById('processingProgressWrap');
     if (progressWrap) progressWrap.style.display = 'block';
     document.getElementById('processingProgressBar').style.width = '0%';
@@ -1723,10 +1676,8 @@ async function confirmRowSelection() {
             try { const errorData = JSON.parse(responseText); errorMessage = errorData.detail || errorMessage; } catch { errorMessage = responseText || errorMessage; }
             throw new Error(errorMessage);
         }
-        
         const data = await response.json();
         if (data.runId || data.run_id) currentRunId = data.runId || data.run_id;
-        
         const runNumber = data.runNumber || data.run_number || '';
         const selectedCount = data.selectedRows || data.selected_rows || allSelectedIndices.size;
         showToast(runNumber ? `Запуск ${runNumber} начат (${selectedCount} строк)` : `Обработка начата (${selectedCount} строк)`, 'success');
@@ -1771,15 +1722,12 @@ async function onProcessingComplete(sessionId) {
     document.getElementById('processingProgressBar').style.width = '100%';
     document.getElementById('processingProgressText').textContent = 'Обработка завершена';
     updateProcessingTypeBadges();
-    
     try {
         const response = await fetch(`${API_BASE}/session/${sessionId}`);
         if (!response.ok) throw new Error('Ошибка');
         const data = await response.json();
-        
         let files = data.files || [];
         currentRunId = data.current_run_id;
-        
         renderResults(files, data);
         document.getElementById('resultsCard').style.display = 'block';
         showToast('Обработка завершена!', 'success');
@@ -1787,25 +1735,19 @@ async function onProcessingComplete(sessionId) {
     } catch (e) { showToast(e.message, 'error'); }
 }
 
-// ========== Управление запусками ==========
 async function loadRuns() {
     if (!currentSessionId) return;
-    
     try {
         const response = await fetch(`${API_BASE}/session/${currentSessionId}/runs`);
         if (!response.ok) return;
-        
         const data = await response.json();
         const runs = data.runs || [];
         const currentRunIdFromServer = data.currentRunId || data.current_run_id || null;
         if (currentRunIdFromServer) currentRunId = currentRunIdFromServer;
-        
         const runSelector = document.getElementById('runSelector');
         const runSelect = document.getElementById('runSelect');
         const currentRunBadge = document.getElementById('currentRunBadge');
-        
         if (!runSelector || !runSelect) return;
-        
         if (runs.length > 1) {
             runSelector.style.display = 'flex';
             runSelect.innerHTML = runs.map((run) => {
@@ -1821,7 +1763,6 @@ async function loadRuns() {
                         }
                     } catch (e) { dateStr = String(createdAt).substring(0, 19).replace('T', ' '); }
                 }
-                
                 const status = run.status || 'unknown';
                 const statusIcon = status === 'completed' ? '✅' : status === 'processing' ? '⏳' : status === 'error' ? '❌' : '📋';
                 const runNumber = run.runNumber || run.run_number || run.number || '?';
@@ -1829,10 +1770,8 @@ async function loadRuns() {
                 const ptIcon = ptLabel === 'AR' ? '🏛️' : '🏗️';
                 const runId = run.runId || run.run_id || run.id;
                 const isSelected = (runId === currentRunId);
-                
                 return `<option value="${runId}" ${isSelected ? 'selected' : ''}>${statusIcon} ${ptIcon} Запуск ${runNumber} — ${dateStr} (${status})</option>`;
             }).join('');
-            
             if (currentRunBadge) {
                 const currentRun = runs.find(r => { const rid = r.runId || r.run_id || r.id; return rid === currentRunId; });
                 if (currentRun) {
@@ -1840,13 +1779,9 @@ async function loadRuns() {
                     const rn = currentRun.runNumber || currentRun.run_number || '?';
                     const ptLabel = currentRun.processingType || currentRun.processing_type || 'KR';
                     currentRunBadge.textContent = `Текущий: ${ptLabel} Запуск ${rn}`;
-                } else {
-                    currentRunBadge.style.display = 'none';
-                }
+                } else currentRunBadge.style.display = 'none';
             }
-        } else {
-            runSelector.style.display = 'none';
-        }
+        } else runSelector.style.display = 'none';
     } catch (e) { console.error('Ошибка загрузки runs:', e); }
 }
 
@@ -1854,17 +1789,13 @@ async function onRunSelectChange() {
     const runSelect = document.getElementById('runSelect');
     const selectedRunId = runSelect.value;
     if (!selectedRunId || selectedRunId === currentRunId) return;
-    
     try {
         const response = await fetch(`${API_BASE}/session/${currentSessionId}/switch_run/${selectedRunId}`, { method: 'POST' });
         if (!response.ok) { const error = await response.json(); throw new Error(error.detail || 'Ошибка переключения'); }
-        
         const data = await response.json();
         currentRunId = data.run_id;
-        
         renderResults(data.files || [], { runs: [], current_run_id: currentRunId });
         if (data.building_height) document.getElementById('buildingHeight').value = data.building_height;
-        
         showToast(`Переключено на Запуск ${data.run_number}`, 'info');
         updateProcessingTypeBadges();
         await loadRuns();
@@ -1873,10 +1804,7 @@ async function onRunSelectChange() {
 
 function renderResults(files, sessionData) {
     const container = document.getElementById('resultsFiles');
-    if (!files || files.length === 0) {
-        container.innerHTML = '<p style="color:#718096;">Нет файлов</p>';
-        return;
-    }
+    if (!files || files.length === 0) { container.innerHTML = '<p style="color:#718096;">Нет файлов</p>'; return; }
     container.innerHTML = files.map(f => {
         const ext = f.filename.split('.').pop().toLowerCase();
         const canPreview = ['xlsx','csv','json'].includes(ext);
@@ -1892,16 +1820,11 @@ function renderResults(files, sessionData) {
     }).join('');
 }
 
-function downloadAll() {
-    if (!currentSessionId) return;
-    window.location.href = `${API_BASE}/session/${currentSessionId}/download_all`;
-}
+function downloadAll() { if (!currentSessionId) return; window.location.href = `${API_BASE}/session/${currentSessionId}/download_all`; }
 
 function startNewSession() {
     if (currentStatusInterval) { clearInterval(currentStatusInterval); currentStatusInterval = null; }
-    currentSessionId = null;
-    currentRunId = null;
-    isNewRunMode = false;
+    currentSessionId = null; currentRunId = null; isNewRunMode = false;
     location.reload();
 }
 
@@ -1922,7 +1845,6 @@ function cleanElementName(name) {
 function getIfcType(typeRu, name) {
     const nameLower = (name || '').toLowerCase();
     const typeLower = (typeRu || '').toLowerCase();
-    
     if (typeLower.includes('ifcproxy') || typeLower.includes('proxy')) return 'IfcProxyElement';
     if (nameLower.includes('отверсти') || nameLower.includes('проём') || nameLower.includes('проем') || nameLower.includes('окно') || nameLower.includes('двер')) return 'IfcOpening';
     if (nameLower.includes('труб')) return 'IfcProxyElement';
@@ -1946,30 +1868,22 @@ function getIfcType(typeRu, name) {
 
 function isHydroVertical(typeRu, name, ifcType) {
     const nameLower = (name || '').toLowerCase();
-    const hasHydro = nameLower.includes('гидроизол');
-    const hasVertical = nameLower.includes('вертикал');
-    const hasWall = nameLower.includes('стен') || ifcType === 'IfcWall';
-    const hasFundament = nameLower.includes('фундамент') || nameLower.includes('фунд. плита') || nameLower.includes('фундаментная');
-    return hasHydro && hasWall && !hasFundament;
+    return nameLower.includes('гидроизол') && (nameLower.includes('стен') || ifcType === 'IfcWall') && !nameLower.includes('фундамент') && !nameLower.includes('фунд. плита') && !nameLower.includes('фундаментная');
 }
 
 function isHydroHorizontal(typeRu, name, ifcType) {
     const nameLower = (name || '').toLowerCase();
-    const hasHydro = nameLower.includes('гидроизол');
-    const hasFundamentOrSlab = nameLower.includes('фундамент') || nameLower.includes('фунд. плита') || nameLower.includes('фундаментная') || nameLower.includes('плит') || nameLower.includes('перекрыт') || ifcType === 'IfcSlab';
     if (isHydroVertical(typeRu, name, ifcType)) return false;
-    return hasHydro && hasFundamentOrSlab;
+    return nameLower.includes('гидроизол') && (nameLower.includes('фундамент') || nameLower.includes('фунд. плита') || nameLower.includes('фундаментная') || nameLower.includes('плит') || nameLower.includes('перекрыт') || ifcType === 'IfcSlab');
 }
 
 function determineSubsection(typeRu, name, part) {
     const nameLower = (name || '').toLowerCase().trim();
     const typeLower = (typeRu || '').toLowerCase();
-    
     if (typeLower.includes('ifcproxy') || typeLower.includes('proxy')) return '__OTHER__';
     const tempIfcType = getIfcType(typeRu, name);
     if (tempIfcType === 'IfcOpening') return '__OTHER__';
     if (nameLower.includes('труб')) return '__OTHER__';
-    
     if (isHydroVertical(typeRu, name, tempIfcType)) {
         if (part === 'Подземная') return 'Подземная часть здания. Вертикальная гидроизоляция';
         if (part === 'Цоколь') return 'Цокольная часть здания. Вертикальная гидроизоляция';
@@ -1977,28 +1891,20 @@ function determineSubsection(typeRu, name, part) {
     }
     if (isHydroHorizontal(typeRu, name, tempIfcType)) return 'Устройство горизонтальной гидроизоляции';
     if (nameLower.includes('сва') || typeLower.includes('ifcpile')) return 'Свайно-ростверковый фундамент';
-    
     if (nameLower.includes('приям')) {
         if (part === 'Подземная') return 'Подземная часть здания. Приямки';
         if (part === 'Цоколь') return 'Цокольная часть здания. Приямки';
         return 'Надземная часть здания. Приямки';
     }
-    
     if (nameLower.includes('парапет')) return 'Надземная часть здания. Парапеты';
-    
     if (tempIfcType === 'IfcStairFlight') {
         if (part === 'Подземная' || part === 'Цоколь') return part + ' часть здания. Лестницы';
         return 'Надземная часть здания. Лестничные марши';
     }
-    if (nameLower.includes('плм')) {
+    if (nameLower.includes('плм') || nameLower.includes('лмн')) {
         if (part === 'Подземная' || part === 'Цоколь') return part + ' часть здания. Лестницы';
         return 'Надземная часть здания. Лестничные площадки';
     }
-    if (nameLower.includes('лмн')) {
-        if (part === 'Подземная' || part === 'Цоколь') return part + ' часть здания. Лестницы';
-        return 'Надземная часть здания. Лестничные площадки';
-    }
-    
     if (nameLower.includes('лестничн') || nameLower.includes('лестниц')) {
         if (nameLower.includes('площадк')) {
             if (part === 'Подземная') return 'Подземная часть здания. Лестницы';
@@ -2014,10 +1920,8 @@ function determineSubsection(typeRu, name, part) {
         if (part === 'Цоколь') return 'Цокольная часть здания. Лестницы';
         return 'Надземная часть здания. Лестничные марши';
     }
-    
     const partStructure = SECTION_STRUCTURE[part];
     if (!partStructure) return '__OTHER__';
-    
     for (const section of partStructure.sections) {
         for (const subsection of section.subsections) {
             for (const pattern of subsection.patterns) {
@@ -2025,13 +1929,11 @@ function determineSubsection(typeRu, name, part) {
             }
         }
     }
-    
     if (typeLower.includes('wall')) return `${part} часть здания. Стены`;
     if (typeLower.includes('slab')) return `${part} часть здания. Плиты перекрытия`;
     if (typeLower.includes('column')) return `${part} часть здания. Колонны`;
     if (typeLower.includes('beam')) return `${part} часть здания. Балки`;
     if (typeLower.includes('stair')) return `${part} часть здания. Лестницы`;
-    
     return '__OTHER__';
 }
 
@@ -2040,137 +1942,75 @@ function renderPreview(data) {
     window._previewData = data;
     const head = document.getElementById('previewHead');
     const body = document.getElementById('previewBody');
-    
     if (!head || !body) return;
-    
     const typeFloorIdx = data.headers.indexOf('Тип_этажа');
     const materialIdx = data.headers.indexOf('Материал');
-    
     const requiredColumns = ['№ п/п', 'Имя', 'Тип элемента', 'Толщина, мм', 'Объём, м3', 'Площадь, м2'];
-    
-    const findColumn = (partialName) => {
-        return data.headers.find(h => {
-            const hLower = h.toLowerCase().replace(/\s/g, '');
-            const partialLower = partialName.toLowerCase().replace(/\s/g, '');
-            return hLower.includes(partialLower);
-        });
-    };
-    
+    const findColumn = (partialName) => data.headers.find(h => h.toLowerCase().replace(/\s/g, '').includes(partialName.toLowerCase().replace(/\s/g, '')));
     const columnMapping = {
-        '№ п/п': '№ п/п',
-        'Имя': 'Имя',
-        'Тип элемента': 'Тип элемента',
+        '№ п/п': '№ п/п', 'Имя': 'Имя', 'Тип элемента': 'Тип элемента',
         'Толщина, мм': findColumn('Ширина, мм') || 'Ширина, мм',
         'Объём, м3': findColumn('Объём, м3') || 'Объём, м3',
         'Площадь, м2': findColumn('Площадь, м2') || 'Площадь, м2',
     };
-    
-    head.innerHTML = '<tr>' +
-        '<th style="width:40px;">✓</th>' +
-        requiredColumns.map(h => `<th>${h}</th>`).join('') +
-        '<th style="width:180px;">Часть здания</th>' +
-        '<th style="width:130px;">Материал</th>' +
-        '</tr>';
-    
+    head.innerHTML = '<tr><th style="width:40px;">✓</th>' + requiredColumns.map(h => `<th>${h}</th>`).join('') + '<th style="width:180px;">Часть здания</th><th style="width:130px;">Материал</th></tr>';
     body.innerHTML = '';
     rowElementCache.clear();
-    
     allRowIndices = [];
     selectedRows.clear();
     rowParts = {};
     rowMaterials = {};
     isGrouped = false;
-    groupIndexMap = {};
-    groupChildren = {};
-    groupParent = {};
-    groupLevel = {};
-    leafGroups = {};
-    
+    groupIndexMap = {}; groupChildren = {}; groupParent = {}; groupLevel = {}; leafGroups = {};
     data.rows.forEach((row, index) => {
         allRowIndices.push(index);
-        
         let defaultPart = 'Надземная';
-        
         if (data.savedTypes && data.savedTypes[index]) {
             const savedPart = data.savedTypes[index];
             if (savedPart.includes('Цокол') || savedPart.includes('цокол')) defaultPart = 'Цоколь';
             else if (savedPart.includes('Подземн') || savedPart.includes('подземн')) defaultPart = 'Подземная';
             else if (savedPart.includes('Надземн') || savedPart.includes('надземн')) defaultPart = 'Надземная';
         }
-        
         if ((!data.savedTypes || !data.savedTypes[index]) && typeFloorIdx !== -1 && row[typeFloorIdx] && row[typeFloorIdx] !== '-') {
             const rawValue = row[typeFloorIdx].trim().toLowerCase();
-            const partMap = {
-                'подвал': 'Подземная', 'basement': 'Подземная', '-1': 'Подземная',
-                'подземный': 'Подземная', 'подземная': 'Подземная',
-                'цоколь': 'Цоколь', 'цокольный': 'Цоколь',
-                'ground': 'Цоколь', '0 этаж': 'Цоколь', 'нулевой': 'Цоколь',
-                'надземная': 'Надземная', 'надземный': 'Надземная',
-                'кровля': 'Надземная', 'технический': 'Надземная',
-                'мансардный': 'Надземная', 'мансарда': 'Надземная'
-            };
+            const partMap = { 'подвал': 'Подземная', 'basement': 'Подземная', '-1': 'Подземная', 'подземный': 'Подземная', 'подземная': 'Подземная', 'цоколь': 'Цоколь', 'цокольный': 'Цоколь', 'ground': 'Цоколь', '0 этаж': 'Цоколь', 'нулевой': 'Цоколь', 'надземная': 'Надземная', 'надземный': 'Надземная', 'кровля': 'Надземная', 'технический': 'Надземная', 'мансардный': 'Надземная', 'мансарда': 'Надземная' };
             defaultPart = partMap[rawValue] || 'Надземная';
         }
-        
         rowParts[index] = defaultPart;
-        
         let defaultMaterial = '-';
-        if (materialIdx !== -1 && row[materialIdx] && row[materialIdx] !== '-') {
-            defaultMaterial = row[materialIdx].trim();
-        }
+        if (materialIdx !== -1 && row[materialIdx] && row[materialIdx] !== '-') defaultMaterial = row[materialIdx].trim();
         rowMaterials[index] = defaultMaterial;
-        
         const orderedRow = requiredColumns.map(h => {
             const actualCol = columnMapping[h];
             const colIdx = data.headers.indexOf(actualCol);
             return colIdx !== -1 ? row[colIdx] : '';
         });
-        
         const standardOptions = ['-', 'Бетон', 'Цемент', 'Кирпич', 'Дерево'];
         let materialOptions = [...standardOptions];
-        if (!standardOptions.includes(defaultMaterial) && defaultMaterial !== '-') {
-            materialOptions.push(defaultMaterial);
-        }
-        
+        if (!standardOptions.includes(defaultMaterial) && defaultMaterial !== '-') materialOptions.push(defaultMaterial);
         const tr = document.createElement('tr');
         tr.dataset.rowIndex = index;
         tr.innerHTML = `
-            <td style="text-align:center;">
-                <input type="checkbox" class="row-checkbox" data-index="${index}" onchange="toggleRowSelection(${index})">
-            </td>
+            <td style="text-align:center;"><input type="checkbox" class="row-checkbox" data-index="${index}" onchange="toggleRowSelection(${index})"></td>
             ${orderedRow.map(cell => `<td title="${cell}">${cell}</td>`).join('')}
-            <td>
-                <select class="part-select" data-index="${index}" disabled style="background:#f7fafc; color:#4a5568; cursor:not-allowed; width:100%; padding:4px 8px; border:1px solid #e2e8f0; border-radius:4px; font-size:12px;">
-                    <option value="Подземная" ${defaultPart === 'Подземная' ? 'selected' : ''}>Подземная часть</option>
-                    <option value="Цоколь" ${defaultPart === 'Цоколь' ? 'selected' : ''}>Цокольная часть</option>
-                    <option value="Надземная" ${defaultPart === 'Надземная' ? 'selected' : ''}>Надземная часть</option>
-                </select>
-            </td>
-            <td>
-                <select class="material-select" data-index="${index}" onchange="updateRowMaterial(${index}, this.value)" style="width:120px;">
-                    ${materialOptions.map(opt => `<option value="${opt}" ${defaultMaterial === opt ? 'selected' : ''}>${opt}</option>`).join('')}
-                </select>
-            </td>
-        `;
+            <td><select class="part-select" data-index="${index}" disabled style="background:#f7fafc; color:#4a5568; cursor:not-allowed; width:100%; padding:4px 8px; border:1px solid #e2e8f0; border-radius:4px; font-size:12px;">
+                <option value="Подземная" ${defaultPart === 'Подземная' ? 'selected' : ''}>Подземная часть</option>
+                <option value="Цоколь" ${defaultPart === 'Цоколь' ? 'selected' : ''}>Цокольная часть</option>
+                <option value="Надземная" ${defaultPart === 'Надземная' ? 'selected' : ''}>Надземная часть</option>
+            </select></td>
+            <td><select class="material-select" data-index="${index}" onchange="updateRowMaterial(${index}, this.value)" style="width:120px;">
+                ${materialOptions.map(opt => `<option value="${opt}" ${defaultMaterial === opt ? 'selected' : ''}>${opt}</option>`).join('')}
+            </select></td>`;
         body.appendChild(tr);
         rowElementCache.set(index, tr);
     });
-    
     document.getElementById('previewInfo').textContent = `Загружено: ${data.totalRows} строк`;
     updateSelectionUI();
-    
     const selectRowsBtn = document.getElementById('selectRowsBtn');
-    if (selectRowsBtn) {
-        selectRowsBtn.disabled = true;
-        selectRowsBtn.innerHTML = `🚀 Запустить обработку (<span id="selectedCount">0</span>)`;
-    }
-    
+    if (selectRowsBtn) { selectRowsBtn.disabled = true; selectRowsBtn.innerHTML = `🚀 Запустить обработку (<span id="selectedCount">0</span>)`; }
     document.getElementById('autoGroupBtn').style.display = 'none';
     document.getElementById('ungroupBtn').style.display = 'inline-block';
-    
-    if (autoGroupEnabled && data.totalRows > 0) {
-        setTimeout(() => { autoGroupRows(); }, 100);
-    }
+    if (autoGroupEnabled && data.totalRows > 0) setTimeout(() => { autoGroupRows(); }, 100);
 }
 
 function updateRowMaterial(index, value) { rowMaterials[index] = value; }
@@ -2186,7 +2026,6 @@ function toggleRowSelection(index) {
 function setGlobalMaterial() {
     const material = document.getElementById('globalMaterialSelect').value;
     if (!material) return;
-    
     if (isGrouped) {
         selectedRows.forEach(firstIndex => {
             for (const [groupId, indices] of Object.entries(groupIndexMap)) {
@@ -2194,10 +2033,7 @@ function setGlobalMaterial() {
                     indices.forEach(idx => {
                         rowMaterials[idx] = material;
                         const ms = document.querySelector(`.material-select[data-index="${idx}"]`);
-                        if (ms) {
-                            if (!Array.from(ms.options).some(o => o.value === material)) ms.add(new Option(material, material));
-                            ms.value = material;
-                        }
+                        if (ms) { if (!Array.from(ms.options).some(o => o.value === material)) ms.add(new Option(material, material)); ms.value = material; }
                     });
                     break;
                 }
@@ -2207,133 +2043,117 @@ function setGlobalMaterial() {
         selectedRows.forEach(index => {
             rowMaterials[index] = material;
             const ms = document.querySelector(`.material-select[data-index="${index}"]`);
-            if (ms) {
-                if (!Array.from(ms.options).some(o => o.value === material)) ms.add(new Option(material, material));
-                ms.value = material;
-            }
+            if (ms) { if (!Array.from(ms.options).some(o => o.value === material)) ms.add(new Option(material, material)); ms.value = material; }
         });
     }
-    
     showToast(`Материал "${material}" назначен`, 'info');
     document.getElementById('globalMaterialSelect').value = '';
 }
 
 // ========== Управление группами ==========
 function toggleGroup(groupId) {
-    const directChildren = [];
-    
-    if (groupChildren[groupId]) {
-        groupChildren[groupId].forEach(childId => {
-            const childTr = document.querySelector(`tr[data-group-id="${childId}"]`);
-            if (childTr) directChildren.push(childTr);
-        });
-    }
-    
-    const indices = groupIndexMap[groupId];
-    let dataRows = [];
-    
-    if (indices) {
-        indices.forEach(index => {
-            let row = rowElementCache.get(index);
-            if (row && document.body.contains(row) && row.dataset.group === groupId) {
-                dataRows.push(row);
-            } else {
-                row = document.querySelector(`tr.group-row[data-index="${index}"]`) || 
-                      document.querySelector(`tr[data-row-index="${index}"]`);
-                if (row && row.dataset.group === groupId) dataRows.push(row);
-            }
-        });
-    }
-    
-    const allRows = [...directChildren, ...dataRows];
-    if (allRows.length === 0) return;
-    
     const arrow = document.getElementById(groupId + '_arrow');
-    const isHidden = allRows[0].classList.contains('hidden-row');
+    if (!arrow) return;
     
-    if (arrow) {
-        if (isHidden) {
-            arrow.classList.add('expanded');
-            arrow.textContent = '▼';
-        } else {
-            arrow.classList.remove('expanded');
-            arrow.textContent = '▶';
-        }
-    }
+    const isExpanding = !arrow.classList.contains('expanded');
     
-    for (const row of directChildren) {
-        if (isHidden) row.classList.remove('hidden-row');
-        else row.classList.add('hidden-row');
-    }
-    
-    if (dataRows.length > PERF.BATCH_SIZE) {
-        batchProcessRows(dataRows, isHidden, 0);
+    // Меняем стрелку мгновенно
+    if (isExpanding) {
+        arrow.classList.add('expanded');
+        arrow.textContent = '▼';
     } else {
-        for (const row of dataRows) {
-            if (isHidden) row.classList.remove('hidden-row');
-            else row.classList.add('hidden-row');
+        arrow.classList.remove('expanded');
+        arrow.textContent = '▶';
+    }
+    
+    // КОЛЛЕКЦИОНИРУЕМ все строки для переключения
+    const rowsToToggle = [];
+    
+    // Дочерние группы
+    const children = groupChildren[groupId] || [];
+    for (let i = 0; i < children.length; i++) {
+        const childRow = document.querySelector(`tr[data-group-id="${children[i]}"]`);
+        if (childRow) {
+            rowsToToggle.push(childRow);
+            // Сворачиваем вложенные группы при закрытии
+            if (!isExpanding) {
+                const childArrow = document.getElementById(children[i] + '_arrow');
+                if (childArrow) {
+                    childArrow.classList.remove('expanded');
+                    childArrow.textContent = '▶';
+                }
+            }
         }
     }
+    
+    // Строки данных - используем ТОЛЬКО кеш или быстрый поиск по индексу
+    const indices = groupIndexMap[groupId];
+    if (indices && indices.length > 0) {
+        // Получаем tbody
+        const tbody = document.getElementById('previewBody');
+        // Получаем ВСЕ строки tbody
+        const allRows = tbody.getElementsByTagName('tr');
+        
+        // Проходим по индексам и собираем строки
+        for (let i = 0; i < indices.length; i++) {
+            const index = indices[i];
+            // Ищем строку в кеше
+            const row = rowElementCache.get(index);
+            if (row && row.dataset.group === groupId) {
+                rowsToToggle.push(row);
+            }
+        }
+    }
+    
+    if (rowsToToggle.length === 0) return;
+    
+    // МГНОВЕННОЕ переключение через requestAnimationFrame
+    requestAnimationFrame(() => {
+        // Используем фрагмент для минимизации reflow
+        for (let i = 0; i < rowsToToggle.length; i++) {
+            const row = rowsToToggle[i];
+            row.style.display = isExpanding ? 'table-row' : 'none';
+            if (isExpanding) {
+                row.classList.remove('hidden-row');
+            } else {
+                row.classList.add('hidden-row');
+            }
+        }
+    });
 }
 
 function batchProcessRows(rows, isHidden, startIndex) {
     const endIndex = Math.min(startIndex + PERF.BATCH_SIZE, rows.length);
-    
     for (let i = startIndex; i < endIndex; i++) {
         const row = rows[i];
         if (isHidden) row.classList.remove('hidden-row');
         else row.classList.add('hidden-row');
     }
-    
     if (endIndex < rows.length) {
-        setTimeout(() => {
-            requestAnimationFrame(() => {
-                batchProcessRows(rows, isHidden, endIndex);
-            });
-        }, PERF.BATCH_DELAY);
+        setTimeout(() => requestAnimationFrame(() => batchProcessRows(rows, isHidden, endIndex)), PERF.BATCH_DELAY);
     }
 }
 
 function hideNestedGroupsDeferred(groupId) {
     if (!groupChildren[groupId]) return;
-    
     const childrenToHide = [];
-    
     groupChildren[groupId].forEach(childId => {
         const childRow = document.querySelector(`tr[data-group-id="${childId}"]`);
-        if (childRow && !childRow.classList.contains('hidden-row')) {
-            childrenToHide.push(childRow);
-        }
+        if (childRow && !childRow.classList.contains('hidden-row')) childrenToHide.push(childRow);
     });
-    
-    if (childrenToHide.length > PERF.BATCH_SIZE) {
-        batchProcessRows(childrenToHide, false, 0);
-    } else {
-        childrenToHide.forEach(row => row.classList.add('hidden-row'));
-    }
-    
+    if (childrenToHide.length > PERF.BATCH_SIZE) batchProcessRows(childrenToHide, false, 0);
+    else childrenToHide.forEach(row => row.classList.add('hidden-row'));
     groupChildren[groupId].forEach(childId => {
         const childArrow = document.getElementById(childId + '_arrow');
-        if (childArrow) {
-            childArrow.classList.remove('expanded');
-            childArrow.textContent = '▶';
-        }
+        if (childArrow) { childArrow.classList.remove('expanded'); childArrow.textContent = '▶'; }
     });
-}
-
-function hideAllNested(row) {
-    const groupId = row.dataset.groupId;
-    if (groupId) hideNestedGroupsDeferred(groupId);
 }
 
 function updateChildCheckboxes(groupId, checked) {
     const indices = groupIndexMap[groupId];
     if (indices) {
         const batch = [];
-        indices.forEach(index => {
-            const row = rowElementCache.get(index);
-            if (row) batch.push(row);
-        });
+        indices.forEach(index => { const row = rowElementCache.get(index); if (row) batch.push(row); });
         updateCheckboxesBatch(batch, checked, 0);
     }
     if (groupChildren[groupId]) groupChildren[groupId].forEach(childId => updateChildCheckboxes(childId, checked));
@@ -2341,13 +2161,8 @@ function updateChildCheckboxes(groupId, checked) {
 
 function updateCheckboxesBatch(rows, checked, startIdx) {
     const endIdx = Math.min(startIdx + 200, rows.length);
-    for (let i = startIdx; i < endIdx; i++) {
-        const cb = rows[i].querySelector('.row-checkbox');
-        if (cb) cb.checked = checked;
-    }
-    if (endIdx < rows.length) {
-        requestAnimationFrame(() => updateCheckboxesBatch(rows, checked, endIdx));
-    }
+    for (let i = startIdx; i < endIdx; i++) { const cb = rows[i].querySelector('.row-checkbox'); if (cb) cb.checked = checked; }
+    if (endIdx < rows.length) requestAnimationFrame(() => updateCheckboxesBatch(rows, checked, endIdx));
 }
 
 function toggleGroupSelection(groupId, checked) {
@@ -2365,7 +2180,6 @@ function toggleGroupSelection(groupId, checked) {
             (groupChildren[gid] || []).forEach(child => leaves.push(...collectLeaves(child)));
             return leaves;
         };
-        
         const leaves = collectLeaves(groupId);
         leaves.forEach(leafId => {
             const indices = groupIndexMap[leafId];
@@ -2378,41 +2192,26 @@ function toggleGroupSelection(groupId, checked) {
             updateChildCheckboxes(leafId, checked);
         });
     }
-    
     [6, 5, 4, 3, 2, 1].forEach(lvl => {
         Object.keys(groupLevel).forEach(gid => {
             if (groupLevel[gid] !== lvl) return;
             const cb = document.querySelector(`.group-checkbox[data-group-id="${gid}"]`);
             if (!cb) return;
             const children = groupChildren[gid] || [];
-            if (children.length > 0) {
-                cb.checked = children.every(cid => {
-                    const childCb = document.querySelector(`.group-checkbox[data-group-id="${cid}"]`);
-                    return childCb && childCb.checked;
-                });
-            }
+            if (children.length > 0) cb.checked = children.every(cid => { const childCb = document.querySelector(`.group-checkbox[data-group-id="${cid}"]`); return childCb && childCb.checked; });
         });
     });
-    
     updateSelectionUI();
 }
 
 function ungroupRows() {
     const data = window._previewData;
     if (!data) return;
-    
-    groupIndexMap = {};
-    groupChildren = {};
-    groupParent = {};
-    groupLevel = {};
-    leafGroups = {};
-    isGrouped = false;
-    autoGroupEnabled = false;
+    groupIndexMap = {}; groupChildren = {}; groupParent = {}; groupLevel = {}; leafGroups = {};
+    isGrouped = false; autoGroupEnabled = false;
     rowElementCache.clear();
-    
     renderPreview(data);
     autoGroupEnabled = true;
-    
     document.getElementById('autoGroupBtn').style.display = 'inline-block';
     document.getElementById('ungroupBtn').style.display = 'none';
     showToast('Группировка снята', 'info');
@@ -2435,17 +2234,10 @@ function selectAllRows() {
                 const cb = document.querySelector(`.group-checkbox[data-group-id="${gid}"]`);
                 if (!cb) return;
                 const children = groupChildren[gid] || [];
-                if (children.length > 0) {
-                    cb.checked = children.every(cid => {
-                        const childCb = document.querySelector(`.group-checkbox[data-group-id="${cid}"]`);
-                        return childCb && childCb.checked;
-                    });
-                }
+                if (children.length > 0) cb.checked = children.every(cid => { const childCb = document.querySelector(`.group-checkbox[data-group-id="${cid}"]`); return childCb && childCb.checked; });
             });
         });
-    } else {
-        document.querySelectorAll('.row-checkbox').forEach(cb => { cb.checked = true; selectedRows.add(parseInt(cb.dataset.index)); });
-    }
+    } else document.querySelectorAll('.row-checkbox').forEach(cb => { cb.checked = true; selectedRows.add(parseInt(cb.dataset.index)); });
     updateSelectionUI();
 }
 
@@ -2458,72 +2250,45 @@ function deselectAllRows() {
 function updateSelectionUI() {
     const selectedCountSpan = document.getElementById('selectedCount');
     if (selectedCountSpan) selectedCountSpan.textContent = selectedRows.size;
-    
     const selectRowsBtn = document.getElementById('selectRowsBtn');
     if (selectRowsBtn) {
         selectRowsBtn.disabled = selectedRows.size === 0;
         const countSpan = selectRowsBtn.querySelector('#selectedCount');
         if (countSpan) countSpan.textContent = selectedRows.size;
     }
-    
     const previewInfo = document.getElementById('previewInfo');
-    if (previewInfo && window._previewData) {
-        previewInfo.textContent = `Загружено: ${window._previewData.totalRows} строк`;
-    }
+    if (previewInfo && window._previewData) previewInfo.textContent = `Загружено: ${window._previewData.totalRows} строк`;
 }
 
 // ========== Группировка для КР ==========
-// ========== Группировка для КР ==========
 function autoGroupRows() {
-    if (currentProcessingType === 'AR') {
-        autoGroupRowsAR();
-        return;
-    }
-    
+    if (currentProcessingType === 'AR') { autoGroupRowsAR(); return; }
     const data = window._previewData;
     if (!data) return;
     const body = document.getElementById('previewBody');
     const rows = Array.from(body.querySelectorAll('tr'));
-    
     rowElementCache.clear();
-    
-    groupIndexMap = {};
-    groupChildren = {};
-    groupParent = {};
-    groupLevel = {};
-    leafGroups = {};
-    selectedRows.clear();
-    isGrouped = true;
-    
+    groupIndexMap = {}; groupChildren = {}; groupParent = {}; groupLevel = {}; leafGroups = {};
+    selectedRows.clear(); isGrouped = true;
     const typeRuIdx = data.headers.indexOf('Тип элемента');
     const nameIdx = data.headers.indexOf('Имя');
-    const volumeIdx = data.headers.findIndex(h => 
-        h.toLowerCase().includes('объём, м3') || h.includes('Объём, м3')
-    );
-    
+    const volumeIdx = data.headers.findIndex(h => h.toLowerCase().includes('объём, м3') || h.includes('Объём, м3'));
     const totalCols = 1 + 6 + 2;
-    
     const getVolume = (rowIndex) => {
         if (volumeIdx === -1) return 0;
         const row = data.rows[rowIndex];
-        if (!row) return 0;
-        return safeParseFloat(row[volumeIdx]);
+        return row ? safeParseFloat(row[volumeIdx]) : 0;
     };
-    
     const getGeometryValue = (rule, rowIndex) => {
         if (!rule || rule === 'default') return getVolume(rowIndex);
         const fieldIdx = data.headers.indexOf(rule.field);
         if (fieldIdx === -1) return getVolume(rowIndex);
         return safeParseFloat(data.rows[rowIndex]?.[fieldIdx]);
     };
-    
     const rowData = rows.map(tr => {
         const tds = tr.querySelectorAll('td');
         const index = parseInt(tr.dataset.rowIndex);
-        
         const partSelect = tds[tds.length - 2]?.querySelector('select');
-        const materialSelect = tds[tds.length - 1]?.querySelector('select');
-        
         const part = partSelect ? partSelect.value : 'Надземная';
         const typeRu = typeRuIdx !== -1 ? (data.rows[index]?.[typeRuIdx] || 'Неизвестно') : 'Неизвестно';
         const name = nameIdx !== -1 ? (data.rows[index]?.[nameIdx] || '') : '';
@@ -2531,178 +2296,77 @@ function autoGroupRows() {
         const ifcType = getIfcType(typeRu, name);
         return { tr, index, part, typeRu, name, subsection, ifcType };
     });
-    
     body.innerHTML = '';
     let groupCounter = 0;
-    
     const partOrder = ['Подземная', 'Цоколь', 'Надземная'];
-    
     partOrder.forEach(part => {
         const partRows = rowData.filter(rd => rd.part === part);
         if (partRows.length === 0) return;
-        
         const partStructure = SECTION_STRUCTURE[part];
         if (!partStructure) return;
-        
         let partVolume = 0;
         partRows.forEach(rd => { partVolume += getVolume(rd.index); });
-        
         const l1Id = 'L1_' + (groupCounter++);
         groupIndexMap[l1Id] = partRows.map(r => r.index);
-        groupLevel[l1Id] = 1;
-        groupChildren[l1Id] = [];
-        
+        groupLevel[l1Id] = 1; groupChildren[l1Id] = [];
         const l1Tr = document.createElement('tr');
-        l1Tr.className = 'group-header';
-        l1Tr.dataset.groupId = l1Id;
+        l1Tr.className = 'group-header'; l1Tr.dataset.groupId = l1Id;
         l1Tr.style.cssText = 'background:#e2e8f0 !important;';
-        l1Tr.onclick = function(e) {
-            if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-            toggleGroup(l1Id);
-        };
-        
-        l1Tr.innerHTML = `
-            <td style="text-align:center;">
-                <span class="group-arrow" id="${l1Id}_arrow">▶</span>
-                <input type="checkbox" class="group-checkbox" data-group-id="${l1Id}">
-            </td>
-            <td colspan="${totalCols - 1}" style="font-weight:700; font-size:15px; color:#2d3748;">
-                🏗️ ${partStructure.label}
-                <span class="group-badge">×${partRows.length}</span>
-                <span style="font-size:11px; color:#4a5568; margin-left:12px;">Σ Объём: ${partVolume.toFixed(2)} м³</span>
-            </td>
-        `;
+        l1Tr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(l1Id); };
+        l1Tr.innerHTML = `<td style="text-align:center;"><span class="group-arrow" id="${l1Id}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${l1Id}"></td><td colspan="${totalCols - 1}" style="font-weight:700;font-size:15px;color:#2d3748;">🏗️ ${partStructure.label}<span class="group-badge">×${partRows.length}</span><span style="font-size:11px;color:#4a5568;margin-left:12px;">Σ Объём: ${partVolume.toFixed(2)} м³</span></td>`;
         body.appendChild(l1Tr);
-        
         const l1Cb = l1Tr.querySelector('.group-checkbox');
         l1Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l1Id, this.checked); });
-        
         const groupedIndices = new Set();
-        
         partStructure.sections.forEach(section => {
-            const sectionRows = partRows.filter(rd => {
-                return section.subsections.some(sub => sub.key === rd.subsection);
-            });
-            
+            const sectionRows = partRows.filter(rd => section.subsections.some(sub => sub.key === rd.subsection));
             if (sectionRows.length === 0) return;
             sectionRows.forEach(rd => groupedIndices.add(rd.index));
-            
             let sectionVolume = 0;
             sectionRows.forEach(rd => { sectionVolume += getVolume(rd.index); });
-            
             const l2Id = 'L2_' + (groupCounter++);
             groupIndexMap[l2Id] = sectionRows.map(r => r.index);
-            groupLevel[l2Id] = 2;
-            groupParent[l2Id] = l1Id;
-            groupChildren[l2Id] = [];
-            groupChildren[l1Id].push(l2Id);
-            
+            groupLevel[l2Id] = 2; groupParent[l2Id] = l1Id; groupChildren[l2Id] = []; groupChildren[l1Id].push(l2Id);
             const l2Tr = document.createElement('tr');
-            l2Tr.className = 'group-row hidden-row';
-            l2Tr.dataset.group = l1Id;
-            l2Tr.dataset.groupId = l2Id;
+            l2Tr.className = 'group-row hidden-row'; l2Tr.dataset.group = l1Id; l2Tr.dataset.groupId = l2Id;
             l2Tr.style.cssText = 'background:#edf2f7 !important;';
-            l2Tr.onclick = function(e) {
-                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                toggleGroup(l2Id);
-            };
-            
-            l2Tr.innerHTML = `
-                <td style="text-align:center; padding-left: 30px;">
-                    <span class="group-arrow" id="${l2Id}_arrow">▶</span>
-                    <input type="checkbox" class="group-checkbox" data-group-id="${l2Id}">
-                </td>
-                <td colspan="${totalCols - 1}" style="font-weight:600; color:#4a5568;">
-                    📋 ${section.name}
-                    <span class="group-badge">×${sectionRows.length}</span>
-                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${sectionVolume.toFixed(2)} м³</span>
-                </td>
-            `;
+            l2Tr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(l2Id); };
+            l2Tr.innerHTML = `<td style="text-align:center;padding-left:30px;"><span class="group-arrow" id="${l2Id}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${l2Id}"></td><td colspan="${totalCols - 1}" style="font-weight:600;color:#4a5568;">📋 ${section.name}<span class="group-badge">×${sectionRows.length}</span><span style="font-size:11px;color:#718096;margin-left:12px;">Σ Объём: ${sectionVolume.toFixed(2)} м³</span></td>`;
             body.appendChild(l2Tr);
-            
             const l2Cb = l2Tr.querySelector('.group-checkbox');
             l2Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l2Id, this.checked); });
-            
             section.subsections.forEach(subsection => {
                 const subsectionRows = sectionRows.filter(rd => rd.subsection === subsection.key);
                 if (subsectionRows.length === 0) return;
-                
                 let subsectionVolume = 0;
                 subsectionRows.forEach(rd => { subsectionVolume += getVolume(rd.index); });
-                
                 const l3Id = 'L3_' + (groupCounter++);
                 groupIndexMap[l3Id] = subsectionRows.map(r => r.index);
-                groupLevel[l3Id] = 3;
-                groupParent[l3Id] = l2Id;
-                groupChildren[l3Id] = [];
-                groupChildren[l2Id].push(l3Id);
-                
+                groupLevel[l3Id] = 3; groupParent[l3Id] = l2Id; groupChildren[l3Id] = []; groupChildren[l2Id].push(l3Id);
                 const l3Tr = document.createElement('tr');
-                l3Tr.className = 'group-row hidden-row';
-                l3Tr.dataset.group = l2Id;
-                l3Tr.dataset.groupId = l3Id;
+                l3Tr.className = 'group-row hidden-row'; l3Tr.dataset.group = l2Id; l3Tr.dataset.groupId = l3Id;
                 l3Tr.style.cssText = 'background:#f7fafc !important;';
-                l3Tr.onclick = function(e) {
-                    if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                    toggleGroup(l3Id);
-                };
-                
-                l3Tr.innerHTML = `
-                    <td style="text-align:center; padding-left: 60px;">
-                        <span class="group-arrow" id="${l3Id}_arrow">▶</span>
-                        <input type="checkbox" class="group-checkbox" data-group-id="${l3Id}">
-                    </td>
-                    <td colspan="${totalCols - 1}" style="font-weight:500; color:#4a5568;">
-                        📐 ${subsection.key}
-                        <span class="group-badge">×${subsectionRows.length}</span>
-                        <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${subsectionVolume.toFixed(2)} м³</span>
-                    </td>
-                `;
+                l3Tr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(l3Id); };
+                l3Tr.innerHTML = `<td style="text-align:center;padding-left:60px;"><span class="group-arrow" id="${l3Id}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${l3Id}"></td><td colspan="${totalCols - 1}" style="font-weight:500;color:#4a5568;">📐 ${subsection.key}<span class="group-badge">×${subsectionRows.length}</span><span style="font-size:11px;color:#718096;margin-left:12px;">Σ Объём: ${subsectionVolume.toFixed(2)} м³</span></td>`;
                 body.appendChild(l3Tr);
-                
                 const l3Cb = l3Tr.querySelector('.group-checkbox');
                 l3Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l3Id, this.checked); });
-                
                 const skipGeometry = NO_GEOMETRY_GROUP_SUBSECTIONS.includes(subsection.key);
-                
                 if (skipGeometry) {
                     const geoId = 'GEO_' + (groupCounter++);
                     groupIndexMap[geoId] = subsectionRows.map(r => r.index);
-                    groupLevel[geoId] = 4;
-                    groupParent[geoId] = l3Id;
-                    groupChildren[geoId] = [];
+                    groupLevel[geoId] = 4; groupParent[geoId] = l3Id; groupChildren[geoId] = [];
                     if (!groupChildren[l3Id]) groupChildren[l3Id] = [];
-                    groupChildren[l3Id].push(geoId);
-                    leafGroups[geoId] = true;
-                    
+                    groupChildren[l3Id].push(geoId); leafGroups[geoId] = true;
                     const firstIndex = subsectionRows[0].index;
-                    
                     const geoTr = document.createElement('tr');
-                    geoTr.className = 'group-row hidden-row';
-                    geoTr.dataset.group = l3Id;
-                    geoTr.dataset.groupId = geoId;
+                    geoTr.className = 'group-row hidden-row'; geoTr.dataset.group = l3Id; geoTr.dataset.groupId = geoId;
                     geoTr.style.cssText = 'background:#ffffff !important;';
-                    geoTr.onclick = function(e) {
-                        if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                        toggleGroup(geoId);
-                    };
-                    
-                    geoTr.innerHTML = `
-                        <td style="text-align:center; padding-left: 90px;">
-                            <span class="group-arrow" id="${geoId}_arrow">▶</span>
-                            <input type="checkbox" class="group-checkbox" data-group-id="${geoId}" data-first-index="${firstIndex}">
-                        </td>
-                        <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
-                            📏 Все элементы
-                            <span class="group-badge">×${subsectionRows.length}</span>
-                            <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${subsectionVolume.toFixed(2)} м³</span>
-                        </td>
-                    `;
+                    geoTr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(geoId); };
+                    geoTr.innerHTML = `<td style="text-align:center;padding-left:90px;"><span class="group-arrow" id="${geoId}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${geoId}" data-first-index="${firstIndex}"></td><td colspan="${totalCols - 1}" style="color:#2b6cb0;font-weight:500;">📏 Все элементы<span class="group-badge">×${subsectionRows.length}</span><span style="font-size:11px;color:#718096;margin-left:12px;">Σ Объём: ${subsectionVolume.toFixed(2)} м³</span></td>`;
                     body.appendChild(geoTr);
-                    
                     const geoCb = geoTr.querySelector('.group-checkbox');
                     geoCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(geoId, this.checked); });
-                    
                     subsectionRows.forEach(rd => {
                         rd.tr.classList.add('group-row', 'hidden-row');
                         rd.tr.dataset.group = geoId;
@@ -2718,199 +2382,73 @@ function autoGroupRows() {
                         if (!ifcGroups[rd.ifcType]) ifcGroups[rd.ifcType] = [];
                         ifcGroups[rd.ifcType].push(rd);
                     });
-                    
                     const needIcfGroup = Object.keys(ifcGroups).length > 1;
-                    
                     Object.keys(ifcGroups).forEach(ifcType => {
                         const ifcRows = ifcGroups[ifcType];
                         const rule = GEOMETRY_GROUP_RULES[ifcType] || GEOMETRY_GROUP_RULES['default'];
-                        
                         if (rule && rule.ranges && rule.ranges.length > 0) {
-                            // ===== НОВАЯ ЛОГИКА С ПОДДЕРЖКОЙ sub_ranges =====
-                            
-                            // Шаг 1: Основная группировка по первому параметру
-                            const mainGroups = rule.ranges.map(r => ({ 
-                                label: r.label, 
-                                max: r.max, 
-                                rows: [], 
-                                indices: [] 
-                            }));
-                            
+                            const mainGroups = rule.ranges.map(r => ({ label: r.label, max: r.max, rows: [], indices: [] }));
                             ifcRows.forEach(rd => {
                                 const value = getGeometryValue(rule, rd.index);
                                 let assigned = false;
-                                for (const mg of mainGroups) {
-                                    if (value <= mg.max) { 
-                                        mg.rows.push(rd); 
-                                        mg.indices.push(rd.index); 
-                                        assigned = true; 
-                                        break; 
-                                    }
-                                }
-                                if (!assigned) {
-                                    const lastMg = mainGroups[mainGroups.length - 1];
-                                    if (lastMg) { 
-                                        lastMg.rows.push(rd); 
-                                        lastMg.indices.push(rd.index); 
-                                    }
-                                }
+                                for (const mg of mainGroups) { if (value <= mg.max) { mg.rows.push(rd); mg.indices.push(rd.index); assigned = true; break; } }
+                                if (!assigned) { const lastMg = mainGroups[mainGroups.length - 1]; if (lastMg) { lastMg.rows.push(rd); lastMg.indices.push(rd.index); } }
                             });
-                            
-                            // Шаг 2: Если есть sub_ranges, создаём подгруппы внутри каждой основной группы
                             const finalGeoGroups = [];
-                            
                             if (rule.sub_ranges) {
                                 mainGroups.forEach(mainGroup => {
                                     if (mainGroup.rows.length === 0) return;
-                                    
-                                    const subRanges = rule.sub_ranges.ranges.map(r => ({
-                                        label: r.label,
-                                        max: r.max,
-                                        rows: [],
-                                        indices: []
-                                    }));
-                                    
+                                    const subRanges = rule.sub_ranges.ranges.map(r => ({ label: r.label, max: r.max, rows: [], indices: [] }));
                                     mainGroup.rows.forEach(rd => {
                                         const subFieldIdx = data.headers.indexOf(rule.sub_ranges.field);
                                         let subValue = 0;
-                                        if (subFieldIdx !== -1 && data.rows[rd.index]) {
-                                            subValue = safeParseFloat(data.rows[rd.index][subFieldIdx]);
-                                        }
-                                        
+                                        if (subFieldIdx !== -1 && data.rows[rd.index]) subValue = safeParseFloat(data.rows[rd.index][subFieldIdx]);
                                         let assigned = false;
-                                        for (const sg of subRanges) {
-                                            if (subValue <= sg.max) {
-                                                sg.rows.push(rd);
-                                                sg.indices.push(rd.index);
-                                                assigned = true;
-                                                break;
-                                            }
-                                        }
-                                        if (!assigned) {
-                                            const lastSg = subRanges[subRanges.length - 1];
-                                            if (lastSg) {
-                                                lastSg.rows.push(rd);
-                                                lastSg.indices.push(rd.index);
-                                            }
-                                        }
+                                        for (const sg of subRanges) { if (subValue <= sg.max) { sg.rows.push(rd); sg.indices.push(rd.index); assigned = true; break; } }
+                                        if (!assigned) { const lastSg = subRanges[subRanges.length - 1]; if (lastSg) { lastSg.rows.push(rd); lastSg.indices.push(rd.index); } }
                                     });
-                                    
                                     subRanges.forEach(subGroup => {
-                                        if (subGroup.rows.length > 0) {
-                                            finalGeoGroups.push({
-                                                rows: subGroup.rows,
-                                                indices: subGroup.indices,
-                                                label: `${mainGroup.label} → ${rule.sub_ranges.label}: ${subGroup.label}`
-                                            });
-                                        }
+                                        if (subGroup.rows.length > 0) finalGeoGroups.push({ rows: subGroup.rows, indices: subGroup.indices, label: `${mainGroup.label} → ${rule.sub_ranges.label}: ${subGroup.label}` });
                                     });
                                 });
-                            } else {
-                                // Без sub_ranges — используем основные группы как есть
-                                mainGroups.forEach(mainGroup => {
-                                    if (mainGroup.rows.length > 0) {
-                                        finalGeoGroups.push({
-                                            rows: mainGroup.rows,
-                                            indices: mainGroup.indices,
-                                            label: mainGroup.label
-                                        });
-                                    }
-                                });
-                            }
-                            
-                            // Шаг 3: Создаём DOM-элементы для каждой финальной группы
+                            } else mainGroups.forEach(mainGroup => { if (mainGroup.rows.length > 0) finalGeoGroups.push({ rows: mainGroup.rows, indices: mainGroup.indices, label: mainGroup.label }); });
                             finalGeoGroups.forEach((geoGroup) => {
                                 if (geoGroup.rows.length === 0) return;
-                                
                                 let geoVolume = 0;
                                 geoGroup.rows.forEach(rd => { geoVolume += getVolume(rd.index); });
-                                
                                 let parentId = l3Id;
                                 let paddingLeft = 90;
-                                
                                 if (needIcfGroup) {
                                     const ifcId = 'IFC_' + (groupCounter++);
                                     groupIndexMap[ifcId] = geoGroup.indices;
-                                    groupLevel[ifcId] = 4;
-                                    groupParent[ifcId] = l3Id;
-                                    groupChildren[ifcId] = [];
+                                    groupLevel[ifcId] = 4; groupParent[ifcId] = l3Id; groupChildren[ifcId] = [];
                                     if (!groupChildren[l3Id]) groupChildren[l3Id] = [];
                                     groupChildren[l3Id].push(ifcId);
-                                    
-                                    const ifcLabels = {
-                                        'IfcWall': '🧱 Стены', 'IfcSlab': '🔲 Плиты',
-                                        'IfcColumn': '🏛️ Колонны', 'IfcBeam': '〰️ Балки',
-                                        'IfcStair': '🪜 Лестницы', 'IfcStairFlight': '🪜 Лестничные марши',
-                                        'IfcPile': '🔩 Сваи', 'default': '📦 Прочее'
-                                    };
-                                    
+                                    const ifcLabels = { 'IfcWall': '🧱 Стены', 'IfcSlab': '🔲 Плиты', 'IfcColumn': '🏛️ Колонны', 'IfcBeam': '〰️ Балки', 'IfcStair': '🪜 Лестницы', 'IfcStairFlight': '🪜 Лестничные марши', 'IfcPile': '🔩 Сваи', 'default': '📦 Прочее' };
                                     const ifcTr = document.createElement('tr');
-                                    ifcTr.className = 'group-row hidden-row';
-                                    ifcTr.dataset.group = l3Id;
-                                    ifcTr.dataset.groupId = ifcId;
+                                    ifcTr.className = 'group-row hidden-row'; ifcTr.dataset.group = l3Id; ifcTr.dataset.groupId = ifcId;
                                     ifcTr.style.cssText = 'background:#f0f4f8 !important;';
-                                    ifcTr.onclick = function(e) {
-                                        if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                                        toggleGroup(ifcId);
-                                    };
-                                    
-                                    ifcTr.innerHTML = `
-                                        <td style="text-align:center; padding-left: 90px;">
-                                            <span class="group-arrow" id="${ifcId}_arrow">▶</span>
-                                            <input type="checkbox" class="group-checkbox" data-group-id="${ifcId}">
-                                        </td>
-                                        <td colspan="${totalCols - 1}" style="font-weight:500; color:#4a5568;">
-                                            ${ifcLabels[ifcType] || ifcType}
-                                            <span class="group-badge">×${geoGroup.rows.length}</span>
-                                            <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³</span>
-                                        </td>
-                                    `;
+                                    ifcTr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(ifcId); };
+                                    ifcTr.innerHTML = `<td style="text-align:center;padding-left:90px;"><span class="group-arrow" id="${ifcId}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${ifcId}"></td><td colspan="${totalCols - 1}" style="font-weight:500;color:#4a5568;">${ifcLabels[ifcType] || ifcType}<span class="group-badge">×${geoGroup.rows.length}</span><span style="font-size:11px;color:#718096;margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³</span></td>`;
                                     body.appendChild(ifcTr);
-                                    
                                     const ifcCb = ifcTr.querySelector('.group-checkbox');
                                     ifcCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(ifcId, this.checked); });
-                                    
-                                    parentId = ifcId;
-                                    paddingLeft = 120;
+                                    parentId = ifcId; paddingLeft = 120;
                                 }
-                                
                                 const geoId = 'GEO_' + (groupCounter++);
                                 groupIndexMap[geoId] = geoGroup.indices;
-                                groupLevel[geoId] = needIcfGroup ? 5 : 4;
-                                groupParent[geoId] = parentId;
-                                groupChildren[geoId] = [];
+                                groupLevel[geoId] = needIcfGroup ? 5 : 4; groupParent[geoId] = parentId; groupChildren[geoId] = [];
                                 if (!groupChildren[parentId]) groupChildren[parentId] = [];
-                                groupChildren[parentId].push(geoId);
-                                leafGroups[geoId] = true;
-                                
+                                groupChildren[parentId].push(geoId); leafGroups[geoId] = true;
                                 const firstIndex = geoGroup.indices[0];
-                                
                                 const geoTr = document.createElement('tr');
-                                geoTr.className = 'group-row hidden-row';
-                                geoTr.dataset.group = parentId;
-                                geoTr.dataset.groupId = geoId;
+                                geoTr.className = 'group-row hidden-row'; geoTr.dataset.group = parentId; geoTr.dataset.groupId = geoId;
                                 geoTr.style.cssText = 'background:#ffffff !important;';
-                                geoTr.onclick = function(e) {
-                                    if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                                    toggleGroup(geoId);
-                                };
-                                
-                                geoTr.innerHTML = `
-                                    <td style="text-align:center; padding-left: ${paddingLeft}px;">
-                                        <span class="group-arrow" id="${geoId}_arrow">▶</span>
-                                        <input type="checkbox" class="group-checkbox" data-group-id="${geoId}" data-first-index="${firstIndex}">
-                                    </td>
-                                    <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
-                                        📏 ${rule.label}: ${geoGroup.label}
-                                        <span class="group-badge">×${geoGroup.rows.length}</span>
-                                        <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³</span>
-                                    </td>
-                                `;
+                                geoTr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(geoId); };
+                                geoTr.innerHTML = `<td style="text-align:center;padding-left:${paddingLeft}px;"><span class="group-arrow" id="${geoId}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${geoId}" data-first-index="${firstIndex}"></td><td colspan="${totalCols - 1}" style="color:#2b6cb0;font-weight:500;">📏 ${rule.label}: ${geoGroup.label}<span class="group-badge">×${geoGroup.rows.length}</span><span style="font-size:11px;color:#718096;margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³</span></td>`;
                                 body.appendChild(geoTr);
-                                
                                 const geoCb = geoTr.querySelector('.group-checkbox');
                                 geoCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(geoId, this.checked); });
-                                
                                 geoGroup.rows.forEach(rd => {
                                     rd.tr.classList.add('group-row', 'hidden-row');
                                     rd.tr.dataset.group = geoId;
@@ -2926,101 +2464,47 @@ function autoGroupRows() {
                 }
             });
         });
-        
-        // Прочие элементы
         const otherRows = partRows.filter(rd => !groupedIndices.has(rd.index));
         if (otherRows.length > 0) {
             let otherVolume = 0;
             otherRows.forEach(rd => { otherVolume += getVolume(rd.index); });
-            
             const otherLabel = partStructure.other_label || 'Прочие элементы';
             const otherId = 'OTHER_' + (groupCounter++);
             groupIndexMap[otherId] = otherRows.map(r => r.index);
-            groupLevel[otherId] = 2;
-            groupParent[otherId] = l1Id;
-            groupChildren[otherId] = [];
-            groupChildren[l1Id].push(otherId);
-            
+            groupLevel[otherId] = 2; groupParent[otherId] = l1Id; groupChildren[otherId] = []; groupChildren[l1Id].push(otherId);
             const otherTr = document.createElement('tr');
-            otherTr.className = 'group-row hidden-row';
-            otherTr.dataset.group = l1Id;
-            otherTr.dataset.groupId = otherId;
+            otherTr.className = 'group-row hidden-row'; otherTr.dataset.group = l1Id; otherTr.dataset.groupId = otherId;
             otherTr.style.cssText = 'background:#fefcbf !important;';
-            otherTr.onclick = function(e) {
-                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                toggleGroup(otherId);
-            };
-            
-            otherTr.innerHTML = `
-                <td style="text-align:center; padding-left: 30px;">
-                    <span class="group-arrow" id="${otherId}_arrow">▶</span>
-                    <input type="checkbox" class="group-checkbox" data-group-id="${otherId}">
-                </td>
-                <td colspan="${totalCols - 1}" style="font-weight:600; color:#975a16;">
-                    📦 ${otherLabel}
-                    <span class="group-badge">×${otherRows.length}</span>
-                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${otherVolume.toFixed(2)} м³</span>
-                </td>
-            `;
+            otherTr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(otherId); };
+            otherTr.innerHTML = `<td style="text-align:center;padding-left:30px;"><span class="group-arrow" id="${otherId}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${otherId}"></td><td colspan="${totalCols - 1}" style="font-weight:600;color:#975a16;">📦 ${otherLabel}<span class="group-badge">×${otherRows.length}</span><span style="font-size:11px;color:#718096;margin-left:12px;">Σ Объём: ${otherVolume.toFixed(2)} м³</span></td>`;
             body.appendChild(otherTr);
-            
             const otherCb = otherTr.querySelector('.group-checkbox');
             otherCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(otherId, this.checked); });
-            
             const byName = {};
             otherRows.forEach(rd => {
                 let nameKey = (rd.name || '').trim();
                 const lastColon = nameKey.lastIndexOf(':');
-                if (lastColon !== -1) {
-                    const after = nameKey.substring(lastColon + 1).trim();
-                    if (/^\d+$/.test(after)) nameKey = nameKey.substring(0, lastColon).trim();
-                }
+                if (lastColon !== -1) { const after = nameKey.substring(lastColon + 1).trim(); if (/^\d+$/.test(after)) nameKey = nameKey.substring(0, lastColon).trim(); }
                 if (!nameKey) nameKey = 'Без названия';
                 if (!byName[nameKey]) byName[nameKey] = [];
                 byName[nameKey].push(rd);
             });
-            
             Object.keys(byName).forEach(nameKey => {
                 const nameRows = byName[nameKey];
                 let nameVolume = 0;
                 nameRows.forEach(rd => { nameVolume += getVolume(rd.index); });
-                
                 const nameId = 'NAME_' + (groupCounter++);
                 groupIndexMap[nameId] = nameRows.map(r => r.index);
-                groupLevel[nameId] = 3;
-                groupParent[nameId] = otherId;
-                groupChildren[nameId] = [];
-                groupChildren[otherId].push(nameId);
-                leafGroups[nameId] = true;
-                
+                groupLevel[nameId] = 3; groupParent[nameId] = otherId; groupChildren[nameId] = []; groupChildren[otherId].push(nameId); leafGroups[nameId] = true;
                 const firstIndex = nameRows[0].index;
-                
                 const nameTr = document.createElement('tr');
-                nameTr.className = 'group-row hidden-row';
-                nameTr.dataset.group = otherId;
-                nameTr.dataset.groupId = nameId;
+                nameTr.className = 'group-row hidden-row'; nameTr.dataset.group = otherId; nameTr.dataset.groupId = nameId;
                 nameTr.style.cssText = 'background:#ffffff !important;';
-                nameTr.onclick = function(e) {
-                    if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                    toggleGroup(nameId);
-                };
-                
-                nameTr.innerHTML = `
-                    <td style="text-align:center; padding-left: 60px;">
-                        <span class="group-arrow" id="${nameId}_arrow">▶</span>
-                        <input type="checkbox" class="group-checkbox" data-group-id="${nameId}" data-first-index="${firstIndex}">
-                    </td>
-                    <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
-                        📎 ${nameKey}
-                        <span class="group-badge">×${nameRows.length}</span>
-                        <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${nameVolume.toFixed(2)} м³</span>
-                    </td>
-                `;
+                nameTr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(nameId); };
+                nameTr.innerHTML = `<td style="text-align:center;padding-left:60px;"><span class="group-arrow" id="${nameId}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${nameId}" data-first-index="${firstIndex}"></td><td colspan="${totalCols - 1}" style="color:#2b6cb0;font-weight:500;">📎 ${nameKey}<span class="group-badge">×${nameRows.length}</span><span style="font-size:11px;color:#718096;margin-left:12px;">Σ Объём: ${nameVolume.toFixed(2)} м³</span></td>`;
                 body.appendChild(nameTr);
-                
                 const nameCb = nameTr.querySelector('.group-checkbox');
                 nameCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(nameId, this.checked); });
-                
                 nameRows.forEach(rd => {
                     rd.tr.classList.add('group-row', 'hidden-row');
                     rd.tr.dataset.group = nameId;
@@ -3033,49 +2517,34 @@ function autoGroupRows() {
             });
         }
     });
-    
-    Object.keys(leafGroups).forEach(key => {
-        if (groupChildren[key] && groupChildren[key].length > 0) delete leafGroups[key];
-    });
-    
+    Object.keys(leafGroups).forEach(key => { if (groupChildren[key] && groupChildren[key].length > 0) delete leafGroups[key]; });
     document.getElementById('autoGroupBtn').style.display = 'none';
     document.getElementById('ungroupBtn').style.display = 'inline-block';
     updateSelectionUI();
     showToast(`Сгруппировано (КР): ${Object.keys(leafGroups).length} групп`, 'info');
 }
+
 // ========== Группировка для АР ==========
 function autoGroupRowsAR() {
     const data = window._previewData;
     if (!data) return;
     const body = document.getElementById('previewBody');
     const rows = Array.from(body.querySelectorAll('tr'));
-    
     rowElementCache.clear();
-    
-    groupIndexMap = {};
-    groupChildren = {};
-    groupParent = {};
-    groupLevel = {};
-    leafGroups = {};
-    selectedRows.clear();
-    isGrouped = true;
-    
+    groupIndexMap = {}; groupChildren = {}; groupParent = {}; groupLevel = {}; leafGroups = {};
+    selectedRows.clear(); isGrouped = true;
     const typeRuIdx = data.headers.indexOf('Тип элемента');
     const nameIdx = data.headers.indexOf('Имя');
     const typeFloorIdx = data.headers.indexOf('Тип_этажа');
     const totalCols = 1 + 6 + 2;
-    
     function getPartFromFloorType(floorType) {
         if (!floorType) return 'Надземная';
         const floorLower = floorType.toLowerCase().trim();
-        
         if (['подзем', 'подвал', 'basement', '-1'].some(w => floorLower.includes(w))) return 'Подземная';
         if (['цокол', 'ground', 'нулев'].some(w => floorLower.includes(w))) return 'Цоколь';
         if (['надзем', 'этаж', 'кровл', 'техническ', 'мансард'].some(w => floorLower.includes(w))) return 'Надземная';
-        
         return 'Надземная';
     }
-    
     const rowData = rows.map(tr => {
         const tds = tr.querySelectorAll('td');
         const index = parseInt(tr.dataset.rowIndex);
@@ -3088,27 +2557,9 @@ function autoGroupRowsAR() {
     
     body.innerHTML = '';
     let groupCounter = 0;
-    
     const partOrder = ['Подземная', 'Цоколь', 'Надземная'];
-    
-    const partLabels = {
-        'Подземная': '🏗️ Подземная часть здания (до отм. 0,000)',
-        'Цоколь': '🏗️ Цокольная часть здания (отм. 0,000)',
-        'Надземная': '🏗️ Надземная часть здания (выше отм. 0,000)',
-    };
-    
-    const typeLabels = {
-        'IfcWall': '🧱 Стены', 'IfcWallStandardCase': '🧱 Стены',
-        'IfcSlab': '🔲 Плиты', 'IfcColumn': '🏛️ Колонны',
-        'IfcBeam': '〰️ Балки', 'IfcStair': '🪜 Лестницы',
-        'IfcStairFlight': '🪜 Лестничные марши', 'IfcDoor': '🚪 Двери',
-        'IfcWindow': '🪟 Окна', 'IfcRailing': '🛡️ Ограждения',
-        'IfcCovering': '🏗️ Покрытия', 'IfcBuildingElementProxy': '📦 Прочие элементы',
-        'IfcPile': '🔩 Сваи', 'IfcRamp': '🔄 Пандусы',
-        'IfcRoof': '🏠 Крыши', 'IfcCurtainWall': '🪟 Фасады',
-        'IfcFurnishingElement': '🪑 Мебель', 'IfcMember': 'Несущий элемент'
-    };
-    
+    const partLabels = { 'Подземная': '🏗️ Подземная часть здания (до отм. 0,000)', 'Цоколь': '🏗️ Цокольная часть здания (отм. 0,000)', 'Надземная': '🏗️ Надземная часть здания (выше отм. 0,000)' };
+    const typeLabels = { 'IfcWall': '🧱 Стены', 'IfcWallStandardCase': '🧱 Стены', 'IfcSlab': '🔲 Плиты', 'IfcColumn': '🏛️ Колонны', 'IfcBeam': '〰️ Балки', 'IfcStair': '🪜 Лестницы', 'IfcStairFlight': '🪜 Лестничные марши', 'IfcDoor': '🚪 Двери', 'IfcWindow': '🪟 Окна', 'IfcRailing': '🛡️ Ограждения', 'IfcCovering': '🏗️ Покрытия', 'IfcBuildingElementProxy': '📦 Прочие элементы', 'IfcPile': '🔩 Сваи', 'IfcRamp': '🔄 Пандусы', 'IfcRoof': '🏠 Крыши', 'IfcCurtainWall': '🪟 Фасады', 'IfcFurnishingElement': '🪑 Мебель', 'IfcMember': 'Несущий элемент' };
     partOrder.forEach(part => {
         const partRows = rowData.filter(rd => rd.part === part);
         if (partRows.length === 0) return;
@@ -3138,99 +2589,39 @@ function autoGroupRowsAR() {
             </td>
         `;
         body.appendChild(l1Tr);
-        
         const l1Cb = l1Tr.querySelector('.group-checkbox');
         l1Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l1Id, this.checked); });
-        
         const typeGroups = {};
-        partRows.forEach(rd => {
-            if (!typeGroups[rd.typeRu]) typeGroups[rd.typeRu] = [];
-            typeGroups[rd.typeRu].push(rd);
-        });
-        
-        const sortedTypes = Object.keys(typeGroups).sort();
-        
-        sortedTypes.forEach(typeRu => {
+        partRows.forEach(rd => { if (!typeGroups[rd.typeRu]) typeGroups[rd.typeRu] = []; typeGroups[rd.typeRu].push(rd); });
+        Object.keys(typeGroups).sort().forEach(typeRu => {
             const typeRows = typeGroups[typeRu];
-            
             const l2Id = 'L2_' + (groupCounter++);
             groupIndexMap[l2Id] = typeRows.map(r => r.index);
-            groupLevel[l2Id] = 2;
-            groupParent[l2Id] = l1Id;
-            groupChildren[l2Id] = [];
-            groupChildren[l1Id].push(l2Id);
-            
+            groupLevel[l2Id] = 2; groupParent[l2Id] = l1Id; groupChildren[l2Id] = []; groupChildren[l1Id].push(l2Id);
             const l2Tr = document.createElement('tr');
-            l2Tr.className = 'group-row hidden-row';
-            l2Tr.dataset.group = l1Id;
-            l2Tr.dataset.groupId = l2Id;
+            l2Tr.className = 'group-row hidden-row'; l2Tr.dataset.group = l1Id; l2Tr.dataset.groupId = l2Id;
             l2Tr.style.cssText = 'background:#edf2f7 !important;';
-            l2Tr.onclick = function(e) {
-                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                toggleGroup(l2Id);
-            };
-            
-            l2Tr.innerHTML = `
-                <td style="text-align:center; padding-left: 30px;">
-                    <span class="group-arrow" id="${l2Id}_arrow">▶</span>
-                    <input type="checkbox" class="group-checkbox" data-group-id="${l2Id}">
-                </td>
-                <td colspan="${totalCols - 1}" style="font-weight:600; color:#4a5568;">
-                    ${typeLabels[typeRu] || typeRu}
-                    <span class="group-badge">×${typeRows.length}</span>
-                </td>
-            `;
+            l2Tr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(l2Id); };
+            l2Tr.innerHTML = `<td style="text-align:center;padding-left:30px;"><span class="group-arrow" id="${l2Id}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${l2Id}"></td><td colspan="${totalCols - 1}" style="font-weight:600;color:#4a5568;">${typeLabels[typeRu] || typeRu}<span class="group-badge">×${typeRows.length}</span></td>`;
             body.appendChild(l2Tr);
-            
             const l2Cb = l2Tr.querySelector('.group-checkbox');
             l2Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l2Id, this.checked); });
-            
             const nameGroups = {};
-            typeRows.forEach(rd => {
-                if (!nameGroups[rd.name]) nameGroups[rd.name] = [];
-                nameGroups[rd.name].push(rd);
-            });
-            
-            const sortedNames = Object.keys(nameGroups).sort();
-            
-            sortedNames.forEach(name => {
+            typeRows.forEach(rd => { if (!nameGroups[rd.name]) nameGroups[rd.name] = []; nameGroups[rd.name].push(rd); });
+            Object.keys(nameGroups).sort().forEach(name => {
                 const nameRows = nameGroups[name];
-                
                 const l3Id = 'L3_' + (groupCounter++);
                 groupIndexMap[l3Id] = nameRows.map(r => r.index);
-                groupLevel[l3Id] = 3;
-                groupParent[l3Id] = l2Id;
-                groupChildren[l3Id] = [];
-                groupChildren[l2Id].push(l3Id);
-                leafGroups[l3Id] = true;
-                
+                groupLevel[l3Id] = 3; groupParent[l3Id] = l2Id; groupChildren[l3Id] = []; groupChildren[l2Id].push(l3Id); leafGroups[l3Id] = true;
                 const firstIndex = nameRows[0].index;
-                
                 const l3Tr = document.createElement('tr');
-                l3Tr.className = 'group-row hidden-row';
-                l3Tr.dataset.group = l2Id;
-                l3Tr.dataset.groupId = l3Id;
+                l3Tr.className = 'group-row hidden-row'; l3Tr.dataset.group = l2Id; l3Tr.dataset.groupId = l3Id;
                 l3Tr.style.cssText = 'background:#f7fafc !important;';
-                l3Tr.onclick = function(e) {
-                    if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                    toggleGroup(l3Id);
-                };
-                
-                l3Tr.innerHTML = `
-                    <td style="text-align:center; padding-left: 60px;">
-                        <span class="group-arrow" id="${l3Id}_arrow">▶</span>
-                        <input type="checkbox" class="group-checkbox" data-group-id="${l3Id}" data-first-index="${firstIndex}">
-                    </td>
-                    <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
-                        📎 ${name}
-                        <span class="group-badge">×${nameRows.length}</span>
-                    </td>
-                `;
+                l3Tr.onclick = function(e) { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return; toggleGroup(l3Id); };
+                l3Tr.innerHTML = `<td style="text-align:center;padding-left:60px;"><span class="group-arrow" id="${l3Id}_arrow">▶</span><input type="checkbox" class="group-checkbox" data-group-id="${l3Id}" data-first-index="${firstIndex}"></td><td colspan="${totalCols - 1}" style="color:#2b6cb0;font-weight:500;">📎 ${name}<span class="group-badge">×${nameRows.length}</span></td>`;
                 body.appendChild(l3Tr);
-                
                 const l3Cb = l3Tr.querySelector('.group-checkbox');
                 l3Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l3Id, this.checked); });
-                
                 nameRows.forEach(rd => {
                     rd.tr.classList.add('group-row', 'hidden-row');
                     rd.tr.dataset.group = l3Id;
@@ -3243,11 +2634,7 @@ function autoGroupRowsAR() {
             });
         });
     });
-    
-    Object.keys(leafGroups).forEach(key => {
-        if (groupChildren[key] && groupChildren[key].length > 0) delete leafGroups[key];
-    });
-    
+    Object.keys(leafGroups).forEach(key => { if (groupChildren[key] && groupChildren[key].length > 0) delete leafGroups[key]; });
     document.getElementById('autoGroupBtn').style.display = 'none';
     document.getElementById('ungroupBtn').style.display = 'inline-block';
     updateSelectionUI();
@@ -3294,9 +2681,7 @@ async function showSessionJsonFile(filename) {
     const loading = document.getElementById('sessionJsonLoading');
     const content = document.getElementById('sessionJsonContent');
     document.getElementById('sessionJsonTitle').textContent = '📄 ' + filename;
-    loading.style.display = 'block';
-    loading.textContent = 'Загрузка...';
-    loading.style.color = '#718096';
+    loading.style.display = 'block'; loading.textContent = 'Загрузка...'; loading.style.color = '#718096';
     content.style.display = 'none';
     overlay.classList.add('active');
     try {
@@ -3304,12 +2689,8 @@ async function showSessionJsonFile(filename) {
         if (!response.ok) throw new Error('Не удалось загрузить файл');
         const data = await response.json();
         content.textContent = JSON.stringify(data, null, 2);
-        loading.style.display = 'none';
-        content.style.display = 'block';
-    } catch (e) {
-        loading.textContent = 'Ошибка: ' + e.message;
-        loading.style.color = '#fc8181';
-    }
+        loading.style.display = 'none'; content.style.display = 'block';
+    } catch (e) { loading.textContent = 'Ошибка: ' + e.message; loading.style.color = '#fc8181'; }
 }
 
 function closeSessionJsonModal() {
@@ -3330,28 +2711,25 @@ function downloadCurrentViewFile() {
 // ========== Зум чертежа ==========
 function _blueprintApplyTransform() {
     const img = document.getElementById('blueprintImageContent');
-    const s = blueprintZoom.scale;
-    img.style.transform = `translate(${blueprintZoom.x}px, ${blueprintZoom.y}px) scale(${s})`;
+    img.style.transform = `translate(${blueprintZoom.x}px, ${blueprintZoom.y}px) scale(${blueprintZoom.scale})`;
     const levelEl = document.getElementById('blueprintZoomLevel');
-    if (levelEl) levelEl.textContent = Math.round(s * 100) + '%';
+    if (levelEl) levelEl.textContent = Math.round(blueprintZoom.scale * 100) + '%';
 }
 
 function _blueprintDims() {
     const container = document.getElementById('blueprintZoomContainer');
     const img = document.getElementById('blueprintImageContent');
-    const cw = container.clientWidth;
-    const ch = container.clientHeight;
-    const iw = (img.naturalWidth || 0) * blueprintZoom.scale;
-    const ih = (img.naturalHeight || 0) * blueprintZoom.scale;
+    const cw = container.clientWidth, ch = container.clientHeight;
+    const iw = (img.naturalWidth || 0) * blueprintZoom.scale, ih = (img.naturalHeight || 0) * blueprintZoom.scale;
     return { cw, ch, iw, ih };
 }
 
 function _blueprintClamp() {
     const { cw, ch, iw, ih } = _blueprintDims();
-    if (iw <= cw) { blueprintZoom.x = (cw - iw) / 2; }
-    else { blueprintZoom.x = Math.min(0, Math.max(cw - iw, blueprintZoom.x)); }
-    if (ih <= ch) { blueprintZoom.y = (ch - ih) / 2; }
-    else { blueprintZoom.y = Math.min(0, Math.max(ch - ih, blueprintZoom.y)); }
+    if (iw <= cw) blueprintZoom.x = (cw - iw) / 2;
+    else blueprintZoom.x = Math.min(0, Math.max(cw - iw, blueprintZoom.x));
+    if (ih <= ch) blueprintZoom.y = (ch - ih) / 2;
+    else blueprintZoom.y = Math.min(0, Math.max(ch - ih, blueprintZoom.y));
 }
 
 function _blueprintZoomToPoint(newScale, mx, my) {
@@ -3362,8 +2740,7 @@ function _blueprintZoomToPoint(newScale, mx, my) {
     blueprintZoom.scale = newScale;
     blueprintZoom.x = mx - imgX * newScale;
     blueprintZoom.y = my - imgY * newScale;
-    _blueprintClamp();
-    _blueprintApplyTransform();
+    _blueprintClamp(); _blueprintApplyTransform();
 }
 
 function blueprintZoomBy(delta) {
@@ -3381,8 +2758,7 @@ function blueprintResetZoom() {
 function blueprintFitZoom() {
     blueprintZoom.scale = blueprintZoom.baseScale || 1;
     const { cw, ch, iw, ih } = _blueprintDims();
-    blueprintZoom.x = (cw - iw) / 2;
-    blueprintZoom.y = (ch - ih) / 2;
+    blueprintZoom.x = (cw - iw) / 2; blueprintZoom.y = (ch - ih) / 2;
     _blueprintApplyTransform();
 }
 
@@ -3390,78 +2766,55 @@ function _blueprintInitZoom() {
     if (blueprintZoom.inited) return;
     blueprintZoom.inited = true;
     const container = document.getElementById('blueprintZoomContainer');
-
     container.addEventListener('wheel', function(e) {
         e.preventDefault();
         const rect = container.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-        const delta = -e.deltaY * 0.0015;
-        _blueprintZoomToPoint(blueprintZoom.scale * (1 + delta), mx, my);
+        _blueprintZoomToPoint(blueprintZoom.scale * (1 - e.deltaY * 0.0015), e.clientX - rect.left, e.clientY - rect.top);
     }, { passive: false });
-
     container.addEventListener('mousedown', function(e) {
         if (e.target.closest('.blueprint-zoom-toolbar')) return;
-        blueprintZoom.dragging = true;
-        blueprintZoom.lastX = e.clientX;
-        blueprintZoom.lastY = e.clientY;
-        container.classList.add('dragging');
-        e.preventDefault();
+        blueprintZoom.dragging = true; blueprintZoom.lastX = e.clientX; blueprintZoom.lastY = e.clientY;
+        container.classList.add('dragging'); e.preventDefault();
     });
     window.addEventListener('mousemove', function(e) {
         if (!blueprintZoom.dragging) return;
         blueprintZoom.x += e.clientX - blueprintZoom.lastX;
         blueprintZoom.y += e.clientY - blueprintZoom.lastY;
-        blueprintZoom.lastX = e.clientX;
-        blueprintZoom.lastY = e.clientY;
-        _blueprintClamp();
-        _blueprintApplyTransform();
+        blueprintZoom.lastX = e.clientX; blueprintZoom.lastY = e.clientY;
+        _blueprintClamp(); _blueprintApplyTransform();
     });
     window.addEventListener('mouseup', function() {
         if (!blueprintZoom.dragging) return;
-        blueprintZoom.dragging = false;
-        container.classList.remove('dragging');
+        blueprintZoom.dragging = false; container.classList.remove('dragging');
     });
-
     let touchState = null;
     container.addEventListener('touchstart', function(e) {
         if (e.target.closest('.blueprint-zoom-toolbar')) return;
-        if (e.touches.length === 1) {
-            touchState = { mode: 'pan', x: e.touches[0].clientX, y: e.touches[0].clientY };
-        } else if (e.touches.length === 2) {
+        if (e.touches.length === 1) touchState = { mode: 'pan', x: e.touches[0].clientX, y: e.touches[0].clientY };
+        else if (e.touches.length === 2) {
             const dx = e.touches[0].clientX - e.touches[1].clientX;
             const dy = e.touches[0].clientY - e.touches[1].clientY;
             const rect = container.getBoundingClientRect();
-            touchState = {
-                mode: 'pinch', dist: Math.hypot(dx, dy),
-                startScale: blueprintZoom.scale,
-                cx: (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left,
-                cy: (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top
-            };
+            touchState = { mode: 'pinch', dist: Math.hypot(dx, dy), startScale: blueprintZoom.scale, cx: (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left, cy: (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top };
         }
     }, { passive: true });
     container.addEventListener('touchmove', function(e) {
-        if (!touchState) return;
-        e.preventDefault();
+        if (!touchState) return; e.preventDefault();
         if (touchState.mode === 'pan' && e.touches.length === 1) {
             blueprintZoom.x += e.touches[0].clientX - touchState.x;
             blueprintZoom.y += e.touches[0].clientY - touchState.y;
-            touchState.x = e.touches[0].clientX;
-            touchState.y = e.touches[0].clientY;
-            _blueprintClamp();
-            _blueprintApplyTransform();
+            touchState.x = e.touches[0].clientX; touchState.y = e.touches[0].clientY;
+            _blueprintClamp(); _blueprintApplyTransform();
         } else if (touchState.mode === 'pinch' && e.touches.length === 2) {
             const dx = e.touches[0].clientX - e.touches[1].clientX;
             const dy = e.touches[0].clientY - e.touches[1].clientY;
-            const dist = Math.hypot(dx, dy);
-            const newScale = touchState.startScale * (dist / touchState.dist);
-            _blueprintZoomToPoint(newScale, touchState.cx, touchState.cy);
+            _blueprintZoomToPoint(touchState.startScale * (Math.hypot(dx, dy) / touchState.dist), touchState.cx, touchState.cy);
         }
     }, { passive: false });
     container.addEventListener('touchend', function() { touchState = null; }, { passive: true });
     container.addEventListener('dblclick', function(e) {
         if (e.target.closest('.blueprint-zoom-toolbar')) return;
-        if (blueprintZoom.scale > 1.001) { blueprintFitZoom(); }
+        if (blueprintZoom.scale > 1.001) blueprintFitZoom();
         else { const rect = container.getBoundingClientRect(); _blueprintZoomToPoint(1, e.clientX - rect.left, e.clientY - rect.top); }
     });
 }
@@ -3470,9 +2823,7 @@ function _blueprintComputeBaseScale() {
     const container = document.getElementById('blueprintZoomContainer');
     const img = document.getElementById('blueprintImageContent');
     if (!img.naturalWidth || !container.clientWidth) return 1;
-    const sx = container.clientWidth / img.naturalWidth;
-    const sy = container.clientHeight / img.naturalHeight;
-    return Math.max(0.01, Math.min(sx, sy));
+    return Math.max(0.01, Math.min(container.clientWidth / img.naturalWidth, container.clientHeight / img.naturalHeight));
 }
 
 function showBlueprintImage() {
@@ -3482,23 +2833,14 @@ function showBlueprintImage() {
     const loading = document.getElementById('blueprintImageLoading');
     const container = document.getElementById('blueprintZoomContainer');
     const img = document.getElementById('blueprintImageContent');
-    loading.style.display = 'block';
-    loading.textContent = 'Загрузка изображения...';
-    loading.style.color = '#718096';
-    container.style.display = 'none';
-    overlay.classList.add('active');
+    loading.style.display = 'block'; loading.textContent = 'Загрузка изображения...'; loading.style.color = '#718096';
+    container.style.display = 'none'; overlay.classList.add('active');
     img.onload = () => {
-        loading.style.display = 'none';
-        container.style.display = 'block';
+        loading.style.display = 'none'; container.style.display = 'block';
         blueprintZoom.scale = 1; blueprintZoom.x = 0; blueprintZoom.y = 0;
-        blueprintZoom.baseScale = _blueprintComputeBaseScale();
-        blueprintFitZoom();
+        blueprintZoom.baseScale = _blueprintComputeBaseScale(); blueprintFitZoom();
     };
-    img.onerror = () => {
-        loading.textContent = 'Ошибка загрузки изображения';
-        loading.style.color = '#fc8181';
-        container.style.display = 'none';
-    };
+    img.onerror = () => { loading.textContent = 'Ошибка загрузки изображения'; loading.style.color = '#fc8181'; container.style.display = 'none'; };
     img.src = `${API_BASE}/session/${currentSessionId}/blueprint_image`;
 }
 
@@ -3513,20 +2855,14 @@ async function showMaterialsLegend() {
     const overlay = document.getElementById('materialsLegendModal');
     const loading = document.getElementById('materialsLegendLoading');
     const content = document.getElementById('materialsLegendContent');
-    loading.style.display = 'block';
-    content.style.display = 'none';
-    overlay.classList.add('active');
+    loading.style.display = 'block'; content.style.display = 'none'; overlay.classList.add('active');
     try {
         const response = await fetch(`${API_BASE}/session/${currentSessionId}/materials_md`);
         if (!response.ok) { const err = await response.json(); throw new Error(err.detail || 'Ошибка'); }
         const data = await response.json();
         content.innerHTML = renderMarkdownTable(data.markdown);
-        loading.style.display = 'none';
-        content.style.display = 'block';
-    } catch (e) {
-        loading.textContent = 'Ошибка: ' + e.message;
-        loading.style.color = '#fc8181';
-    }
+        loading.style.display = 'none'; content.style.display = 'block';
+    } catch (e) { loading.textContent = 'Ошибка: ' + e.message; loading.style.color = '#fc8181'; }
 }
 
 function closeMaterialsLegend() { document.getElementById('materialsLegendModal').classList.remove('active'); }
@@ -3539,8 +2875,7 @@ function renderMarkdownTable(md) {
     const bodyRows = lines.slice(2).map(parseRow);
     let html = '<table style="width:100%;border-collapse:collapse;font-size:14px;">';
     html += '<thead><tr>' + headers.map(h => '<th style="padding:10px 12px;text-align:left;border-bottom:2px solid #e2e8f0;background:#f7fafc;font-weight:600;color:#4a5568;">' + h + '</th>').join('') + '</tr></thead>';
-    html += '<tbody>' + bodyRows.map(row => '<tr>' + row.map(cell => '<td style="padding:8px 12px;border-bottom:1px solid #f0f4f8;">' + cell + '</td>').join('') + '</tr>').join('') + '</tbody>';
-    html += '</table>';
+    html += '<tbody>' + bodyRows.map(row => '<tr>' + row.map(cell => '<td style="padding:8px 12px;border-bottom:1px solid #f0f4f8;">' + cell + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
     return html;
 }
 
@@ -3549,81 +2884,52 @@ async function previewGlbFile(filename) {
     const overlay = document.getElementById('viewer3dModal');
     const container = document.getElementById('viewer3dContainer');
     const loading = document.getElementById('viewer3dLoading');
-    
     document.getElementById('viewer3dTitle').textContent = '🧊 ' + filename;
     overlay.classList.add('active');
-    loading.style.display = 'block';
-    loading.textContent = 'Загрузка 3D модели...';
-    loading.style.color = '#718096';
-    
-    document.getElementById('downloadGlbBtn').onclick = () => {
-        window.open(`${API_BASE}/session/${currentSessionId}/download/${encodeURIComponent(filename)}`, '_blank');
-    };
-    
+    loading.style.display = 'block'; loading.textContent = 'Загрузка 3D модели...'; loading.style.color = '#718096';
+    document.getElementById('downloadGlbBtn').onclick = () => { window.open(`${API_BASE}/session/${currentSessionId}/download/${encodeURIComponent(filename)}`, '_blank'); };
     if (viewer3d) {
         if (viewer3d._resizeHandler) window.removeEventListener('resize', viewer3d._resizeHandler);
         try { viewer3d.renderer.dispose(); } catch(e) {}
         viewer3d = null;
     }
-    
     try {
         const THREE = await import('three');
         const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
         const { OrbitControls } = await import('three/addons/controls/OrbitControls.js');
-        
-        container.innerHTML = '';
-        container.appendChild(loading);
-        
+        container.innerHTML = ''; container.appendChild(loading);
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0xf0f4f8);
         scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-        
         const d1 = new THREE.DirectionalLight(0xffffff, 1.5); d1.position.set(10, 30, 20); scene.add(d1);
         const d2 = new THREE.DirectionalLight(0xffffff, 0.6); d2.position.set(-20, 10, -10); scene.add(d2);
-        
         const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000000);
         camera.position.set(50, 50, 50);
-        
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(container.clientWidth, container.clientHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         container.appendChild(renderer.domElement);
-        
         const controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
-        controls.dampingFactor = 0.1;
-        controls.target.set(0, 0, 0);
-        
+        controls.enableDamping = true; controls.dampingFactor = 0.1; controls.target.set(0, 0, 0);
         const url = `${API_BASE}/session/${currentSessionId}/download/${encodeURIComponent(filename)}`;
-        
         await new Promise((resolve, reject) => {
             new GLTFLoader().load(url,
                 (gltf) => {
                     loading.style.display = 'none';
-                    const modelGroup = new THREE.Group();
-                    modelGroup.add(gltf.scene);
-                    scene.add(modelGroup);
-                    
+                    const modelGroup = new THREE.Group(); modelGroup.add(gltf.scene); scene.add(modelGroup);
                     const box = new THREE.Box3().setFromObject(gltf.scene);
                     const center = box.getCenter(new THREE.Vector3());
                     const size = box.getSize(new THREE.Vector3());
                     const maxDim = Math.max(size.x, size.y, size.z);
-                    
                     if (maxDim === 0) { loading.textContent = '⚠️ Модель пустая'; loading.style.display = 'block'; reject(new Error('Empty')); return; }
-                    
                     modelGroup.position.set(-center.x, -center.y, -center.z);
                     controls.target.set(0, 0, 0);
                     const distance = maxDim * 2.0;
                     camera.position.set(distance * 0.8, distance * 0.8, distance * 0.8);
-                    camera.lookAt(0, 0, 0);
-                    controls.update();
-                    
+                    camera.lookAt(0, 0, 0); controls.update();
                     const axesHelper = new THREE.AxesHelper(maxDim * 1.5);
-                    axesHelper.visible = false;
-                    scene.add(axesHelper);
-                    
+                    axesHelper.visible = false; scene.add(axesHelper);
                     viewer3d = { scene, camera, renderer, controls, model: modelGroup, wireframe: false, axesHelper, _THREE: THREE };
-                    
                     const resizeHandler = () => {
                         if (!viewer3d) return;
                         camera.aspect = container.clientWidth / container.clientHeight;
@@ -3632,7 +2938,6 @@ async function previewGlbFile(filename) {
                     };
                     window.addEventListener('resize', resizeHandler);
                     viewer3d._resizeHandler = resizeHandler;
-                    
                     showToast('3D модель загружена!', 'success');
                     resolve();
                 },
@@ -3640,7 +2945,6 @@ async function previewGlbFile(filename) {
                 (error) => { loading.textContent = '❌ Ошибка загрузки'; loading.style.color = '#e53e3e'; reject(error); }
             );
         });
-        
         function animate() { if (!viewer3d) return; requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
         animate();
     } catch (e) {
@@ -3666,8 +2970,7 @@ function reset3DView() {
     const size = box.getSize(new viewer3d._THREE.Vector3());
     const distance = Math.max(size.x, size.y, size.z) * 2.0;
     viewer3d.camera.position.set(distance * 0.8, distance * 0.8, distance * 0.8);
-    viewer3d.controls.target.copy(center);
-    viewer3d.controls.update();
+    viewer3d.controls.target.copy(center); viewer3d.controls.update();
 }
 
 function toggleWireframe() {
@@ -3716,28 +3019,19 @@ async function restoreSession(sessionId) {
         const data = await response.json();
         currentSessionId = sessionId;
         currentRunId = data.current_run_id || null;
-        
         if (data.buildingHeight) document.getElementById('buildingHeight').value = data.buildingHeight;
-        
         if (data.processingType || data.processing_type) {
             currentProcessingType = data.processingType || data.processing_type;
             const radio = document.querySelector(`input[name="processingType"][value="${currentProcessingType}"]`);
             if (radio) { radio.checked = true; onProcessingTypeChange(); }
         }
-        
         showToast('Сессия восстановлена', 'success');
         switchTab('process');
-        
         if (data.status === 'completed') {
             const r = await fetch(`${API_BASE}/session/${sessionId}`);
             const s = await r.json();
-            
             let files = s.files || [];
-            if (s.runs && s.runs.length > 0) {
-                const currentRun = s.runs.find(r => r.run_id === currentRunId);
-                if (currentRun) files = currentRun.files || [];
-            }
-            
+            if (s.runs && s.runs.length > 0) { const currentRun = s.runs.find(r => r.run_id === currentRunId); if (currentRun) files = currentRun.files || []; }
             renderResults(files, s);
             document.getElementById('resultsCard').style.display = 'block';
             document.getElementById('step1').classList.remove('disabled');
@@ -3772,8 +3066,6 @@ async function deleteSession(sessionId) {
 document.addEventListener('DOMContentLoaded', () => {
     loadHistory();
     updateProcessingTypeBadges();
-    
-    // Обработчики для reference-вкладки
     document.querySelectorAll('input[name="referenceProcessingType"]').forEach(radio => {
         radio.addEventListener('change', function() {
             document.querySelectorAll('#referenceTypeSelector .processing-type-label').forEach(label => {
@@ -3781,20 +3073,13 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
     });
-    
     document.getElementById('previewModal').addEventListener('click', function(e) { if (e.target === this) closePreview(); });
     document.getElementById('viewer3dModal').addEventListener('click', function(e) { if (e.target === this) close3DViewer(); });
     document.getElementById('blueprintImageModal').addEventListener('click', function(e) { if (e.target === this) closeBlueprintImage(); });
     document.getElementById('materialsLegendModal').addEventListener('click', function(e) { if (e.target === this) closeMaterialsLegend(); });
     document.getElementById('sessionJsonModal').addEventListener('click', function(e) { if (e.target === this) closeSessionJsonModal(); });
     document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') {
-            closePreview();
-            closeBlueprintImage();
-            closeMaterialsLegend();
-            closeSessionJsonModal();
-            close3DViewer();
-        }
+        if (e.key === 'Escape') { closePreview(); closeBlueprintImage(); closeMaterialsLegend(); closeSessionJsonModal(); close3DViewer(); }
     });
 });
 </script>
