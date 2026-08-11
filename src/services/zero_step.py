@@ -588,8 +588,16 @@ def fill_missing_from_name(df):
     return df
 
 
-def zero_step(ifc_file, output_folder=None):
-    """Основная функция обработки IFC файла"""
+def zero_step(ifc_file, output_folder=None, write_full_data=True):
+    """Основная функция обработки IFC файла
+
+    Args:
+        ifc_file: путь к IFC-файлу
+        output_folder: папка для сохранения результатов
+        write_full_data: если False — пропускает запись IFC_ВСЕ_ДАННЫЕ_исправленный.xlsx
+            (242 колонки), экономя ~90-100 с на больших файлах.
+            ДЛЯ_СМЕТЧИКА_исправленный.xlsx и сокращённый создаются в любом случае.
+    """
     logger.info(f"Начата обработка файла {ifc_file}")
 
     model = ifcopenshell.open(ifc_file)
@@ -1193,12 +1201,19 @@ def zero_step(ifc_file, output_folder=None):
     cols_to_drop = ['Глубина_выдавливания_мм', 'Координата_X_мм', 'Координата_Y_мм', 'Координата_Z_мм']
     df = df.drop([col for col in cols_to_drop if col in df.columns], axis=1)
 
-    if output_folder:
-        output_filename = os.path.join(output_folder, 'IFC_ВСЕ_ДАННЫЕ_исправленный.xlsx')
-    else:
-        output_filename = 'IFC_ВСЕ_ДАННЫЕ_исправленный.xlsx'
+    # Полный файл всех данных (242 колонки) — опционально.
+    # На больших файлах запись занимает ~90-100 с и не нужна для формирования
+    # ДЛЯ_СМЕТЧИКА_*.xlsx и Финального перечня работ, поэтому по умолчанию
+    # в пайплайне она отключена (write_full_data=False).
+    if write_full_data:
+        if output_folder:
+            output_filename = os.path.join(output_folder, 'IFC_ВСЕ_ДАННЫЕ_исправленный.xlsx')
+        else:
+            output_filename = 'IFC_ВСЕ_ДАННЫЕ_исправленный.xlsx'
 
-    df.to_excel(output_filename, index=False)
+        df.to_excel(output_filename, index=False)
+    else:
+        logger.info("Пропущена запись IFC_ВСЕ_ДАННЫЕ_исправленный.xlsx (write_full_data=False)")
     
     # ============================================================================
     # СОЗДАЕМ СОКРАЩЕННУЮ ТАБЛИЦУ ДЛЯ СМЕТЧИКА

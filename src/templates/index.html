@@ -752,7 +752,7 @@
                     <button class="btn btn-secondary" id="btnMaterialsLegend" onclick="showMaterialsLegend()">🎨 Условные обозначения</button>
                     <button class="btn btn-secondary" id="btnViewElementsJson" style="display:none;" onclick="showSessionJsonFile('ifc_elements_output.json')">📄 Элементы (JSON)</button>
                     <button class="btn btn-secondary" id="btnViewGroupedJson" style="display:none;" onclick="showSessionJsonFile('ifc_raw_elements_grouped.json')">📊 Группы (JSON)</button>
-                    <button class="btn btn-secondary" id="btnViewGroupedXlsx" style="display:none;" onclick="previewResultFile('ifc_raw_elements_grouped.xlsx')">📥 Группы (XLSX)</button>
+
                     <button class="btn btn-secondary" id="btnView3dModel" style="display:none;" onclick="open3dModelViewer()">🧊 3D модель</button>
                 </div>
                 <div class="params-row mt-20">
@@ -1570,13 +1570,12 @@ async function onIfcProcessed(sessionId) {
             const isPdf = preview_data.sourceType === 'pdf';
             const isIfc = preview_data.sourceType === 'ifc';
             const hasPdfExtras = isPdf && (preview_data.hasBlueprintImage || preview_data.hasMaterialsMd);
-            const hasRefFiles = preview_data.hasIfcElementsJson || preview_data.hasIfcGroupedJson || preview_data.hasIfcGroupedXlsx;
+            const hasRefFiles = preview_data.hasIfcElementsJson || preview_data.hasIfcGroupedJson;
             blueprintBtns.style.display = (hasPdfExtras || hasRefFiles || isIfc) ? 'flex' : 'none';
             document.getElementById('btnBlueprintImage').style.display = isPdf ? '' : 'none';
             document.getElementById('btnMaterialsLegend').style.display = isPdf ? '' : 'none';
             document.getElementById('btnViewElementsJson').style.display = preview_data.hasIfcElementsJson ? '' : 'none';
             document.getElementById('btnViewGroupedJson').style.display = preview_data.hasIfcGroupedJson ? '' : 'none';
-            document.getElementById('btnViewGroupedXlsx').style.display = preview_data.hasIfcGroupedXlsx ? '' : 'none';
             document.getElementById('btnView3dModel').style.display = isIfc ? '' : 'none';
         }
         showToast(`Загружено ${preview_data.totalRows} строк`, 'success');

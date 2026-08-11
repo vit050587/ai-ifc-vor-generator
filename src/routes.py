@@ -836,7 +836,7 @@ def preview_excel(session_id: str):
     has_materials_md = False
     has_ifc_elements_json = False
     has_ifc_grouped_json = False
-    has_ifc_grouped_xlsx = False
+
     source_type = s.get("source_type")
     
     for f in os.listdir(search_dir) if os.path.exists(search_dir) else []:
@@ -849,7 +849,6 @@ def preview_excel(session_id: str):
     if os.path.exists(session_dir):
         has_ifc_elements_json = os.path.exists(os.path.join(session_dir, "ifc_elements_output.json"))
         has_ifc_grouped_json = os.path.exists(os.path.join(session_dir, "ifc_raw_elements_grouped.json"))
-        has_ifc_grouped_xlsx = os.path.exists(os.path.join(session_dir, "ifc_raw_elements_grouped.xlsx"))
 
     # После чтения основного Excel
     building_height = None
@@ -911,7 +910,6 @@ def preview_excel(session_id: str):
         has_materials_md=has_materials_md,
         has_ifc_elements_json=has_ifc_elements_json,
         has_ifc_grouped_json=has_ifc_grouped_json,
-        has_ifc_grouped_xlsx=has_ifc_grouped_xlsx,
         processing_type=s.get("processing_type", "KR"),
     ))
 

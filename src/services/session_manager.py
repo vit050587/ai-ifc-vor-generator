@@ -516,7 +516,7 @@ class SessionManager:
             
             self._update_progress(session_id, 10, f"Обработка IFC файла ({processing_type})...")
             self._update_progress(session_id, 20, "Извлечение элементов из IFC...")
-            zero_step(ifc_path, output_folder=session_dir)
+            zero_step(ifc_path, output_folder=session_dir, write_full_data=False)
 
             # Формируем справочные JSON
             try:
@@ -800,6 +800,9 @@ class SessionManager:
         shutil.copy2(excel_path, run_excel_path)
         
         # Копируем IFC_ВСЕ_ДАННЫЕ и GLB
+        # Примечание: IFC_ВСЕ_ДАННЫЕ_исправленный.xlsx может отсутствовать
+        # (write_full_data=False в zero_step для экономии времени).
+        # В этом случае Дерево_проекта.xlsx не будет сформировано — это нормально.
         original_dir = os.path.join(session_dir, 'original')
         search_dir = original_dir if os.path.exists(original_dir) else session_dir
         
@@ -1166,7 +1169,6 @@ class SessionManager:
             for src_name, display_name in [
                 ("ifc_elements_output.json", "все элементы.json"),
                 ("ifc_raw_elements_grouped.json", "группы элементов.json"),
-                ("ifc_raw_elements_grouped.xlsx", "группы элементов.xlsx"),
             ]:
                 src_path = os.path.join(session_dir, src_name)
                 if os.path.isfile(src_path):

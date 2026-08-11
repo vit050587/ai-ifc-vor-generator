@@ -40,76 +40,6 @@ from src.services.group_excel import (
 
 logger = setup_logger(__name__)
 
-# Маппинг внутренних имён колонок XLSX на русские
-_COLUMN_RU_NAMES = {
-    'buildingElementName': 'Элемент',
-    'isActive': 'Активен',
-    'elementCount': 'Количество',
-    'totalMeasure_type': 'Тип измерения',
-    'totalMeasure_value': 'Значение',
-    'totalMeasure_unit': 'Единица измерения',
-    # characteristics (нормализованные)
-    'char_Материал': 'Материал',
-    'char_Расположение': 'Расположение',
-    'char_Толщина': 'Толщина',
-    'char_Площадь': 'Площадь',
-    'char_Периметр': 'Периметр',
-    'char_Длина': 'Длина',
-    'char_Объём': 'Объём',
-    # additional (оригинальные)
-    'additional_Имя элемента': 'Имя элемента',
-    'additional_Толщина': 'Толщина элемента',
-    'additional_Площадь': 'Площадь элемента',
-    'additional_Периметр': 'Периметр элемента',
-    'additional_Длина': 'Длина элемента',
-    'additional_Высота': 'Высота элемента',
-    'additional_Этаж': 'Этаж',
-    'additional_Тип этажа': 'Тип этажа',
-}
-
-# Порядок колонок в XLSX (внутренние имена, до переименования в русские).
-_COLUMN_ORDER = [
-    'buildingElementName',
-    'isActive',
-    'elementCount',
-    'totalMeasure_type',
-    'totalMeasure_value',
-    'totalMeasure_unit',
-    # characteristics (нормализованные)
-    'char_Материал',
-    'char_Расположение',
-    'char_Толщина',
-    'char_Площадь',
-    'char_Периметр',
-    # additionalCharacteristics (оригинальные)
-    'additional_Имя элемента',
-    'additional_Толщина',
-    'additional_Площадь',
-    'additional_Периметр',
-]
-
-
-def _prepare_xlsx_df(xlsx_rows: list) -> pd.DataFrame:
-    """Формирует DataFrame из строк XLSX, упорядочивает колонки и переименовывает в русские."""
-    if not xlsx_rows:
-        return pd.DataFrame()
-    df = pd.DataFrame(xlsx_rows).fillna('')
-    # Упорядочиваем колонки по _COLUMN_ORDER (только те, что есть в данных)
-    ordered_cols = [col for col in _COLUMN_ORDER if col in df.columns]
-    # Добавляем колонки, которых нет в _COLUMN_ORDER, в конец
-    remaining_cols = [col for col in df.columns if col not in _COLUMN_ORDER]
-    df = df[ordered_cols + remaining_cols]
-    # Переименовываем колонки в русские названия
-    rename_map = {}
-    for col in df.columns:
-        if col in _COLUMN_RU_NAMES:
-            rename_map[col] = _COLUMN_RU_NAMES[col]
-        elif col.startswith('char_'):
-            rename_map[col] = col.replace('char_', '', 1)
-        elif col.startswith('additional_'):
-            rename_map[col] = col.replace('additional_', '', 1)
-    return df.rename(columns=rename_map)
-
 
 # =====================================================================
 #  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -1103,18 +1033,16 @@ def build_reference_from_ifc(ifc_path: str, output_folder: str, processing_type:
     logger.info("\n--- ЭТАП C: Формирование выходного формата ---")
     result = build_reference_output(leaf_groups, full_groups)
 
-    # --- Перезаписываем ifc_raw_elements_grouped.json и .xlsx новым форматом ---
-    # process_ifc_excel()/process_ifc_excel_ar() создали их в формате дерева групп
+    # --- Перезаписываем ifc_raw_elements_grouped.json новым форматом ---
+    # process_ifc_excel()/process_ifc_excel_ar() создали его в формате дерева групп
     # (для АР — с суффиксом _AR). Перезаписываем в формате справочника (как требует ТЗ)
-    # и всегда под стандартными именами (без суффикса), чтобы веб-интерфейс и
-    # session_manager находили файлы по одному пути.
+    # и всегда под стандартным именем (без суффикса), чтобы веб-интерфейс и
+    # session_manager находили файл по одному пути.
     # Это безопасно: веб-интерфейс использует filtered_elements_grouped.json,
     # а не ifc_raw_elements_grouped.json.
     final_json_path = os.path.join(output_folder, 'ifc_raw_elements_grouped.json')
-    final_excel_path = os.path.join(output_folder, 'ifc_raw_elements_grouped.xlsx')
 
     if grouped_json_path and result:
-        # JSON
         with open(final_json_path, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2, default=str)
         logger.info(
@@ -1122,37 +1050,13 @@ def build_reference_from_ifc(ifc_path: str, output_folder: str, processing_type:
             f"в формате справочника ({len(result)} групп)"
         )
 
-        # XLSX — плоская таблица в формате справочника
-        xlsx_rows = []
-        for item in result:
-            row = {
-                'buildingElementName': item['buildingElementName'],
-                'isActive': item['isActive'],
-                'elementCount': item['elementCount'],
-                'totalMeasure_type': item['totalMeasure']['type'],
-                'totalMeasure_value': item['totalMeasure']['value'],
-                'totalMeasure_unit': item['totalMeasure']['unit'],
-            }
-            for ch in item['characteristics']:
-                vals = ', '.join(v['strValue'] for v in ch['values'])
-                row[f'char_{ch["name"]}'] = vals
-            for ch in item['additionalCharacteristics']:
-                vals = ', '.join(v['strValue'] for v in ch['values'])
-                row[f'additional_{ch["name"]}'] = vals
-            xlsx_rows.append(row)
-
-        if xlsx_rows:
-            df = _prepare_xlsx_df(xlsx_rows)
-            df.to_excel(final_excel_path, index=False)
-            logger.info(
-                f"Файл {os.path.basename(final_excel_path)} перезаписан "
-                f"в формате справочника ({len(result)} групп)"
-            )
-
-    # Удаляем промежуточный файл ifc_raw_elements.xlsx — он больше не нужен
+    # Удаляем промежуточные файлы — они больше не нужны
     if excel_path and os.path.exists(excel_path):
         os.remove(excel_path)
         logger.info(f"Удалён промежуточный файл {os.path.basename(excel_path)}")
+    if grouped_excel_path and os.path.exists(grouped_excel_path):
+        os.remove(grouped_excel_path)
+        logger.info(f"Удалён промежуточный файл {os.path.basename(grouped_excel_path)}")
 
     logger.info("=" * 60)
     logger.info(f"ПОСТРОЕНИЕ СПРАВОЧНОЙ СТРУКТУРЫ ЗАВЕРШЕНО. "
@@ -1279,11 +1183,10 @@ def build_reference_from_pdf(df: pd.DataFrame, output_folder: str, processing_ty
     logger.info("--- Этап 4: Формирование выходного формата ---")
     result = build_reference_output(leaf_groups, full_groups)
 
-    # Перезаписываем ifc_raw_elements_grouped.json/.xlsx в формате справочника
-    # и всегда под стандартными именами (без суффикса _AR), чтобы веб-интерфейс
-    # и session_manager находили файлы по одному пути.
+    # Перезаписываем ifc_raw_elements_grouped.json в формате справочника
+    # и всегда под стандартным именем (без суффикса _AR), чтобы веб-интерфейс
+    # и session_manager находили файл по одному пути.
     final_json_path = os.path.join(output_folder, 'ifc_raw_elements_grouped.json')
-    final_excel_path = os.path.join(output_folder, 'ifc_raw_elements_grouped.xlsx')
 
     if grouped_json_path and result:
         with open(final_json_path, 'w', encoding='utf-8') as f:
@@ -1293,37 +1196,13 @@ def build_reference_from_pdf(df: pd.DataFrame, output_folder: str, processing_ty
             f"в формате справочника ({len(result)} групп)"
         )
 
-        # XLSX — плоская таблица в формате справочника
-        xlsx_rows = []
-        for item in result:
-            row = {
-                'buildingElementName': item['buildingElementName'],
-                'isActive': item['isActive'],
-                'elementCount': item['elementCount'],
-                'totalMeasure_type': item['totalMeasure']['type'],
-                'totalMeasure_value': item['totalMeasure']['value'],
-                'totalMeasure_unit': item['totalMeasure']['unit'],
-            }
-            for ch in item['characteristics']:
-                vals = ', '.join(v['strValue'] for v in ch['values'])
-                row[f'char_{ch["name"]}'] = vals
-            for ch in item['additionalCharacteristics']:
-                vals = ', '.join(v['strValue'] for v in ch['values'])
-                row[f'additional_{ch["name"]}'] = vals
-            xlsx_rows.append(row)
-
-        if xlsx_rows:
-            df_out = _prepare_xlsx_df(xlsx_rows)
-            df_out.to_excel(final_excel_path, index=False)
-            logger.info(
-                f"Файл {os.path.basename(final_excel_path)} перезаписан "
-                f"в формате справочника ({len(result)} групп)"
-            )
-
-    # Удаляем временный файл
+    # Удаляем временные файлы
     if os.path.exists(xlsx_path):
         os.remove(xlsx_path)
         logger.info(f"Удалён временный файл {os.path.basename(xlsx_path)}")
+    if grouped_excel_path and os.path.exists(grouped_excel_path):
+        os.remove(grouped_excel_path)
+        logger.info(f"Удалён промежуточный файл {os.path.basename(grouped_excel_path)}")
 
     logger.info("=" * 60)
     logger.info(f"ФОРМИРОВАНИЕ JSON-ФАЙЛОВ ИЗ PDF ЗАВЕРШЕНО. "

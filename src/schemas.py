@@ -114,7 +114,6 @@ class PreviewResponse(CamelModel):
     has_materials_md: bool = False
     has_ifc_elements_json: bool = False
     has_ifc_grouped_json: bool = False
-    has_ifc_grouped_xlsx: bool = False
 
 
 class RestoreResponse(CamelModel):
