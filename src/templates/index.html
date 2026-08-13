@@ -2085,40 +2085,41 @@ function toggleGroup(groupId) {
         arrow.textContent = '▶';
     }
     
-    // Собираем строки для переключения
+    // Собираем строки для переключения.
+    // При разворачивании показываем только один уровень (дочерние группы и строки),
+    // при сворачивании — рекурсивно скрываем все вложенные уровни.
     const rowsToToggle = [];
+    const nestedArrows = [];
+    const collectAllNested = !isExpanding; // рекурсия нужна только при сворачивании
     
-    // Дочерние группы
-    if (groupChildren[groupId]) {
-        groupChildren[groupId].forEach(childId => {
-            const childRow = document.querySelector(`tr[data-group-id="${childId}"]`);
-            if (childRow) {
-                rowsToToggle.push(childRow);
-                if (!isExpanding) {
-                    const childArrow = document.getElementById(childId + '_arrow');
-                    if (childArrow) {
-                        childArrow.classList.remove('expanded');
-                        childArrow.textContent = '▶';
-                    }
+    const collectDescendants = (gid) => {
+        // Дочерние группы
+        if (groupChildren[gid]) {
+            groupChildren[gid].forEach(childId => {
+                const childRow = document.querySelector(`tr[data-group-id="${childId}"]`);
+                if (childRow) rowsToToggle.push(childRow);
+                nestedArrows.push(childId);
+                if (collectAllNested) collectDescendants(childId);
+            });
+        }
+        
+        // Строки данных - из кеша, с fallback на DOM-запрос
+        const indices = groupIndexMap[gid];
+        if (indices) {
+            indices.forEach(index => {
+                let row = rowElementCache.get(index);
+                if (!row) {
+                    row = document.querySelector(`tr[data-row-index="${index}"]`);
+                    if (row) rowElementCache.set(index, row);
                 }
-            }
-        });
-    }
+                if (row && row.dataset.group === gid) {
+                    rowsToToggle.push(row);
+                }
+            });
+        }
+    };
     
-    // Строки данных - из кеша, с fallback на DOM-запрос
-    const indices = groupIndexMap[groupId];
-    if (indices) {
-        indices.forEach(index => {
-            let row = rowElementCache.get(index);
-            if (!row) {
-                row = document.querySelector(`tr[data-row-index="${index}"]`);
-                if (row) rowElementCache.set(index, row);
-            }
-            if (row && row.dataset.group === groupId) {
-                rowsToToggle.push(row);
-            }
-        });
-    }
+    collectDescendants(groupId);
     
     if (rowsToToggle.length === 0) return;
     
@@ -2127,6 +2128,16 @@ function toggleGroup(groupId) {
         const method = isExpanding ? 'remove' : 'add';
         for (let i = 0; i < rowsToToggle.length; i++) {
             rowsToToggle[i].classList[method]('hidden-row');
+        }
+        // При сворачивании сбрасываем стрелки всех вложенных групп
+        if (!isExpanding) {
+            nestedArrows.forEach(childId => {
+                const childArrow = document.getElementById(childId + '_arrow');
+                if (childArrow) {
+                    childArrow.classList.remove('expanded');
+                    childArrow.textContent = '▶';
+                }
+            });
         }
     });
 }
