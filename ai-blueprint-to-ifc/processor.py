@@ -4,6 +4,7 @@ from pathlib import Path
 from draw_geometry import render_rectangles_fast, render_rectangles_on_image
 import json
 import statistics
+import time
 from utils import image_to_base64, find_intersecting_rectangles
 from pdf_prcoessor import PdfProcessor
 from walls_processor import WallsProcessor
@@ -36,15 +37,20 @@ class Processor:
         debug_manager.delete_debug_folder()
 
         self.ollama_service = OllamaService("prompts")
+        self.dino_service = DinoService(model_path=settings.DINO_HATCHING_MODEL)
         self.pdf_processor = PdfProcessor(self.PDF_PATH)
         self.drawing_statistics = DrawingStatisticsAnalyzer(self.pdf_processor)
         self.transformers_service = TransformerService(settings.PROMPTS_DIR)
-        self.hatching_processor = HatchingProcessor(self.ollama_service, self.drawing_statistics, pdf_processor=self.pdf_processor)
+        self.hatching_processor = HatchingProcessor(self.ollama_service, self.drawing_statistics, self.dino_service, pdf_processor=self.pdf_processor)
         self.layout_processor = LayoutProcessor(self.pdf_processor, self.ollama_service)
-        self.legend_layout_processor = LegendLayoutProcessor(self.pdf_processor)
+        self.legend_layout_processor = LegendLayoutProcessor(self.pdf_processor, self.dino_service)
 
         self.reference_scale = (1, 200)
+
+        self.current_wall_id = 0
     def process(self) -> Dict[str, Any]:
+        start_time = time.time()
+
         debug_manager.save_run_settings()
         debug_manager.save_initial_blueprint(self.pdf_processor)
 
@@ -96,6 +102,8 @@ class Processor:
         
         logger.info(f"Итоговый confidence обработки для чертежа: {round((blueprint_processing_confidence if blueprint_processing_confidence else 0) * 100, 1)}%")
         result_object["confidence"] = blueprint_processing_confidence
+
+        result_object.setdefault("time", {})["full"] = time.time() - start_time
 
         debug_manager.save_result(result_object)
 
@@ -240,7 +248,8 @@ class Processor:
 
     def _assign_designations_to_walls(self, walls):
         for i, wall in enumerate(walls):
-            wall["id"] = f"W{i}"
+            self.current_wall_id += 1
+            wall["id"] = f"W{self.current_wall_id}"
     
     def _process_walls(self, drawing_index, drawings, walls_processor: WallsProcessor, zoom: float):
         folder_name = str(drawing_index)

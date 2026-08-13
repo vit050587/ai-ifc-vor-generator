@@ -13,7 +13,7 @@ class OllamaService:
         self.prompt_manager.load_all()
 
     def extract_from_drawing(self, img_base64,  model_name, prompt_name, data = {}) -> dict:
-        print(f"Размер изображения: {len(img_base64) / 1024 / 1024:.2f} MB")
+        #print(f"Размер изображения: {len(img_base64) / 1024 / 1024:.2f} MB")
 
         prompt = self.prompt_manager.get_prompt(prompt_name)
         prompt = prompt.format(**data)

@@ -5,20 +5,27 @@ from pathlib import Path
 from tqdm import tqdm
 from typing import Any, List, Dict
 import statistics
+import copy
 
 from shapely.geometry import Polygon, box
 
 from rectangle_utils import rectangles_to_yolo_obb, get_two_points_bbox
 from pdf_prcoessor import PdfProcessor
 from yolo_service import YoloService
+from dino_service import DinoService
+from PIL import Image
 
 from config import settings
+from logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class LegendLayoutProcessor:
-    def __init__(self, pdf_processor: PdfProcessor):
+    def __init__(self, pdf_processor: PdfProcessor, dino_service: DinoService):
         self.pdf_processor = pdf_processor
         self.yolo_service = YoloService(settings.YOLO_LEGEND_LAYOUT_MODEL)
+        self.dino_service = dino_service
 
         self.layouts = {}
 
@@ -48,12 +55,74 @@ class LegendLayoutProcessor:
                 continue
 
             row_items.append({
-                "legend_row": row,
+                "legend_rows": [row],
                 "legend_symbols": row_symbols,
                 "legend_descriptions": row_descriptions,
             })
 
+        row_items = self.merge_similar_legend_rows(row_items)
         return row_items
+
+    def merge_similar_legend_rows(self, row_items: list[dict]):
+        merged_row_items = copy.deepcopy(row_items)
+
+        if not merged_row_items:
+            return []
+
+        merge_number = 0
+        merged = True
+        while merged:
+            for row_item_first in merged_row_items:
+                merged = False
+                symbols_first = self._get_symbols_from_legend_row(row_item_first)
+                for row_item_second in merged_row_items:
+                    if row_item_first is row_item_second:
+                        continue
+
+                    symbols_second = self._get_symbols_from_legend_row(row_item_second)
+                    if self._compare_symbols_lists(symbols_first, symbols_second, settings.LEGEND_ROWS_SIMILARITY_THRESHOLD):
+                        merged_row_items.append(self._merge_legend_rows(row_item_first, row_item_second))
+                        merged_row_items.remove(row_item_first)
+                        merged_row_items.remove(row_item_second)
+                        merged = True
+                        merge_number += 1
+                        break
+                if merged:
+                    break
+
+        if merge_number:
+            logger.info(f"Объединено {merge_number} строк легенды. Количство строк легенды: {len(merged_row_items)}.")
+
+        return merged_row_items
+
+    def _get_symbols_from_legend_row(self, row_item):
+        symbols = []
+        for symbol in row_item.get("legend_symbols", []):
+            _, symbol_image = self.pdf_processor.crop_pdf_rect(get_two_points_bbox(symbol["bbox"]), zoom=settings.HATCHING_ZOOM)
+            symbols.append(symbol_image)
+        return symbols
+    
+
+    def _compare_symbols_lists(self, first_symbols:list[Image.Image], second_symbols:list[Image.Image], threshold:float):
+        for symbol_first in first_symbols:
+            for symbol_second in second_symbols:
+                if self.dino_service.predict_pair(plan_image=symbol_first, plan_obb=None, image2=symbol_second)["score"] > threshold:
+                    return True
+        return False
+
+    @staticmethod
+    def _merge_legend_rows(first_row: dict[str, list], second_row: dict[str, list]):
+        result = {}
+
+        for key, value in first_row.items():
+            if isinstance(value, list):
+                result.setdefault(key, []).extend(value)
+
+        for key, value in second_row.items():
+            if isinstance(value, list):
+                result.setdefault(key, []).extend(value)
+
+        return result
 
     @staticmethod
     def _is_bbox_inside(

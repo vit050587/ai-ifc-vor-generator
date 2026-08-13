@@ -4,6 +4,7 @@ from tqdm import tqdm
 from PIL import Image
 from typing import List, Dict
 import hashlib
+import copy
 from dino_service import DinoService
 from pdf_prcoessor import PdfProcessor
 from ollama_service import OllamaService
@@ -21,9 +22,10 @@ class HatchingProcessor:
         self,
         ollama_service: OllamaService,
         drawing_statistics: DrawingStatisticsAnalyzer,
+        dino_service: DinoService,
         pdf_processor: PdfProcessor | None = None
     ):
-        self.dino_service = DinoService(model_path=settings.DINO_HATCHING_MODEL)
+        self.dino_service = dino_service
         self.drawing_statistics = drawing_statistics
         self.pdf_processor = pdf_processor
         self.ollama_service = ollama_service
@@ -242,13 +244,22 @@ class HatchingProcessor:
         return best_result, offset
 
     
-    def _get_description(self, descriptions: dict):
+    def _get_description(self, descriptions: list):
         description_texts = []
         for description in descriptions:
-            img_b64, _ = self.pdf_processor.crop_pdf_rect(get_two_points_bbox(description["bbox"]), zoom=settings.HATCHING_ZOOM)
+            description_bbox = self._apply_description_bbox_horizontal_modifier(get_two_points_bbox(description["bbox"]))
+            img_b64, _ = self.pdf_processor.crop_pdf_rect(description_bbox, zoom=settings.HATCHING_ZOOM)
             image_text_json = self.ollama_service.extract_from_drawing(img_b64, settings.OLLAMA_MODEL_NAME, "get_text_from_image")
             description_texts.append(image_text_json.get("text", ""))
         return " ".join(description_texts)
+
+    @staticmethod
+    def _apply_description_bbox_horizontal_modifier(bbox: dict[str, float]):
+        bbox = copy.deepcopy(bbox)
+        bbox_length = bbox["x1"] - bbox["x0"]
+        bbox["x0"] = bbox["x0"] - bbox_length * settings.LEGEND_DESCRIPTION_HORIZONTAL_MODIFIER
+        bbox["x1"] = bbox["x1"] + bbox_length * settings.LEGEND_DESCRIPTION_HORIZONTAL_MODIFIER
+        return bbox
 
     def _crop_wall(self, wall, pixels_around=20):
         """Вырезает стену из пдф и возвращает рисунок стены с отступом в пикселях и координаты стены на рисунке"""

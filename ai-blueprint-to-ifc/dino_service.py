@@ -133,7 +133,7 @@ class DinoService:
     def predict_pair(
         self,
         plan_image: str | Path | Image.Image,
-        plan_obb: list[float],
+        plan_obb: list[float] | None,
         image2: str | Path | Image.Image,
         image2_obb: list[float] | None = None,
     ) -> dict:
