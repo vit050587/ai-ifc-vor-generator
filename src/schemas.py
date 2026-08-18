@@ -114,6 +114,9 @@ class PreviewResponse(CamelModel):
     has_materials_md: bool = False
     has_ifc_elements_json: bool = False
     has_ifc_grouped_json: bool = False
+    # Карта MSSK-кодов из data/elements_mssk_nested.json:
+    # code → {name, order} (для группировки превью по колонке «Код мсск»)
+    mssk_code_map: Optional[Dict[str, Any]] = None
 
 
 class RestoreResponse(CamelModel):

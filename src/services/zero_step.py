@@ -1216,6 +1216,38 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
         logger.info("Пропущена запись IFC_ВСЕ_ДАННЫЕ_исправленный.xlsx (write_full_data=False)")
     
     # ============================================================================
+    # ОПРЕДЕЛЯЕМ КОД ЭЛЕМЕНТА (Код мсск) И ФИЛЬТРУЕМ ЭЛЕМЕНТЫ БЕЗ КОДА
+    # ============================================================================
+    # Код извлекается из параметров, содержащих "ElementCode"
+    # (например: Свойство_ExpCheck_Wall_MGE_ElementCode,
+    #  Свойство_ExpCheck_Slab_MGE_ElementCode, Свойство_ExpCheck_Column_MGE_ElementCode).
+    # Валидным считается код, начинающийся с "ЭЛ" (например "ЭЛ 30 10 30 15").
+    # Значения-заглушки ("0", "-", "НЕТ ДАННЫХ" и пр.) не считаются кодом —
+    # элементы с такими значениями исключаются из таблиц для сметчика.
+
+    element_code_cols = [col for col in df.columns if 'ElementCode' in col]
+
+    def _get_element_code(row):
+        for col in element_code_cols:
+            val = row[col]
+            if val is not None and str(val).strip() and str(val) != '-':
+                return str(val)
+        return '-'
+
+    if element_code_cols:
+        element_codes = df.apply(_get_element_code, axis=1)
+    else:
+        element_codes = pd.Series(['-'] * len(df), index=df.index)
+
+    valid_code_mask = element_codes.astype(str).str.strip().str.startswith('ЭЛ') & \
+                      (element_codes.astype(str).str.strip() != '-')
+
+    n_valid = int(valid_code_mask.sum())
+    n_total = len(df)
+    logger.info(f"Код элемента: валидных {n_valid} из {n_total} "
+                f"(исключено {n_total - n_valid} элементов без кода)")
+
+    # ============================================================================
     # СОЗДАЕМ СОКРАЩЕННУЮ ТАБЛИЦУ ДЛЯ СМЕТЧИКА
     # ============================================================================
     
@@ -1243,6 +1275,10 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
     
     # Заменяем NaN на '-'
     df_short = df_short.fillna('-')
+    
+    # Оставляем только элементы с валидным кодом, перенумеровываем № п/п
+    df_short = df_short[valid_code_mask.values].reset_index(drop=True)
+    df_short['№ п/п'] = range(1, len(df_short) + 1)
     
     # Сохраняем сокращенную таблицу
     if output_folder:
@@ -1296,9 +1332,20 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
     df_smetchik = df_smetchik.fillna('-')
 
     df_smetchik.insert(0, '№ п/п', range(1, len(df_smetchik) + 1))
+
+    # Колонка "Код мсск" — извлекается из параметров, содержащих "ElementCode"
+    # (например: Свойство_ExpCheck_Wall_MGE_ElementCode,
+    #  Свойство_ExpCheck_Slab_MGE_ElementCode, Свойство_ExpCheck_Column_MGE_ElementCode)
+    element_code_cols = [col for col in df.columns if 'ElementCode' in col]
+    df_smetchik.insert(1, 'Код мсск', element_codes.values)
+
     df_smetchik['Примечание_сметчика'] = ''
     df_smetchik['Стоимость_за_ед_руб'] = ''
     df_smetchik['Общая_стоимость_руб'] = ''
+
+    # Оставляем только элементы с валидным кодом, перенумеровываем № п/п
+    df_smetchik = df_smetchik[valid_code_mask.values].reset_index(drop=True)
+    df_smetchik['№ п/п'] = range(1, len(df_smetchik) + 1)
 
     # Поиск колонки с объемом для сводки (приоритет агрегированный)
     volume_col = 'Объём, м3'
@@ -1315,19 +1362,20 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
                     break
 
     summary_data = []
-    grouped = df.groupby(['Тип (RU)', 'Тип элемента', 'Материал'])
+    df_for_summary = df[valid_code_mask.values]
+    grouped = df_for_summary.groupby(['Тип (RU)', 'Тип элемента', 'Материал'])
 
     for (type_ru, type_elem, material), group in grouped:
         count = len(group)
         
         total_volume = 0
-        if volume_col and volume_col in df.columns:
+        if volume_col and volume_col in df_for_summary.columns:
             vol_series = pd.to_numeric(group[volume_col], errors='coerce').fillna(0)
             total_volume = vol_series.sum()
         
         # Также считаем общую Gross площадь
         total_gross_area = 0
-        if 'Площадь, м2' in df.columns:
+        if 'Площадь, м2' in df_for_summary.columns:
             area_series = pd.to_numeric(group['Площадь, м2'], errors='coerce').fillna(0)
             total_gross_area = area_series.sum()
         

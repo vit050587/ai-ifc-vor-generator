@@ -1130,8 +1130,8 @@ class SessionManager:
                 output_folder=run_dir
             )
             
-            self._update_progress(session_id, 40, f"Запуск {run_number}: Этап 2 — Фильтрация по части здания...")
-            second_step(input_folder=run_dir)
+            self._update_progress(session_id, 40, f"Запуск {run_number}: Этап 2 — Фильтрация по части здания ({processing_type})...")
+            second_step(input_folder=run_dir, processing_type=processing_type)
             
             self._update_progress(session_id, 60, f"Запуск {run_number}: Этап 3 — Фильтрация по высоте...")
             third_step(input_folder=run_dir, building_height=building_height)

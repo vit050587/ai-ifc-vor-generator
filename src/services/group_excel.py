@@ -429,6 +429,40 @@ class ElementData:
         self.ifc_type = get_ifc_type(self.type_ru, self.name)
 
 
+def _create_group(name: str, level: int, group_df, rows: List[Dict[str, Any]],
+                  volume_col, sum_columns: List[str], children=None) -> Dict[str, Any]:
+    """Создаёт узел дерева групп: агрегирует объём/площади по DataFrame строк.
+
+    Вынесен на уровень модуля, чтобы переиспользовать в разных вариантах
+    группировки (по разделам/подразделам и по кодам МССК).
+    """
+    indices = sorted(group_df.index.tolist())
+
+    if volume_col and volume_col in group_df.columns:
+        vol_series = pd.to_numeric(group_df[volume_col], errors='coerce').fillna(0)
+        # float() — иначе np.int64/np.float64 попадут в JSON как строки
+        volume = float(round(vol_series.sum(), 2))
+    else:
+        volume = 0.0
+
+    areas = {}
+    for col in sum_columns:
+        if 'площадь' in col.lower() and col in group_df.columns:
+            area_series = pd.to_numeric(group_df[col], errors='coerce').fillna(0)
+            total = area_series.sum()
+            if total > 0:
+                areas[col] = float(round(total, 2))
+
+    first_elem = rows[indices[0]] if indices else {}
+
+    return {
+        'name': name, 'level': level, 'indices': indices,
+        'total_volume': volume, 'total_areas': areas,
+        'first_element': dict(first_elem), 'count': len(indices),
+        'children': children or []
+    }
+
+
 def group_elements(rows: List[Dict[str, Any]], headers: List[str], use_new_grouping: bool = False) -> List[Dict[str, Any]]:
     """Группировка элементов по иерархии (для КР). Оптимизированная версия с pandas.
     
@@ -475,33 +509,7 @@ def group_elements(rows: List[Dict[str, Any]], headers: List[str], use_new_group
     df['_ifc_type'] = df.apply(get_ifc_type_row, axis=1)
     
     def create_group(name, level, group_df, children=None):
-        indices = sorted(group_df.index.tolist())
-        
-        if volume_col and volume_col in group_df.columns:
-            vol_series = pd.to_numeric(group_df[volume_col], errors='coerce').fillna(0)
-            # НОВАЯ ВЕРСИЯ: float() — иначе np.int64/np.float64 попадут в JSON как строки
-            # (json.dump(default=str) в _get_cached_or_compute), что ломает
-            # build_reference_output (round() по строке).
-            volume = float(round(vol_series.sum(), 2))
-        else:
-            volume = 0.0
-        
-        areas = {}
-        for col in sum_columns:
-            if 'площадь' in col.lower() and col in group_df.columns:
-                area_series = pd.to_numeric(group_df[col], errors='coerce').fillna(0)
-                total = area_series.sum()
-                if total > 0:
-                    areas[col] = float(round(total, 2))
-        
-        first_elem = rows[indices[0]] if indices else {}
-        
-        return {
-            'name': name, 'level': level, 'indices': indices,
-            'total_volume': volume, 'total_areas': areas,
-            'first_element': dict(first_elem), 'count': len(indices),
-            'children': children or []
-        }
+        return _create_group(name, level, group_df, rows, volume_col, sum_columns, children)
     
     def get_material_group(row):
         material = str(row.get('Материал', ''))
@@ -654,15 +662,157 @@ def group_elements_new(rows: List[Dict[str, Any]], headers: List[str]) -> List[D
     return group_elements(rows, headers, use_new_grouping=True)
 
 
-def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_grouping=False):
+def group_elements_mssk(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[str, Any]]:
+    """Группировка элементов (для КР) по иерархии:
+
+        Часть здания (L1)
+          → Код МССК (L2) — название из справочника elements_mssk_nested.json,
+                             неизвестные/пустые коды объединяются в «Прочее»
+            → IFC-тип (L3, только если в МССК-группе несколько типов)
+              → Геометрия (L4) — по GEOMETRY_GROUP_RULES:
+                    стены — Ширина, мм (толщина),
+                    плиты/балки — Площадь, м2,
+                    колонны — Периметр, мм + подгруппа «Сторона» по ширине,
+                    сваи — Длина, мм и т.д.
+                → Материал (L5) — «Материал: …» (только при нескольких материалах)
+                  → Бетон (L6) — «Бетон: В…, W…, F…»
+                       (по колонкам ExpCheck_MaterialConcrete_*)
+
+    Геометрическая группировка и материал/бетон переиспользуют _add_geometry_groups
+    со сдвигом уровней level_offset=-1.
+    """
+    # Импорт внутри функции, чтобы избежать циклической зависимости
+    from src.services.mssk_lookup import build_mssk_lookup, OTHER_LABEL
+    lookup, _ = build_mssk_lookup()
+
+    volume_col = None
+    for h in headers:
+        h_lower = h.lower()
+        if 'netvolume' in h_lower or ('объём' in h_lower and 'м3' in h_lower):
+            volume_col = h
+            break
+
+    sum_columns = [h for h in headers if any(kw in h.lower() for kw in ['объём', 'объем', 'площадь', 'стоимость'])]
+
+    df = pd.DataFrame(rows)
+    if volume_col and volume_col in df.columns:
+        df[volume_col] = pd.to_numeric(df[volume_col], errors='coerce').fillna(0)
+
+    def get_part(floor_type):
+        if not floor_type or pd.isna(floor_type):
+            return 'Надземная'
+        fl = str(floor_type).lower().strip()
+        if any(w in fl for w in ['подзем', 'подвал', 'basement', '-1']):
+            return 'Подземная'
+        if any(w in fl for w in ['цокол', 'ground', 'нулев']):
+            return 'Цоколь'
+        if any(w in fl for w in ['надзем', 'этаж', 'кровл', 'техническ', 'мансард']):
+            return 'Надземная'
+        return 'Надземная'
+
+    def get_ifc_type_row(row):
+        return get_ifc_type(str(row.get('Тип элемента', '')), str(row.get('Имя', '')))
+
+    df['_part'] = df['Тип_этажа'].apply(get_part) if 'Тип_этажа' in df.columns else 'Надземная'
+    df['_ifc_type'] = df.apply(get_ifc_type_row, axis=1)
+
+    has_mssk_col = 'Код мсск' in headers
+
+    result = []
+    part_order = ['Подземная', 'Цоколь', 'Надземная']
+    part_labels = {
+        'Подземная': 'Подземная часть здания (до отм. 0,000)',
+        'Цоколь': 'Цокольная часть здания (отм. 0,000)',
+        'Надземная': 'Надземная часть здания (выше отм. 0,000)',
+    }
+
+    for part in part_order:
+        part_df = df[df['_part'] == part]
+        if len(part_df) == 0:
+            continue
+
+        part_group = _create_group(part_labels[part], 1, part_df, rows, volume_col, sum_columns)
+
+        # --- Группировка по коду МССК ---
+        mssk_groups = defaultdict(list)
+        mssk_meta = {}  # key → (название_группы, порядок_сортировки)
+        for idx in part_df.index:
+            raw_code = rows[idx].get('Код мсск', '') if has_mssk_col else ''
+            code = str(raw_code).strip() if raw_code is not None else ''
+            if code and code != '-':
+                info = lookup.get(code)
+                if info:
+                    key = f'{code}__{info["name"]}'
+                    meta = (info['name'], info['order'])
+                else:
+                    key = '__OTHER__'
+                    meta = (OTHER_LABEL, float('inf'))
+            else:
+                key = '__OTHER__'
+                meta = (OTHER_LABEL, float('inf'))
+            mssk_groups[key].append(idx)
+            mssk_meta[key] = meta
+
+        # Сортировка: сначала известные коды (по порядку в справочнике),
+        # затем «Прочее»
+        sorted_keys = sorted(mssk_groups.keys(),
+                             key=lambda k: (mssk_meta[k][1], mssk_meta[k][0]))
+
+        for key in sorted_keys:
+            indices = sorted(mssk_groups[key])
+            mssk_df = df.loc[indices]
+            name = mssk_meta[key][0]
+
+            mssk_group = _create_group(name, 2, mssk_df, rows, volume_col, sum_columns)
+
+            # --- Геометрия + Материал/Бетон ---
+            elems = []
+            for idx in indices:
+                row = rows[idx]
+                e = ElementData(idx, row, headers)
+                e.part = part
+                e.ifc_type = get_ifc_type(str(row.get('Тип элемента', '')), str(row.get('Имя', '')))
+                elems.append(e)
+
+            # level_offset=-1: ifc=3, геометрия=4, материал=5, бетон=6;
+            # для колонн с подгруппами: «Периметр»=4 → «Сторона»=5 → материал=6 → бетон=7
+            # nest_sub_ranges=True: для колонн — «Периметр» → «Сторона» (вложенно)
+            _add_geometry_groups(mssk_group, elems, headers, volume_col,
+                                 use_new_grouping=True, level_offset=-1,
+                                 nest_sub_ranges=True)
+
+            if mssk_group['children']:
+                part_group['children'].append(mssk_group)
+
+        result.append(part_group)
+
+    return result
+
+
+def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_grouping=False,
+                         level_offset=0, nest_sub_ranges=False):
     """Добавляет геометрическую группировку к родительской группе с поддержкой sub_ranges.
 
     use_new_grouping=True — упрощённая логика из group_excel_new.py:
-    фиксированные уровни (4/5), подгруппы sub_ranges добавляются напрямую в родителя.
+    фиксированные уровни (ifc=4, геометрия/подгруппы=5), подгруппы sub_ranges
+    добавляются напрямую в родителя.
     use_new_grouping=False (по умолчанию) — старая логика: динамический base_level,
     промежуточная основная группа с вложенными подгруппами.
+
+    level_offset — сдвиг уровней для иерархий другой глубины (например,
+    группировка по кодам МССК: ifc=3, геометрия=4, материал=5, бетон=6).
+
+    nest_sub_ranges=True (только вместе с use_new_grouping=True) — сохраняет
+    промежуточную основную геометрическую группу (например «Периметр: до 1200 мм»)
+    и вкладывает подгруппы sub_ranges («Сторона: ≤ 300 мм») внутрь неё.
     """
-    
+    mat_level = 6 + level_offset
+    conc_level = 7 + level_offset
+    # Уровни геометрии для use_new_grouping=True с nest_sub_ranges:
+    # основная группа на уровне геометрии, подгруппы — на уровень глубже
+    geo_level = 5 + level_offset
+    sub_level = 6 + level_offset
+
     def get_volume(elem):
         if volume_col is None:
             return 0.0
@@ -689,8 +839,13 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
             'count': len(elems_list), 'children': []
         }
     
-    def apply_mat_conc(elems_list, parent):
-        """Группировка по материалу/бетону для геометрических групп"""
+    def apply_mat_conc(elems_list, parent, mat_level=mat_level, conc_level=conc_level):
+        """Группировка по материалу/бетону для геометрических групп.
+
+        Сначала «Материал: …», затем внутри — «Бетон: В…, W…, F…»
+        (по колонкам ExpCheck_MaterialConcrete_*).
+        Уровни можно переопределить для вложенных подгрупп (sub_ranges).
+        """
         mat_groups = defaultdict(list)
         for e in elems_list:
             material = str(e.row.get('Материал', ''))
@@ -704,12 +859,12 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
                 conc_groups[conc_key].append(e)
             if len(conc_groups) > 1:
                 for conc_key, conc_elems in conc_groups.items():
-                    g = create_geo_group(conc_key, 7, conc_elems)
+                    g = create_geo_group(conc_key, conc_level, conc_elems)
                     if g:
                         parent['children'].append(g)
         else:
             for mat_key, mat_elems in mat_groups.items():
-                mat_group = create_geo_group(mat_key, 6, mat_elems)
+                mat_group = create_geo_group(mat_key, mat_level, mat_elems)
                 if not mat_group:
                     continue
                 conc_groups = defaultdict(list)
@@ -718,7 +873,7 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
                     conc_groups[conc_key].append(e)
                 if len(conc_groups) > 1:
                     for conc_key, conc_elems in conc_groups.items():
-                        g = create_geo_group(conc_key, 7, conc_elems)
+                        g = create_geo_group(conc_key, conc_level, conc_elems)
                         if g:
                             mat_group['children'].append(g)
                 parent['children'].append(mat_group)
@@ -756,7 +911,7 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
                 'IfcStair': 'Лестницы', 'IfcStairFlight': 'Лестничные марши',
                 'IfcPile': 'Сваи', 'default': 'Прочее'
             }
-            ifc_group = create_geo_group(ifc_labels.get(ifc_type, ifc_type), base_level, ifc_elements)
+            ifc_group = create_geo_group(ifc_labels.get(ifc_type, ifc_type), base_level + level_offset, ifc_elements)
             if ifc_group:
                 parent_group['children'].append(ifc_group)
                 current_parent = ifc_group
@@ -806,15 +961,41 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
                         sub_geo_groups[sub_rule['ranges'][-1]['label']].append(e)
                 
                 if use_new_grouping:
-                    # НОВАЯ ВЕРСИЯ: подгруппы добавляются напрямую в родителя
-                    # (без промежуточной основной группы), уровень фиксированный 5
-                    for sub_label, sub_elems in sub_geo_groups.items():
-                        if not sub_elems:
+                    if nest_sub_ranges:
+                        # Промежуточная основная группа (например «Периметр: до 1200 мм»)
+                        # с вложенными подгруппами sub_ranges («Сторона: ≤ 300 мм»),
+                        # фиксированные уровни: основная = geo_level, подгруппа = sub_level
+                        main_geo_group = create_geo_group(geo_name, geo_level, geo_elements)
+                        if not main_geo_group:
                             continue
-                        sub_geo_group = create_geo_group(f'{sub_rule["label"]}: {sub_label}', 5, sub_elems)
-                        if sub_geo_group:
-                            apply_mat_conc(sub_elems, sub_geo_group)
-                            current_parent['children'].append(sub_geo_group)
+
+                        has_subgroups = False
+                        for sub_label, sub_elems in sub_geo_groups.items():
+                            if not sub_elems:
+                                continue
+                            sub_name = f'{sub_rule["label"]}: {sub_label}'
+                            sub_geo_group = create_geo_group(sub_name, sub_level, sub_elems)
+                            if sub_geo_group:
+                                apply_mat_conc(sub_elems, sub_geo_group,
+                                               mat_level=sub_level + 1, conc_level=sub_level + 2)
+                                main_geo_group['children'].append(sub_geo_group)
+                                has_subgroups = True
+
+                        if has_subgroups:
+                            current_parent['children'].append(main_geo_group)
+                        else:
+                            apply_mat_conc(geo_elements, main_geo_group)
+                            current_parent['children'].append(main_geo_group)
+                    else:
+                        # НОВАЯ ВЕРСИЯ: подгруппы добавляются напрямую в родителя
+                        # (без промежуточной основной группы), уровень фиксированный
+                        for sub_label, sub_elems in sub_geo_groups.items():
+                            if not sub_elems:
+                                continue
+                            sub_geo_group = create_geo_group(f'{sub_rule["label"]}: {sub_label}', 5 + level_offset, sub_elems)
+                            if sub_geo_group:
+                                apply_mat_conc(sub_elems, sub_geo_group)
+                                current_parent['children'].append(sub_geo_group)
                 else:
                     # СТАРАЯ ВЕРСИЯ: промежуточная основная группа с вложенными подгруппами
                     main_geo_group = create_geo_group(geo_name, base_level, geo_elements)
@@ -843,8 +1024,8 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
                         current_parent['children'].append(main_geo_group)
             else:
                 # Обычная группа без sub_ranges
-                # НОВАЯ ВЕРСИЯ: фиксированный уровень 5, старая: base_level
-                level = 5 if use_new_grouping else base_level
+                # НОВАЯ ВЕРСИЯ: фиксированный уровень, старая: base_level
+                level = (5 + level_offset) if use_new_grouping else base_level
                 geo_group = create_geo_group(geo_name, level, geo_elements)
                 if geo_group:
                     apply_mat_conc(geo_elements, geo_group)
@@ -1157,6 +1338,25 @@ def process_ifc_excel_new(input_excel_path: str, output_dir: str = None) -> Dict
         processing_type='KR',
         group_func=group_elements_new,
         suffix='_new'
+    )
+
+
+def process_ifc_excel_mssk(input_excel_path: str, output_dir: str = None) -> Dict[str, str]:
+    """Process IFC Excel file и создать grouped output (для КР) с группировкой
+    по кодам МССК: Часть здания → Код МССК → Геометрия → Материал/Бетон.
+    С кешированием на диске."""
+    input_path = Path(input_excel_path)
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input file not found: {input_excel_path}")
+    
+    output_dir = output_dir or str(input_path.parent)
+    
+    return _get_cached_or_compute(
+        input_excel_path=input_excel_path,
+        output_dir=output_dir,
+        processing_type='KR',
+        group_func=group_elements_mssk,
+        suffix='_mssk'
     )
 
 

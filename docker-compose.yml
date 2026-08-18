@@ -38,6 +38,7 @@ services:
     environment:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       DOCUMENTS_PATH: /app/data/perechen_kr.xlsx
+      AR_DOCUMENTS_PATH: /app/data/perechen_ar.xlsx
       KOEFS_PATH: /app/data/koefs.xlsx
       PRICE_COST_PATH: /app/data/price_cost.xlsx
       UPLOAD_FOLDER: /app/uploads

@@ -11,6 +11,7 @@ from flask import (
     jsonify, redirect, Response
 )
 from src.services.session_manager import SessionManager
+from src.services.mssk_lookup import get_mssk_code_map
 from src.core.logger import setup_logger
 from src.core.config import load_config
 from src.schemas import (
@@ -911,6 +912,7 @@ def preview_excel(session_id: str):
         has_ifc_elements_json=has_ifc_elements_json,
         has_ifc_grouped_json=has_ifc_grouped_json,
         processing_type=s.get("processing_type", "KR"),
+        mssk_code_map=get_mssk_code_map(),
     ))
 
 

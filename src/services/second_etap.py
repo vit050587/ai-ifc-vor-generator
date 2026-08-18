@@ -13,9 +13,23 @@ _cfg = load_config()
 
 LLM_MODEL = _cfg.model_ollama
 OLLAMA_URL = _cfg.ollama_url
-WORKS_FILE = _cfg.DOCUMENTS_PATH
+
+# Файлы перечней работ: КР и АР
+WORKS_FILE_KR = _cfg.DOCUMENTS_PATH
+WORKS_FILE_AR = _cfg.AR_DOCUMENTS_PATH
 
 IFC_CLLASS_FILTERING_FLAG = False
+
+
+def get_works_file(processing_type: str = "KR") -> str:
+    """Возвращает путь к файлу перечня работ в зависимости от типа обработки.
+
+    - KR (конструктивные решения) → DOCUMENTS_PATH (perechen_kr.xlsx)
+    - AR (архитектурные решения)  → AR_DOCUMENTS_PATH (perechen_ar.xlsx)
+    """
+    if str(processing_type).upper() == "AR":
+        return WORKS_FILE_AR
+    return WORKS_FILE_KR
 
 COLUMN_NAME = "Наименование расценки/ресурса"
 MAX_DISTANCE = 2  # Максимальное расстояние Левенштейна
@@ -61,9 +75,9 @@ def check_building_part(text, target_part, max_distance=2):
 
  
 
-def _filter_one_element_by_part(output_folder, file_works_path, row_number, building_part, normalized_data):
+def _filter_one_element_by_part(output_folder, file_works_path, row_number, building_part, normalized_data, processing_type="KR"):
 
-    logger.info(f"Часть здания для фильтрации (строка {row_number}): {building_part}")
+    logger.info(f"Часть здания для фильтрации (строка {row_number}): {building_part} (тип: {processing_type})")
  
     logger.info(f"Загрузка файла: {file_works_path}")
     df_works = pd.read_excel(file_works_path)
@@ -150,8 +164,15 @@ def _filter_one_element_by_part(output_folder, file_works_path, row_number, buil
 
 
 
-def second_step(input_folder):
+def second_step(input_folder, processing_type="KR"):
     logger.info("НАЧАТ ВТОРОЙ ЭТАП")
+    
+    # Выбираем файл перечня работ в зависимости от типа обработки (КР/АР)
+    works_file = get_works_file(processing_type)
+    if not os.path.exists(works_file):
+        logger.warning(f"Файл перечня работ не найден: {works_file}, использую перечень КР")
+        works_file = WORKS_FILE_KR
+    logger.info(f"Файл перечня работ: {works_file} (тип: {processing_type})")
     
     # Загружаем словарь частей здания
     building_parts = _load_building_parts(input_folder)
@@ -177,7 +198,7 @@ def second_step(input_folder):
                 logger.info(f"Загрузка нормализованных данных из файла {filename}")
                 try:
                     data = json.load(file)
-                    _filter_one_element_by_part(input_folder, WORKS_FILE, row_number, building_part, data)  
+                    _filter_one_element_by_part(input_folder, works_file, row_number, building_part, data, processing_type)  
                     logger.info(f"Обработан файл: {filename}")
                 except json.JSONDecodeError as e:
                     logger.warning(f"Ошибка чтения JSON в файле: {filename}, {e}")
