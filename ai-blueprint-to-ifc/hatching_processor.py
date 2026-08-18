@@ -261,7 +261,7 @@ class HatchingProcessor:
         bbox["x1"] = bbox["x1"] + bbox_length * settings.LEGEND_DESCRIPTION_HORIZONTAL_MODIFIER
         return bbox
 
-    def _crop_wall(self, wall, pixels_around=20):
+    def _crop_wall(self, wall, pixels_around=30):
         """Вырезает стену из пдф и возвращает рисунок стены с отступом в пикселях и координаты стены на рисунке"""
         if self.pdf_processor is None:
             raise ValueError("PdfProcessor is required to crop walls")
