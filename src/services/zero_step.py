@@ -683,6 +683,32 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
                 elem_info['Тип (RU)'] = ru_name
                 elements.append(elem_info)
 
+    # Высота здания = самый высокий уровень среди всех элементов.
+    # Раньше высота считалась только по этажам типа Цокольный/Надземный/Технический/
+    # Мансардный, из-за чего этаж "Крыша" (тип Кровля) исключался и высота
+    # занижалась. Теперь берём максимум по уровням всех элементов.
+    element_levels_mm = []
+    for el in elements:
+        lvl = el.get('Уровень_этажа_мм')
+        if lvl is not None and lvl != '-':
+            try:
+                element_levels_mm.append(float(lvl))
+            except (ValueError, TypeError):
+                pass
+
+    if element_levels_mm:
+        max_element_level_m = max(element_levels_mm) / 1000.0
+        building_height_info['Высота_надземной_части_м'] = round(max_element_level_m, 3)
+        logger.info(
+            f"Высота здания определена по максимальному уровню элементов: "
+            f"{max_element_level_m} м"
+        )
+    else:
+        logger.info(
+            f"Уровни элементов не найдены, используется высота по этажам: "
+            f"{building_height_info['Высота_надземной_части_м']} м"
+        )
+
     df = pd.DataFrame(elements)
     df = df.fillna('-')
 
