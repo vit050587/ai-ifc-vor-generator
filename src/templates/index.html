@@ -2288,12 +2288,17 @@ function updateSelectionUI() {
 }
 
 // ========== Общая группировка превью (КР и АР) ==========
-// Иерархия:
+// КР-режим, иерархия:
 //   L1 — Часть здания
 //   L2 — Код МССК
 //   L3 — IFC-тип (только если в МССК-группе несколько типов)
 //   L4 — Геометрические параметры (толщина, площадь, периметр+сечение и т.д.)
 //   L5 — Наименование элемента (листовая группа со строками)
+    // АР-режим, иерархия:
+    //   L1 — Часть здания
+    //   L2 — Код МССК
+    //   L3 — Главный материал (из «Свойство::IfcMaterialLayer::Name»)
+    //   L4 — Наименование элемента (листовая группа со строками)
 function groupRowsCommon(mode) {
     const data = window._previewData;
     if (!data) return;
@@ -2387,6 +2392,153 @@ function groupRowsCommon(mode) {
     // колонны — периметр и сечение наименьшей стороны, балки — площадь,
     // сваи — длина и т.д.), затем внутри каждой группы по имени элемента.
     // ============================================================
+    // Группа по имени элемента (листовая, содержит строки)
+    const addNameGroups = (geoParentId, rowsToGroup, padding, level) => {
+        const nameGroups = {};
+        rowsToGroup.forEach(rd => {
+            if (!nameGroups[rd.nameKey]) nameGroups[rd.nameKey] = [];
+            nameGroups[rd.nameKey].push(rd);
+        });
+        
+        const sortedNames = Object.keys(nameGroups).sort((a, b) => a.localeCompare(b, 'ru'));
+        
+        sortedNames.forEach(nameKey => {
+            const nameRows = nameGroups[nameKey];
+            if (nameRows.length === 0) return;
+            
+            let nameVolume = 0;
+            nameRows.forEach(rd => { nameVolume += getVolume(rd.index); });
+            
+            const nameId = 'NAME_' + (groupCounter++);
+            groupIndexMap[nameId] = nameRows.map(r => r.index);
+            groupLevel[nameId] = level;
+            groupParent[nameId] = geoParentId;
+            groupChildren[nameId] = [];
+            groupChildren[geoParentId].push(nameId);
+            leafGroups[nameId] = true;
+            
+            const firstIndex = nameRows[0].index;
+            
+            const nameTr = document.createElement('tr');
+            nameTr.className = 'group-row hidden-row';
+            nameTr.dataset.group = geoParentId;
+            nameTr.dataset.groupId = nameId;
+            nameTr.style.cssText = 'background:#ffffff !important; cursor:pointer;';
+            nameTr.onclick = function(e) {
+                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                toggleGroup(nameId);
+            };
+            
+            nameTr.innerHTML = `
+                <td style="text-align:center; padding-left: ${padding}px;">
+                    <span class="group-arrow" id="${nameId}_arrow">▶</span>
+                    <input type="checkbox" class="group-checkbox" data-group-id="${nameId}" data-first-index="${firstIndex}">
+                </td>
+                <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
+                    📎 ${nameKey}
+                    <span class="group-badge">×${nameRows.length}</span>
+                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${nameVolume.toFixed(2)} м³</span>
+                </td>
+            `;
+            body.appendChild(nameTr);
+            
+            const nameCb = nameTr.querySelector('.group-checkbox');
+            nameCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(nameId, this.checked); });
+            
+            // Добавляем строки
+            nameRows.forEach(rd => {
+                rd.tr.classList.add('group-row', 'hidden-row');
+                rd.tr.dataset.group = nameId;
+                const firstTd = rd.tr.querySelector('td');
+                if (firstTd) firstTd.style.paddingLeft = (padding + 30) + 'px';
+                const cb = rd.tr.querySelector('.row-checkbox');
+                if (cb) { cb.style.display = 'none'; cb.checked = false; }
+                rowElementCache.set(rd.index, rd.tr);
+                body.appendChild(rd.tr);
+            });
+        });
+    };
+
+    // Группировка для АР: после кода МССК (L2) элементы группируются
+    // по главному материалу (L3), затем по наименованию (L4).
+    // Материал берётся из data.materialsGroupMap (GlobalId → {name, order}):
+    //   код материала не найден / нет поля → «Прочее»
+    //   несколько материалов в слое         → «Многослойные»
+    const addMaterialAndNameGroupsAR = (parentId, rows, basePadding) => {
+        const globalIdIdx = data.headers.indexOf('GlobalId');
+        const materialsGroupMap = data.materialsGroupMap || {};
+
+        const resolveMaterialGroup = (rowIndex) => {
+            let gid = '';
+            if (globalIdIdx !== -1 && data.rows[rowIndex] && data.rows[rowIndex][globalIdIdx] !== '-') {
+                gid = String(data.rows[rowIndex][globalIdIdx]).trim();
+            }
+            const info = gid ? materialsGroupMap[gid] : null;
+            if (!info || !info.name) return { name: 'Прочее', order: Infinity };
+            return { name: info.name, order: typeof info.order === 'number' ? info.order : 0 };
+        };
+
+        const matGroups = {};
+        rows.forEach(rd => {
+            const mat = resolveMaterialGroup(rd.index);
+            rd.material = mat;
+            if (!matGroups[mat.name]) matGroups[mat.name] = { ...mat, rows: [] };
+            matGroups[mat.name].rows.push(rd);
+        });
+
+        const matNames = Object.keys(matGroups);
+        matNames.sort((a, b) => {
+            const ga = matGroups[a], gb = matGroups[b];
+            if (ga.order !== gb.order) return ga.order - gb.order;
+            return (ga.name || '').localeCompare(gb.name || '');
+        });
+
+        matNames.forEach(matName => {
+            const matGroup = matGroups[matName];
+            const matRows = matGroup.rows;
+            if (matRows.length === 0) return;
+
+            let matVolume = 0;
+            matRows.forEach(rd => { matVolume += getVolume(rd.index); });
+
+            const matId = 'MAT_' + (groupCounter++);
+            groupIndexMap[matId] = matRows.map(r => r.index);
+            groupLevel[matId] = 3;
+            groupParent[matId] = parentId;
+            groupChildren[matId] = [];
+            groupChildren[parentId].push(matId);
+
+            const matTr = document.createElement('tr');
+            matTr.className = 'group-row hidden-row';
+            matTr.dataset.group = parentId;
+            matTr.dataset.groupId = matId;
+            matTr.style.cssText = 'background:#f0fff4 !important; cursor:pointer;';
+            matTr.onclick = function(e) {
+                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                toggleGroup(matId);
+            };
+
+            matTr.innerHTML = `
+                <td style="text-align:center; padding-left: ${basePadding}px;">
+                    <span class="group-arrow" id="${matId}_arrow">▶</span>
+                    <input type="checkbox" class="group-checkbox" data-group-id="${matId}">
+                </td>
+                <td colspan="${totalCols - 1}" style="font-weight:600; color:#276749;">
+                    🧱 ${matName}
+                    <span class="group-badge">×${matRows.length}</span>
+                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${matVolume.toFixed(2)} м³</span>
+                </td>
+            `;
+            body.appendChild(matTr);
+
+            const matCb = matTr.querySelector('.group-checkbox');
+            matCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(matId, this.checked); });
+
+            // Внутри группы материала — группы по наименованию элемента (L4)
+            addNameGroups(matId, matRows, basePadding + 30, 4);
+        });
+    };
+
     const addGeometryAndNameGroups = (parentId, rows, basePadding) => {
         const ifcGroups = {};
         rows.forEach(rd => {
@@ -2398,74 +2550,7 @@ function groupRowsCommon(mode) {
         const ifcLevel = needIfcGroup ? 3 : 0;
         const geoLevel = needIfcGroup ? 4 : 3;
         const nameLevel = needIfcGroup ? 5 : 4;
-        
-        // Группа по имени элемента (листовая, содержит строки)
-        const addNameGroups = (geoParentId, rowsToGroup, padding) => {
-            const nameGroups = {};
-            rowsToGroup.forEach(rd => {
-                if (!nameGroups[rd.nameKey]) nameGroups[rd.nameKey] = [];
-                nameGroups[rd.nameKey].push(rd);
-            });
-            
-            const sortedNames = Object.keys(nameGroups).sort((a, b) => a.localeCompare(b, 'ru'));
-            
-            sortedNames.forEach(nameKey => {
-                const nameRows = nameGroups[nameKey];
-                if (nameRows.length === 0) return;
-                
-                let nameVolume = 0;
-                nameRows.forEach(rd => { nameVolume += getVolume(rd.index); });
-                
-                const nameId = 'NAME_' + (groupCounter++);
-                groupIndexMap[nameId] = nameRows.map(r => r.index);
-                groupLevel[nameId] = nameLevel;
-                groupParent[nameId] = geoParentId;
-                groupChildren[nameId] = [];
-                groupChildren[geoParentId].push(nameId);
-                leafGroups[nameId] = true;
-                
-                const firstIndex = nameRows[0].index;
-                
-                const nameTr = document.createElement('tr');
-                nameTr.className = 'group-row hidden-row';
-                nameTr.dataset.group = geoParentId;
-                nameTr.dataset.groupId = nameId;
-                nameTr.style.cssText = 'background:#ffffff !important; cursor:pointer;';
-                nameTr.onclick = function(e) {
-                    if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                    toggleGroup(nameId);
-                };
-                
-                nameTr.innerHTML = `
-                    <td style="text-align:center; padding-left: ${padding}px;">
-                        <span class="group-arrow" id="${nameId}_arrow">▶</span>
-                        <input type="checkbox" class="group-checkbox" data-group-id="${nameId}" data-first-index="${firstIndex}">
-                    </td>
-                    <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
-                        📎 ${nameKey}
-                        <span class="group-badge">×${nameRows.length}</span>
-                        <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${nameVolume.toFixed(2)} м³</span>
-                    </td>
-                `;
-                body.appendChild(nameTr);
-                
-                const nameCb = nameTr.querySelector('.group-checkbox');
-                nameCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(nameId, this.checked); });
-                
-                // Добавляем строки
-                nameRows.forEach(rd => {
-                    rd.tr.classList.add('group-row', 'hidden-row');
-                    rd.tr.dataset.group = nameId;
-                    const firstTd = rd.tr.querySelector('td');
-                    if (firstTd) firstTd.style.paddingLeft = (padding + 30) + 'px';
-                    const cb = rd.tr.querySelector('.row-checkbox');
-                    if (cb) { cb.style.display = 'none'; cb.checked = false; }
-                    rowElementCache.set(rd.index, rd.tr);
-                    body.appendChild(rd.tr);
-                });
-            });
-        };
-        
+
         // Добавляет геометрическую группу и вкладывает в неё группы по имени
         const addGeoGroup = (geoParentId, geoRows, level, padding, label) => {
             if (geoRows.length === 0) return;
@@ -2507,7 +2592,7 @@ function groupRowsCommon(mode) {
             geoCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(geoId, this.checked); });
             
             // Внутри геометрической группы — группы по имени элемента
-            addNameGroups(geoId, geoRows, padding + 30);
+            addNameGroups(geoId, geoRows, padding + 30, nameLevel);
         };
         
         Object.keys(ifcGroups).forEach(ifcType => {
@@ -2752,8 +2837,14 @@ function groupRowsCommon(mode) {
             const l2Cb = l2Tr.querySelector('.group-checkbox');
             l2Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l2Id, this.checked); });
             
-            // Уровень 3/4/5: IFC → Геометрия → Имя
-            addGeometryAndNameGroups(l2Id, groupRows, 60);
+            // Для АР: после кода МССК группировка по главному материалу (L3),
+            // затем по наименованию элемента (L4).
+            // Для КР: IFC → Геометрия → Имя
+            if (mode === 'АР') {
+                addMaterialAndNameGroupsAR(l2Id, groupRows, 60);
+            } else {
+                addGeometryAndNameGroups(l2Id, groupRows, 60);
+            }
         });
     });
     

@@ -515,6 +515,36 @@ class SessionManager:
             session_dir = os.path.join(self.output_folder, session_id)
             
             self._update_progress(session_id, 10, f"Обработка IFC файла ({processing_type})...")
+
+            # АР: в самом начале обработки сохраняем в корень сессии XLSX со всеми
+            # элементами IFC и их параметрами в исходном виде (без нормализации).
+            if processing_type == "AR":
+                self._update_progress(
+                    session_id, 15,
+                    "АР: выгрузка всех параметров элементов из IFC в корень сессии..."
+                )
+                try:
+                    from src.services.ifc_raw_dump import dump_ifc_elements_raw
+                    raw_dump_path = dump_ifc_elements_raw(ifc_path, session_dir)
+                    if raw_dump_path and os.path.exists(raw_dump_path):
+                        with self._state_lock:
+                            if session_id in self._sessions:
+                                current_files = self._sessions[session_id].get("files", [])
+                                current_files.append({
+                                    "path": raw_dump_path,
+                                    "filename": os.path.basename(raw_dump_path),
+                                    "size": os.path.getsize(raw_dump_path),
+                                })
+                                self._sessions[session_id]["files"] = current_files
+                                self._save()
+                        logger.info(f"Сохранён файл сырых данных IFC в корень сессии: {raw_dump_path}")
+                except Exception as e:
+                    import traceback
+                    logger.warning(
+                        f"Не удалось выгрузить сырые параметры IFC (АР) для сессии {session_id}: {e}",
+                    )
+                    logger.debug(traceback.format_exc())
+
             self._update_progress(session_id, 20, "Извлечение элементов из IFC...")
             zero_step(ifc_path, output_folder=session_dir, write_full_data=False)
 
@@ -751,7 +781,61 @@ class SessionManager:
     # =====================================================================
     #  ЗАПУСКИ (runs)
     # =====================================================================
-    
+
+    def _load_material_layer_map(self, session_id: str) -> Dict[str, str]:
+        """Загружает карту GlobalId → «Свойство::IfcMaterialLayer::Name».
+
+        Источник — JSON-дамп сырых параметров IFC (IFC_исходные_параметры.json)
+        в корне сессии. При отсуствии JSON читает XLSX-дамп (`IFC_исходные_параметры.xlsx`).
+        Используется для групировки элементов в режиме АР по главному материалу.
+        """
+        from src.services.ifc_raw_dump import RAW_DUMP_JSON_FILENAME, RAW_DUMP_FILENAME
+
+        session_dir = os.path.join(self.output_folder, session_id)
+        json_path = os.path.join(session_dir, RAW_DUMP_JSON_FILENAME)
+        xlsx_path = os.path.join(session_dir, RAW_DUMP_FILENAME)
+
+        rows = None
+        mat_col = None
+
+        if os.path.isfile(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if isinstance(data, list) and data:
+                    mat_col = next(
+                        (k for k in data[0].keys() if "IfcMaterialLayer::Name" in str(k)),
+                        None,
+                    )
+                    rows = data
+            except Exception as exc:
+                logger.warning(f"Не удалось прочитать JSON-дамп материалов {json_path}: {exc}")
+                rows = None
+
+        if rows is None and os.path.isfile(xlsx_path):
+            try:
+                df_dump = pd.read_excel(xlsx_path)
+                mat_col = next(
+                    (c for c in df_dump.columns if "IfcMaterialLayer::Name" in str(c)),
+                    None,
+                )
+                rows = df_dump.to_dict("records")
+            except Exception as exc:
+                logger.warning(f"Не удалось прочитать XLSX-дамп материалов {xlsx_path}: {exc}")
+                rows = None
+
+        if not rows or not mat_col:
+            return {}
+
+        material_map = {}
+        for row in rows:
+            gid = row.get("GlobalId")
+            if gid is None:
+                continue
+            material_map[str(gid)] = str(row.get(mat_col, "") or "")
+        logger.info(f"Карта материалов: {len(material_map)} элементов (колонка: {mat_col})")
+        return material_map
+
     def new_run(self, session_id: str, row_indices: List[int], 
                 construction_types: Dict[int, str] = None,
                 construction_materials: Dict[int, str] = None,
@@ -995,7 +1079,20 @@ class SessionManager:
             df_original = pd.read_excel(excel_path, sheet_name='Данные')
             unique_indices = sorted(set(row_indices))
             df_filtered = df_original.iloc[unique_indices].reset_index(drop=True)
-            
+
+            # АР: подмешиваем колонку с материалами слоёв
+            # («Свойство::IfcMaterialLayer::Name») из сырого дампа IFC по GlobalId.
+            # Далее группировка в АР выполняется по главному материалу.
+            if processing_type == "AR":
+                try:
+                    mat_map = self._load_material_layer_map(session_id)
+                    if mat_map and 'GlobalId' in df_filtered.columns:
+                        df_filtered['Свойство::IfcMaterialLayer::Name'] = (
+                            df_filtered['GlobalId'].astype(str).map(mat_map).fillna('')
+                        )
+                except Exception as e:
+                    logger.warning(f"Не удалось подмешать материалы слоёв (АР): {e}", exc_info=True)
+
             filtered_path = os.path.join(run_dir, 'filtered_elements.xlsx')
             with pd.ExcelWriter(filtered_path, engine='openpyxl') as writer:
                 df_filtered.to_excel(writer, sheet_name='Данные', index=False)
@@ -1176,6 +1273,17 @@ class SessionManager:
                         "path": src_path,
                         "filename": display_name,
                         "size": os.path.getsize(src_path),
+                    })
+
+            # АР: включаем в результаты файл с исходными параметрами элементов
+            if processing_type == "AR":
+                from src.services.ifc_raw_dump import RAW_DUMP_FILENAME
+                raw_dump_path = os.path.join(session_dir, RAW_DUMP_FILENAME)
+                if os.path.isfile(raw_dump_path):
+                    final_files.append({
+                        "path": raw_dump_path,
+                        "filename": RAW_DUMP_FILENAME,
+                        "size": os.path.getsize(raw_dump_path),
                     })
             
             # Обновляем run

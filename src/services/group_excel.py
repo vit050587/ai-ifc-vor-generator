@@ -5,7 +5,7 @@ Output: Excel file with hierarchical grouping + JSON file
 
 Поддерживает два режима:
 - КР (Конструктивные решения): иерархия Часть здания → Раздел → Подраздел → Геометрия → Материал
-- АР (Архитектурные решения): иерархия Часть здания → Тип элемента → Очищенное имя
+- АР (Архитектурные решения): иерархия Часть здания → Код МССК → Наименование элемента
 """
 
 import pandas as pd
@@ -1035,21 +1035,48 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
 def group_elements_ar(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[str, Any]]:
     """
     Группировка элементов для Архитектурных Решений.
-    Иерархия: Часть здания → Тип элемента → Очищенное имя
+    Иерархия: Часть здания → Код МССК → Материал → Наименование элемента
+
+    После группировки по коду МССК элементы дополнительно группируются
+    по главному материалу (уровень L3), а затем — по наименованию (L4).
+
+    Материал берётся из колонки вида «Свойство::IfcMaterialLayer::Name»
+    (значения вида «Минераловатная плита (СТ 10 14 20 14)»). Имя группы
+    определяется по коду МССК материала из data/materials_mssk_nested.json:
+      * код не найден / поле пустое  → «Прочее»
+      * несколько материалов в поле  → «Многослойные»
+
+    Если колонка материалов отсутствует во входных данных — группировка
+    выполняется как раньше: Код МССК → Наименование (без уровня материала).
     """
-    
+    from src.services.mssk_lookup import build_mssk_lookup, OTHER_LABEL as ELEMENTS_OTHER_LABEL
+    from src.services.materials_lookup import (
+        build_materials_lookup,
+        resolve_material_group,
+    )
+    lookup, _ = build_mssk_lookup()
+    materials_lookup, _ = build_materials_lookup()
+
     df = pd.DataFrame(rows)
-    
+
     volume_col_name = None
     for h in headers:
         h_lower = h.lower()
         if 'netvolume' in h_lower or ('объём' in h_lower and 'м3' in h_lower):
             volume_col_name = h
             break
-    
+
+    sum_columns = [h for h in headers if any(kw in h.lower() for kw in ['объём', 'объем', 'площадь', 'стоимость'])]
+
     if volume_col_name and volume_col_name in df.columns:
         df[volume_col_name] = pd.to_numeric(df[volume_col_name], errors='coerce').fillna(0)
-    
+
+    # Колонка с материалами слоёв (например «Свойство::IfcMaterialLayer::Name»)
+    material_col = next(
+        (h for h in headers if 'IfcMaterialLayer::Name' in str(h)),
+        None,
+    )
+
     def get_part(floor_type):
         if not floor_type or pd.isna(floor_type):
             return 'Надземная'
@@ -1059,15 +1086,14 @@ def group_elements_ar(rows: List[Dict[str, Any]], headers: List[str]) -> List[Di
         if any(w in fl for w in ['цокол', 'ground', 'нулев']):
             return 'Цоколь'
         return 'Надземная'
-    
+
     if 'Тип_этажа' in df.columns:
         df['_part'] = df['Тип_этажа'].apply(get_part)
     else:
         df['_part'] = 'Надземная'
-    
-    df['_type'] = df['Тип элемента'].fillna('Неизвестно').astype(str)
-    df['_name'] = df['Имя'].apply(clean_element_name)
-    
+
+    has_mssk_col = 'Код мсск' in headers
+
     result = []
     part_order = ['Подземная', 'Цоколь', 'Надземная']
     part_labels = {
@@ -1075,51 +1101,92 @@ def group_elements_ar(rows: List[Dict[str, Any]], headers: List[str]) -> List[Di
         'Цоколь': 'Цокольная часть здания (отм. 0,000)',
         'Надземная': 'Надземная часть здания (выше отм. 0,000)',
     }
-    
+
+    def add_name_groups(parent_group, idx_list, base_level):
+        """Добавляет в parent_group дочерние группы по наименованию элемента."""
+        name_groups = defaultdict(list)
+        for idx in idx_list:
+            name_key = clean_element_name(str(rows[idx].get('Имя', '')).strip())
+            name_groups[name_key].append(idx)
+
+        for name_key in sorted(name_groups.keys()):
+            name_indices = sorted(name_groups[name_key])
+            name_df = df.loc[name_indices]
+            name_group = _create_group(name_key, base_level, name_df, rows, volume_col_name, sum_columns)
+            if name_group:
+                parent_group['children'].append(name_group)
+
     for part in part_order:
-        part_data = df[df['_part'] == part]
-        if len(part_data) == 0:
+        part_df = df[df['_part'] == part]
+        if len(part_df) == 0:
             continue
-        
-        part_indices = part_data.index.tolist()
-        # НОВАЯ ВЕРСИЯ: float() — чтобы значения корректно сериализовались в JSON
-        part_volume = float(round(part_data[volume_col_name].sum(), 2)) if volume_col_name else 0.0
-        
-        type_groups = []
-        for type_ru in sorted(part_data['_type'].unique()):
-            type_data = part_data[part_data['_type'] == type_ru]
-            type_indices = type_data.index.tolist()
-            # НОВАЯ ВЕРСИЯ: float() — чтобы значения корректно сериализовались в JSON
-            type_volume = float(round(type_data[volume_col_name].sum(), 2)) if volume_col_name else 0.0
-            
-            name_groups = []
-            for name in sorted(type_data['_name'].unique()):
-                name_data = type_data[type_data['_name'] == name]
-                indices = name_data.index.tolist()
-                # НОВАЯ ВЕРСИЯ: float() — чтобы значения корректно сериализовались в JSON
-                name_volume = float(round(name_data[volume_col_name].sum(), 2)) if volume_col_name else 0.0
-                
-                name_groups.append({
-                    'name': name, 'level': 3, 'indices': sorted(indices),
-                    'total_volume': name_volume, 'total_areas': {},
-                    'first_element': rows[indices[0]] if indices else {},
-                    'count': len(indices), 'children': []
-                })
-            
-            type_groups.append({
-                'name': IFC_TYPE_LABELS.get(type_ru, type_ru), 'level': 2,
-                'indices': sorted(type_indices), 'total_volume': type_volume,
-                'total_areas': {}, 'first_element': rows[type_indices[0]] if type_indices else {},
-                'count': len(type_indices), 'children': name_groups
-            })
-        
-        result.append({
-            'name': part_labels.get(part, part), 'level': 1,
-            'indices': sorted(part_indices), 'total_volume': part_volume,
-            'total_areas': {}, 'first_element': rows[part_indices[0]] if part_indices else {},
-            'count': len(part_indices), 'children': type_groups
-        })
-    
+
+        part_group = _create_group(part_labels[part], 1, part_df, rows, volume_col_name, sum_columns)
+
+        # --- Группировка по коду МССК (L2) ---
+        mssk_groups = defaultdict(list)
+        mssk_meta = {}  # key → (название_группы, порядок_сортировки)
+        for idx in part_df.index:
+            raw_code = rows[idx].get('Код мсск', '') if has_mssk_col else ''
+            code = str(raw_code).strip() if raw_code is not None else ''
+            if code and code != '-':
+                info = lookup.get(code)
+                if info:
+                    key = f'{code}__{info["name"]}'
+                    meta = (info['name'], info['order'])
+                else:
+                    key = '__OTHER__'
+                    meta = (ELEMENTS_OTHER_LABEL, float('inf'))
+            else:
+                key = '__OTHER__'
+                meta = (ELEMENTS_OTHER_LABEL, float('inf'))
+            mssk_groups[key].append(idx)
+            mssk_meta[key] = meta
+
+        # Сортировка: сначала известные коды (по порядку в справочнике),
+        # затем «Прочее»
+        sorted_keys = sorted(mssk_groups.keys(),
+                             key=lambda k: (mssk_meta[k][1], mssk_meta[k][0]))
+
+        for key in sorted_keys:
+            indices = sorted(mssk_groups[key])
+            mssk_df = df.loc[indices]
+            mssk_name = mssk_meta[key][0]
+
+            mssk_group = _create_group(mssk_name, 2, mssk_df, rows, volume_col_name, sum_columns)
+
+            # --- Группировка по главному материалу (L3) ---
+            if material_col:
+                mat_groups = defaultdict(list)
+                mat_meta = {}  # имя группы → порядок сортировки
+                for idx in indices:
+                    mat_val = rows[idx].get(material_col, '')
+                    mat_name, mat_order = resolve_material_group(mat_val, materials_lookup)
+                    mat_groups[mat_name].append(idx)
+                    mat_meta[mat_name] = mat_order
+
+                sorted_mat_names = sorted(mat_groups.keys(),
+                                          key=lambda n: (mat_meta[n], n))
+
+                for mat_name in sorted_mat_names:
+                    mat_indices = sorted(mat_groups[mat_name])
+                    mat_df = df.loc[mat_indices]
+                    mat_group = _create_group(mat_name, 3, mat_df, rows, volume_col_name, sum_columns)
+
+                    # --- Группировка по наименованию элемента (L4) ---
+                    add_name_groups(mat_group, mat_indices, 4)
+
+                    if mat_group['children']:
+                        mssk_group['children'].append(mat_group)
+            else:
+                # --- Группировка по наименованию элемента (L3, без материала) ---
+                add_name_groups(mssk_group, indices, 3)
+
+            if mssk_group['children']:
+                part_group['children'].append(mssk_group)
+
+        result.append(part_group)
+
     return result
 
 
