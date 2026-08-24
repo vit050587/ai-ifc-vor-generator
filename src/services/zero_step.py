@@ -6,6 +6,7 @@ import os
 import re
 
 from src.core.logger import setup_logger
+from src.services.ifc_raw_dump import _compute_bbox_quantities
 
 logger = setup_logger("zero_step")
 
@@ -437,8 +438,21 @@ def get_element_info(element):
     info.update(get_placement_info(element))
     
     # QTO характеристики (количественные)
-    info.update(get_all_quantities(element))
-    
+    quantities = get_all_quantities(element)
+    info.update(quantities)
+
+    # Если у элемента нет количественных характеристик QTO (IfcElementQuantity),
+    # вычисляем их из геометрии (bbox) по координатам — как в ifc_raw_dump.
+    # Колонки имеют префикс QTO_bbox:: и используются в geometry_mapping
+    # как запасной источник для длины/ширины/высоты/площади/объёма
+    # (важно для режима АР: окна, двери, покрытия и пр. часто без QTO).
+    if not quantities:
+        try:
+            info.update(_compute_bbox_quantities(element))
+        except Exception as exc:
+            logger.debug(f"Не удалось вычислить bbox-количества для "
+                         f"{safe_get_attr(element, 'GlobalId')}: {exc}")
+
     # Все свойства
     info.update(get_all_properties(element))
     
@@ -1331,6 +1345,28 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
         },
     }
     
+    # ============================================================================
+    # FALLBACK: КОЛИЧЕСТВА, ВЫЧИСЛЕННЫЕ ИЗ ГЕОМЕТРИИ (bbox)
+    # ============================================================================
+    # Если у элемента нет QTO (IfcElementQuantity), количества вычисляются
+    # из геометрии по координатам и попадают в колонки с префиксом QTO_bbox::.
+    # Добавляем эти колонки в конец списков возможных источников geometry_mapping
+    # — они используются как запасной вариант (срабатывают только тогда,
+    # когда в IFC-файле нет «настоящих» QTO). Важно для режима АР: окна,
+    # двери, покрытия и пр. часто не содержат IfcElementQuantity.
+    _BBOX_FALLBACK = {
+        'ДЛИНА': 'QTO_bbox::Длина_мм',
+        'ШИРИНА': 'QTO_bbox::Ширина_мм',
+        'ВЫСОТА': 'QTO_bbox::Высота_мм',
+        'ОБЪЕМ': 'QTO_bbox::Объём_м3',
+        'ПЛОЩАДЬ': 'QTO_bbox::Площадь_поверхности_м2',
+    }
+    for _type_mapping in geometry_mapping.values():
+        for _param, _bbox_col in _BBOX_FALLBACK.items():
+            _sources = _type_mapping.get(_param)
+            if _sources is not None and _bbox_col not in _sources:
+                _sources.append(_bbox_col)
+
     # ============================================================================
     # ФУНКЦИЯ ДЛЯ ИЗВЛЕЧЕНИЯ ЗНАЧЕНИЯ ПО ТИПУ ЭЛЕМЕНТА
     # ============================================================================
