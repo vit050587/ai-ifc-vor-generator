@@ -516,37 +516,51 @@ class SessionManager:
             
             self._update_progress(session_id, 10, f"Обработка IFC файла ({processing_type})...")
 
-            # АР: в самом начале обработки сохраняем в корень сессии XLSX со всеми
-            # элементами IFC и их параметрами в исходном виде (без нормализации).
-            if processing_type == "AR":
-                self._update_progress(
-                    session_id, 15,
-                    "АР: выгрузка всех параметров элементов из IFC в корень сессии..."
+            # Сохраняем в корень сессии XLSX/JSON со всеми элементами IFC и их
+            # параметрами в исходном виде (без нормализации).
+            # Файлы создаются в обоих режимах (КР и АР).
+            self._update_progress(
+                session_id, 15,
+                f"{processing_type}: выгрузка всех параметров элементов из IFC в корень сессии..."
+            )
+            try:
+                from src.services.ifc_raw_dump import (
+                    dump_ifc_elements_raw,
+                    RAW_DUMP_FILENAME,
+                    RAW_DUMP_JSON_FILENAME,
                 )
-                try:
-                    from src.services.ifc_raw_dump import dump_ifc_elements_raw
-                    raw_dump_path = dump_ifc_elements_raw(ifc_path, session_dir)
-                    if raw_dump_path and os.path.exists(raw_dump_path):
-                        with self._state_lock:
-                            if session_id in self._sessions:
-                                current_files = self._sessions[session_id].get("files", [])
+                raw_dump_path = dump_ifc_elements_raw(ifc_path, session_dir)
+                if raw_dump_path and os.path.exists(raw_dump_path):
+                    with self._state_lock:
+                        if session_id in self._sessions:
+                            current_files = self._sessions[session_id].get("files", [])
+                            # XLSX-дамп
+                            current_files.append({
+                                "path": raw_dump_path,
+                                "filename": RAW_DUMP_FILENAME,
+                                "size": os.path.getsize(raw_dump_path),
+                            })
+                            # JSON-копия дампа
+                            json_dump_path = os.path.join(session_dir, RAW_DUMP_JSON_FILENAME)
+                            if os.path.isfile(json_dump_path):
                                 current_files.append({
-                                    "path": raw_dump_path,
-                                    "filename": os.path.basename(raw_dump_path),
-                                    "size": os.path.getsize(raw_dump_path),
+                                    "path": json_dump_path,
+                                    "filename": RAW_DUMP_JSON_FILENAME,
+                                    "size": os.path.getsize(json_dump_path),
                                 })
-                                self._sessions[session_id]["files"] = current_files
-                                self._save()
-                        logger.info(f"Сохранён файл сырых данных IFC в корень сессии: {raw_dump_path}")
-                except Exception as e:
-                    import traceback
-                    logger.warning(
-                        f"Не удалось выгрузить сырые параметры IFC (АР) для сессии {session_id}: {e}",
-                    )
-                    logger.debug(traceback.format_exc())
+                            self._sessions[session_id]["files"] = current_files
+                            self._save()
+                    logger.info(f"Сохранён файл сырых данных IFC в корень сессии: {raw_dump_path}")
+            except Exception as e:
+                import traceback
+                logger.warning(
+                    f"Не удалось выгрузить сырые параметры IFC ({processing_type}) для сессии {session_id}: {e}",
+                )
+                logger.debug(traceback.format_exc())
 
             self._update_progress(session_id, 20, "Извлечение элементов из IFC...")
-            zero_step(ifc_path, output_folder=session_dir, write_full_data=False)
+            zero_step(ifc_path, output_folder=session_dir, write_full_data=False,
+                      processing_type=processing_type)
 
             # Формируем справочные JSON
             try:
@@ -554,6 +568,25 @@ class SessionManager:
                 build_reference_from_ifc(ifc_path, session_dir, processing_type)
             except Exception as e:
                 logger.warning(f"Не удалось сформировать JSON-файлы справочника для IFC: {e}", exc_info=True)
+
+            # Добавляем справочные JSON в список файлов сессии, чтобы они были
+            # доступны для просмотра/скачивания сразу после обработки IFC.
+            with self._state_lock:
+                if session_id in self._sessions:
+                    current_files = self._sessions[session_id].get("files", [])
+                    for src_name, display_name in [
+                        ("ifc_elements_output.json", "все элементы.json"),
+                        ("ifc_raw_elements_grouped.json", "группы элементов.json"),
+                    ]:
+                        src_path = os.path.join(session_dir, src_name)
+                        if os.path.isfile(src_path):
+                            current_files.append({
+                                "path": src_path,
+                                "filename": display_name,
+                                "size": os.path.getsize(src_path),
+                            })
+                    self._sessions[session_id]["files"] = current_files
+                    self._save()
 
             self._update_progress(session_id, 80, "Проверка результатов...")
             
@@ -1275,14 +1308,15 @@ class SessionManager:
                         "size": os.path.getsize(src_path),
                     })
 
-            # АР: включаем в результаты файл с исходными параметрами элементов
-            if processing_type == "AR":
-                from src.services.ifc_raw_dump import RAW_DUMP_FILENAME
-                raw_dump_path = os.path.join(session_dir, RAW_DUMP_FILENAME)
+            # Включаем в результаты файлы с исходными параметрами элементов
+            # (XLSX + JSON-копия) — создаются в обоих режимах (КР и АР).
+            from src.services.ifc_raw_dump import RAW_DUMP_FILENAME, RAW_DUMP_JSON_FILENAME
+            for dump_name in (RAW_DUMP_FILENAME, RAW_DUMP_JSON_FILENAME):
+                raw_dump_path = os.path.join(session_dir, dump_name)
                 if os.path.isfile(raw_dump_path):
                     final_files.append({
                         "path": raw_dump_path,
-                        "filename": RAW_DUMP_FILENAME,
+                        "filename": dump_name,
                         "size": os.path.getsize(raw_dump_path),
                     })
             

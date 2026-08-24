@@ -10,9 +10,12 @@ from src.core.logger import setup_logger
 logger = setup_logger("zero_step")
 
  
-element_types = [
+# Список IFC-классов для режима КР (конструктивные решения).
+# Конструктивные элементы из железобетона, а также изоляция (IfcCovering).
+# Используется при processing_type="KR".
+ELEMENT_TYPES_KR = [
     ('IfcWall', 'Стены'),
-    ('IfcFooting', 'Перекрытия'),
+    ('IfcFooting', 'Фундамент'),
     ('IfcWallStandardCase', 'Стены'),
     ('IfcSlab', 'Перекрытия'),
     ('IfcColumn', 'Колонны'),
@@ -20,17 +23,47 @@ element_types = [
     ('IfcStair', 'Лестницы'),
     ('IfcStairFlight', 'Лестницы'),
     ('IfcRamp', 'Пандусы'),
+    ('IfcPile', 'Сваи'),
+    ('IfcCovering', 'Изоляция'),
+]
+
+# Дополнительные классы только для режима АР (архитектурные решения).
+# Сюда перенесены архитектурно-отделочные элементы (ранее ошибочно
+# присутствовавшие в списке КР): окна, двери, витражи, покрытия, кровля,
+# перила, мебель, прокси-элементы — у них есть код МССК в отдельных
+# колонках Property Sets (ExpCheck_Covering::MGE_ElementCode,
+# ExpCheck_Door::MGE_ElementCode, ...), но они НЕ являются ж/б конструкциями.
+_ARCH_TYPES = [
     ('IfcBuildingElementProxy', 'Прочие_элементы'),
     ('IfcCovering', 'Покрытие'),
-    ('IfcPile', 'Сваи'),
     ('IfcWindow', 'Окна'),
     ('IfcDoor', 'Двери'),
     ('IfcCurtainWall', 'Стены'),
     ('IfcRoof', 'Кровля'),
     ('IfcRailing', 'Перила'),
     ('IfcFurnishingElement', 'Мебель'),
-    ('IfcMember', 'Конструктивные_элементы'),
+    ('IfcPlate', 'Плиты'),
+    ('IfcShadingDevice', 'Солнцезащитные устройства'),
+    ('IfcWasteTerminal', 'Санитарно-технические приборы'),
+    ('IfcAirTerminal', 'Воздухораспределители'),
+    ('IfcMember', 'Стойка_ограждения'),
 ]
+
+# Список IFC-классов для режима АР: конструктивные (КР) + архитектурные.
+# Дедупликация по IFC-классу: IfcCovering присутствует и в КР («Изоляция»),
+# и в архитектурном списке («Покрытие»), но один и тот же элемент не должен
+# попадать в таблицу АР дважды. При совпадении класса приоритет у
+# архитектурной метки (_ARCH_TYPES), сохраняя прежнее поведение АР-режима.
+_ar_types_by_class = {}
+for _ifc_type, _ru_name in ELEMENT_TYPES_KR:
+    _ar_types_by_class.setdefault(_ifc_type, (_ifc_type, _ru_name))
+for _ifc_type, _ru_name in _ARCH_TYPES:
+    _ar_types_by_class[_ifc_type] = (_ifc_type, _ru_name)
+ELEMENT_TYPES_AR = list(_ar_types_by_class.values())
+
+# Обратная совместимость: внешний код может импортировать element_types.
+# По умолчанию соответствует списку КР (как было до разделения).
+element_types = ELEMENT_TYPES_KR
 
 # Список специфических свойств для извлечения
 SPECIFIC_PROPERTIES = [
@@ -83,6 +116,53 @@ def classify_storey_type(storey_name, elevation_mm):
             print(f'Ошибка: {e}')
 
     return 'Не определен'
+
+
+def find_main_floor_height(storeys):
+    """Определяет высоту основного (типового) этажа по отметкам этажей.
+
+    В режиме АР важна не общая высота здания, а высота типового этажа:
+    расценки на архитектурно-отделочные работы привязаны к высоте этажа.
+    Считаем разницу между последовательными надземными этажами
+    (Цокольный/Надземный/Мансардный) и выбираем наиболее часто
+    встречающийся шаг (моду), при неоднозначности — медиану.
+
+    Args:
+        storeys: dict {имя этажа: {'elevation': м, 'type': str}}
+
+    Returns:
+        float: высота основного этажа в метрах (0.0, если не удалось).
+    """
+    from collections import Counter
+
+    elevs = sorted(
+        info['elevation']
+        for info in storeys.values()
+        if info.get('type') in ('Цокольный', 'Надземный', 'Мансардный')
+    )
+
+    steps = []
+    for lo, hi in zip(elevs, elevs[1:]):
+        diff = hi - lo
+        if 0.5 <= diff <= 20:  # типовой междуэтажный шаг
+            steps.append(diff)
+
+    if not steps:
+        return 0.0
+
+    # Мода по шагам с точностью до сантиметра
+    steps_cm = [round(step * 100) for step in steps]
+    counter = Counter(steps_cm)
+    max_count = max(counter.values())
+    modes = sorted(k for k, v in counter.items() if v == max_count)
+
+    if len(modes) == 1:
+        floor_cm = modes[0]
+    else:
+        # Несколько одинаково частых шагов — берём медиану всех шагов
+        floor_cm = sorted(steps_cm)[len(steps_cm) // 2]
+
+    return round(floor_cm / 100, 3)
 
 
 def get_element_storey(element):
@@ -588,7 +668,7 @@ def fill_missing_from_name(df):
     return df
 
 
-def zero_step(ifc_file, output_folder=None, write_full_data=True):
+def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_type="KR"):
     """Основная функция обработки IFC файла
 
     Args:
@@ -597,8 +677,18 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
         write_full_data: если False — пропускает запись IFC_ВСЕ_ДАННЫЕ_исправленный.xlsx
             (242 колонки), экономя ~90-100 с на больших файлах.
             ДЛЯ_СМЕТЧИКА_исправленный.xlsx и сокращённый создаются в любом случае.
+        processing_type: тип обработки — "KR" (конструктив, по умолчанию)
+            или "AR" (архитектура). Определяет набор извлекаемых IFC-классов:
+            ELEMENT_TYPES_KR / ELEMENT_TYPES_AR.
     """
-    logger.info(f"Начата обработка файла {ifc_file}")
+    logger.info(f"Начата обработка файла {ifc_file} (тип: {processing_type})")
+
+    processing_type = str(processing_type).upper()
+    selected_types = ELEMENT_TYPES_AR if processing_type == "AR" else ELEMENT_TYPES_KR
+    logger.info(
+        f"Извлекаемые IFC-классы (processing_type={processing_type}): "
+        f"{len(selected_types)} шт"
+    )
 
     model = ifcopenshell.open(ifc_file)
 
@@ -672,9 +762,17 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
             'Максимальная_отметка_надземной_части_м': 0
         }
 
+    # Высота основного (типового) этажа. В режиме АР расценки на
+    # архитектурно-отделочные работы привязаны к высоте этажа, поэтому
+    # в веб-интерфейсе в этом режиме должна показываться именно она,
+    # а не общая высота здания (как в режиме КР).
+    main_floor_height = find_main_floor_height(storeys)
+    building_height_info['Высота_основного_этажа_м'] = round(main_floor_height, 3)
+    logger.info(f"Высота основного этажа: {main_floor_height} м")
+
     elements = []
 
-    for ifc_type, ru_name in element_types:
+    for ifc_type, ru_name in selected_types:
         elems = model.by_type(ifc_type)
         if len(elems) > 0:
             print(f"   {ifc_type} ({ru_name}): {len(elems)} шт")
@@ -734,18 +832,21 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
     geometry_mapping = {
         'Стены': {
             'ДЛИНА': [
+                'Свойство_RusSet_Quantities_RUS_Length',
                 'Длина_Length_мм',
                 'QTO_Qto_WallBaseQuantities_Длина_Length_мм',
                 'Свойство_Qto_WallBaseQuantities_Length',
                 'Длина_мм', 'Length_мм'
             ],
             'ШИРИНА': [
+                'Свойство_RusSet_Quantities_RUS_Thickness',
                 'Длина_Width_мм',
                 'QTO_Qto_WallBaseQuantities_Длина_Width_мм',
                 'Свойство_Qto_WallBaseQuantities_Width',
                 'Толщина_мм', 'Width_мм'
             ],
             'ВЫСОТА': [
+                'Свойство_RusSet_Quantities_RUS_Height',
                 'Длина_Height_мм',
                 'QTO_Qto_WallBaseQuantities_Длина_Height_мм',
                 'Свойство_Qto_WallBaseQuantities_Height',
@@ -771,6 +872,7 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
                 'Площадь_м2', 'Area_м2'
             ],
             'ОБЪЕМ': [
+                'Свойство_RusSet_Quantities_RUS_Volume',
                 'Объём_NetVolume_м3',
                 'Объём_GrossVolume_литры',
                 'QTO_Qto_WallBaseQuantities_Объём_NetVolume_м3',
@@ -789,12 +891,14 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
         },
         'Перекрытия': {
             'ДЛИНА': [
+                'Свойство_RusSet_Quantities_RUS_Length',
                 'Длина_Length_мм',
                 'QTO_Qto_SlabBaseQuantities_Длина_Length_мм',
                 'Свойство_Qto_SlabBaseQuantities_Length',
                 'Длина_мм', 'Length_мм'
             ],
             'ШИРИНА': [
+                'Свойство_RusSet_Quantities_RUS_Thickness',
                 'Длина_Width_мм',
                 'QTO_Qto_SlabBaseQuantities_Длина_Width_мм',
                 'Свойство_Qto_SlabBaseQuantities_Width',
@@ -802,6 +906,7 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
                 'Толщина_мм', 'Width_мм'
             ],
             'ВЫСОТА': [
+                'Свойство_RusSet_Quantities_RUS_Thickness',
                 'Длина_Height_мм',
                 'QTO_Qto_SlabBaseQuantities_Длина_Height_мм',
                 'Свойство_Qto_SlabBaseQuantities_NominalThickness',
@@ -827,6 +932,7 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
                 'Площадь_м2', 'Area_м2'
             ],
             'ОБЪЕМ': [
+                'Свойство_RusSet_Quantities_RUS_Volume',
                 'Объём_NetVolume_м3',
                 'Объём_GrossVolume_литры',
                 'QTO_Qto_SlabBaseQuantities_Объём_NetVolume_м3',
@@ -845,12 +951,14 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
         },
         'Колонны': {
             'ДЛИНА': [
+                'Свойство_RusSet_Quantities_RUS_Length',
                 'Длина_Length_мм',
                 'QTO_Qto_ColumnBaseQuantities_Длина_Length_мм',
                 'Свойство_Qto_ColumnBaseQuantities_Length',
                 'Длина_мм', 'Length_мм'
             ],
             'ШИРИНА': [
+                'Свойство_RusSet_Quantities_RUS_Width',
                 'Длина_Width_мм',
                 'QTO_Qto_ColumnBaseQuantities_Длина_Width_мм',
                 'Свойство_Qto_ColumnBaseQuantities_Width',
@@ -858,6 +966,7 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
                 'Толщина_мм', 'Width_мм'
             ],
             'ВЫСОТА': [
+                'Свойство_RusSet_Quantities_RUS_Height',
                 'Длина_Height_мм',
                 'QTO_Qto_ColumnBaseQuantities_Длина_Height_мм',
                 'Свойство_Qto_ColumnBaseQuantities_Height',
@@ -881,6 +990,7 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
                 'Площадь_м2', 'Area_м2'
             ],
             'ОБЪЕМ': [
+                'Свойство_RusSet_Quantities_RUS_Volume',
                 'Объём_NetVolume_м3',
                 'Объём_GrossVolume_литры',
                 'QTO_Qto_ColumnBaseQuantities_Объём_NetVolume_м3',
@@ -899,12 +1009,14 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
         },
         'Балки': {
             'ДЛИНА': [
+                'Свойство_RusSet_Quantities_RUS_Length',
                 'Длина_Length_мм',
                 'QTO_Qto_BeamBaseQuantities_Длина_Length_мм',
                 'Свойство_Qto_BeamBaseQuantities_Length',
                 'Длина_мм', 'Length_мм'
             ],
             'ШИРИНА': [
+                'Свойство_RusSet_Quantities_RUS_Width',
                 'Длина_Width_мм',
                 'QTO_Qto_BeamBaseQuantities_Длина_Width_мм',
                 'Свойство_Qto_BeamBaseQuantities_Width',
@@ -912,6 +1024,7 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
                 'Толщина_мм', 'Width_мм'
             ],
             'ВЫСОТА': [
+                'Свойство_RusSet_Quantities_RUS_Height',
                 'Длина_Height_мм',
                 'QTO_Qto_BeamBaseQuantities_Длина_Height_мм',
                 'Свойство_Qto_BeamBaseQuantities_Height',
@@ -932,6 +1045,7 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
                 'Площадь_м2', 'Area_м2'
             ],
             'ОБЪЕМ': [
+                'Свойство_RusSet_Quantities_RUS_Volume',
                 'Объём_NetVolume_м3',
                 'Объём_GrossVolume_литры',
                 'QTO_Qto_BeamBaseQuantities_Объём_NetVolume_м3',
@@ -950,12 +1064,14 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
         },
         'Лестницы': {
             'ДЛИНА': [
+                'Свойство_RusSet_Quantities_RUS_Length',
                 'Длина_Length_мм',
                 'QTO_Qto_StairBaseQuantities_Длина_Length_мм',
                 'Свойство_Qto_StairBaseQuantities_Length',
                 'Длина_мм', 'Length_мм'
             ],
             'ШИРИНА': [
+                'Свойство_RusSet_Quantities_RUS_Width',
                 'Длина_Width_мм',
                 'QTO_Qto_StairBaseQuantities_Длина_Width_мм',
                 'Свойство_Qto_StairBaseQuantities_Width',
@@ -964,6 +1080,7 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
                 'Толщина_мм', 'Width_мм'
             ],
             'ВЫСОТА': [
+                'Свойство_RusSet_Quantities_RUS_Height',
                 'Длина_Height_мм',
                 'QTO_Qto_StairBaseQuantities_Длина_Height_мм',
                 'Свойство_Qto_StairBaseQuantities_Height',
@@ -984,6 +1101,7 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
                 'Площадь_м2', 'Area_м2'
             ],
             'ОБЪЕМ': [
+                'Свойство_RusSet_Quantities_RUS_Volume',
                 'Объём_NetVolume_м3',
                 'Объём_GrossVolume_литры',
                 'QTO_Qto_StairBaseQuantities_Объём_NetVolume_м3',
@@ -1003,18 +1121,21 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
         },
         'Пандусы': {
             'ДЛИНА': [
+                'Свойство_RusSet_Quantities_RUS_Length',
                 'Длина_Length_мм',
                 'QTO_Qto_RampBaseQuantities_Длина_Length_мм',
                 'Свойство_Qto_RampBaseQuantities_Length',
                 'Длина_мм', 'Length_мм'
             ],
             'ШИРИНА': [
+                'Свойство_RusSet_Quantities_RUS_Width',
                 'Длина_Width_мм',
                 'QTO_Qto_RampBaseQuantities_Длина_Width_мм',
                 'Свойство_Qto_RampBaseQuantities_Width',
                 'Толщина_мм', 'Width_мм'
             ],
             'ВЫСОТА': [
+                'Свойство_RusSet_Quantities_RUS_Height',
                 'Длина_Height_мм',
                 'QTO_Qto_RampBaseQuantities_Длина_Height_мм',
                 'Свойство_Qto_RampBaseQuantities_Height',
@@ -1050,9 +1171,9 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
             ],
         },
         'Прочие_элементы': {
-            'ДЛИНА': ['Длина_мм', 'Length_мм'],
-            'ШИРИНА': ['Толщина_мм', 'Width_мм', 'Длина_Width_мм'],
-            'ВЫСОТА': ['Высота_мм', 'Height_мм', 'Глубина_выдавливания_мм'],
+            'ДЛИНА': ['Свойство_RusSet_Quantities_RUS_Length', 'Длина_мм', 'Length_мм'],
+            'ШИРИНА': ['Свойство_RusSet_Quantities_RUS_Width', 'Свойство_RusSet_Quantities_RUS_Thickness', 'Толщина_мм', 'Width_мм', 'Длина_Width_мм'],
+            'ВЫСОТА': ['Свойство_RusSet_Quantities_RUS_Height', 'Высота_мм', 'Height_мм', 'Глубина_выдавливания_мм'],
             'ПЕРИМЕТР': ['Perimeter_мм', 'Периметр_мм'],
             'ПЛОЩАДЬ': [
                 'Площадь_GROSS_м2',
@@ -1107,14 +1228,67 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
                 'ReinforcementVolumeRatio'
             ],
         },
+        'Фундамент': {
+            'ДЛИНА': [
+                'Свойство_RusSet_Quantities_RUS_Length',
+                'Длина_Length_мм',
+                'QTO_Qto_FootingBaseQuantities_Длина_Length_мм',
+                'Свойство_Qto_FootingBaseQuantities_Length',
+                'Длина_мм', 'Length_мм'
+            ],
+            'ШИРИНА': [
+                'Свойство_RusSet_Quantities_RUS_Width',
+                'Длина_Width_мм',
+                'QTO_Qto_FootingBaseQuantities_Длина_Width_мм',
+                'Свойство_Qto_FootingBaseQuantities_Width',
+                'Толщина_мм', 'Width_мм'
+            ],
+            'ВЫСОТА': [
+                'Свойство_RusSet_Quantities_RUS_Height',
+                'Длина_Height_мм',
+                'QTO_Qto_FootingBaseQuantities_Длина_Height_мм',
+                'Свойство_Qto_FootingBaseQuantities_Height',
+                'Высота_мм', 'Height_мм', 'Глубина_выдавливания_мм'
+            ],
+            'ПЕРИМЕТР': [
+                'Свойство_Qto_FootingBaseQuantities_Perimeter',
+                'Perimeter_мм', 'Периметр_мм'
+            ],
+            'ПЛОЩАДЬ': [
+                'Площадь_GROSS_м2',
+                'QTO_Qto_FootingBaseQuantities_Площадь_GROSS_м2',
+                'Свойство_Qto_FootingBaseQuantities_GROSS',
+                'Площадь_GrossArea_м2',
+                'QTO_Qto_FootingBaseQuantities_Площадь_GrossArea_м2',
+                'Свойство_Qto_FootingBaseQuantities_GrossArea',
+                'Площадь_м2', 'Area_м2'
+            ],
+            'ОБЪЕМ': [
+                'Свойство_RusSet_Quantities_RUS_Volume',
+                'Объём_NetVolume_м3',
+                'Объём_GrossVolume_литры',
+                'QTO_Qto_FootingBaseQuantities_Объём_NetVolume_м3',
+                'QTO_Qto_FootingBaseQuantities_Объём_GrossVolume_литры',
+                'Свойство_Qto_FootingBaseQuantities_NetVolume',
+                'Свойство_Qto_FootingBaseQuantities_GrossVolume',
+                'Объём_м3', 'Volume_м3'
+            ],
+            'ReinforcementVolumeRatio': [
+                'Свойство_Pset_ConcreteElementGeneral_ReinforcementVolumeRatio',
+                'Pset_ConcreteElementGeneral_ReinforcementVolumeRatio',
+                'ReinforcementVolumeRatio'
+            ],
+        },
         'Свая': {
             'ДЛИНА': [
+                'Свойство_RusSet_Quantities_RUS_Length',
                 'Длина_Length_мм',
                 'QTO_Qto_PileBaseQuantities_Длина_Length_мм',
                 'Свойство_Qto_PileBaseQuantities_Length',
                 'Длина_мм', 'Length_мм'
             ],
             'ШИРИНА': [
+                'Свойство_RusSet_Quantities_RUS_Width',
                 'Длина_Width_мм',
                 'QTO_Qto_PileBaseQuantities_Длина_Width_мм',
                 'Свойство_Qto_PileBaseQuantities_Width',
@@ -1122,6 +1296,7 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
                 'Толщина_мм', 'Width_мм'
             ],
             'ВЫСОТА': [
+                'Свойство_RusSet_Quantities_RUS_Height',
                 'Свойство_Qto_PileBaseQuantities_Height',
                 'Высота_мм', 'Height_мм', 'Глубина_выдавливания_мм'
             ],
@@ -1139,6 +1314,7 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
                 'Площадь_м2', 'Area_м2'
             ],
             'ОБЪЕМ': [
+                'Свойство_RusSet_Quantities_RUS_Volume',
                 'Объём_NetVolume_м3',
                 'Объём_GrossVolume_литры',
                 'QTO_Qto_PileBaseQuantities_Объём_NetVolume_м3',
@@ -1218,6 +1394,13 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
     df['Объём, м3'] = df.apply(lambda row: get_geometry_value(row, 'ОБЪЕМ', convert_to_m3=True), axis=1)
     df['ReinforcementVolumeRatio'] = df.apply(lambda row: get_geometry_value(row, 'ReinforcementVolumeRatio'), axis=1)
     
+    # В pandas 3.0 столбцы из одних строк (например, '-' из get_geometry_value)
+    # получают dtype 'str', и запись в них float (из fill_missing_from_name)
+    # падает с TypeError. Приводим к object, чтобы хранить числа и '-' вместе.
+    for geom_col in ['Длина, мм', 'Ширина, мм', 'Высота, мм', 'Периметр, мм',
+                     'Площадь, м2', 'Объём, м3', 'ReinforcementVolumeRatio']:
+        df[geom_col] = df[geom_col].astype(object)
+    
     # ============================================================================
     # ЗАПОЛНЯЕМ ПРОПУСКИ В ГЕОМЕТРИЧЕСКИХ ПАРАМЕТРАХ ИЗ ИМЕНИ ЭЛЕМЕНТА
     # ============================================================================
@@ -1244,14 +1427,15 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
     # ============================================================================
     # ОПРЕДЕЛЯЕМ КОД ЭЛЕМЕНТА (Код мсск) И ФИЛЬТРУЕМ ЭЛЕМЕНТЫ БЕЗ КОДА
     # ============================================================================
-    # Код извлекается из параметров, содержащих "ElementCode"
-    # (например: Свойство_ExpCheck_Wall_MGE_ElementCode,
-    #  Свойство_ExpCheck_Slab_MGE_ElementCode, Свойство_ExpCheck_Column_MGE_ElementCode).
+    # Коды поиска: параметры, содержащие "ElementCode" (например
+    # Свойство_ExpCheck_Wall_MGE_ElementCode) ИЛИ "Element_Code"
+    # (например Свойство_RusSet_Common_RUS_MSSK_Element_Code).
     # Валидным считается код, начинающийся с "ЭЛ" (например "ЭЛ 30 10 30 15").
     # Значения-заглушки ("0", "-", "НЕТ ДАННЫХ" и пр.) не считаются кодом —
     # элементы с такими значениями исключаются из таблиц для сметчика.
 
-    element_code_cols = [col for col in df.columns if 'ElementCode' in col]
+    element_code_cols = [col for col in df.columns
+                         if 'elementcode' in col.lower().replace('_', '')]
 
     def _get_element_code(row):
         for col in element_code_cols:
@@ -1361,8 +1545,10 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
 
     # Колонка "Код мсск" — извлекается из параметров, содержащих "ElementCode"
     # (например: Свойство_ExpCheck_Wall_MGE_ElementCode,
-    #  Свойство_ExpCheck_Slab_MGE_ElementCode, Свойство_ExpCheck_Column_MGE_ElementCode)
-    element_code_cols = [col for col in df.columns if 'ElementCode' in col]
+    #  Свойство_ExpCheck_Slab_MGE_ElementCode, Свойство_ExpCheck_Column_MGE_ElementCode,
+    #  Свойство_RusSet_Common_RUS_MSSK_Element_Code)
+    element_code_cols = [col for col in df.columns
+                         if 'elementcode' in col.lower().replace('_', '')]
     df_smetchik.insert(1, 'Код мсск', element_codes.values)
 
     df_smetchik['Примечание_сметчика'] = ''
@@ -1414,7 +1600,17 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
             'Площадь Gross, м²': round(total_gross_area, 3) if total_gross_area > 0 else '-',
         })
 
-    df_summary = pd.DataFrame(summary_data)
+    # Если данные отсутствуют (например, все элементы исключены фильтром кода),
+    # заранее создаём каркас сводки с нужными колонками, чтобы итоговая таблица
+    # существовала даже при нуле валидных элементов (pandas из пустого списка
+    # создаёт DataFrame вообще без колонок, и обращение к 'Количество, шт' упадёт с KeyError).
+    if summary_data:
+        df_summary = pd.DataFrame(summary_data)
+    else:
+        df_summary = pd.DataFrame(columns=[
+            'Тип (RU)', 'Тип элемента', 'Материал', 'Количество, шт',
+            'Объем, м³', 'Площадь Gross, м²'
+        ])
 
     total_count = df_summary['Количество, шт'].sum()
     total_volume = 0
@@ -1444,31 +1640,44 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True):
 
     logger.info("Обработка файла завершена")
 
+    # В режиме АР показываем высоту основного этажа, в КР — высоту здания.
+    if processing_type == "AR":
+        primary_height = building_height_info['Высота_основного_этажа_м']
+        primary_label = 'Высота основного этажа'
+    else:
+        primary_height = building_height_info['Высота_надземной_части_м']
+        primary_label = 'Высота надземной части'
+
     with open(height_file, 'w', encoding='utf-8') as file:
-        file.write(str(building_height_info['Высота_надземной_части_м']))
+        file.write(str(primary_height))
 
     with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
         df_smetchik.to_excel(writer, sheet_name='Данные', index=False)
         df_summary.to_excel(writer, sheet_name='Сводка_по_типам', index=False)
-        
-        df_height = pd.DataFrame([{
-            'Параметр': 'Высота надземной части',
-            'Значение_м': building_height_info['Высота_надземной_части_м'],
-            'Значение_мм': building_height_info['Высота_надземной_части_м'] * 1000
-        }, {
-            'Параметр': 'Общая высота здания',
-            'Значение_м': building_height_info['Общая_высота_здания_м'],
-            'Значение_мм': building_height_info['Общая_высота_здания_м'] * 1000
-        }, {
-            'Параметр': 'Минимальная отметка надземной части',
-            'Значение_м': building_height_info['Минимальная_отметка_надземной_части_м'],
-            'Значение_мм': building_height_info['Минимальная_отметка_надземной_части_м'] * 1000
-        }, {
-            'Параметр': 'Максимальная отметка надземной части',
-            'Значение_м': building_height_info['Максимальная_отметка_надземной_части_м'],
-            'Значение_мм': building_height_info['Максимальная_отметка_надземной_части_м'] * 1000
-        }])
-        
+
+        # Основная высота (для веб-интерфейса) всегда первой строкой листа.
+        height_rows = [{
+            'Параметр': primary_label,
+            'Значение_м': primary_height,
+            'Значение_мм': primary_height * 1000
+        }]
+        # Остальные параметры высоты — информационно, после основной строки.
+        for label, value in [
+            ('Высота надземной части', building_height_info['Высота_надземной_части_м']),
+            ('Высота основного этажа', building_height_info.get('Высота_основного_этажа_м', 0.0)),
+            ('Общая высота здания', building_height_info['Общая_высота_здания_м']),
+            ('Минимальная отметка надземной части', building_height_info['Минимальная_отметка_надземной_части_м']),
+            ('Максимальная отметка надземной части', building_height_info['Максимальная_отметка_надземной_части_м']),
+        ]:
+            if label == primary_label:
+                continue
+            height_rows.append({
+                'Параметр': label,
+                'Значение_м': value,
+                'Значение_мм': value * 1000
+            })
+
+        df_height = pd.DataFrame(height_rows)
         df_height.to_excel(writer, sheet_name='Высота_здания', index=False)
 
     logger.info(f"Файл сохранен в {output_file}")

@@ -757,9 +757,9 @@
                 </div>
                 <div class="params-row mt-20">
                     <div>
-                        <label for="buildingHeight">Высота здания (м):</label>
+                        <label for="buildingHeight" id="buildingHeightLabel">Высота здания (м):</label>
                         <input type="number" id="buildingHeight" value="56" step="0.5" min="1" max="10000" style="max-width:150px;">
-                        <div class="hint">От 1 до 10000 м</div>
+                        <div class="hint" id="buildingHeightHint">От 1 до 10000 м</div>
                     </div>
                     <button class="btn btn-primary" id="selectRowsBtn" onclick="confirmRowSelection()" disabled>
                         🚀 Запустить обработку (<span id="selectedCount">0</span>)
@@ -1059,6 +1059,12 @@ function updateProcessingTypeBadges() {
         const badge = document.getElementById(id);
         if (badge) badge.textContent = badgeText;
     });
+    // В режиме АР показываем высоту этажа, в КР — высоту здания.
+    const isAR = currentProcessingType === 'AR';
+    const label = document.getElementById('buildingHeightLabel');
+    if (label) label.textContent = isAR ? 'Высота этажа (м):' : 'Высота здания (м):';
+    const hint = document.getElementById('buildingHeightHint');
+    if (hint) hint.textContent = isAR ? 'Высота этажа, от 1 до 10000 м' : 'Высота здания, от 1 до 10000 м';
 }
 
 // ========== Состояние зума ==========
@@ -1962,7 +1968,7 @@ function renderPreview(data) {
     const head = document.getElementById('previewHead');
     const body = document.getElementById('previewBody');
     if (!head || !body) return;
-    const typeFloorIdx = data.headers.indexOf('Тип_этажа');
+    const typeFloorIdx = data.headers.indexOf('Этаж');
     const materialIdx = data.headers.indexOf('Материал');
     const requiredColumns = ['№ п/п', 'Имя', 'Тип элемента', 'Толщина, мм', 'Объём, м3', 'Площадь, м2'];
     const findColumn = (partialName) => data.headers.find(h => h.toLowerCase().replace(/\s/g, '').includes(partialName.toLowerCase().replace(/\s/g, '')));
@@ -1991,9 +1997,22 @@ function renderPreview(data) {
             else if (savedPart.includes('Надземн') || savedPart.includes('надземн')) defaultPart = 'Надземная';
         }
         if ((!data.savedTypes || !data.savedTypes[index]) && typeFloorIdx !== -1 && row[typeFloorIdx] && row[typeFloorIdx] !== '-') {
-            const rawValue = row[typeFloorIdx].trim().toLowerCase();
-            const partMap = { 'подвал': 'Подземная', 'basement': 'Подземная', '-1': 'Подземная', 'подземный': 'Подземная', 'подземная': 'Подземная', 'цоколь': 'Цоколь', 'цокольный': 'Цоколь', 'ground': 'Цоколь', '0 этаж': 'Цоколь', 'нулевой': 'Цоколь', 'надземная': 'Надземная', 'надземный': 'Надземная', 'кровля': 'Надземная', 'технический': 'Надземная', 'мансардный': 'Надземная', 'мансарда': 'Надземная' };
-            defaultPart = partMap[rawValue] || 'Надземная';
+            const rawValue = String(row[typeFloorIdx]).trim();
+            // Определение уровня по числовому индикатору параметра «Этаж».
+            // Разбиваем по «_» и пробелам, ищем первый сегмент — чистое число:
+            //   'К01_1_этаж_основной'           → Надземная
+            //   'К01_-1_подземный этаж_основной' → Подземная
+            //   'К01_-1/1_подземный этаж'        → Цоколь
+            //   'С01_1_этаж_основной'            → Надземная
+            //   'С01_-1_подвал_основной'         → Подземная
+            //   'К01_Крыша'                     → Надземная
+            const segments = rawValue.split(/[_\s]+/);
+            for (const seg of segments) {
+                const s = seg.trim();
+                if (/^-\d+\s*\/\s*\d+$/.test(s)) { defaultPart = 'Цоколь'; break; }
+                if (/^-\d+$/.test(s)) { defaultPart = 'Подземная'; break; }
+                if (/^\d+$/.test(s)) { defaultPart = 'Надземная'; break; }
+            }
         }
         rowParts[index] = defaultPart;
         let defaultMaterial = '-';
@@ -2459,8 +2478,8 @@ function groupRowsCommon(mode) {
         });
     };
 
-    // Группировка для АР: после кода МССК (L2) элементы группируются
-    // по главному материалу (L3), затем по наименованию (L4).
+    // Группировка для АР: после кода МССК (L1) элементы группируются
+    // по главному материалу (L2), затем по наименованию (L3).
     // Материал берётся из data.materialsGroupMap (GlobalId → {name, order}):
     //   код материала не найден / нет поля → «Прочее»
     //   несколько материалов в слое         → «Многослойные»
@@ -2503,7 +2522,7 @@ function groupRowsCommon(mode) {
 
             const matId = 'MAT_' + (groupCounter++);
             groupIndexMap[matId] = matRows.map(r => r.index);
-            groupLevel[matId] = 3;
+            groupLevel[matId] = 2;
             groupParent[matId] = parentId;
             groupChildren[matId] = [];
             groupChildren[parentId].push(matId);
@@ -2534,8 +2553,8 @@ function groupRowsCommon(mode) {
             const matCb = matTr.querySelector('.group-checkbox');
             matCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(matId, this.checked); });
 
-            // Внутри группы материала — группы по наименованию элемента (L4)
-            addNameGroups(matId, matRows, basePadding + 30, 4);
+            // Внутри группы материала — группы по наименованию элемента (L3)
+            addNameGroups(matId, matRows, basePadding + 30, 3);
         });
     };
 
@@ -2730,6 +2749,84 @@ function groupRowsCommon(mode) {
         });
     };
     
+    // ============================================================
+    // Группировка АР: Код МССК (L1) → Материал (L2) → Наименование (L3).
+    // Часть здания (уровень) в АР не используется.
+    // ============================================================
+    if (mode === 'АР') {
+        const msskGroups = {};
+        rowData.forEach(rd => {
+            const key = rd.mssk.code ? `${rd.mssk.code}__${rd.mssk.name}` : '__OTHER__';
+            if (!msskGroups[key]) msskGroups[key] = { ...rd.mssk, rows: [] };
+            msskGroups[key].rows.push(rd);
+        });
+
+        // Сортируем группы: сначала известные (по порядку в справочнике),
+        // затем «Прочее»
+        const groupKeys = Object.keys(msskGroups);
+        groupKeys.sort((a, b) => {
+            const ga = msskGroups[a], gb = msskGroups[b];
+            if (ga.order !== gb.order) return ga.order - gb.order;
+            return (ga.name || '').localeCompare(gb.name || '');
+        });
+
+        groupKeys.forEach(key => {
+            const group = msskGroups[key];
+            const groupRows = group.rows;
+            if (groupRows.length === 0) return;
+
+            let groupVolume = 0;
+            groupRows.forEach(rd => { groupVolume += getVolume(rd.index); });
+
+            // Название группы: название из справочника МССК, «Прочее» для неизвестных
+            const label = group.name || 'Прочее';
+
+            // Уровень 1: Код МССК
+            const l1Id = 'MSSK_' + (groupCounter++);
+            groupIndexMap[l1Id] = groupRows.map(r => r.index);
+            groupLevel[l1Id] = 1;
+            groupChildren[l1Id] = [];
+
+            const l1Tr = document.createElement('tr');
+            l1Tr.className = 'group-header';
+            l1Tr.dataset.groupId = l1Id;
+            l1Tr.style.cssText = 'background:#e2e8f0 !important; cursor:pointer;';
+            l1Tr.onclick = function(e) {
+                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                toggleGroup(l1Id);
+            };
+
+            l1Tr.innerHTML = `
+                <td style="text-align:center;">
+                    <span class="group-arrow" id="${l1Id}_arrow">▶</span>
+                    <input type="checkbox" class="group-checkbox" data-group-id="${l1Id}">
+                </td>
+                <td colspan="${totalCols - 1}" style="font-weight:700; font-size:15px; color:#2d3748;">
+                    📋 ${label}
+                    <span class="group-badge">×${groupRows.length}</span>
+                    <span style="font-size:11px; color:#4a5568; margin-left:12px;">Σ Объём: ${groupVolume.toFixed(2)} м³</span>
+                </td>
+            `;
+            body.appendChild(l1Tr);
+
+            const l1Cb = l1Tr.querySelector('.group-checkbox');
+            l1Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l1Id, this.checked); });
+
+            // L2: Материал → L3: Наименование
+            addMaterialAndNameGroupsAR(l1Id, groupRows, 30);
+        });
+
+        document.getElementById('autoGroupBtn').style.display = 'none';
+        document.getElementById('ungroupBtn').style.display = 'inline-block';
+        updateSelectionUI();
+        showToast(`Сгруппировано (${mode}): ${Object.keys(groupIndexMap).length} групп`, 'info');
+        return;
+    }
+
+    // ============================================================
+    // Группировка КР: Часть здания (L1) → Код МССК (L2) →
+    // Геометрия (L3/L4) → Наименование.
+    // ============================================================
     partOrder.forEach(part => {
         const partRows = rowData.filter(rd => rd.part === part);
         if (partRows.length === 0) return;
@@ -2837,14 +2934,8 @@ function groupRowsCommon(mode) {
             const l2Cb = l2Tr.querySelector('.group-checkbox');
             l2Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l2Id, this.checked); });
             
-            // Для АР: после кода МССК группировка по главному материалу (L3),
-            // затем по наименованию элемента (L4).
             // Для КР: IFC → Геометрия → Имя
-            if (mode === 'АР') {
-                addMaterialAndNameGroupsAR(l2Id, groupRows, 60);
-            } else {
-                addGeometryAndNameGroups(l2Id, groupRows, 60);
-            }
+            addGeometryAndNameGroups(l2Id, groupRows, 60);
         });
     });
     

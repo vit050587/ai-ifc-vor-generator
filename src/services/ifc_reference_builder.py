@@ -23,7 +23,8 @@ from src.core.logger import setup_logger
 
 # Переиспользуем функции из существующих модулей
 from src.services.zero_step import (
-    element_types,
+    ELEMENT_TYPES_KR,
+    ELEMENT_TYPES_AR,
     SPECIFIC_PROPERTIES,
     get_element_info,
 )
@@ -335,22 +336,25 @@ def _get_geometry_range_for_element(element_data: dict, ifc_type: str) -> Tuple[
     return geo_label, _extract_geometry_range(rule['ranges'][-1]['label'])
 
 
-def _get_location_from_storey_type(storey_type: str) -> str:
+def _get_location_from_storey_type(storey_name: str) -> str:
     """
-    Определяет часть здания по типу этажа.
+    Определяет часть здания по значению параметра «Этаж».
 
-    'Подземный' → 'Подземная часть здания'
-    'Цокольный' → 'Цокольная часть здания'
-    остальное   → 'Надземная часть здания'
+    Правила (по числовому индикатору):
+      '-1/1_Подземный этаж'            → 'Цокольная часть здания'
+      '-1_Подземный этаж_основной'     → 'Подземная часть здания'
+      '1_Этаж_основной'                → 'Надземная часть здания'
+      'К01_1_этаж_основной'            → 'Надземная часть здания'
+      'К01_-1_подземный этаж_основной' → 'Подземная часть здания'
+      'К01_Крыша'                      → 'Надземная часть здания'
+      'С01_1_этаж_основной'            → 'Надземная часть здания'
+      'С01_-1_подвал_основной'         → 'Подземная часть здания'
+
+    Если «Этаж» пуст или не распознан — 'Надземная часть здания'.
     """
-    if not storey_type or storey_type == '-':
-        return 'Надземная часть здания'
-    st = str(storey_type).lower()
-    if 'подзем' in st or 'подвал' in st:
-        return 'Подземная часть здания'
-    if 'цокол' in st:
-        return 'Цокольная часть здания'
-    return 'Надземная часть здания'
+    from src.services.group_excel import _get_part_from_storey_name
+    part = _get_part_from_storey_name(storey_name)
+    return _get_location_name(part)
 
 
 def build_elements_json_output(df: pd.DataFrame) -> List[Dict[str, Any]]:
@@ -388,12 +392,12 @@ def build_elements_json_output(df: pd.DataFrame) -> List[Dict[str, Any]]:
             ],
         })
 
-        # 2. Расположение (по типу этажа)
+        # 2. Расположение (по параметру «Этаж»)
         characteristics.append({
             'name': 'Расположение',
             'values': [
                 {'strValue': _get_location_from_storey_type(
-                    str(element_data.get('Тип_этажа', ''))
+                    str(element_data.get('Этаж', ''))
                 )}
             ],
         })
@@ -497,7 +501,7 @@ def build_elements_json_output(df: pd.DataFrame) -> List[Dict[str, Any]]:
 #  ЭТАП A: ИЗВЛЕЧЕНИЕ ВСЕХ ЭЛЕМЕНТОВ ИЗ IFC
 # =====================================================================
 
-def extract_elements_from_ifc(ifc_path: str, output_folder: str) -> str:
+def extract_elements_from_ifc(ifc_path: str, output_folder: str, processing_type: str = "KR") -> str:
     """
     Извлекает все элементы из IFC-файла.
     Переиспользует функции из zero_step.py.
@@ -510,16 +514,23 @@ def extract_elements_from_ifc(ifc_path: str, output_folder: str) -> str:
     Вход:  путь к IFC-файлу
     Выход: путь к созданному Excel-файлу (ifc_raw_elements.xlsx с листом 'Данные')
            + файл ifc_raw_elements.json для отладки
+
+    processing_type: тип обработки — "KR" (конструктив, по умолчанию)
+        или "AR" (архитектура). Определяет набор извлекаемых IFC-классов:
+        ELEMENT_TYPES_KR / ELEMENT_TYPES_AR.
     """
-    logger.info(f"Извлечение элементов из IFC: {ifc_path}")
+    logger.info(f"Извлечение элементов из IFC: {ifc_path} (тип: {processing_type})")
 
     if not os.path.exists(ifc_path):
         raise FileNotFoundError(f"IFC файл не найден: {ifc_path}")
 
+    processing_type = str(processing_type).upper()
+    selected_types = ELEMENT_TYPES_AR if processing_type == "AR" else ELEMENT_TYPES_KR
+
     model = ifcopenshell.open(ifc_path)
     elements = []
 
-    for ifc_type, ru_name in element_types:
+    for ifc_type, ru_name in selected_types:
         elems = model.by_type(ifc_type)
         logger.info(f"  {ifc_type} ({ru_name}): {len(elems)} шт")
         for elem in elems:
@@ -677,6 +688,24 @@ def extract_elements_from_ifc(ifc_path: str, output_folder: str) -> str:
 
     # Добавляем служебные колонки (как в zero_step)
     df_smetchik.insert(0, '№ п/п', range(1, len(df_smetchik) + 1))
+
+    # Колонка "Код мсск" — извлекается из параметров, содержащих "ElementCode"
+    # (например: Свойство_ExpCheck_Wall_MGE_ElementCode,
+    #  Свойство_RusSet_Common_RUS_MSSK_Element_Code).
+    # Нужна для группировки элементов в режиме АР.
+    element_code_cols = [col for col in df.columns
+                         if 'elementcode' in col.lower().replace('_', '')]
+
+    def _get_element_code(row):
+        for col in element_code_cols:
+            val = row[col]
+            if val is not None and str(val).strip() and str(val) != '-':
+                return str(val)
+        return '-'
+
+    if element_code_cols:
+        df_smetchik.insert(1, 'Код мсск', df.apply(_get_element_code, axis=1).values)
+
     df_smetchik['Примечание_сметчика'] = ''
     df_smetchik['Стоимость_за_ед_руб'] = ''
     df_smetchik['Общая_стоимость_руб'] = ''
@@ -816,11 +845,21 @@ def build_reference_output(
         # Часть здания (первый элемент пути — Подземная/Цоколь/Надземная)
         part = path[0] if path else 'Надземная'
         # Ищем ключ части здания среди известных
-        part_key = 'Надземная'
+        part_key = None
         for known_part in ['Подземная', 'Цоколь', 'Надземная']:
             if known_part in part:
                 part_key = known_part
                 break
+        # В АР-режиме часть здания не является уровнем группировки
+        # (группировка сразу по коду МССК), поэтому при отсутствии части
+        # в пути определяем «Расположение» по типу этажа первого элемента.
+        if part_key is None:
+            location = _get_location_from_storey_type(str(first.get('Этаж', '')))
+            for known_part in ['Подземная', 'Цоколь', 'Надземная']:
+                if location.startswith(known_part):
+                    part_key = known_part
+                    break
+            part_key = part_key or 'Надземная'
 
         # IFC-тип для определения геометрических характеристик.
         # Приоритет: поле 'Тип элемента' (IfcSlab, IfcWall, ...),
@@ -1015,7 +1054,7 @@ def build_reference_from_ifc(ifc_path: str, output_folder: str, processing_type:
 
     # Этап A: Извлечение элементов
     logger.info("\n--- ЭТАП A: Извлечение элементов из IFC ---")
-    excel_path = extract_elements_from_ifc(ifc_path, output_folder)
+    excel_path = extract_elements_from_ifc(ifc_path, output_folder, processing_type)
     if not excel_path:
         logger.error("Не удалось извлечь элементы из IFC")
         return []
