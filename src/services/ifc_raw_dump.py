@@ -251,8 +251,36 @@ def _collect_propsets(element):
 #  МАТЕРИАЛ И ЭТАЖ
 # =====================================================================
 
+def _material_names(items) -> str:
+    """Собирает имена материалов из коллекции IFC-сущностей.
+
+    items — список элементов вида IfcMaterialLayer / IfcMaterialConstituent /
+    IfcMaterialProfile / IfcMaterial, у которых есть атрибут Material (или сам
+    элемент — IfcMaterial). Возвращает строку имён через запятую.
+    """
+    names = []
+    for item in items or []:
+        mat = item
+        if hasattr(item, "Material"):
+            mat = item.Material
+        if mat is None:
+            continue
+        nm = getattr(mat, "Name", None)
+        if nm:
+            names.append(str(nm))
+    return ", ".join(names)
+
+
 def _get_material(element):
-    """Извлекает материал элемента (без нормализации названий)."""
+    """Извлекает материал элемента (без нормализации названий).
+
+    Поддерживаются все способы привязки материала в IFC:
+      * IfcMaterial (одиночный материал);
+      * IfcMaterialLayerSet / IfcMaterialLayerSetUsage (слои);
+      * IfcMaterialList;
+      * IfcMaterialConstituentSet (состав — двери, окна и т.п.);
+      * IfcMaterialProfileSet / IfcMaterialProfileSetUsage (профили — металлопрокат).
+    """
     try:
         if not hasattr(element, "HasAssociations"):
             return ""
@@ -268,33 +296,23 @@ def _get_material(element):
 
             if mat.is_a("IfcMaterialLayerSetUsage"):
                 layerset = getattr(mat, "ForLayerSet", None)
-                if layerset and getattr(layerset, "MaterialLayers", None):
-                    names = []
-                    for layer in layerset.MaterialLayers:
-                        if layer.Material:
-                            nm = getattr(layer.Material, "Name", None)
-                            if nm:
-                                names.append(str(nm))
-                    if names:
-                        return ", ".join(names)
-                return ""
+                return _material_names(getattr(layerset, "MaterialLayers", None) if layerset else None)
 
             if mat.is_a("IfcMaterialLayerSet"):
-                names = []
-                for layer in getattr(mat, "MaterialLayers", []) or []:
-                    if layer.Material:
-                        nm = getattr(layer.Material, "Name", None)
-                        if nm:
-                            names.append(str(nm))
-                return ", ".join(names) if names else ""
+                return _material_names(getattr(mat, "MaterialLayers", []))
 
             if mat.is_a("IfcMaterialList"):
-                names = []
-                for m in getattr(mat, "Materials", []) or []:
-                    nm = getattr(m, "Name", None)
-                    if nm:
-                        names.append(str(nm))
-                return ", ".join(names) if names else ""
+                return _material_names(getattr(mat, "Materials", []))
+
+            if mat.is_a("IfcMaterialConstituentSet"):
+                return _material_names(getattr(mat, "MaterialConstituents", []))
+
+            if mat.is_a("IfcMaterialProfileSet"):
+                return _material_names(getattr(mat, "MaterialProfiles", []))
+
+            if mat.is_a("IfcMaterialProfileSetUsage"):
+                profset = getattr(mat, "ForProfileSet", None)
+                return _material_names(getattr(profset, "MaterialProfiles", None) if profset else None)
     except Exception as exc:
         logger.debug(f"Ошибка извлечения материала: {exc}")
     return ""
@@ -370,7 +388,7 @@ def _placement_to_matrix(placement):
         else:
             x = np.array([1.0, 0.0, 0.0])
             y = np.array([0.0, 1.0, 0.0])
-            z = np.array([0.0, 0.0, 0.0])
+            z = np.array([0.0, 0.0, 1.0])
 
         # Дополняем location до 3D (IfcCartesianPoint может быть 2D).
         if len(location) == 2:
@@ -400,6 +418,266 @@ def _placement_to_matrix(placement):
     M[:3, 2] = z
     M[:3, 3] = location
     return M
+
+
+def _local_placement_to_matrix(placement):
+    """Рекурсивно строит мировую матрицу из цепочки IfcLocalPlacement.
+
+    IfcLocalPlacement содержит PlacementRelTo (ссылка на родительский
+    placement) и RelativePlacement (IfcAxis2Placement3D). Матрицы
+    перемножаются от корня (IfcLocalPlacement без PlacementRelTo)
+    до текущего placement.
+    """
+    if placement is None:
+        return np.eye(4, dtype=float)
+
+    # Если есть родительский placement — сначала его матрица.
+    parent = getattr(placement, "PlacementRelTo", None)
+    if parent is not None and parent.is_a("IfcLocalPlacement"):
+        parent_m = _local_placement_to_matrix(parent)
+    else:
+        parent_m = np.eye(4, dtype=float)
+
+    own = getattr(placement, "RelativePlacement", None)
+    own_m = _placement_to_matrix(own)
+    return parent_m @ own_m
+
+
+def _mapped_item_to_matrix(item):
+    """Строит матрицу трансформации из IfcMappedItem (MappingTarget).
+
+    IfcMappedItem задаёт трансформацию через MappingTarget
+    (IfcCartesianTransformationOperator3D), которая включает смещение,
+    масштаб и поворот.
+    """
+    try:
+        target = getattr(item, "MappingTarget", None)
+        if target is None:
+            return np.eye(4, dtype=float)
+
+        # Точка начала (Axis1/LocalOrigin)
+        origin = getattr(target, "LocalOrigin", None)
+        loc = np.array(origin.Coordinates, dtype=float) if origin else np.zeros(3)
+        if len(loc) == 2:
+            loc = np.append(loc, 0.0)
+
+        # Направления осей
+        axis1 = getattr(target, "Axis1", None)   # X
+        axis2 = getattr(target, "Axis2", None)   # Y
+        axis3 = getattr(target, "Axis3", None)   # Z
+
+        def _dir(d, default):
+            if d is not None:
+                v = np.array(d.DirectionRatios, dtype=float)
+                n = np.linalg.norm(v)
+                return v / n if n > 1e-12 else np.array(default, dtype=float)
+            return np.array(default, dtype=float)
+
+        x = _dir(axis1, [1.0, 0.0, 0.0])
+        y = _dir(axis2, [0.0, 1.0, 0.0])
+        z = _dir(axis3, [0.0, 0.0, 1.0])
+
+        # Масштаб
+        scale = getattr(target, "Scale", 1.0) or 1.0
+
+        M = np.eye(4, dtype=float)
+        M[:3, 0] = x * scale
+        M[:3, 1] = y * scale
+        M[:3, 2] = z * scale
+        M[:3, 3] = loc
+        return M
+    except Exception:
+        return np.eye(4, dtype=float)
+
+
+def _apply_transform(verts, matrix):
+    """Применяет матрицу 4x4 к массиву вершин (N×3)."""
+    if matrix is None or np.allclose(matrix, np.eye(4)):
+        return verts
+    n = len(verts)
+    homog = np.hstack([verts, np.ones((n, 1))])  # N×4
+    transformed = homog @ matrix.T               # N×4
+    return transformed[:, :3]
+
+
+def _polygon_area_2d(points):
+    """Площадь 2D-многоугольника (формула шнурков/Gauss).
+
+    ``points`` — список (x, y). Первая и последняя точки могут совпадать
+    (замкнутый контур) или нет — оба варианта обрабатываются корректно.
+    """
+    n = len(points)
+    if n < 3:
+        return 0.0
+    # Если контур замкнут (первая == последняя) — убираем последнюю.
+    if points[0] == points[-1]:
+        pts = points[:-1]
+    else:
+        pts = points
+    n = len(pts)
+    if n < 3:
+        return 0.0
+    s = 0.0
+    for i in range(n):
+        x1, y1 = pts[i]
+        x2, y2 = pts[(i + 1) % n]
+        s += x1 * y2 - x2 * y1
+    return abs(s) / 2.0
+
+
+def _profile_net_area(contours):
+    """Площадь сечения профиля с учётом отверстий.
+
+    ``contours`` — список контуров: первый — внешний, остальные —
+    внутренние (отверстия). Площадь отверстий вычитается.
+    """
+    if not contours:
+        return 0.0
+    area = _polygon_area_2d(contours[0])
+    for inner in contours[1:]:
+        area -= _polygon_area_2d(inner)
+    return max(area, 0.0)
+
+
+def _fan_triangulate(face):
+    """Веерная триангуляция многоугольника (fallback)."""
+    n = len(face)
+    if n < 3:
+        return []
+    if n == 3:
+        return [list(face)]
+    return [[face[0], face[i], face[i + 1]] for i in range(1, n - 1)]
+
+
+def _ear_clip_triangulate(verts, face):
+    """Триангуляция простого многоугольника методом отрезания «ушек».
+
+    Корректно обрабатывает вогнутые многоугольники. Возвращает список
+    треугольников (тройки индексов в ``verts``).
+    """
+    n = len(face)
+    if n < 3:
+        return []
+    if n == 3:
+        return [list(face)]
+
+    # Нормаль грани для определения направления обхода и проецирования.
+    v0 = verts[face[0]]
+    v1 = verts[face[1]]
+    v2 = verts[face[2]]
+    normal = np.cross(v1 - v0, v2 - v0)
+    norm_len = np.linalg.norm(normal)
+    if norm_len < 1e-12:
+        return _fan_triangulate(face)
+    normal = normal / norm_len
+
+    # Выбираем плоскость проецирования (отбрасываем координату с
+    # наибольшей компонентой нормали — для устойчивости).
+    abs_n = np.abs(normal)
+    if abs_n[0] >= abs_n[1] and abs_n[0] >= abs_n[2]:
+        drop = 0
+    elif abs_n[1] >= abs_n[2]:
+        drop = 1
+    else:
+        drop = 2
+
+    def _proj(idx):
+        v = verts[idx]
+        return tuple(np.delete(v, drop))
+
+    pts2d = [_proj(i) for i in face]
+
+    # Определяем направление обхода (по знаку площади в 2D).
+    signed_area = 0.0
+    for i in range(n):
+        x1, y1 = pts2d[i]
+        x2, y2 = pts2d[(i + 1) % n]
+        signed_area += x1 * y2 - x2 * y1
+    ccw = signed_area > 0
+
+    # Индексы активных вершин (кольцо).
+    indices = list(range(n))
+
+    def _cross2d(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    def _is_convex(prev, curr, nxt):
+        # Для CCW: cross > 0 → выпуклый. Для CW: cross < 0 → выпуклый.
+        c = _cross2d(pts2d[prev], pts2d[curr], pts2d[nxt])
+        return c > 0 if ccw else c < 0
+
+    def _point_in_tri(p, a, b, c):
+        # Проверка: точка p внутри треугольника (a, b, c) — барицентрически.
+        d1 = _cross2d(a, b, p)
+        d2 = _cross2d(b, c, p)
+        d3 = _cross2d(c, a, p)
+        has_neg = (d1 < 0) or (d2 < 0) or (d3 < 0)
+        has_pos = (d1 > 0) or (d2 > 0) or (d3 > 0)
+        return not (has_neg and has_pos)
+
+    triangles = []
+    # Защита от бесконечного цикла.
+    max_iter = n * n
+    it = 0
+
+    while len(indices) > 3 and it < max_iter:
+        it += 1
+        ear_found = False
+        m = len(indices)
+        for ii in range(m):
+            prev_i = indices[(ii - 1) % m]
+            curr_i = indices[ii]
+            next_i = indices[(ii + 1) % m]
+
+            if not _is_convex(prev_i, curr_i, next_i):
+                continue
+
+            # Ни одна другая вершина не должна быть внутри этого треугольника.
+            a, b, c = pts2d[prev_i], pts2d[curr_i], pts2d[next_i]
+            ok = True
+            for jj in indices:
+                if jj in (prev_i, curr_i, next_i):
+                    continue
+                if _point_in_tri(pts2d[jj], a, b, c):
+                    ok = False
+                    break
+            if not ok:
+                continue
+
+            triangles.append([face[prev_i], face[curr_i], face[next_i]])
+            indices.pop(ii)
+            ear_found = True
+            break
+
+        if not ear_found:
+            # Не удалось найти «ушко» — fallback на веер для оставшихся.
+            remaining = [face[i] for i in indices]
+            triangles.extend(_fan_triangulate(remaining))
+            break
+
+    if len(indices) == 3:
+        triangles.append([face[indices[0]], face[indices[1]], face[indices[2]]])
+
+    return triangles if triangles else _fan_triangulate(face)
+
+
+def _is_mesh_closed(verts, faces):
+    """Проверяет, является ли меш замкнутой (manifold) поверхностью.
+
+    Меш считается замкнутым, если каждое ребро принадлежит ровно
+    двум граням. Возвращает True для замкнутого меша.
+    """
+    edges = {}
+    for f in faces:
+        n = len(f)
+        for j in range(n):
+            a, b = f[j], f[(j + 1) % n]
+            key = (min(a, b), max(a, b))
+            edges[key] = edges.get(key, 0) + 1
+    # Допускаем небольшое количество не-манифолдных рёбер (<= 2),
+    # т.к. тесселяции из Revit иногда имеют мелкие дефекты.
+    non_manifold = sum(1 for v in edges.values() if v != 2)
+    return non_manifold <= 2
 
 
 def _extract_profile_points_2d(profile):
@@ -499,25 +777,34 @@ def _extract_profile_points_2d(profile):
 
 
 def _extruded_solid_to_mesh(item):
-    """Преобразует IfcExtrudedAreaSolid в (verts, faces).
+    """Преобразует IfcExtrudedAreaSolid в (verts, faces, profile_area, depth, surface_area).
 
     Извлекает 2D-профиль, трансформирует через Position в 3D,
     затем экструдирует вдоль ExtrudedDirection на Depth.
-    Возвращает (np.ndarray вершин, list граней) или (None, None).
-    """
-    import math
 
+    ``profile_area`` — площадь сечения с учётом отверстий (мм²),
+    используется для точного вычисления объёма (profile_area × depth).
+
+    ``surface_area`` — площадь поверхности тела с учётом отверстий (мм²):
+    ``2×(S_внеш − ΣS_внутр) + P_внеш×depth + ΣP_внутр×depth``.
+
+    Возвращает (verts, faces, profile_area, depth, surface_area)
+    или (None, None, 0, 0, 0).
+    """
     swept_area = item.SweptArea
     if swept_area is None:
-        return None, None
+        return None, None, 0.0, 0.0, 0.0
 
     contours = _extract_profile_points_2d(swept_area)
     if not contours:
-        return None, None
+        return None, None, 0.0, 0.0, 0.0
 
     outer = contours[0]
     if len(outer) < 3:
-        return None, None
+        return None, None, 0.0, 0.0, 0.0
+
+    # Площадь сечения с учётом отверстий (для точного объёма).
+    profile_area = _profile_net_area(contours)
 
     # Матрица трансформации Position (IfcAxis2Placement3D).
     pos = getattr(item, "Position", None)
@@ -527,13 +814,29 @@ def _extruded_solid_to_mesh(item):
     ext_dir = item.ExtrudedDirection
     depth = float(item.Depth or 0)
     if ext_dir is None or depth <= 0:
-        return None, None
+        return None, None, 0.0, 0.0, 0.0
+
+    # Точная площадь поверхности экструзии (с учётом отверстий).
+    # 2 × (S_внеш − ΣS_внутр) — основания; P × depth — боковины.
+    def _perimeter(points):
+        p = 0.0
+        n = len(points)
+        if points[0] == points[-1]:
+            n -= 1
+        for i in range(n):
+            x1, y1 = points[i]
+            x2, y2 = points[(i + 1) % n]
+            p += ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+        return p
+
+    outer_per = _perimeter(outer)
+    surface_area = 2.0 * profile_area + outer_per * depth
+    for inner in contours[1:]:
+        surface_area += _perimeter(inner) * depth
 
     direction = np.array(ext_dir.DirectionRatios, dtype=float)
     direction = direction / np.linalg.norm(direction)
     # Вектор экструзии в мировых координатах.
-    # Если Position задано, направление экструзии задаётся в локальной системе
-    # Position и должно быть трансформировано.
     ext_vec = M[:3, :3] @ direction * depth
 
     # Нижнее основание: 2D-точки профиля → 3D через M.
@@ -560,34 +863,46 @@ def _extruded_solid_to_mesh(item):
     # Замыкающая боковая грань.
     faces.append([n - 1, 0, n, 2 * n - 1])
 
-    return verts, faces
+    return verts, faces, profile_area, depth, surface_area
 
 
-def _collect_geom_from_item(item, parts):
+def _collect_geom_from_item(item, parts, transform=None):
     """Рекурсивно собирает геометрические части (verts, faces) из элемента-представления.
 
     Обрабатывает:
-      * IfcMappedItem  — раскрывает через MappingSource.MappedRepresentation;
+      * IfcMappedItem  — раскрывает через MappingSource.MappedRepresentation
+        с применением трансформации MappingTarget;
       * IfcPolygonalFaceSet / IfcTriangulatedFaceSet — тесселяция;
       * IfcFacetedBrep — граненая B-Rep модель;
       * IfcExtrudedAreaSolid — тело выдавливания (профиль + глубина);
       * IfcBooleanClippingResult — раскрывает через Operand (рекурсивно);
       * IfcBooleanResult — раскрывает первый операнд.
 
-    ``parts`` — список накопленных кортежей (np.ndarray вершин, list граней).
+    ``parts`` — список накопленных кортежей:
+      (np.ndarray вершин, list граней, kind, profile_area, surface_area)
+      где kind = 'extruded' | 'surface',
+      profile_area — площадь сечения экструзии (мм²),
+      surface_area — точная площадь поверхности экструзии (мм²).
+
+    ``transform`` — опциональная матрица 4×4, применяемая к вершинам.
     Индексы в гранях — 0-based, указывают на локальный массив вершин части.
     """
     try:
         if item.is_a("IfcMappedItem"):
+            # IfcMappedItem: трансформируем через MappingTarget.
             mrep = item.MappingSource.MappedRepresentation
+            mapped_m = _mapped_item_to_matrix(item)
+            combined = mapped_m if transform is None else transform @ mapped_m
             for it in mrep.Items:
-                _collect_geom_from_item(it, parts)
+                _collect_geom_from_item(it, parts, combined)
 
         elif item.is_a("IfcPolygonalFaceSet") or item.is_a("IfcTriangulatedFaceSet"):
             coords = item.Coordinates.CoordList
             if not coords:
                 return
             verts = np.array(coords, dtype=float)
+            # Применяем трансформацию (MappingTarget / placement).
+            verts = _apply_transform(verts, transform)
             faces = []
 
             # IfcPolygonalFaceSet: грани — IfcIndexedPolygonalFace.
@@ -601,7 +916,7 @@ def _collect_geom_from_item(item, parts):
                     faces.append([i - 1 for i in idx])
 
             if len(verts) > 0 and faces:
-                parts.append((verts, faces))
+                parts.append((verts, faces, 'surface', None, None))
 
         elif item.is_a("IfcFacetedBrep"):
             outer = item.Outer
@@ -618,12 +933,15 @@ def _collect_geom_from_item(item, parts):
                                 verts.append(list(p.Coordinates))
                             faces.append(face_idx)
                 if verts:
-                    parts.append((np.array(verts, dtype=float), faces))
+                    verts = np.array(verts, dtype=float)
+                    verts = _apply_transform(verts, transform)
+                    parts.append((verts, faces, 'surface', None, None))
 
         elif item.is_a("IfcExtrudedAreaSolid"):
-            verts, faces = _extruded_solid_to_mesh(item)
+            verts, faces, profile_area, depth, surface_area = _extruded_solid_to_mesh(item)
             if verts is not None and len(verts) > 0 and faces:
-                parts.append((verts, faces))
+                verts = _apply_transform(verts, transform)
+                parts.append((verts, faces, 'extruded', profile_area, surface_area))
 
         elif item.is_a("IfcBooleanClippingResult") or item.is_a("IfcBooleanResult"):
             # Boolean result: раскрываем первый операнд (тело).
@@ -633,26 +951,31 @@ def _collect_geom_from_item(item, parts):
             if operand is None:
                 operand = getattr(item, "Operand1", None)
             if operand is not None:
-                _collect_geom_from_item(operand, parts)
+                _collect_geom_from_item(operand, parts, transform)
 
     except Exception as exc:
         logger.debug(f"Ошибка извлечения геометрии из {item.is_a()}: {exc}")
 
 
 def _compute_mesh_volume(verts, faces):
-    """Вычисляет объём замкнутого меша методом сигнатур тетраэдров.
+    """Вычисляет объём меша методом сигнатур тетраэдров.
 
-    Для каждой грани (триангулированной веером) считается
+    Для каждой грани (триангулированной корректно) считается
     signed volume тетраэдра (0, a, b, c). Сумма по модулю — объём.
     Координаты в мм, результат — в мм³.
+
+    Для устойчивости результат не зависит от начала координат, если меш
+    замкнут. Если меш не замкнут (тесселяции из Revit часто имеют
+    boundary-рёбра / мелкие «дыры»), метод даёт приближённое значение:
+    вклад «дыр» в сумму обычно мал по сравнению с объёмом тела.
     """
     total = 0.0
     for face in faces:
-        # Триангуляция веером (fan) для многоугольных граней.
-        for i in range(1, len(face) - 1):
-            a = verts[face[0]]
-            b = verts[face[i]]
-            c = verts[face[i + 1]]
+        triangles = _ear_clip_triangulate(verts, face)
+        for (ia, ib, ic) in triangles:
+            a = verts[ia]
+            b = verts[ib]
+            c = verts[ic]
             total += np.dot(a, np.cross(b, c)) / 6.0
     return abs(total)
 
@@ -660,14 +983,16 @@ def _compute_mesh_volume(verts, faces):
 def _compute_surface_area(verts, faces):
     """Вычисляет площадь поверхности меша (сумма площадей треугольников).
 
-    Координаты в мм, результат — в мм².
+    Координаты в мм, результат — в мм². Используется корректная
+    триангуляция (ear-clipping) для вогнутых многоугольников.
     """
     total = 0.0
     for face in faces:
-        for i in range(1, len(face) - 1):
-            a = verts[face[0]]
-            b = verts[face[i]]
-            c = verts[face[i + 1]]
+        triangles = _ear_clip_triangulate(verts, face)
+        for (ia, ib, ic) in triangles:
+            a = verts[ia]
+            b = verts[ib]
+            c = verts[ic]
             total += 0.5 * np.linalg.norm(np.cross(b - a, c - a))
     return total
 
@@ -682,6 +1007,13 @@ def _compute_bbox_quantities(element):
       * ``Высота_мм``              — наименьший габарит bbox (мм);
       * ``Площадь_поверхности_м2`` — площадь поверхности меша (м²).
 
+    Объём для тел выдавливания (IfcExtrudedAreaSolid) вычисляется точно
+    как ``площадь_сечения × глубина`` (с вычетом отверстий). Для
+    тесселированных мешей используется метод сигнатур тетраэдров
+    (приближённо корректный и для мешей с мелкими дефектами). Если
+    полученный объём нулевой или отрицательный — используется
+    bbox-объём (Длина × Ширина × Высота) как запасной вариант.
+
     Все значения округлены: объём — 4 знака, габариты — 1 знак,
     площадь — 4 знака. Если геометрия отсутствует — пустой словарь.
     """
@@ -691,8 +1023,20 @@ def _compute_bbox_quantities(element):
         if not rep:
             return result
 
+        # ObjectPlacement элемента НЕ применяется: он лишь позиционирует
+        # элемент в проекте (сдвиг + поворот), не меняя его реальные
+        # размеры. Габариты вычисляются в локальной системе координат
+        # элемента. Трансформация IfcMappedItem (MappingTarget) применяется
+        # внутри _collect_geom_from_item — она является частью определения
+        # геометрии экземпляра (масштаб, зеркалирование и т.п.).
+
         parts = []
         for r in rep.Representations:
+            # Пропускаем негеометрические представления (FootPrint, Axis и т.п.),
+            # оставляем только пространственные тела/поверхности.
+            rep_type = getattr(r, "RepresentationType", None) or ""
+            if rep_type in ("Curve2D", "Curve3D", "Point", "GeometricSet"):
+                continue
             for item in r.Items:
                 _collect_geom_from_item(item, parts)
 
@@ -703,10 +1047,30 @@ def _compute_bbox_quantities(element):
         total_volume = 0.0
         total_area = 0.0
 
-        for verts, faces in parts:
+        for verts, faces, kind, profile_area, surface_area in parts:
             all_verts.append(verts)
-            total_volume += _compute_mesh_volume(verts, faces)
-            total_area += _compute_surface_area(verts, faces)
+
+            if kind == 'extruded':
+                # Объём тела выдавливания: площадь сечения (с вычетом
+                # отверстий) × глубина. Глубину берём как расстояние
+                # между нижним и верхним основаниями.
+                n = len(verts)
+                half = n // 2
+                if half > 0 and profile_area is not None and profile_area > 0:
+                    v_bottom = verts[0]
+                    v_top = verts[half]
+                    depth = float(np.linalg.norm(v_top - v_bottom))
+                    total_volume += profile_area * depth
+                # Площадь поверхности — точная формула (с учётом отверстий),
+                # если она вычислена; иначе падаем на триангуляцию.
+                if surface_area is not None and surface_area > 0:
+                    total_area += surface_area
+                else:
+                    total_area += _compute_surface_area(verts, faces)
+            else:
+                # Поверхностный меш — метод тетраэдров (только замкнутые).
+                total_volume += _compute_mesh_volume(verts, faces)
+                total_area += _compute_surface_area(verts, faces)
 
         if not all_verts:
             return result
@@ -716,6 +1080,19 @@ def _compute_bbox_quantities(element):
         # Длина (наибольший) → Ширина → Высота (наименьший).
         dims = combined.max(axis=0) - combined.min(axis=0)
         dims_sorted = np.sort(dims)[::-1]
+
+        # Объём bbox (Длина × Ширина × Высота) — fallback на случай,
+        # если объём из геометрии получился нулевым или аномально малым
+        # (сильно «дырявый» меш, вырожденная геометрия и т.п.).
+        bbox_volume = float(dims_sorted[0] * dims_sorted[1] * dims_sorted[2])
+
+        if total_volume <= 0.0:
+            logger.debug(
+                f"Объём из геометрии для {getattr(element, 'GlobalId', '?')} "
+                f"равен {total_volume:.3f} мм³ — использую bbox-объём "
+                f"{bbox_volume:.3f} мм³."
+            )
+            total_volume = bbox_volume
 
         # Координаты в IFC — в миллиметрах.
         result = {

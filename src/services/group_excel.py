@@ -1075,6 +1075,7 @@ def group_elements_ar(rows: List[Dict[str, Any]], headers: List[str]) -> List[Di
     from src.services.materials_lookup import (
         build_materials_lookup,
         resolve_material_group,
+        extract_material_value,
     )
     lookup, _ = build_mssk_lookup()
     materials_lookup, _ = build_materials_lookup()
@@ -1098,6 +1099,13 @@ def group_elements_ar(rows: List[Dict[str, Any]], headers: List[str]) -> List[Di
         (h for h in headers if 'IfcMaterialLayer::Name' in str(h)),
         None,
     )
+
+    # Есть ли MGE-колонки с кодами материалов (fallback для дверей, окон и т.п.,
+    # у которых нет IfcMaterialLayer, но есть Pset ExpCheck_*::MGE_Material*).
+    has_mge_material = any('MGE_Material' in str(h) for h in headers)
+
+    # Группировка по материалу выполняется, если есть хотя бы один источник.
+    has_material_source = bool(material_col) or has_mge_material
 
     has_mssk_col = 'Код мсск' in headers
 
@@ -1150,11 +1158,11 @@ def group_elements_ar(rows: List[Dict[str, Any]], headers: List[str]) -> List[Di
         mssk_group = _create_group(mssk_name, 1, mssk_df, rows, volume_col_name, sum_columns)
 
         # --- Группировка по главному материалу (L2) ---
-        if material_col:
+        if has_material_source:
             mat_groups = defaultdict(list)
             mat_meta = {}  # имя группы → порядок сортировки
             for idx in indices:
-                mat_val = rows[idx].get(material_col, '')
+                mat_val = extract_material_value(rows[idx])
                 mat_name, mat_order = resolve_material_group(mat_val, materials_lookup)
                 mat_groups[mat_name].append(idx)
                 mat_meta[mat_name] = mat_order

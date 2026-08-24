@@ -23,7 +23,7 @@ import json
 import os
 import re
 from functools import lru_cache
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from src.core.logger import setup_logger
 
@@ -160,3 +160,107 @@ def resolve_material_group(
     if info:
         return info["name"], info["order"]
     return OTHER_LABEL, float("inf")
+
+
+# Колонки-источники материалов из Pset «ExpCheck_*» (MGE_MaterialCode/MGE_Material).
+# Используются как fallback, когда у элемента нет IfcMaterialLayer::Name.
+_MGE_MATERIAL_COLS = (
+    "MGE_MaterialCode",
+    "MGE_Material",
+    "MGE_MaterialCode1",
+    "MGE_Material1",
+    "MGE_MaterialCode2",
+    "MGE_Material2",
+)
+
+# Значения, считающиеся «пустыми» (в т.ч. NaN из Excel/pandas).
+_EMPTY_VALUES = ("", "-", "nan", "none", "nat", "null")
+
+
+def _is_empty_value(val) -> bool:
+    """Проверяет, что значение материала пустое (None, NaN, '-', '')."""
+    if val is None:
+        return True
+    return str(val).strip().lower() in _EMPTY_VALUES
+
+
+def extract_material_value(row: Dict[str, Any]) -> str:
+    """Собирает строку материалов элемента с учётом fallback-источников.
+
+    Приоритет:
+      1. «Свойство::IfcMaterialLayer::Name» — уже содержит «Имя (СТ ...)»;
+      2. пары MGE_MaterialCode/MGE_Material из Pset «ExpCheck_*» (для дверей,
+         окон, витражей, облицовок и т.п., где нет слоёв материала).
+
+    Из пар MGE строится строка вида «Имя (СТ ...)Имя2 (СТ ...)», которую
+    умеет разбирать parse_material_segments(). Повторяющиеся коды
+    (например MGE_MaterialCode1 == MGE_MaterialCode2 у двери) отбрасываются,
+    чтобы элемент не попал в «Многослойные» из-за дубликата.
+
+    Если ни одного источника нет — возвращается пустая строка (→ «Прочее»).
+    """
+    if row is None:
+        return ""
+
+    # 1) Основной источник — слои материала.
+    for key in row:
+        if "IfcMaterialLayer::Name" in str(key):
+            val = row.get(key)
+            if not _is_empty_value(val):
+                return str(val).strip()
+            break
+
+    # 2) Fallback — пары MGE_MaterialCode/MGE_Material из Pset ExpCheck_*.
+    #    Группируем колонки по Pset-префиксу и суффиксу номера (1, 2, ...),
+    #    чтобы корректно сопоставить Code1↔Material1, Code2↔Material2 и т.д.
+    from collections import OrderedDict
+
+    # pset_prefix → {suffix → {"code": ..., "name": ...}}
+    pset_pairs: "OrderedDict[str, OrderedDict[str, Dict[str, str]]]" = OrderedDict()
+
+    for key in row:
+        skey = str(key)
+        if "MGE_Material" not in skey:
+            continue
+        idx = skey.rfind("::")
+        if idx == -1:
+            continue
+        pset = skey[:idx]          # «Свойство::ExpCheck_Door»
+        short = skey[idx + 2:]     # «MGE_MaterialCode1»
+        if short not in _MGE_MATERIAL_COLS:
+            continue
+        val = row.get(key)
+        if _is_empty_value(val):
+            continue
+        val = str(val).strip()
+
+        # Суффикс: '' для MGE_MaterialCode/MGE_Material, '1', '2' и т.д.
+        if short.startswith("MGE_MaterialCode"):
+            suffix = short[len("MGE_MaterialCode"):]
+        else:
+            suffix = short[len("MGE_Material"):]
+
+        pairs = pset_pairs.setdefault(pset, OrderedDict())
+        pair = pairs.setdefault(suffix, {"code": None, "name": None})
+        if short.startswith("MGE_MaterialCode"):
+            pair["code"] = val
+        else:
+            pair["name"] = val
+
+    if not pset_pairs:
+        return ""
+
+    parts = []
+    seen_codes = set()
+    for pairs in pset_pairs.values():
+        for pair in pairs.values():
+            code = pair["code"]
+            name = pair["name"]
+            if code:
+                if code in seen_codes:
+                    continue
+                seen_codes.add(code)
+                parts.append(f"{name or ''} ({code})" if name else f"({code})")
+            elif name:
+                parts.append(name)
+    return "".join(parts)

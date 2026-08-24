@@ -816,29 +816,33 @@ class SessionManager:
     # =====================================================================
 
     def _load_material_layer_map(self, session_id: str) -> Dict[str, str]:
-        """Загружает карту GlobalId → «Свойство::IfcMaterialLayer::Name».
+        """Загружает карту GlobalId → строка материалов элемента.
 
         Источник — JSON-дамп сырых параметров IFC (IFC_исходные_параметры.json)
         в корне сессии. При отсуствии JSON читает XLSX-дамп (`IFC_исходные_параметры.xlsx`).
-        Используется для групировки элементов в режиме АР по главному материалу.
+        Используется для группировки элементов в режиме АР по главному материалу.
+
+        Значение для каждого элемента строится функцией extract_material_value:
+        сначала берётся «Свойство::IfcMaterialLayer::Name», а если оно пустое —
+        пары MGE_MaterialCode/MGE_Material из Pset «ExpCheck_*» (двери, окна и т.п.).
         """
         from src.services.ifc_raw_dump import RAW_DUMP_JSON_FILENAME, RAW_DUMP_FILENAME
+        from src.services.materials_lookup import extract_material_value
 
         session_dir = os.path.join(self.output_folder, session_id)
         json_path = os.path.join(session_dir, RAW_DUMP_JSON_FILENAME)
         xlsx_path = os.path.join(session_dir, RAW_DUMP_FILENAME)
 
         rows = None
-        mat_col = None
+        has_material_col = False
 
         if os.path.isfile(json_path):
             try:
                 with open(json_path, "r", encoding="utf-8") as fh:
                     data = json.load(fh)
                 if isinstance(data, list) and data:
-                    mat_col = next(
-                        (k for k in data[0].keys() if "IfcMaterialLayer::Name" in str(k)),
-                        None,
+                    has_material_col = any(
+                        "IfcMaterialLayer::Name" in str(k) for k in data[0].keys()
                     )
                     rows = data
             except Exception as exc:
@@ -848,16 +852,22 @@ class SessionManager:
         if rows is None and os.path.isfile(xlsx_path):
             try:
                 df_dump = pd.read_excel(xlsx_path)
-                mat_col = next(
-                    (c for c in df_dump.columns if "IfcMaterialLayer::Name" in str(c)),
-                    None,
+                has_material_col = any(
+                    "IfcMaterialLayer::Name" in str(c) for c in df_dump.columns
                 )
                 rows = df_dump.to_dict("records")
             except Exception as exc:
                 logger.warning(f"Не удалось прочитать XLSX-дамп материалов {xlsx_path}: {exc}")
                 rows = None
 
-        if not rows or not mat_col:
+        if not rows:
+            return {}
+
+        # Если нет ни IfcMaterialLayer::Name, ни MGE-колонок — карта бесполезна.
+        has_any_source = has_material_col or any(
+            "MGE_Material" in str(k) for k in rows[0].keys()
+        )
+        if not has_any_source:
             return {}
 
         material_map = {}
@@ -865,8 +875,8 @@ class SessionManager:
             gid = row.get("GlobalId")
             if gid is None:
                 continue
-            material_map[str(gid)] = str(row.get(mat_col, "") or "")
-        logger.info(f"Карта материалов: {len(material_map)} элементов (колонка: {mat_col})")
+            material_map[str(gid)] = extract_material_value(row)
+        logger.info(f"Карта материалов: {len(material_map)} элементов")
         return material_map
 
     def new_run(self, session_id: str, row_indices: List[int], 
