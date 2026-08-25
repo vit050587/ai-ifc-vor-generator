@@ -10,6 +10,9 @@ class Config:
     model_ollama: str
     KOEFS_PATH: str
     PRICE_COST_PATH: str
+    # API справочника работ ТСН (для режима КР)
+    WORKS_API_URL: str
+    WORKS_API_TOKEN: str
 
 
 def load_config() -> Config:
@@ -20,4 +23,9 @@ def load_config() -> Config:
         KOEFS_PATH=os.getenv("KOEFS_PATH", "data/koefs.xlsx"),
         PRICE_COST_PATH=os.getenv("PRICE_COST_PATH", "data/price_cost.xlsx"),
         model_ollama=os.getenv("NORMS_LLM_MODEL", "yandex/YandexGPT-5-Lite-8B-instruct-GGUF:latest"),
+        WORKS_API_URL=os.getenv(
+            "WORKS_API_URL",
+            "https://normativ.mgexp.org/digital-collection/api/v1/digital-collection/building-elements/positions",
+        ),
+        WORKS_API_TOKEN=os.getenv("WORKS_API_TOKEN", ""),
     )

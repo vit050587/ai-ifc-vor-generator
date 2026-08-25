@@ -1189,13 +1189,17 @@ class SessionManager:
             # Собираем листовые группы
             self._update_progress(session_id, 15, f"Запуск {run_number}: Формирование групп для сметчика...")
             
-            def collect_leaf_groups(groups_list, result=None):
+            def collect_leaf_groups(groups_list, result=None, path=None):
                 if result is None:
                     result = []
+                if path is None:
+                    path = []
                 for group in groups_list:
+                    current_path = path + [group.get('name', '')]
                     if group.get('children') and len(group['children']) > 0:
-                        collect_leaf_groups(group['children'], result)
+                        collect_leaf_groups(group['children'], result, current_path)
                     else:
+                        group['path'] = current_path
                         result.append(group)
                 return result
             
@@ -1260,26 +1264,74 @@ class SessionManager:
             # Обновляем пути для этапов
             excel_path = smetchik_path
             row_indices = list(range(len(df_smetchik)))
-            
-            # Этапы 1-4
-            self._update_progress(session_id, 20, f"Запуск {run_number}: Этап 1 — Анализ через LLM...")
-            first_step(
-                prompt_manager=self.prompt_manager,
-                file=excel_path,
-                rows=[i+1 for i in row_indices],
-                output_folder=run_dir
-            )
-            
-            self._update_progress(session_id, 40, f"Запуск {run_number}: Этап 2 — Фильтрация по части здания ({processing_type})...")
-            second_step(input_folder=run_dir, processing_type=processing_type)
-            
-            self._update_progress(session_id, 60, f"Запуск {run_number}: Этап 3 — Фильтрация по высоте...")
-            third_step(input_folder=run_dir, building_height=building_height)
-            
-            self._update_progress(session_id, 90, f"Запуск {run_number}: Этап 4 — Формирование перечня ({processing_type})...")
-            fourth_step(input_folder=run_dir, processing_type=processing_type)
-            
-            self._update_progress(session_id, 95, f"Запуск {run_number}: Сохранение результатов...")
+
+            # ---- Подбор работ ----
+            # КР: работы подбираются через API справочника ТСН —
+            # группы выбранных элементов (в формате ifc_raw_elements_grouped.json)
+            # отправляются POST-запросом на эндпоинт, из ответа формируется
+            # финальный перечень работ (этапы 1-4 не выполняются).
+            # АР: сохраняется прежний пайплайн LLM (этапы 1-4).
+            if processing_type == "KR":
+                from src.services.ifc_reference_builder import build_reference_output
+                from src.services.api_works_lookup import (
+                    fetch_works_from_api,
+                    build_final_works_from_api,
+                )
+
+                self._update_progress(
+                    session_id, 20,
+                    f"Запуск {run_number}: Подготовка групп элементов для API подбора работ..."
+                )
+
+                # Преобразуем листовые группы в формат ifc_raw_elements_grouped.json
+                api_groups = build_reference_output(leaf_groups, groups)
+                if not api_groups:
+                    raise RuntimeError(
+                        "Не удалось сформировать группы элементов для API подбора работ"
+                    )
+
+                # Сохраняем группы выбранных элементов как JSON
+                api_request_path = os.path.join(run_dir, 'selected_elements_grouped.json')
+                with open(api_request_path, 'w', encoding='utf-8') as f:
+                    json.dump(api_groups, f, ensure_ascii=False, indent=2)
+                logger.info(
+                    f"Сохранены группы выбранных элементов: {api_request_path} "
+                    f"({len(api_groups)} групп)"
+                )
+
+                self._update_progress(
+                    session_id, 40,
+                    f"Запуск {run_number}: Запрос работ к API справочника ТСН..."
+                )
+                api_results = fetch_works_from_api(api_groups)
+
+                self._update_progress(
+                    session_id, 80,
+                    f"Запуск {run_number}: Формирование финального перечня работ..."
+                )
+                build_final_works_from_api(api_results, run_dir)
+
+                self._update_progress(session_id, 95, f"Запуск {run_number}: Сохранение результатов...")
+            else:
+                # Этапы 1-4 (АР)
+                self._update_progress(session_id, 20, f"Запуск {run_number}: Этап 1 — Анализ через LLM...")
+                first_step(
+                    prompt_manager=self.prompt_manager,
+                    file=excel_path,
+                    rows=[i+1 for i in row_indices],
+                    output_folder=run_dir
+                )
+
+                self._update_progress(session_id, 40, f"Запуск {run_number}: Этап 2 — Фильтрация по части здания ({processing_type})...")
+                second_step(input_folder=run_dir, processing_type=processing_type)
+
+                self._update_progress(session_id, 60, f"Запуск {run_number}: Этап 3 — Фильтрация по высоте...")
+                third_step(input_folder=run_dir, building_height=building_height)
+
+                self._update_progress(session_id, 90, f"Запуск {run_number}: Этап 4 — Формирование перечня ({processing_type})...")
+                fourth_step(input_folder=run_dir, processing_type=processing_type)
+
+                self._update_progress(session_id, 95, f"Запуск {run_number}: Сохранение результатов...")
             
             # Собираем финальные файлы
             final_files = []
@@ -1304,6 +1356,17 @@ class SessionManager:
                     })
             
             final_files.sort(key=lambda x: x['filename'])
+
+            # КР: включаем в результаты JSON групп выбранных элементов,
+            # отправленный в API подбора работ.
+            if processing_type == "KR":
+                api_request_path = os.path.join(run_dir, 'selected_elements_grouped.json')
+                if os.path.isfile(api_request_path):
+                    final_files.append({
+                        "path": api_request_path,
+                        "filename": "группы выбранных элементов.json",
+                        "size": os.path.getsize(api_request_path),
+                    })
             
             # Добавляем справочные JSON из корня сессии
             for src_name, display_name in [
