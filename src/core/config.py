@@ -12,7 +12,11 @@ class Config:
     PRICE_COST_PATH: str
     # API справочника работ ТСН (для режима КР)
     WORKS_API_URL: str
-    WORKS_API_TOKEN: str
+    WORKS_API_TOKEN: str  # fallback-токен, если Keycloak-клиент не настроен
+    # Keycloak для автоматического обновления токена (client_credentials)
+    KEYCLOAK_TOKEN_URL: str
+    KEYCLOAK_CLIENT_ID: str
+    KEYCLOAK_CLIENT_SECRET: str
 
 
 def load_config() -> Config:
@@ -28,4 +32,10 @@ def load_config() -> Config:
             "https://normativ.mgexp.org/digital-collection/api/v1/digital-collection/building-elements/positions",
         ),
         WORKS_API_TOKEN=os.getenv("WORKS_API_TOKEN", ""),
+        KEYCLOAK_TOKEN_URL=os.getenv(
+            "KEYCLOAK_TOKEN_URL",
+            "https://normativ-idm.mgexp.org/realms/normativ/protocol/openid-connect/token",
+        ),
+        KEYCLOAK_CLIENT_ID=os.getenv("KEYCLOAK_CLIENT_ID", ""),
+        KEYCLOAK_CLIENT_SECRET=os.getenv("KEYCLOAK_CLIENT_SECRET", ""),
     )

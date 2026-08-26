@@ -18,14 +18,17 @@ digital-collection/building-elements/positions.
      price_cost.xlsx (Шифр ТСН × Объём работ).
 """
 
+import base64
 import json
 import os
+import time
 from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 import requests
 
 from src.core.config import load_config
+from src.core.keycloak import KeycloakTokenProvider
 from src.core.logger import setup_logger
 from src.services.fourth_etap import _get_corrected_volume, _add_cost_column
 
@@ -35,6 +38,58 @@ _cfg = load_config()
 
 API_URL = _cfg.WORKS_API_URL
 API_TOKEN = _cfg.WORKS_API_TOKEN
+
+# Провайдер для автоматического обновления токена (Keycloak, client_credentials).
+# Если KEYCLOAK_CLIENT_ID/KEYCLOAK_CLIENT_SECRET не заданы — используется
+# статичный WORKS_API_TOKEN как fallback.
+if _cfg.KEYCLOAK_CLIENT_ID and _cfg.KEYCLOAK_CLIENT_SECRET:
+    _token_provider = KeycloakTokenProvider(
+        token_url=_cfg.KEYCLOAK_TOKEN_URL,
+        client_id=_cfg.KEYCLOAK_CLIENT_ID,
+        client_secret=_cfg.KEYCLOAK_CLIENT_SECRET,
+    )
+    logger.info(
+        "Токен API справочника работ будет получаться автоматически "
+        "(Keycloak client_credentials)"
+    )
+else:
+    _token_provider = None
+    if not API_TOKEN:
+        logger.warning(
+            "WORKS_API_TOKEN не задан и Keycloak-клиент не сконфигурирован "
+            "(KEYCLOAK_CLIENT_ID/KEYCLOAK_CLIENT_SECRET) — "
+            "запросы к API работ будут недоступны"
+        )
+    else:
+        logger.warning(
+            "Keycloak-клиент не сконфигурирован (KEYCLOAK_CLIENT_ID/"
+            "KEYCLOAK_CLIENT_SECRET) — используется статичный WORKS_API_TOKEN"
+        )
+
+
+def _get_token() -> str:
+    """Возвращает актуальный Bearer-токен.
+
+    Если настроен Keycloak-клиент — токен получается и обновляется
+    автоматически, иначе возвращается статичный WORKS_API_TOKEN.
+    """
+    if _token_provider is not None:
+        return _token_provider.get_token()
+    if not API_TOKEN:
+        raise RuntimeError(
+            "Не задан Bearer-токен для API подбора работ "
+            "(переменная окружения WORKS_API_TOKEN)"
+        )
+    try:
+        payload_b64 = API_TOKEN.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        exp = payload.get("exp")
+        exp_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(exp)) if exp else "?"
+    except Exception:
+        exp_str = "?"
+    logger.info(f"Используется статичный WORKS_API_TOKEN (exp={exp_str})")
+    return API_TOKEN
 
 # Максимальный размер страницы — чтобы получить все позиции за один запрос.
 _PAGE_SIZE = 1000
@@ -51,20 +106,32 @@ def _fetch_one(element: Dict[str, Any]) -> Dict[str, Any]:
     отправляется отдельным запросом.
     """
     headers = {
-        "Authorization": f"Bearer {API_TOKEN}",
+        "Authorization": f"Bearer {_get_token()}",
         "Content-Type": "application/json",
     }
     url = f"{API_URL}?pageSize={_PAGE_SIZE}"
 
-    try:
-        response = requests.post(url, json=element, headers=headers, timeout=300)
-    except requests.RequestException as exc:
-        raise RuntimeError(f"Ошибка вызова API подбора работ: {exc}") from exc
+    def _post() -> requests.Response:
+        try:
+            return requests.post(url, json=element, headers=headers, timeout=300)
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Ошибка вызова API подбора работ: {exc}") from exc
+
+    response = _post()
+
+    # Токен мог быть отозван Keycloak раньше, чем наступил рассчитанный
+    # expires_at. В таком случае сбрасываем кеш, получаем новый токен
+    # и повторяем запрос ровно один раз.
+    if response.status_code == 401 and _token_provider is not None:
+        _token_provider.invalidate()
+        headers["Authorization"] = f"Bearer {_get_token()}"
+        response = _post()
 
     if response.status_code == 401:
         raise RuntimeError(
             "API подбора работ вернул 401 — Bearer-токен недействителен "
-            "(проверьте WORKS_API_TOKEN)"
+            "(проверьте WORKS_API_TOKEN / KEYCLOAK_CLIENT_ID и "
+            "KEYCLOAK_CLIENT_SECRET)"
         )
     if response.status_code >= 400:
         raise RuntimeError(
@@ -107,11 +174,8 @@ def fetch_works_from_api(
     if not elements_json:
         raise RuntimeError("Нет данных для отправки в API подбора работ")
 
-    if not API_TOKEN:
-        raise RuntimeError(
-            "Не задан Bearer-токен для API подбора работ "
-            "(переменная окружения WORKS_API_TOKEN)"
-        )
+    # Убеждаемся, что токен доступен (из Keycloak-провайдера или WORKS_API_TOKEN).
+    _get_token()
 
     results: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
     total = len(elements_json)
