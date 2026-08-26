@@ -539,10 +539,13 @@ def parse_name(name: str, ifc_class: str):
     
     if ifc_class in ["IfcWall", "IfcWallStandardCase"]:
         # Ищем толщину стены: 100мм, 200 мм, t=100 и т.д.
+        # (?<!\d) вместо \b: символ «_» считается word-символом, поэтому
+        # \b не срабатывает перед числом в именах вида «ADSK_Бетон В25_200 мм»,
+        # где толщина отделена подчёркиванием от марки бетона.
         patterns = [
             r'(?:толщина|t)[\s=]*(\d{2,3})\s?мм',  # толщина 100мм или t=100
-            r'\b(\d{2,3})\s?мм\b',                   # просто 100мм
-            r'\b(\d{2,3})mm\b',                      # 100mm
+            r'(?<!\d)(\d{2,3})\s?мм\b',             # 100мм / В25_200 мм
+            r'(?<!\d)(\d{2,3})mm\b',                # 100mm
         ]
         for pattern in patterns:
             match = re.search(pattern, name, re.IGNORECASE)
@@ -554,8 +557,8 @@ def parse_name(name: str, ifc_class: str):
         # Ищем толщину перекрытия
         patterns = [
             r'(?:толщина|t|h)[\s=]*(\d{2,3})\s?мм',
-            r'\b(\d{2,3})\s?мм\b',
-            r'\b(\d{2,3})mm\b',
+            r'(?<!\d)(\d{2,3})\s?мм\b',
+            r'(?<!\d)(\d{2,3})mm\b',
         ]
         for pattern in patterns:
             match = re.search(pattern, name, re.IGNORECASE)

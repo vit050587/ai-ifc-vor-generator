@@ -237,6 +237,27 @@ def _add_cost_column(df):
         df['Стоимость'] = ''
         return df
 
+    def _lookup_price(shifr_clean):
+        """Возвращает цену по шифру ТСН с учётом разных форматов записи.
+
+        price_cost.xlsx хранит шифры в старом формате '3.6-98-1',
+        а API справочника ТСН отдаёт их без префикса: '6-98-1'.
+        Пробуем точное совпадение, затем оба варианта с префиксом и без.
+        """
+        if shifr_clean in lookup:
+            return lookup[shifr_clean]
+        # Шифр без '3.' — пробуем старый формат price_cost.xlsx ('3.' + шифр)
+        if not shifr_clean.startswith('3.'):
+            alt = '3.' + shifr_clean
+            if alt in lookup:
+                return lookup[alt]
+        # Шифр с '3.' — пробуем вариант без префикса
+        if shifr_clean.startswith('3.'):
+            alt = shifr_clean[2:]
+            if alt in lookup:
+                return lookup[alt]
+        return None
+
     def calculate_cost(row):
         shifr = row.get('Шифр ТСН')
         volume = row.get('Объём работ')
@@ -244,9 +265,10 @@ def _add_cost_column(df):
             return ''
         try:
             shifr_clean = str(shifr).strip()
-            if shifr_clean not in lookup:
+            price = _lookup_price(shifr_clean)
+            if price is None:
                 return ''
-            cost = float(lookup[shifr_clean]) * float(volume)
+            cost = float(price) * float(volume)
             return round(cost, 2)
         except (ValueError, TypeError):
             return ''
