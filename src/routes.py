@@ -908,7 +908,7 @@ def preview_excel(session_id: str):
         try:
             from src.services.materials_lookup import (
                 build_materials_lookup,
-                resolve_material_group,
+                resolve_material_group_with_code,
             )
             mat_lookup, _ = build_materials_lookup()
             raw_map = _get_manager()._load_material_layer_map(session_id)
@@ -916,8 +916,8 @@ def preview_excel(session_id: str):
                 materials_group_map = {}
                 for gid in df['GlobalId'].dropna().astype(str).unique():
                     raw_val = raw_map.get(gid, '')
-                    name, order = resolve_material_group(raw_val, mat_lookup)
-                    materials_group_map[gid] = {"name": name, "order": order}
+                    name, order, code = resolve_material_group_with_code(raw_val, mat_lookup)
+                    materials_group_map[gid] = {"name": name, "order": order, "code": code}
         except Exception as e:
             logger.warning(f"Не удалось построить карту материалов (АР) для превью: {e}", exc_info=True)
             materials_group_map = None

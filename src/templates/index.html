@@ -2480,7 +2480,7 @@ function groupRowsCommon(mode) {
 
     // Группировка для АР: после кода МССК (L1) элементы группируются
     // по главному материалу (L2), затем по наименованию (L3).
-    // Материал берётся из data.materialsGroupMap (GlobalId → {name, order}):
+    // Материал берётся из data.materialsGroupMap (GlobalId → {name, order, code}):
     //   код материала не найден / нет поля → «Прочее»
     //   несколько материалов в слое         → «Многослойные»
     const addMaterialAndNameGroupsAR = (parentId, rows, basePadding) => {
@@ -2493,16 +2493,18 @@ function groupRowsCommon(mode) {
                 gid = String(data.rows[rowIndex][globalIdIdx]).trim();
             }
             const info = gid ? materialsGroupMap[gid] : null;
-            if (!info || !info.name) return { name: 'Прочее', order: Infinity };
-            return { name: info.name, order: typeof info.order === 'number' ? info.order : 0 };
+            if (!info || !info.name) return { name: 'Прочее', order: Infinity, code: '' };
+            return { name: info.name, order: typeof info.order === 'number' ? info.order : 0, code: info.code || '' };
         };
 
         const matGroups = {};
         rows.forEach(rd => {
             const mat = resolveMaterialGroup(rd.index);
             rd.material = mat;
-            if (!matGroups[mat.name]) matGroups[mat.name] = { ...mat, rows: [] };
-            matGroups[mat.name].rows.push(rd);
+            // Ключ группы: имя + код, чтобы разные коды не смешивались
+            const key = mat.code ? `${mat.name}__${mat.code}` : mat.name;
+            if (!matGroups[key]) matGroups[key] = { name: mat.name, code: mat.code, order: mat.order, rows: [] };
+            matGroups[key].rows.push(rd);
         });
 
         const matNames = Object.keys(matGroups);
@@ -2512,8 +2514,8 @@ function groupRowsCommon(mode) {
             return (ga.name || '').localeCompare(gb.name || '');
         });
 
-        matNames.forEach(matName => {
-            const matGroup = matGroups[matName];
+        matNames.forEach(matKey => {
+            const matGroup = matGroups[matKey];
             const matRows = matGroup.rows;
             if (matRows.length === 0) return;
 
@@ -2543,7 +2545,8 @@ function groupRowsCommon(mode) {
                     <input type="checkbox" class="group-checkbox" data-group-id="${matId}">
                 </td>
                 <td colspan="${totalCols - 1}" style="font-weight:600; color:#276749;">
-                    🧱 ${matName}
+                    🧱 ${matGroup.name}
+                    ${matGroup.code ? `<span style="color:#718096; margin-left:8px;">(${matGroup.code})</span>` : ''}
                     <span class="group-badge">×${matRows.length}</span>
                     <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${matVolume.toFixed(2)} м³</span>
                 </td>
@@ -2803,6 +2806,7 @@ function groupRowsCommon(mode) {
                 </td>
                 <td colspan="${totalCols - 1}" style="font-weight:700; font-size:15px; color:#2d3748;">
                     📋 ${label}
+                    ${group.code ? `<span style="color:#718096; margin-left:8px;">(${group.code})</span>` : ''}
                     <span class="group-badge">×${groupRows.length}</span>
                     <span style="font-size:11px; color:#4a5568; margin-left:12px;">Σ Объём: ${groupVolume.toFixed(2)} м³</span>
                 </td>
@@ -2925,6 +2929,7 @@ function groupRowsCommon(mode) {
                 </td>
                 <td colspan="${totalCols - 1}" style="font-weight:600; color:#4a5568;">
                     📋 ${label}
+                    ${group.code ? `<span style="color:#718096; margin-left:8px;">(${group.code})</span>` : ''}
                     <span class="group-badge">×${groupRows.length}</span>
                     <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${groupVolume.toFixed(2)} м³</span>
                 </td>

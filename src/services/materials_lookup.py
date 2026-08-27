@@ -23,7 +23,7 @@ import json
 import os
 import re
 from functools import lru_cache
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.core.logger import setup_logger
 
@@ -137,6 +137,30 @@ def parse_material_segments(value) -> List[Tuple[str, str]]:
     return segments
 
 
+def resolve_material_group_with_code(
+    value, lookup: Dict[str, Dict[str, object]] = None
+) -> Tuple[str, int, Optional[str]]:
+    """Разрешает значение поля материалов в (имя_группы, порядок_сортировки, код).
+
+    Код — МССК-код материала из справочника (например ``СТ 00 15 01``).
+    Для «Многослойные» и «Прочее» код отсутствует (None).
+    """
+    if lookup is None:
+        lookup, _ = build_materials_lookup()
+
+    segments = parse_material_segments(value)
+    if not segments:
+        return OTHER_LABEL, float("inf"), None
+    if len(segments) > 1:
+        return MULTILAYER_LABEL, _MULTILAYER_ORDER, None
+
+    code = segments[0][1]
+    info = lookup.get(code)
+    if info:
+        return info["name"], info["order"], code
+    return OTHER_LABEL, float("inf"), None
+
+
 def resolve_material_group(
     value, lookup: Dict[str, Dict[str, object]] = None
 ) -> Tuple[str, int]:
@@ -146,20 +170,8 @@ def resolve_material_group(
     * 1 материал                          → (имя из справочника, order)
     * >1 материала                        → («Многослойные», _MULTILAYER_ORDER)
     """
-    if lookup is None:
-        lookup, _ = build_materials_lookup()
-
-    segments = parse_material_segments(value)
-    if not segments:
-        return OTHER_LABEL, float("inf")
-    if len(segments) > 1:
-        return MULTILAYER_LABEL, _MULTILAYER_ORDER
-
-    code = segments[0][1]
-    info = lookup.get(code)
-    if info:
-        return info["name"], info["order"]
-    return OTHER_LABEL, float("inf")
+    name, order, _ = resolve_material_group_with_code(value, lookup)
+    return name, order
 
 
 # Колонки-источники материалов из Pset «ExpCheck_*» (MGE_MaterialCode/MGE_Material).

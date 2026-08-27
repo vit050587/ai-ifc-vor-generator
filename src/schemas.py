@@ -117,9 +117,10 @@ class PreviewResponse(CamelModel):
     # Карта MSSK-кодов из data/elements_mssk_nested.json:
     # code → {name, order} (для группировки превью по колонке «Код мсск»)
     mssk_code_map: Optional[Dict[str, Any]] = None
-    # Карта материалов для АР-режима: GlobalId → {name, order}
+    # Карта материалов для АР-режима: GlobalId → {name, order, code}
     # (имя группы по data/materials_mssk_nested.json из поля
-    #  «Свойство::IfcMaterialLayer::Name»; «Прочее»/«Многослойные»).
+    #  «Свойство::IfcMaterialLayer::Name»; «Прочее»/«Многослойные»;
+    #  code — МССК-код материала для отображения в скобках).
     materials_group_map: Optional[Dict[str, Any]] = None
 
 

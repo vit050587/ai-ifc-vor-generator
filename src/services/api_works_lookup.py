@@ -260,6 +260,32 @@ def _calculate_work_volume(work: Dict[str, Any], total_measure: Dict[str, Any]) 
     return ""
 
 
+def _resolve_unit_label(work: Dict[str, Any]) -> str:
+    """Определяет единицу измерения для колонки «Ед. изм.» финального перечня.
+
+    Обозначение единицы должно соответствовать делителю объёма (okeiValue):
+      * без делителя (okeiValue <= 1) — базовая единица: «м³», «м²», «шт»;
+      * с делителем (например, 100) — «100 м³», «100 м²», «100 шт»,
+        т.е. объём в перечне выражен в сотнях соответствующих единиц.
+
+    Для прочих измерителей (т, кг, м и т.п.) возвращается исходное
+    обозначение из API.
+    """
+    unit = str(work.get("unitOfMeasure", "") or "").lower().replace(" ", "")
+    divisor = _divisor(work.get("okeiValue"))
+
+    if "м3" in unit or "m3" in unit or "м[3" in unit or "m[3" in unit:
+        base = "м³"
+    elif "м2" in unit or "m2" in unit or "м[2" in unit or "m[2" in unit:
+        base = "м²"
+    elif "шт" in unit:
+        base = "шт"
+    else:
+        return work.get("unitOfMeasure", "") or ""
+
+    return f"{divisor} {base}" if divisor > 1 else base
+
+
 # =====================================================================
 #  ФОРМИРОВАНИЕ ФИНАЛЬНОГО ПЕРЕЧНЯ РАБОТ
 # =====================================================================
@@ -300,7 +326,7 @@ def build_final_works_from_api(
                 rows.append({
                     "Шифр ТСН": work.get("code", ""),
                     "Наименование расценки/ресурса": work.get("name", ""),
-                    "Ед. изм.": work.get("unitOfMeasure", ""),
+                    "Ед. изм.": _resolve_unit_label(work),
                     "Объём работ": volume,
                 })
 
