@@ -1,93 +1,385 @@
 # ai-ifc-vor-generator
 
+Сервис автоматической генерации **видов работ (ВОР)** для смет из BIM-моделей.
+Принимает на вход **IFC-файлы** и **PDF-чертежи**, извлекает строительные элементы,
+группирует их и формирует финальный **перечень работ** (Excel) со стоимостью.
 
+Поддерживает два режима обработки:
 
-## Getting started
+- **KR** — конструктивные решения (ж/б конструкции: стены, колонны, перекрытия, балки и т.д.);
+- **AR** — архитектурные решения (окна, двери, покрытия, кровля, отделка и т.д.).
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+Сервис реализован на **Flask + gunicorn**, работает в **Docker Compose** вместе с **Ollama**
+(локальная модель LLM) на базе графического ускорителя NVIDIA. Вся тяжёлая обработка
+выполняется **в фоне** (в отдельных потоках), API — асинхронное: после загрузки файла
+сервис сразу возвращает `sessionId`, а пользователь опрашивает статус до завершения.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+---
 
-## Add your files
+## Функциональность (что делает сервис)
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+- **Загрузка IFC (.ifc) или PDF-чертежа (.pdf)** на выбор, с указанием типа обработки `KR` / `AR`.
+- **Извлечение элементов** из IFC (через `ifcopenshell`): стены, колонны, плиты, балки, лестницы,
+  фундаменты, сваи, а в режиме АР — окна, двери, кровля, покрытия, перила, мебель и др.
+- **Извлечение данных из PDF-чертежей** (машинное зрение): обнаружение стен (YOLO),
+  анализ штриховок и расшифровка материалов (DINO + VLM), легенды и масштабы.
+- **Нормализация** характеристик элемента: размеры, геометрия (в т.ч. вычисление по bbox,
+  когда в IFC нет QTO), материал, части здания, этажность.
+- **Группировка** элементов в иерархию для сметчика (по частям здания, разделам, материалам,
+  кодам МССК).
+- **Подбор работ**:
+  - в режиме **KR** — через **внешний API цифрового справочника ТСН** (по группам элементов);
+  - в режиме **AR** — через локальную LLM-модель (этапы нормализации, фильтрации и подбора).
+- Расчёт **объёмов работ** (по группам/материалам), корректировка по нормам расхода
+  (`koefs.xlsx`) и **стоимости** (по `price_cost.xlsx`).
+- **Формирование Excel-перечней**: `ДЛЯ_СМЕТЧИКА*`, `ОБЩИЙ_Финальный_перечень_работ.xlsx`,
+  `Дерево_проекта*` и др.
+- **JSON-справочники** элементов и групп для внешних баз (`ifc_elements_output.json`,
+  `ifc_raw_elements_grouped.json`).
+- **Просмотр и скачивание** всех промежуточных и финальных файлов, выгрузка архивом.
+- **3D-модель (GLB)** из IFC — формируется по запросу (`/api/session/<id>/3d_model`).
+- **Множественные запуски** (runs) в рамках одной сессии — можно повторно обрабатывать
+  выбранные строки, переключаться между запусками и их результатами.
+- **Авторизация** (flask-login) + защита API.
+
+---
+
+## Структура проекта
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.mgexp.org/normativ/ai-ifc-vor-generator.git
-git branch -M main
-git push -uf origin main
+ai-ifc-vor-generator/
+├── Dockerfile                 # Образ сервиса (CUDA 12.9, Python 3.11)
+├── docker-compose.yml         # Связка ollama (GPU) + web-сервис
+├── nginx.conf                 # Проксирование /ifc-vor/ → 127.0.0.1:6001
+├── Makefile                   # Утилиты: make up / down / restart / logs / clean
+├── requirements.txt           # Python-зависимости
+├── .env                       # Переменные окружения (модели, API, Keycloak)
+│
+├── src/                       # Основной сервис (Flask)
+│   ├── __init__.py            # create_app(), регистрация blueprint, Swagger
+│   ├── wsgi.py                # Точка входа gunicorn
+│   ├── routes.py              # Все HTTP-эндпоинты (REST API)
+│   ├── schemas.py             # Pydantic-схемы запросов/ответов
+│   ├── templates/
+│   │   └── index.html         # Веб-интерфейс (SPA на JS)
+│   ├── core/
+│   │   ├── config.py          # Конфигурация из env (пути, модели, API)
+│   │   ├── logger.py          # Настройка логирования
+│   │   ├── prompt_manager.py  # Загрузка промптов из prompts/
+│   │   └── keycloak.py        # Провайдер Bearer-токена Keycloak (client_credentials)
+│   └── services/              # Бизнес-логика и пайплайн
+│       ├── session_manager.py # Управление сессиями, запусками, фоновыми потоками
+│       ├── zero_step.py       # Извлечение элементов из IFC (КР/АР), нормализация
+│       ├── ifc_raw_dump.py    # «Сырой» дамп свойств/QTO/материалов + расчёт по bbox
+│       ├── ifc_reference_builder.py # Построение JSON-справочников из IFC/PDF
+│       ├── first_etap.py      # Этап 1 (АР): анализ элемента через LLM
+│       ├── second_etap.py     # Этап 2 (АР): фильтрация по части здания
+│       ├── third_etap.py      # Этап 3 (АР): фильтрация по высоте
+│       ├── fourth_etap.py     # Этап 4 (АР): подбор работ + объём/стоимость
+│       ├── base_knowledge.py  # База ключевых слов работ для подбора
+│       ├── geometry_filter.py # Фильтрация работ по геометрии элемента
+│       ├── group_excel.py     # Группировка элементов (КР и АР), правила группировки
+│       ├── api_works_lookup.py# Подбор работ через API справочника ТСН (КР)
+│       ├── materials_lookup.py# Карта МССК-кодов материалов (АР)
+│       ├── mssk_lookup.py     # Карта МССК-кодов элементов
+│       ├── pdf_processor.py   # Обёртка пайплайна обработки PDF
+│       └── serializer.py      # Экспорт IFC → GLB (3D модель)
+│
+├── ai-blueprint-to-ifc/       # Пайплайн машинного зрения для PDF-чертежей
+│   ├── config.py              # Настройки (модели, параметры, пороги)
+│   ├── processor.py           # Оркестратор обработки чертежа
+│   ├── pdf_prcoessor.py       # Конвертация PDF → изображения, тайлы
+│   ├── walls_processor.py     # Детекция стен (YOLO OBB)
+│   ├── hatching_processor.py  # Анализ штриховок и расшифровка материалов
+│   ├── dino_service.py        # DINO-модель (сравнение символов легенды)
+│   ├── yolo_service.py        # Обёртка над YOLO/ultralytics
+│   ├── transformer_service.py # VLM (GreenMap qwen3-vl) для извлечения данных
+│   ├── ollama_service.py      # Обёртка над Ollama (VLM Qwen3-VL)
+│   ├── layout_processor.py    # Детекция layout (чертёж/легенда)
+│   ├── legend_layout_processor.py # Разбор строк легенды
+│   ├── drawing_statistics_analyzer.py # Статистика уверенности обработки
+│   ├── result_former.py       # Формирование DataFrame результатов
+│   ├── rectangle_utils.py     # Работа с OBB-прямоугольниками
+│   ├── draw_geometry.py       # Отрисовка размеченных чертежей
+│   ├── dino_train_creator.py  # Подготовка данных для обучения DINO
+│   ├── models/                # Веса ML-моделей
+│   │   ├── yolo_walls_obb.pt
+│   │   ├── yolo_layout.pt
+│   │   ├── yolo_legend_layout.pt
+│   │   └── dino_hatching.pt
+│   └── prompts/               # Промпты VLM для чертежей
+│       ├── get_scale.txt
+│       └── get_text_from_image.txt
+│
+├── prompts/                   # Промпты этапов пайплайна
+│   └── element_analyze.txt    # Анализ характеристик элемента (этап 1)
+├── data/                      # Справочники и входные данные
+│   ├── perechen_kr.xlsx, perechen_kr_1.xlsx  # Перечни работ (КР)
+│   ├── perechen_ar.xlsx                      # Перечень работ (АР)
+│   ├── koefs.xlsx                            # Нормы расхода (корректировка объёма)
+│   ├── price_cost.xlsx                       # Стоимость расценок
+│   ├── elements_mssk.xlsx / elements_mssk_nested.json  # Справочник МССК элементов
+│   └── materials_mssk.xlsx / materials_mssk_nested.json # Справочник МССК материалов
+│
+├── uploads/                   # Загруженные файлы (по сессиям)
+└── outputs/                   # Результаты обработки
+    ├── sessions.json          # «База» всех сессий
+    └── <session_id>/          # Директория одной сессии
+        ├── original/          # Исходные файлы (IFC/PDF, исходные Excel, GLB)
+        ├── run_<NNN>/         # Результаты запуска NNN
+        └── ...справочные и промежуточные JSON/XLSX...
 ```
 
-## Integrate with your tools
+---
 
-* [Set up project integrations](https://gitlab.mgexp.org/normativ/ai-ifc-vor-generator/-/settings/integrations)
+## Используемые модели ИИ
 
-## Collaborate with your team
+| Модель | Фреймворк | Роль |
+|--------|-----------|------|
+| `yolo_walls_obb.pt` | Ultralytics YOLO (OBB) | Детекция стен на чертеже PDF |
+| `yolo_layout.pt` | Ultralytics YOLO | Детекция layout-областей (чертёж/легенда) |
+| `yolo_legend_layout.pt` | Ultralytics YOLO | Детекция таблиц легенды |
+| `dino_hatching.pt` | DINO (TorchScript) | Анализ штриховок, сравнение символов легенды |
+| `hf.co/unsloth/Qwen3-VL-8B-Instruct-GGUF` (`OLLAMA_MODEL_NAME`) | Ollama / VLM | Обработка чертежей PDF: распознавание материалов/штриховок по изображению |
+| `yandex/YandexGPT-5-Lite-8B-instruct-GGUF` (`NORMS_LLM_MODEL` / `model_ollama`) | Ollama | Этап 1 (нормализация элемента), этап 3 (LLM-проверка высоты), этап 4 (выбор работ) — режим АР |
+| `GreenMap/qwen3-vl-4b-ru-blueprint-extractor` (`TG_MODEL_DIR`) | transformers (HF) | Извлечение данных с чертежа/легенды (VLM через `transformer_service`) |
+| **ifcopenshell** | C++/Python | Парсинг и геометрия IFC, экспорт в GLB (не ML) |
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+Роль моделей по задачам:
 
-## Test and Deploy
+- **PDF-чертежи** — весь конвейер в `ai-blueprint-to-ifc`: YOLO (стены/layout/легенда) →
+  DINO + VLM (штриховки и материалы) → формирование Excel.
+- **IFC-файлы** — `ifcopenshell`: атрибуты, Property Sets, QTO, геометрия → расчёт количеств.
+- **Подбор работ (нормы)** — в режиме АР используется локальная LLM (YandexGPT),
+  в режиме КР — внешний API справочника ТСН (LLM не используется).
 
-Use the built-in continuous integration in GitLab.
+---
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+## Изменения и дополнения функционала
 
-***
+Основные модули и изменения поведения по сравнению с базовой версией:
 
-# Editing this README
+- **Подбор работ для КР через API цифрового справочника ТСН** (`api_works_lookup.py`).
+  Ключевое изменение: в режиме **КР** работы больше не подбираются LLM (этапы 1–4 не выполняются).
+  Вместо этого группы выбранных элементов конвертируются в формат `ifc_raw_elements_grouped.json`
+  и отправляются **POST-запросами** на эндпоинт
+  `digital-collection/building-elements/positions`; из ответа формируется
+  `ОБЩИЙ_Финальный_перечень_работ.xlsx` с шифрами ТСН, объёмами и стоимостью.
+- **Режим АР (архитектурные решения)** — расширенный набор IFC-классов (окна, двери, кровля,
+  покрытия, перила, мебель и др.) и группа правил группировки по кодам МССК и материалам.
+- **Авторизация через Keycloak** (`keycloak.py`) — автоматическое получение/обновление
+  Bearer-токена (`client_credentials`) для API справочника работ; статичный `WORKS_API_TOKEN`
+  используется как fallback.
+- **Расчёт количеств из геометрии (bbox/QTO)** (`ifc_raw_dump.py`) — когда в IFC нет
+  наборов `IfcElementQuantity`, объём/длины/площади вычисляются по тесселированной геометрии
+  элемента (меш/выдавливание), благодаря чему данные есть и для АР-элементов.
+- **Сырой дамп параметров** `IFC_исходные_параметры.xlsx/.json` выгружается в корень сессии
+  и включается в результаты — полный исходный набор свойств каждого элемента.
+- **Группировка по кодам МССК и материалам** для превью и группировки в режиме АР
+  (справочники `elements_mssk_nested.json` и `materials_mssk_nested.json`).
+- **JSON-справочники элементов и групп** (`ifc_elements_output.json`, `ifc_raw_elements_grouped.json`)
+  теперь формируются автоматически сразу после извлечения IFC и доступны для скачивания.
+- **Множественные запуски (runs)** внутри сессии: повторный подбор работ для другой выборки
+  строк без повторной обработки исходного файла, переключение между запусками.
+- **3D-модель по запросу**: GLB-файл больше не создаётся автоматически — формируется только
+  при вызове `/api/session/<id>/3d_model` (отдельная кнопка в UI).
+- **Объединение листов** PDF-обработки (`Данные_N` в один лист `Данные`), формирование
+  изображения чертежа с разметкой и markdown-условных обозначений материалов.
+- **Фильтрация по высоте** и расчёт высоты основного этажа (в АР важна высота типового этажа,
+  а не общая высота здания).
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+---
 
-## Suggestions for a good README
+## Данные и справочники
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+| Файл | Назначение |
+|------|-----------|
+| `data/perechen_kr.xlsx`, `perechen_kr_1.xlsx` | Перечень доступных расценок/работ для режима КР |
+| `data/perechen_ar.xlsx` | Перечень работ для режима АР |
+| `data/koefs.xlsx` | Нормы расхода/коэффициенты для корректировки объёмов работ |
+| `data/price_cost.xlsx` | Стоимость расценок (Шифр → Текущие прямые затраты) |
+| `data/elements_mssk.xlsx`, `elements_mssk_nested.json` | МССК-справочник строительных элементов (иерархия категория→назначение→класс→подкласс) |
+| `data/materials_mssk.xlsx`, `materials_mssk_nested.json` | МССК-справочник материалов (для группировки АР элементов по слоям) |
+| `prompts/element_analyze.txt` | Промпт этапа 1 (нормализация характеристик элемента) |
 
-## Name
-Choose a self-explaining name for your project.
+Новые/изменённые файлы-результаты в `outputs/<session_id>/`:
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+- `IFC_исходные_параметры.xlsx` / `.json` — сырой дамп всех свойств элементов IFC;
+- `ifc_elements_output.json` — справочник по каждому элементу (characteristics / additionalCharacteristics);
+- `ifc_raw_elements_grouped.json` — справочник групп элементов (для API подбора работ);
+- `ДЛЯ_СМЕТЧИКА_исправленный.xlsx` — основная таблица элементов для выбора строк;
+- `Дерево_проекта*.xlsx` — иерархическая группировка;
+- `ДЛЯ_СМЕТЧИКА_сгруппированный.xlsx` — группы с объёмами;
+- `ОБЩИЙ_Финальный_перечень_работ.xlsx` — итоговый перечень работ с объёмом и стоимостью;
+- `3Dmodel.glb` — 3D-модель (по запросу);
+- `blueprint_painted.png`, `materials_colors.md` — размеченный чертёж и условные обозначения (PDF);
+- `api_works_response.json` — сырые ответы API подбора работ (КР).
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+---
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+## База данных
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+Сервис **не использует классическую СУБД**. Хранилища:
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+- **Состояние сессий** — JSON-файл `outputs/sessions.json` (потокобезопасно, с атомарной записью,
+  резервным копированием при повреждении). Хранит метаданные сессий, запусков, списки файлов,
+  прогресс.
+- **Результаты и файлы сессий** — файловая система: `outputs/<session_id>/` (+ `original/`,
+  `run_<NNN>/`), загрузки — `uploads/<session_id>/`.
+- **Справочные данные** — статические Excel/JSON-файлы в `data/` (перечни, коэффициенты, цены,
+  МССК).
+- **Внешние системы (по сети)**:
+  - **Ollama** — локальная LLM-инференс;
+  - **API цифрового справочника ТСН** `normativ.mgexp.org/digital-collection/...` — подбор работ в КР;
+  - **Keycloak** `normativ-idm.mgexp.org/...` — выдача/обновление Bearer-токена.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+---
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+## API
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+Базовый префикс: `/ifc-vor`. Swagger UI: `/ifc-vor/docs`, спецификация: `/ifc-vor/apispec.json`.
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+Все вызовы API (кроме `/login`, `/logout`, `/docs`) **требуют авторизации**:
+по cookie сессии (фронтенд) или возвращают `401` для `/ifc-vor/api/*`.
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+Обработка **асинхронная**: `upload_ifc` / `reference` сразу возвращают `sessionId`
+и `status`, далее статус опрашивается через `GET /api/session/<id>/status`.
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+### Авторизация и здоровье
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET/POST | `/ifc-vor/login` | Вход (HTML-форма) |
+| GET | `/ifc-vor/logout` | Выход |
+| GET | `/ifc-vor/api/health` | `{"status":"ok","timestamp":...}` |
 
-## License
-For open source projects, say how it is licensed.
+### Загрузка и справочники
+| Метод | Путь | Описание |
+|-------|------|----------|
+| POST | `/ifc-vor/api/upload_ifc` | Загрузка IFC/PDF + `processingType` (KR/AR), async. Ответ: `sessionId, status, sourceType, processingType, message` |
+| POST | `/ifc-vor/api/reference` | Только построение JSON-справочников из IFC/PDF (202). Возвращает `Location` и `Retry-After` |
+| GET | `/ifc-vor/api/session/<id>/reference` | Результат построения справочников (200 готово / 202 в процессе / 422 ошибка) |
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+### Сессии
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | `/ifc-vor/api/sessions` | Список всех сессий (+`total`) |
+| GET | `/ifc-vor/api/session/<id>` | Полные данные сессии |
+| GET | `/ifc-vor/api/session/<id>/status` | Краткий статус для поллинга (`status`, `realStatus`, `progress`, `progressMessage`, `hasResults`, `error`) |
+| POST | `/ifc-vor/api/session/<id>/restore` | Данные для восстановления интерфейса |
+| DELETE | `/ifc-vor/api/session/<id>` | Удаление сессии и файлов |
+
+### Обработка (выбор строк и запуски)
+| Метод | Путь | Описание |
+|-------|------|----------|
+| POST | `/ifc-vor/api/session/<id>/select_rows` | Выбор строк (`rowIndices`, `allRows`, `rowTypes`, `rowMaterials`, `buildingHeight`, `processingType`) и запуск обработки |
+| POST | `/ifc-vor/api/session/<id>/new_run` | Новый запуск обработки (без повтора извлечения из файла) |
+| GET | `/ifc-vor/api/session/<id>/runs` | Список запусков сессии |
+| POST | `/ifc-vor/api/session/<id>/switch_run/<run_id>` | Переключение на другой запуск |
+| POST | `/ifc-vor/api/session/<id>/filter_height` | Обновить высоту здания |
+
+Статусы сессии: `ifc_processing` / `pdf_processing` / `selecting_rows` / `processing` /
+`completed` / `error` (маппинг в краткий `status`: `processing`, `selecting_rows`, ...).
+
+### Файлы и просмотр
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | `/ifc-vor/api/session/<id>/preview` | Предпросмотр Excel (заголовки/строки) + карты МССК/материалов |
+| GET | `/ifc-vor/api/session/<id>/preview_result/<filename>` | Предпросмотр произвольного xlsx/csv/json |
+| GET | `/ifc-vor/api/session/<id>/blueprint_image` | PNG размеченного чертежа (для PDF) |
+| GET | `/ifc-vor/api/session/<id>/materials_md` | Markdown условных обозначений материалов (для PDF) |
+| GET | `/ifc-vor/api/session/<id>/download/<filename>` | Скачать файл результата |
+| GET | `/ifc-vor/api/session/<id>/download_all` | Скачать все файлы сессии ZIP-архивом |
+| POST | `/ifc-vor/api/session/<id>/3d_model` | Создать 3D-модель (GLB) по запросу (только IFC) |
+| GET | `/ifc-vor/api/session/<id>/3d_model/status` | Статус генерации 3D-модели (`none/creating/ready/error`) |
+
+### Форматы ответа
+Все ответы — JSON в **camelCase** (Pydantic `CamelModel`). Ошибки — `{"detail": "..."}`
+(коды 400/401/404/409/413/422/500). Загрузка файла — `multipart/form-data` (`file`, `processingType`);
+выбор строк/запуски — JSON-тело.
+
+---
+
+## Пайплайн сервиса (со стороны пользователя)
+
+### 1. Вход
+Пользователь открывает веб-интерфейс (`/ifc-vor/`), проходит авторизацию.
+
+### 2. Загрузка исходных данных — **две вариации**
+Пользователь выбирает **тип обработки** (КР или АР) и загружает файл:
+
+- **Вариант A — IFC-файл.** `SessionManager.process_ifc` сохраняет файл и запускает фоновую
+  обработку: `zero_step` (+ `ifc_raw_dump` и `ifc_reference_builder`) извлекают элементы,
+  формируют `ДЛЯ_СМЕТЧИКА_исправленный.xlsx` и JSON-справочники.
+- **Вариант Б — PDF-чертёж.** `pdf_processor` запускает конвейер машинного зрения
+  (`ai-blueprint-to-ifc`): детекция стен/layout/легенды (YOLO), анализ штриховок (DINO + VLM),
+  формирование таких же Excel-таблиц, а также размеченных изображений и условных обозначений.
+
+### 3. Просмотр и выбор элементов
+После первой обработки сессия переходит в статус `selecting_rows`. Пользователь видит таблицу
+`ДЛЯ_СМЕТЧИКА*` (превью), может указать для строк **часть здания** (Надземная/Подземная/Цоколь),
+**материал**, задать **высоту здания** (или она берётся из IFC/расчёта) и выбрать строки.
+
+### 4. Генерация перечня работ — **главная вариация пайплайна**
+
+- **Режим КР (внешний справочник ТСН):**
+  1. Выбранные строки фильтруются и **группируются** (`process_ifc_excel`).
+  2. Листовые группы конвертируются в формат `ifc_raw_elements_grouped.json`
+     (`buildingElementName`, `totalMeasure`, `characteristics`, `additionalCharacteristics`).
+  3. Каждая группа отправляется **POST**-запросом в API цифрового справочника ТСН.
+  4. Из ответов формируется `ОБЩИЙ_Финальный_перечень_работ.xlsx`
+     (Шифр ТСН, наименование, ед. изм., объём; объём корректируется по `koefs.xlsx`,
+     стоимость — по `price_cost.xlsx`).
+
+- **Режим АР (локальная LLM, этапы 1–4):**
+  1. **Этап 1** (`first_etap`): каждый элемент анализируется LLM — выделяются размеры, материал,
+     описание (промпт `element_analyze.txt`).
+  2. **Этап 2** (`second_etap`): фильтрация работ по **части здания** (надземная/подземная/цоколь).
+  3. **Этап 3** (`third_etap`): фильтрация по **высоте** (паттерны + LLM-проверка).
+  4. **Этап 4** (`fourth_etap`): подбор работ по материалу/ключевым словам из базы знаний
+     + LLM-отбор (промпт специальный для АР), расчёт объёмов и стоимости,
+     сборка `ОБЩИЙ_Финальный_перечень_работ.xlsx`.
+
+В обоих режимах:
+- дополнительно формируются `Дерево_проекта*.xlsx`, справочные JSON и сырой дамп IFC;
+- в каждый **запуск** (`run_<NNN>`) сохраняются все промежуточные и финальные файлы.
+
+### 5. Результаты
+Пользователь просматривает статус, доступные файлы, может **скачать** их по отдельности или
+архивом, а для IFC — запросить **3D-модель (GLB)**. При необходимости — запустить **новый запуск**
+с другой выборкой строк или **переключиться** между запусками.
+
+---
+
+## Запуск и развертывание
+
+Требования: Docker + Docker Compose, GPU NVIDIA (CUDA). Порт наружу — `6001` (внутри `6000`),
+Ollama — `11450` (внутри `11434`).
+
+```bash
+make up        # собрать и запустить (docker-compose up -d --build + логи)
+make down      # остановить
+make restart   # перезапуск
+make logs      # логи
+make clean     # остановить и удалить volumes
+```
+
+Настройка — через `.env` (в `docker-compose.yml`, сервисы `ollama` и `web`):
+
+- `OLLAMA_BASE_URL` — адрес Ollama;
+- `OLLAMA_MODEL_NAME` — VLM для обработки чертежей (Qwen3-VL-8B);
+- `NORMS_LLM_MODEL` — LLM для этапов АР (YandexGPT-5-Lite-8B);
+- `DOCUMENTS_PATH`, `AR_DOCUMENTS_PATH`, `KOEFS_PATH`, `PRICE_COST_PATH` — справочники;
+- `WORKS_API_URL`, `WORKS_API_TOKEN` — API справочника ТСН;
+- `KEYCLOAK_TOKEN_URL`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET` — авто-токен Keycloak;
+- `UPLOAD_FOLDER`, `OUTPUT_FOLDER`, `SESSIONS_FILE` — каталоги данных;
+- `MAX_UPLOAD_MB` — лимит загрузки.
+
+Проксирование Nginx — по пути `/ifc-vor/` на `http://127.0.0.1:6001` (`nginx.conf`).
+
+---
+
+## Технологический стек
+
+Flask 3, gunicorn, Pydantic, flasgger (Swagger), ifcopenshell, pandas, openpyxl,
+langchain/langgraph, ollama, ultralytics (YOLO), supervision, transformers, torch,
+pymorphy3, fuzzywuzzy/fuzzysearch, requests, httpx, Flask-Login, Keycloak.
