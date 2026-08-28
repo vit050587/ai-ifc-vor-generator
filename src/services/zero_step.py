@@ -395,8 +395,64 @@ def get_specific_properties(element):
     return properties
 
 
-def get_element_info(element):
-    """Собирает всю информацию об элементе"""
+# Соответствие IFC-класса элемента и суффикса имени Pset «ExpCheck_<Suffix>»,
+# из которого берётся материал (MGE_Material). Для большинства классов суффикс
+# равен имени класса без префикса «Ifc» (IfcWall → Wall, IfcBeam → Beam,
+# IfcStairFlight → StairFlight и т.д.). Исключения — алиасные классы
+# (IfcWallStandardCase → Wall), у которых Pset называется «ExpCheck_Wall».
+_EXP_CHECK_PSET_SUFFIX_ALIASES = {
+    'IfcWallStandardCase': 'Wall',
+}
+
+
+def _resolve_expcheck_material(info: dict, ifc_class: str):
+    """Возвращает материал элемента из Pset «ExpCheck_<Type>::MGE_Material».
+
+    В режиме КР материал элемента должен браться не из ассоциаций материала
+    IFC (IfcRelAssociatesMaterial — там часто «По умолчанию» или внутреннее
+    имя Revit), а из свойства ``MGE_Material`` набора ``ExpCheck_<Класс>``
+    (например ``ExpCheck_Beam::MGE_Material`` = «Железобетон сборный»).
+
+    Свойства уже извлечены функцией get_all_properties в ключи вида
+    ``Свойство_ExpCheck_<Pset>_MGE_Material``. Подбираем ключ, Pset которого
+    соответствует классу элемента (с учётом алиасов). Если подходящего
+    непустого значения нет — возвращаем None (материал остаётся прежним).
+    """
+    if not ifc_class or ifc_class == '-':
+        return None
+
+    suffix = _EXP_CHECK_PSET_SUFFIX_ALIASES.get(ifc_class)
+    if suffix is None:
+        suffix = ifc_class[3:] if ifc_class.startswith('Ifc') else ifc_class
+
+    primary_key = f'Свойство_ExpCheck_{suffix}_MGE_Material'
+    val = info.get(primary_key)
+    if val is not None and str(val).strip() and str(val).strip() != '-':
+        return str(val).strip()
+
+    # Запасной вариант: среди всех ExpCheck_*::MGE_Material берём первый
+    # непустой (на случай нестандартного имени Pset).
+    for key, raw in info.items():
+        if (isinstance(key, str)
+                and key.startswith('Свойство_ExpCheck_')
+                and key.endswith('_MGE_Material')
+                and key != primary_key):
+            if raw is not None and str(raw).strip() and str(raw).strip() != '-':
+                return str(raw).strip()
+
+    return None
+
+
+def get_element_info(element, processing_type: str = "KR"):
+    """Собирает всю информацию об элементе
+
+    Args:
+        element: IFC-элемент.
+        processing_type: режим обработки — "KR" (по умолчанию) или "AR".
+            В режиме КР материал элемента берётся из свойства
+            ``ExpCheck_<Класс>::MGE_Material`` (а не из ассоциаций материала
+            IFC), как требуется для корректного превью и подбора работ.
+    """
     info = {
         'GlobalId': safe_get_attr(element, 'GlobalId'),
         'Имя': safe_get_attr(element, 'Name'),
@@ -458,7 +514,16 @@ def get_element_info(element):
     
     # СПЕЦИФИЧЕСКИЕ СВОЙСТВА ДЛЯ СМЕТЧИКА
     info.update(get_specific_properties(element))
-    
+
+    # В режиме КР материал элемента берётся из Pset «ExpCheck_<Класс>::MGE_Material»
+    # (колонки вида «Свойство::ExpCheck_Beam::MGE_Material», «Свойство::ExpCheck_Slab::MGE_Material»
+    # и т.д.), а не из ассоциаций материала IFC, где часто стоит заглушка
+    # «По умолчанию» или внутреннее имя Revit.
+    if processing_type and str(processing_type).upper() == 'KR':
+        mge_material = _resolve_expcheck_material(info, info.get('Тип элемента', ''))
+        if mge_material:
+            info['Материал'] = mge_material
+
     return info
 
 
@@ -794,7 +859,7 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
         if len(elems) > 0:
             print(f"   {ifc_type} ({ru_name}): {len(elems)} шт")
             for elem in elems:
-                elem_info = get_element_info(elem)
+                elem_info = get_element_info(elem, processing_type=processing_type)
                 elem_info['Тип (RU)'] = ru_name
                 elements.append(elem_info)
 

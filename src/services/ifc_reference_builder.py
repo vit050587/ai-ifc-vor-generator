@@ -534,7 +534,7 @@ def extract_elements_from_ifc(ifc_path: str, output_folder: str, processing_type
         elems = model.by_type(ifc_type)
         logger.info(f"  {ifc_type} ({ru_name}): {len(elems)} шт")
         for elem in elems:
-            elem_info = get_element_info(elem)
+            elem_info = get_element_info(elem, processing_type=processing_type)
             elem_info['Тип (RU)'] = ru_name
             elements.append(elem_info)
 
