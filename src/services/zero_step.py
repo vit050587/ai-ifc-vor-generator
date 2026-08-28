@@ -1444,6 +1444,42 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
     # ЗАПОЛНЯЕМ ПРОПУСКИ В ГЕОМЕТРИЧЕСКИХ ПАРАМЕТРАХ ИЗ ИМЕНИ ЭЛЕМЕНТА
     # ============================================================================
     df = fill_missing_from_name(df)
+
+    # ============================================================================
+    # ВЫЧИСЛЯЕМ ПЛОЩАДЬ ДЛЯ СТЕН С ПРОПУЩЕННОЙ «Площадь, м2»
+    # ============================================================================
+    # У части стен в IFC отсутствуют площадные QTO (GrossSideArea, GROSS и т.д.),
+    # но есть NetVolume и Ширина (толщина, заполненная из имени или из QTO).
+    # Боковая площадь одной грани стены = Объём / Толщина (м),
+    # что совпадает с GrossSideArea = Длина × Высота для монолитных стен.
+    # Это значение нужно для расчёта объёмов работ по опалубке в финальном перечне.
+    if 'Площадь, м2' in df.columns and 'Объём, м3' in df.columns and 'Ширина, мм' in df.columns:
+        _area_filled = 0
+        for idx, row in df.iterrows():
+            cur_area = row.get('Площадь, м2')
+            if cur_area is not None and not (isinstance(cur_area, str) and cur_area.strip() in ('-', '')):
+                continue
+            ifc_class = str(row.get('Тип элемента', ''))
+            if ifc_class not in ('IfcWall', 'IfcWallStandardCase'):
+                continue
+            vol = row.get('Объём, м3')
+            width = row.get('Ширина, мм')
+            try:
+                vol_f = float(vol)
+                width_f = float(width)
+            except (ValueError, TypeError):
+                continue
+            if vol_f <= 0 or width_f <= 0:
+                continue
+            area_m2 = round(vol_f / (width_f / 1000.0), 3)
+            df.at[idx, 'Площадь, м2'] = area_m2
+            _area_filled += 1
+            logger.debug(
+                f"Стена '{row.get('Имя', '?')}': вычислена Площадь = {area_m2} м² "
+                f"(Объём {vol_f} м³ / Ширина {width_f} мм)"
+            )
+        if _area_filled:
+            logger.info(f"Вычислена площадь для {_area_filled} стен с пропущенной «Площадь, м2»")
     
     # Удаляем технические столбцы
     cols_to_drop = ['Глубина_выдавливания_мм', 'Координата_X_мм', 'Координата_Y_мм', 'Координата_Z_мм']

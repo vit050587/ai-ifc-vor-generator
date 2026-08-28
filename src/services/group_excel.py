@@ -13,7 +13,7 @@ import json
 import re
 import os
 import time
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from collections import defaultdict
 from pathlib import Path
 import openpyxl
@@ -490,11 +490,18 @@ def _create_group(name: str, level: int, group_df, rows: List[Dict[str, Any]],
             if total > 0:
                 areas[col] = float(round(total, 2))
 
+    # Суммарный расход арматуры (ReinforcementVolumeRatio, кг) по всем элементам группы
+    reinforcement = 0.0
+    if 'ReinforcementVolumeRatio' in group_df.columns:
+        rein_series = pd.to_numeric(group_df['ReinforcementVolumeRatio'], errors='coerce').fillna(0)
+        reinforcement = float(round(rein_series.sum(), 2))
+
     first_elem = rows[indices[0]] if indices else {}
 
     return {
         'name': name, 'level': level, 'indices': indices,
         'total_volume': volume, 'total_areas': areas,
+        'total_reinforcement': reinforcement,
         'first_element': dict(first_elem), 'count': len(indices),
         'children': children or []
     }
@@ -696,22 +703,34 @@ def group_elements_mssk(rows: List[Dict[str, Any]], headers: List[str]) -> List[
         Часть здания (L1)
           → Код МССК (L2) — название из справочника elements_mssk_nested.json,
                              неизвестные/пустые коды объединяются в «Прочее»
-            → IFC-тип (L3, только если в МССК-группе несколько типов)
-              → Геометрия (L4) — по GEOMETRY_GROUP_RULES:
-                    стены — Ширина, мм (толщина),
-                    плиты/балки — Площадь, м2,
-                    колонны — Периметр, мм + подгруппа «Сторона» по ширине,
-                    сваи — Длина, мм и т.д.
-                → Материал (L5) — «Материал: …» (только при нескольких материалах)
-                  → Бетон (L6) — «Бетон: В…, W…, F…»
-                       (по колонкам ExpCheck_MaterialConcrete_*)
+            → Материал (L3) — группа по коду МССК МАТЕРИАЛА из
+                  data/materials_mssk_nested.json, например
+                  «Железобетон сборный (СТ 00 15 01)», «Бетон монолитный (СТ 00 10 02)».
+                  Код ищется в параметрах элемента (ExpCheck_*::MGE_MaterialCode,
+                  IfcMaterialLayer::Name). Если код не найден — «Прочее».
+              → IFC-тип (L4, только если в группе несколько типов)
+                → Геометрия (L5) — по GEOMETRY_GROUP_RULES:
+                      стены — Ширина, мм (толщина),
+                      плиты/балки — Площадь, м2,
+                      колонны — Периметр, мм + подгруппа «Сторона» по ширине,
+                      сваи — Длина, мм и т.д.
+                  → Материал (L6) — «Материал: …» (только при нескольких материалах)
+                    → Бетон (L7) — «Бетон: В…, W…, F…»
+                         (по колонкам ExpCheck_MaterialConcrete_*)
 
     Геометрическая группировка и материал/бетон переиспользуют _add_geometry_groups
-    со сдвигом уровней level_offset=-1.
+    со сдвигом уровней level_offset=0 (с учётом дополнительного уровня материала L3).
     """
     # Импорт внутри функции, чтобы избежать циклической зависимости
     from src.services.mssk_lookup import build_mssk_lookup, OTHER_LABEL
+    from src.services.materials_lookup import (
+        build_materials_lookup,
+        extract_material_value,
+        resolve_material_group_with_code,
+        OTHER_LABEL as MATERIALS_OTHER_LABEL,
+    )
     lookup, _ = build_mssk_lookup()
+    materials_lookup, _ = build_materials_lookup()
 
     volume_col = None
     for h in headers:
@@ -736,6 +755,23 @@ def group_elements_mssk(rows: List[Dict[str, Any]], headers: List[str]) -> List[
     df['_ifc_type'] = df.apply(get_ifc_type_row, axis=1)
 
     has_mssk_col = 'Код мсск' in headers
+
+    def _get_material_group(row) -> Tuple[str, float]:
+        """Определяет группу материала элемента по коду МССК из параметров.
+
+        Ищет код материала вида «СТ 00 15 01» в параметрах элемента
+        (колонки ExpCheck_*::MGE_MaterialCode, IfcMaterialLayer::Name и т.п.)
+        через extract_material_value/resolve_material_group_with_code.
+
+        Возвращает (имя_группы, порядок_сортировки):
+          * код найден     → «Железобетон сборный (СТ 00 15 01)» и порядок из справочника;
+          * код не найден  → «Прочее» и бесконечность.
+        """
+        mat_val = extract_material_value(row)
+        name, order, code = resolve_material_group_with_code(mat_val, materials_lookup)
+        if code:
+            return f'{name} ({code})', order
+        return MATERIALS_OTHER_LABEL, float('inf')
 
     result = []
     part_order = ['Подземная', 'Цоколь', 'Надземная']
@@ -784,21 +820,48 @@ def group_elements_mssk(rows: List[Dict[str, Any]], headers: List[str]) -> List[
 
             mssk_group = _create_group(name, 2, mssk_df, rows, volume_col, sum_columns)
 
-            # --- Геометрия + Материал/Бетон ---
-            elems = []
+            # --- Группировка по материалу (L3) ---
+            # Материал определяется по коду МССК из параметров элемента
+            # (например «Свойство::ExpCheck_Wall::MGE_MaterialCode» = «СТ 00 15 01»
+            # или «Свойство::IfcMaterialLayer::Name» = «Железобетон (СТ 00 15 01)»).
+            # Имя группы из data/materials_mssk_nested.json: «Железобетон сборный (СТ 00 15 01)»;
+            # если код не найден — группа «Прочее».
+            mat_groups = defaultdict(list)
+            mat_meta = {}  # имя группы → порядок сортировки
             for idx in indices:
-                row = rows[idx]
-                e = ElementData(idx, row, headers)
-                e.part = part
-                e.ifc_type = get_ifc_type(str(row.get('Тип элемента', '')), str(row.get('Имя', '')))
-                elems.append(e)
+                mat_key, mat_order = _get_material_group(rows[idx])
+                mat_groups[mat_key].append(idx)
+                mat_meta[mat_key] = mat_order
 
-            # level_offset=-1: ifc=3, геометрия=4, материал=5, бетон=6;
-            # для колонн с подгруппами: «Периметр»=4 → «Сторона»=5 → материал=6 → бетон=7
-            # nest_sub_ranges=True: для колонн — «Периметр» → «Сторона» (вложенно)
-            _add_geometry_groups(mssk_group, elems, headers, volume_col,
-                                 use_new_grouping=True, level_offset=-1,
-                                 nest_sub_ranges=True)
+            # Сортировка: сначала известные материалы (по порядку в справочнике),
+            # затем «Прочее»
+            sorted_mat_keys = sorted(mat_groups.keys(),
+                                     key=lambda k: (mat_meta[k], k))
+
+            for mat_key in sorted_mat_keys:
+                mat_indices = sorted(mat_groups[mat_key])
+                mat_df = df.loc[mat_indices]
+                mat_group = _create_group(mat_key, 3, mat_df, rows, volume_col, sum_columns)
+
+                # --- Геометрия + Материал/Бетон ---
+                elems = []
+                for idx in mat_indices:
+                    row = rows[idx]
+                    e = ElementData(idx, row, headers)
+                    e.part = part
+                    e.ifc_type = get_ifc_type(str(row.get('Тип элемента', '')), str(row.get('Имя', '')))
+                    elems.append(e)
+
+                # level_offset=0 (родитель — группа материала L3):
+                #   ifc=4, геометрия=5, материал=6, бетон=7;
+                # для колонн с подгруппами: «Периметр»=5 → «Сторона»=6 → материал=7 → бетон=8
+                # nest_sub_ranges=True: для колонн — «Периметр» → «Сторона» (вложенно)
+                _add_geometry_groups(mat_group, elems, headers, volume_col,
+                                     use_new_grouping=True, level_offset=0,
+                                     nest_sub_ranges=True)
+
+                if mat_group['children']:
+                    mssk_group['children'].append(mat_group)
 
             if mssk_group['children']:
                 part_group['children'].append(mssk_group)
@@ -850,10 +913,33 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
             return None
         volume = sum(get_volume(e) for e in elems_list)
         indices = sorted([e.index for e in elems_list])
+
+        # Агрегируем площади по всем колонкам, содержащим «площадь».
+        # Геометрические группы (например, стены по толщине) тоже должны
+        # нести суммарную площадь — по ней считаются объёмы работ в единицах
+        # площади (монтаж/демонтаж опалубки и т.п.) в финальном перечне.
+        areas = {}
+        area_fields = [
+            col for col in headers
+            if 'площадь' in col.lower() and col not in areas
+        ]
+        for field in area_fields:
+            total = 0.0
+            for e in elems_list:
+                total += safe_parse_float(e.row.get(field, 0))
+            if total > 0:
+                areas[field] = float(round(total, 2))
+
+        # Суммарный расход арматуры (ReinforcementVolumeRatio, кг) по всем элементам группы
+        reinforcement = 0.0
+        for e in elems_list:
+            reinforcement += safe_parse_float(e.row.get('ReinforcementVolumeRatio', 0))
+
         return {
             'name': name, 'level': level, 'indices': indices,
             # НОВАЯ ВЕРСИЯ: float() — чтобы значения корректно сериализовались в JSON
-            'total_volume': float(round(volume, 2)), 'total_areas': {},
+            'total_volume': float(round(volume, 2)), 'total_areas': areas,
+            'total_reinforcement': float(round(reinforcement, 2)),
             'first_element': dict(elems_list[0].row) if elems_list else {},
             'count': len(elems_list), 'children': []
         }

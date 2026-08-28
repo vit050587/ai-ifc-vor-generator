@@ -18,7 +18,7 @@ from src.services.third_etap import third_step
 from src.services.fourth_etap import fourth_step
 from src.services.pdf_processor import process_pdf
 from src.services.serializer import _make_glb_file
-from src.services.group_excel import process_ifc_excel, process_ifc_excel_ar
+from src.services.group_excel import process_ifc_excel, process_ifc_excel_ar, process_ifc_excel_mssk
 
 from openpyxl import load_workbook
 
@@ -1123,10 +1123,11 @@ class SessionManager:
             unique_indices = sorted(set(row_indices))
             df_filtered = df_original.iloc[unique_indices].reset_index(drop=True)
 
-            # АР: подмешиваем колонку с материалами слоёв
-            # («Свойство::IfcMaterialLayer::Name») из сырого дампа IFC по GlobalId.
-            # Далее группировка в АР выполняется по главному материалу.
-            if processing_type == "AR":
+            # Подмешиваем колонку с материалами («Свойство::IfcMaterialLayer::Name»)
+            # из сырого дампа IFC по GlobalId. В АР группировка выполняется по
+            # главному материалу, в КР — по коду МССК материала
+            # (монолитный/сборный ж/б и бетон: «СТ 00 15 01», «СТ 00 10 02» и т.п.).
+            if processing_type in ("AR", "KR"):
                 try:
                     mat_map = self._load_material_layer_map(session_id)
                     if mat_map and 'GlobalId' in df_filtered.columns:
@@ -1134,7 +1135,7 @@ class SessionManager:
                             df_filtered['GlobalId'].astype(str).map(mat_map).fillna('')
                         )
                 except Exception as e:
-                    logger.warning(f"Не удалось подмешать материалы слоёв (АР): {e}", exc_info=True)
+                    logger.warning(f"Не удалось подмешать материалы слоёв ({processing_type}): {e}", exc_info=True)
 
             filtered_path = os.path.join(run_dir, 'filtered_elements.xlsx')
             with pd.ExcelWriter(filtered_path, engine='openpyxl') as writer:
@@ -1148,7 +1149,7 @@ class SessionManager:
             if processing_type == "AR":
                 group_result = process_ifc_excel_ar(filtered_path, run_dir)
             else:
-                group_result = process_ifc_excel(filtered_path, run_dir)
+                group_result = process_ifc_excel_mssk(filtered_path, run_dir)
             
             # Кешируем дерево проекта в original/
             session_dir = os.path.join(self.output_folder, session_id)
@@ -1167,7 +1168,7 @@ class SessionManager:
                 if processing_type == "AR":
                     all_project_tree = process_ifc_excel_ar(all_data_path, original_dir)
                 else:
-                    all_project_tree = process_ifc_excel(all_data_path, original_dir)
+                    all_project_tree = process_ifc_excel_mssk(all_data_path, original_dir)
                 
                 whole_tree_src = all_project_tree['excel']
                 whole_tree_dst = os.path.join(run_dir, 'Дерево_проекта.xlsx')

@@ -900,11 +900,12 @@ def preview_excel(session_id: str):
     except Exception as e:
         logger.warning(f"Не удалось прочитать высоту: {e}")
 
-    # АР: карта материалов для группировки превью по главному материалу.
-    # GlobalId → {name, order}, где name — имя группы из data/materials_mssk_nested.json,
-    # «Прочее» (код не найден) или «Многослойные» (несколько материалов в слое).
+    # Карта материалов для группировки превью по материалу (GlobalId → {name, order, code}).
+    # Строится для АР (главный материал из IfcMaterialLayer::Name) и для КР
+    # (код материала MGE_MaterialCode / IfcMaterialLayer::Name:
+    #  «Железобетон сборный (СТ 00 15 01)», «Бетон монолитный (СТ 00 10 02)» и т.п.).
     materials_group_map = None
-    if s.get("processing_type", "KR") == "AR":
+    if s.get("processing_type", "KR") in ("AR", "KR"):
         try:
             from src.services.materials_lookup import (
                 build_materials_lookup,
@@ -919,7 +920,7 @@ def preview_excel(session_id: str):
                     name, order, code = resolve_material_group_with_code(raw_val, mat_lookup)
                     materials_group_map[gid] = {"name": name, "order": order, "code": code}
         except Exception as e:
-            logger.warning(f"Не удалось построить карту материалов (АР) для превью: {e}", exc_info=True)
+            logger.warning(f"Не удалось построить карту материалов для превью: {e}", exc_info=True)
             materials_group_map = None
 
     return _ok(PreviewResponse(

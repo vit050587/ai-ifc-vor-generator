@@ -840,6 +840,14 @@ def build_reference_output(
         if not first:
             continue
 
+        # Суммарный расход арматуры (ReinforcementVolumeRatio, кг) по всем
+        # элементам группы. Берётся из агрегированного поля total_reinforcement
+        # (сумма по группе), а не из first_element. Используется в финальном
+        # перечне работ для расценок по установке арматуры (перевод кг → т).
+        reinforcement_volume_ratio = safe_parse_float(
+            group.get('total_reinforcement', 0)
+        )
+
         # ---- Определяем основные параметры группы ----
 
         # Часть здания (первый элемент пути — Подземная/Цоколь/Надземная)
@@ -1005,6 +1013,17 @@ def build_reference_output(
             })
 
         # ---- Собираем итоговый объект ----
+        # totalMeasure содержит только ОДИН измеритель (объём ИЛИ площадь),
+        # поэтому суммарные площади групп сохраняются дополнительно в totalAreas.
+        # Они нужны для расчёта объёмов работ в единицах площади
+        # (монтаж/демонтаж опалубки и т.п.) в финальном перечне работ.
+        total_areas_clean = {}
+        if isinstance(total_areas, dict):
+            for area_key, area_val in total_areas.items():
+                area_num = safe_parse_float(area_val)
+                if area_num and area_num > 0:
+                    total_areas_clean[str(area_key)] = round(area_num, 2)
+
         obj = {
             'buildingElementName': _singularize_ru_name(ru_name),
             'isActive': True,
@@ -1014,8 +1033,13 @@ def build_reference_output(
                 'value': measure_value,
                 'unit': measure_unit,
             },
+            'totalAreas': total_areas_clean,
             'characteristics': characteristics,
             'additionalCharacteristics': additional,
+            # Внутреннее служебное поле: расход арматуры на куб бетона
+            # (ReinforcementVolumeRatio из IFC). Не отправляется в API,
+            # используется только при формировании финального перечня работ.
+            '_reinforcementVolumeRatio': reinforcement_volume_ratio,
         }
 
         result.append(obj)

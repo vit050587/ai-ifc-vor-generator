@@ -1005,6 +1005,9 @@ let selectedRows = new Set();
 let allRowIndices = [];
 let rowParts = {};
 let rowMaterials = {};
+// Фактические заголовки колонок превью (без чекбокса и селектов «Часть здания»/«Материал»).
+// Используется для рендера таблицы и colspan групповых строк.
+let previewColumnHeaders = [];
 let isGrouped = false;
 let groupIndexMap = {};
 let groupChildren = {};
@@ -1978,7 +1981,9 @@ function renderPreview(data) {
         'Объём, м3': findColumn('Объём, м3') || 'Объём, м3',
         'Площадь, м2': findColumn('Площадь, м2') || 'Площадь, м2',
     };
-    head.innerHTML = '<tr><th style="width:40px;">✓</th>' + requiredColumns.map(h => `<th>${h}</th>`).join('') + '<th style="width:180px;">Часть здания</th><th style="width:130px;">Материал</th></tr>';
+    // Полный список отображаемых колонок (запоминаем для группировки и colspan)
+    previewColumnHeaders = [...requiredColumns];
+    head.innerHTML = '<tr><th style="width:40px;">✓</th>' + previewColumnHeaders.map(h => `<th>${h}</th>`).join('') + '<th style="width:180px;">Часть здания</th><th style="width:130px;">Материал</th></tr>';
     body.innerHTML = '';
     rowElementCache.clear();
     allRowIndices = [];
@@ -2018,7 +2023,7 @@ function renderPreview(data) {
         let defaultMaterial = '-';
         if (materialIdx !== -1 && row[materialIdx] && row[materialIdx] !== '-') defaultMaterial = row[materialIdx].trim();
         rowMaterials[index] = defaultMaterial;
-        const orderedRow = requiredColumns.map(h => {
+        const orderedRow = previewColumnHeaders.map(h => {
             const actualCol = columnMapping[h];
             const colIdx = data.headers.indexOf(actualCol);
             return colIdx !== -1 ? row[colIdx] : '';
@@ -2310,9 +2315,11 @@ function updateSelectionUI() {
 // КР-режим, иерархия:
 //   L1 — Часть здания
 //   L2 — Код МССК
-//   L3 — IFC-тип (только если в МССК-группе несколько типов)
-//   L4 — Геометрические параметры (толщина, площадь, периметр+сечение и т.д.)
-//   L5 — Наименование элемента (листовая группа со строками)
+//   L3 — Материал (код МССК материала: «Железобетон сборный (СТ 00 15 01)»,
+//        «Железобетон монолитный (СТ 00 15 02)», «Бетон монолитный (СТ 00 10 02)»; нет кода — «Прочее»)
+//   L4 — IFC-тип (только если в группе материала несколько типов)
+//   L5 — Геометрические параметры (толщина, площадь, периметр+сечение и т.д.)
+//   L6 — Наименование элемента (листовая группа со строками)
     // АР-режим, иерархия:
     //   L1 — Часть здания
     //   L2 — Код МССК
@@ -2343,13 +2350,24 @@ function groupRowsCommon(mode) {
     // Если карты нет — считаем все коды неизвестными («Прочее»).
     const msskCodeMap = data.msskCodeMap || {};
     
-    const totalCols = 1 + 6 + 2;
+    const totalCols = 1 + (previewColumnHeaders.length || 6) + 2;
     
     const getVolume = (rowIndex) => {
         if (volumeIdx === -1) return 0;
         const row = data.rows[rowIndex];
         return row ? safeParseFloat(row[volumeIdx]) : 0;
     };
+    
+    // Суммарная площадь элемента (колонка «Площадь, м2») — для отображения
+    // Σ Площадь в групповых строках превью.
+    const areaIdx = data.headers.findIndex(h => h.toLowerCase().replace(/\s/g, '') === 'площадь,м2');
+    const getArea = (rowIndex) => {
+        if (areaIdx === -1) return 0;
+        const row = data.rows[rowIndex];
+        return row ? safeParseFloat(row[areaIdx]) : 0;
+    };
+    // Форматирует сводку площади для групповой строки (пусто, если площади нет)
+    const fmtAreaSummary = (area) => area > 0 ? ` · Σ Площадь: ${area.toFixed(2)} м²` : '';
     
     // Разрешаем код MSSK в (название_группы, порядок_сортировки)
     const resolveMsskGroup = (rowIndex) => {
@@ -2427,6 +2445,8 @@ function groupRowsCommon(mode) {
             
             let nameVolume = 0;
             nameRows.forEach(rd => { nameVolume += getVolume(rd.index); });
+            let nameArea = 0;
+            nameRows.forEach(rd => { nameArea += getArea(rd.index); });
             
             const nameId = 'NAME_' + (groupCounter++);
             groupIndexMap[nameId] = nameRows.map(r => r.index);
@@ -2456,7 +2476,7 @@ function groupRowsCommon(mode) {
                 <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
                     📎 ${nameKey}
                     <span class="group-badge">×${nameRows.length}</span>
-                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${nameVolume.toFixed(2)} м³</span>
+                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${nameVolume.toFixed(2)} м³${fmtAreaSummary(nameArea)}</span>
                 </td>
             `;
             body.appendChild(nameTr);
@@ -2521,6 +2541,8 @@ function groupRowsCommon(mode) {
 
             let matVolume = 0;
             matRows.forEach(rd => { matVolume += getVolume(rd.index); });
+            let matArea = 0;
+            matRows.forEach(rd => { matArea += getArea(rd.index); });
 
             const matId = 'MAT_' + (groupCounter++);
             groupIndexMap[matId] = matRows.map(r => r.index);
@@ -2548,7 +2570,7 @@ function groupRowsCommon(mode) {
                     🧱 ${matGroup.name}
                     ${matGroup.code ? `<span style="color:#718096; margin-left:8px;">(${matGroup.code})</span>` : ''}
                     <span class="group-badge">×${matRows.length}</span>
-                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${matVolume.toFixed(2)} м³</span>
+                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${matVolume.toFixed(2)} м³${fmtAreaSummary(matArea)}</span>
                 </td>
             `;
             body.appendChild(matTr);
@@ -2561,7 +2583,7 @@ function groupRowsCommon(mode) {
         });
     };
 
-    const addGeometryAndNameGroups = (parentId, rows, basePadding) => {
+    const addGeometryAndNameGroups = (parentId, rows, basePadding, levelOffset = 0) => {
         const ifcGroups = {};
         rows.forEach(rd => {
             if (!ifcGroups[rd.ifcType]) ifcGroups[rd.ifcType] = [];
@@ -2569,9 +2591,11 @@ function groupRowsCommon(mode) {
         });
         
         const needIfcGroup = Object.keys(ifcGroups).length > 1;
-        const ifcLevel = needIfcGroup ? 3 : 0;
-        const geoLevel = needIfcGroup ? 4 : 3;
-        const nameLevel = needIfcGroup ? 5 : 4;
+        // levelOffset сдвигает уровни вложенности, если перед геометрией
+        // добавлен дополнительный уровень (например группировка по материалу).
+        const ifcLevel = (needIfcGroup ? 3 : 0) + levelOffset;
+        const geoLevel = (needIfcGroup ? 4 : 3) + levelOffset;
+        const nameLevel = (needIfcGroup ? 5 : 4) + levelOffset;
 
         // Добавляет геометрическую группу и вкладывает в неё группы по имени
         const addGeoGroup = (geoParentId, geoRows, level, padding, label) => {
@@ -2579,6 +2603,8 @@ function groupRowsCommon(mode) {
             
             let geoVolume = 0;
             geoRows.forEach(rd => { geoVolume += getVolume(rd.index); });
+            let geoArea = 0;
+            geoRows.forEach(rd => { geoArea += getArea(rd.index); });
             
             const geoId = 'GEO_' + (groupCounter++);
             groupIndexMap[geoId] = geoRows.map(r => r.index);
@@ -2605,7 +2631,7 @@ function groupRowsCommon(mode) {
                 <td colspan="${totalCols - 1}" style="font-weight:500; color:#4a5568;">
                     📏 ${label}
                     <span class="group-badge">×${geoRows.length}</span>
-                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³</span>
+                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³${fmtAreaSummary(geoArea)}</span>
                 </td>
             `;
             body.appendChild(geoTr);
@@ -2634,6 +2660,8 @@ function groupRowsCommon(mode) {
                 
                 let ifcVolume = 0;
                 ifcRows.forEach(rd => { ifcVolume += getVolume(rd.index); });
+                let ifcArea = 0;
+                ifcRows.forEach(rd => { ifcArea += getArea(rd.index); });
                 
                 const ifcId = 'IFC_' + (groupCounter++);
                 groupIndexMap[ifcId] = ifcRows.map(r => r.index);
@@ -2660,7 +2688,7 @@ function groupRowsCommon(mode) {
                     <td colspan="${totalCols - 1}" style="font-weight:600; color:#4a5568;">
                         ${ifcLabels[ifcType] || ifcType}
                         <span class="group-badge">×${ifcRows.length}</span>
-                        <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${ifcVolume.toFixed(2)} м³</span>
+                        <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${ifcVolume.toFixed(2)} м³${fmtAreaSummary(ifcArea)}</span>
                     </td>
                 `;
                 body.appendChild(ifcTr);
@@ -2753,6 +2781,95 @@ function groupRowsCommon(mode) {
     };
     
     // ============================================================
+    // Группировка по материалу (КР): Код МССК (L2) → Материал (L3) →
+    // IFC → Геометрия → Наименование.
+    // Материал берётся из data.materialsGroupMap (GlobalId → {name, order, code}),
+    // где name — имя группы из data/materials_mssk_nested.json
+    // («Железобетон сборный», «Бетон монолитный», …), code — код материала
+    // («СТ 00 15 01», «СТ 00 10 02», …). Если код не найден — «Прочее».
+    // ============================================================
+    const addMaterialGroupsKR = (parentId, rows, basePadding) => {
+        const globalIdIdx = data.headers.indexOf('GlobalId');
+        const materialsGroupMap = data.materialsGroupMap || {};
+        
+        const resolveMaterialGroup = (rowIndex) => {
+            let gid = '';
+            if (globalIdIdx !== -1 && data.rows[rowIndex] && data.rows[rowIndex][globalIdIdx] !== '-') {
+                gid = String(data.rows[rowIndex][globalIdIdx]).trim();
+            }
+            const info = gid ? materialsGroupMap[gid] : null;
+            if (!info || !info.name) return { name: 'Прочее', order: Infinity, code: '' };
+            return { name: info.name, order: typeof info.order === 'number' ? info.order : 0, code: info.code || '' };
+        };
+        
+        const matGroups = {};
+        rows.forEach(rd => {
+            const mat = resolveMaterialGroup(rd.index);
+            rd.material = mat;
+            // Ключ группы: имя + код, чтобы разные коды не смешивались
+            const key = mat.code ? `${mat.name}__${mat.code}` : mat.name;
+            if (!matGroups[key]) matGroups[key] = { name: mat.name, code: mat.code, order: mat.order, rows: [] };
+            matGroups[key].rows.push(rd);
+        });
+        
+        const matNames = Object.keys(matGroups);
+        matNames.sort((a, b) => {
+            const ga = matGroups[a], gb = matGroups[b];
+            if (ga.order !== gb.order) return ga.order - gb.order;
+            return (ga.name || '').localeCompare(gb.name || '');
+        });
+        
+        matNames.forEach(matKey => {
+            const matGroup = matGroups[matKey];
+            const matRows = matGroup.rows;
+            if (matRows.length === 0) return;
+            
+            let matVolume = 0;
+            matRows.forEach(rd => { matVolume += getVolume(rd.index); });
+            let matArea = 0;
+            matRows.forEach(rd => { matArea += getArea(rd.index); });
+            
+            const matId = 'MAT_' + (groupCounter++);
+            groupIndexMap[matId] = matRows.map(r => r.index);
+            groupLevel[matId] = 3;
+            groupParent[matId] = parentId;
+            groupChildren[matId] = [];
+            groupChildren[parentId].push(matId);
+            
+            const matTr = document.createElement('tr');
+            matTr.className = 'group-row hidden-row';
+            matTr.dataset.group = parentId;
+            matTr.dataset.groupId = matId;
+            matTr.style.cssText = 'background:#f0fff4 !important; cursor:pointer;';
+            matTr.onclick = function(e) {
+                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                toggleGroup(matId);
+            };
+            
+            matTr.innerHTML = `
+                <td style="text-align:center; padding-left: ${basePadding}px;">
+                    <span class="group-arrow" id="${matId}_arrow">▶</span>
+                    <input type="checkbox" class="group-checkbox" data-group-id="${matId}">
+                </td>
+                <td colspan="${totalCols - 1}" style="font-weight:600; color:#276749;">
+                    🧱 ${matGroup.name}
+                    ${matGroup.code ? `<span style="color:#718096; margin-left:8px;">(${matGroup.code})</span>` : ''}
+                    <span class="group-badge">×${matRows.length}</span>
+                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${matVolume.toFixed(2)} м³${fmtAreaSummary(matArea)}</span>
+                </td>
+            `;
+            body.appendChild(matTr);
+            
+            const matCb = matTr.querySelector('.group-checkbox');
+            matCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(matId, this.checked); });
+            
+            // Внутри группы материала — IFC → Геометрия → Имя
+            // (levelOffset=1: уровни сдвигаются под уровень материала L3)
+            addGeometryAndNameGroups(matId, matRows, basePadding + 30, 1);
+        });
+    };
+    
+    // ============================================================
     // Группировка АР: Код МССК (L1) → Материал (L2) → Наименование (L3).
     // Часть здания (уровень) в АР не используется.
     // ============================================================
@@ -2780,6 +2897,8 @@ function groupRowsCommon(mode) {
 
             let groupVolume = 0;
             groupRows.forEach(rd => { groupVolume += getVolume(rd.index); });
+            let groupArea = 0;
+            groupRows.forEach(rd => { groupArea += getArea(rd.index); });
 
             // Название группы: название из справочника МССК, «Прочее» для неизвестных
             const label = group.name || 'Прочее';
@@ -2808,7 +2927,7 @@ function groupRowsCommon(mode) {
                     📋 ${label}
                     ${group.code ? `<span style="color:#718096; margin-left:8px;">(${group.code})</span>` : ''}
                     <span class="group-badge">×${groupRows.length}</span>
-                    <span style="font-size:11px; color:#4a5568; margin-left:12px;">Σ Объём: ${groupVolume.toFixed(2)} м³</span>
+                    <span style="font-size:11px; color:#4a5568; margin-left:12px;">Σ Объём: ${groupVolume.toFixed(2)} м³${fmtAreaSummary(groupArea)}</span>
                 </td>
             `;
             body.appendChild(l1Tr);
@@ -2829,7 +2948,7 @@ function groupRowsCommon(mode) {
 
     // ============================================================
     // Группировка КР: Часть здания (L1) → Код МССК (L2) →
-    // Геометрия (L3/L4) → Наименование.
+    // Материал (L3) → IFC → Геометрия → Наименование.
     // ============================================================
     partOrder.forEach(part => {
         const partRows = rowData.filter(rd => rd.part === part);
@@ -2843,6 +2962,8 @@ function groupRowsCommon(mode) {
         
         let partVolume = 0;
         partRows.forEach(rd => { partVolume += getVolume(rd.index); });
+        let partArea = 0;
+        partRows.forEach(rd => { partArea += getArea(rd.index); });
         
         // Уровень 1: Часть здания
         const l1Id = 'L1_' + (groupCounter++);
@@ -2867,7 +2988,7 @@ function groupRowsCommon(mode) {
             <td colspan="${totalCols - 1}" style="font-weight:700; font-size:15px; color:#2d3748;">
                 🏗️ ${partLabel}
                 <span class="group-badge">×${partRows.length}</span>
-                <span style="font-size:11px; color:#4a5568; margin-left:12px;">Σ Объём: ${partVolume.toFixed(2)} м³</span>
+                <span style="font-size:11px; color:#4a5568; margin-left:12px;">Σ Объём: ${partVolume.toFixed(2)} м³${fmtAreaSummary(partArea)}</span>
             </td>
         `;
         body.appendChild(l1Tr);
@@ -2901,6 +3022,8 @@ function groupRowsCommon(mode) {
             
             let groupVolume = 0;
             groupRows.forEach(rd => { groupVolume += getVolume(rd.index); });
+            let groupArea = 0;
+            groupRows.forEach(rd => { groupArea += getArea(rd.index); });
             
             // Название группы: название из справочника МССК, «Прочее» для неизвестных
             const label = group.name || 'Прочее';
@@ -2931,7 +3054,7 @@ function groupRowsCommon(mode) {
                     📋 ${label}
                     ${group.code ? `<span style="color:#718096; margin-left:8px;">(${group.code})</span>` : ''}
                     <span class="group-badge">×${groupRows.length}</span>
-                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${groupVolume.toFixed(2)} м³</span>
+                    <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${groupVolume.toFixed(2)} м³${fmtAreaSummary(groupArea)}</span>
                 </td>
             `;
             body.appendChild(l2Tr);
@@ -2939,8 +3062,8 @@ function groupRowsCommon(mode) {
             const l2Cb = l2Tr.querySelector('.group-checkbox');
             l2Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l2Id, this.checked); });
             
-            // Для КР: IFC → Геометрия → Имя
-            addGeometryAndNameGroups(l2Id, groupRows, 60);
+            // Для КР: Материал (L3) → IFC → Геометрия → Имя
+            addMaterialGroupsKR(l2Id, groupRows, 60);
         });
     });
     
