@@ -12,6 +12,8 @@ class Config:
     PRICE_COST_PATH: str
     # API справочника работ ТСН (для режима КР)
     WORKS_API_URL: str
+    # Эндпоинт стоимости работ ТСН (curAll — цена за единицу измерения)
+    WORKS_RESOURCES_API_URL: str
     WORKS_API_TOKEN: str  # fallback-токен, если Keycloak-клиент не настроен
     # Keycloak для автоматического обновления токена (client_credentials)
     KEYCLOAK_TOKEN_URL: str
@@ -30,6 +32,10 @@ def load_config() -> Config:
         WORKS_API_URL=os.getenv(
             "WORKS_API_URL",
             "https://normativ.mgexp.org/digital-collection/api/v1/digital-collection/building-elements/positions",
+        ),
+        WORKS_RESOURCES_API_URL=os.getenv(
+            "WORKS_RESOURCES_API_URL",
+            "https://normativ.mgexp.org/digital-collection/api/v1/digital-collection/works/resources",
         ),
         WORKS_API_TOKEN=os.getenv("WORKS_API_TOKEN", ""),
         KEYCLOAK_TOKEN_URL=os.getenv(

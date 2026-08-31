@@ -14,8 +14,12 @@ digital-collection/building-elements/positions.
   3. Из ответов (data[].works) формируется финальный перечень работ:
      Шифр ТСН = works/code, Наименование расценки/ресурса = works/name,
      Ед. изм. = works/unitOfMeasure. Объём работ рассчитывается по
-     totalMeasure соответствующей группы элементов, Стоимость — по
-     price_cost.xlsx (Шифр ТСН × Объём работ).
+     totalMeasure соответствующей группы элементов.
+  4. Полученные работы отправляются на эндпоинт стоимости
+     works/resources (POST), откуда берётся curAll — стоимость одной
+     измерительной единицы работы (за 100 м², тонну и т. д. в
+     зависимости от okeiValue). Колонка «Стоимость за Ед. Изм.» =
+     curAll, «Стоимость» = Объём работ × Стоимость за Ед. Изм.
 """
 
 import base64
@@ -37,6 +41,7 @@ logger = setup_logger(__name__)
 _cfg = load_config()
 
 API_URL = _cfg.WORKS_API_URL
+RESOURCES_API_URL = _cfg.WORKS_RESOURCES_API_URL
 API_TOKEN = _cfg.WORKS_API_TOKEN
 
 # Провайдер для автоматического обновления токена (Keycloak, client_credentials).
@@ -201,6 +206,117 @@ def fetch_works_from_api(
         results.append((element, response))
 
     return results
+
+
+# =====================================================================
+#  ЗАПРОС СТОИМОСТИ РАБОТ (works/resources)
+# =====================================================================
+
+# Максимальное число работ в одном запросе стоимости.
+_COST_BATCH_SIZE = 100
+
+
+def _post_resources(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """POST-запрос к эндпоинту стоимости работ (works/resources).
+
+    При 401 сбрасывает кеш токена Keycloak и повторяет запрос один раз.
+    """
+    headers = {
+        "Authorization": f"Bearer {_get_token()}",
+        "Content-Type": "application/json",
+    }
+
+    def _post() -> requests.Response:
+        try:
+            return requests.post(
+                RESOURCES_API_URL, json=payload, headers=headers, timeout=300
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Ошибка вызова API стоимости работ: {exc}") from exc
+
+    response = _post()
+
+    if response.status_code == 401 and _token_provider is not None:
+        _token_provider.invalidate()
+        headers["Authorization"] = f"Bearer {_get_token()}"
+        response = _post()
+
+    if response.status_code == 401:
+        raise RuntimeError(
+            "API стоимости работ вернул 401 — Bearer-токен недействителен "
+            "(проверьте WORKS_API_TOKEN / KEYCLOAK_CLIENT_ID и "
+            "KEYCLOAK_CLIENT_SECRET)"
+        )
+    if response.status_code >= 400:
+        raise RuntimeError(
+            f"API стоимости работ вернул статус {response.status_code}: "
+            f"{response.text[:500]}"
+        )
+
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise RuntimeError(
+            f"API стоимости работ вернул не-JSON ответ: {response.text[:500]}"
+        ) from exc
+
+
+def fetch_work_costs(
+    works: List[Dict[str, Any]],
+) -> Tuple[Dict[int, float], List[Dict[str, Any]]]:
+    """Запрашивает стоимость единицы измерения для списка работ.
+
+    Работы отправляются на эндпоинт works/resources в формате
+    {"works": [...], "wrate": false, "coefficient": true}. В ответе для
+    каждой работы возвращается curAll — стоимость одной измерительной
+    единицы (за 100 м², тонну и т. д. в зависимости от okeiValue).
+
+    Аргументы:
+        works — список работ в формате ответа API подбора работ
+            (id, code, name, unitOfMeasure, okeiValue, characteristics,
+            additionalWorks).
+
+    Возвращает:
+        Кортеж (costs, raw_responses), где costs — словарь
+        {workId: curAll}, raw_responses — сырые ответы API (для дампа).
+    """
+    costs: Dict[int, float] = {}
+    raw_responses: List[Dict[str, Any]] = []
+
+    # Дедупликация работ по id (одна и та же расценка может прийти
+    # в ответах для разных групп элементов)
+    unique: Dict[int, Dict[str, Any]] = {}
+    for work in works:
+        work_id = work.get("id")
+        if work_id is None or work_id in unique:
+            continue
+        unique[work_id] = work
+
+    work_ids = list(unique.keys())
+    total = len(work_ids)
+    logger.info(f"Запрос стоимости для {total} работ ({RESOURCES_API_URL})")
+
+    for start in range(0, total, _COST_BATCH_SIZE):
+        batch_ids = work_ids[start:start + _COST_BATCH_SIZE]
+        payload = {
+            "works": [unique[wid] for wid in batch_ids],
+            "wrate": False,
+            "coefficient": True,
+        }
+        response = _post_resources(payload)
+        raw_responses.append(response)
+
+        for cost_work in response.get("works", []) or []:
+            work_id = cost_work.get("workId")
+            cur_all = cost_work.get("curAll")
+            if work_id is None or cur_all is None:
+                continue
+            costs[work_id] = safe_float(cur_all)
+
+    logger.info(
+        f"Получена стоимость для {len(costs)} из {total} работ"
+    )
+    return costs, raw_responses
 
 
 # =====================================================================
@@ -387,7 +503,8 @@ def build_final_works_from_api(
         Наименование расценки/ресурса = works/name
         Ед. изм.              = works/unitOfMeasure
         Объём работ           = по totalMeasure группы элементов запроса
-        Стоимость             = цена из price_cost.xlsx × Объём работ
+        Стоимость за Ед. Изм. = curAll из API стоимости (works/resources)
+        Стоимость             = Объём работ × Стоимость за Ед. Изм.
 
     Аргументы:
         api_results   — список пар (element, api_response) из fetch_works_from_api.
@@ -398,6 +515,7 @@ def build_final_works_from_api(
         Путь к созданному файлу ОБЩИЙ_Финальный_перечень_работ.xlsx.
     """
     rows: List[Dict[str, Any]] = []
+    all_works: List[Dict[str, Any]] = []
 
     for element, response in api_results:
         total_measure = element.get("totalMeasure", {})
@@ -420,11 +538,14 @@ def build_final_works_from_api(
                     # ReinforcementVolumeRatio в IFC задан в килограммах
                     # (на кубический метр), единица расценки — тонны: кг → т
                     volume = f"{reinforcement_ratio / 1000:.4f}"
+                all_works.append(work)
                 rows.append({
                     "Шифр ТСН": work.get("code", ""),
                     "Наименование расценки/ресурса": work.get("name", ""),
                     "Ед. изм.": _resolve_unit_label(work),
                     "Объём работ": volume,
+                    # id работы для сопоставления со стоимостью из API
+                    "_workId": work.get("id"),
                 })
 
     if not rows:
@@ -438,6 +559,7 @@ def build_final_works_from_api(
 
     df = pd.DataFrame(rows, columns=[
         "Шифр ТСН", "Наименование расценки/ресурса", "Ед. изм.", "Объём работ",
+        "_workId",
     ])
 
     # Корректировка объёмов по нормам расхода (koefs.xlsx)
@@ -446,11 +568,45 @@ def build_final_works_from_api(
     except Exception as exc:
         logger.error(f"Ошибка при корректировке объёма работ: {exc}")
 
-    # Стоимость = цена из price_cost.xlsx × Объём работ
+    # Стоимость за единицу измерения — из API цифрового сборника
+    # (works/resources, поле curAll). При сбое — fallback на price_cost.xlsx.
+    costs: Dict[int, float] = {}
+    cost_raw: List[Dict[str, Any]] = []
     try:
-        df = _add_cost_column(df)
+        works_for_cost = [w for w in all_works if w.get("id") is not None]
+        if works_for_cost:
+            costs, cost_raw = fetch_work_costs(works_for_cost)
     except Exception as exc:
-        logger.error(f"Ошибка при расчёте стоимости: {exc}")
+        logger.error(f"Ошибка при получении стоимости из API: {exc}")
+
+    if costs:
+        df["Стоимость за Ед. Изм."] = df["_workId"].map(
+            lambda wid: costs.get(wid) if wid is not None else None
+        )
+        df["Стоимость за Ед. Изм."] = df["Стоимость за Ед. Изм."].apply(
+            lambda v: round(v, 2) if safe_float(v) > 0 else ""
+        )
+        # Стоимость = Объём работ × Стоимость за Ед. Изм.
+        def _calc_total(row) -> Any:
+            unit_cost = safe_float(row.get("Стоимость за Ед. Изм."), default=0.0)
+            volume = safe_float(row.get("Объём работ"), default=0.0)
+            if unit_cost > 0 and volume > 0:
+                return round(unit_cost * volume, 2)
+            return ""
+
+        df["Стоимость"] = df.apply(_calc_total, axis=1)
+    else:
+        # Fallback: стоимость из price_cost.xlsx (прежнее поведение)
+        logger.warning(
+            "Стоимость из API недоступна — используется price_cost.xlsx"
+        )
+        try:
+            df = _add_cost_column(df)
+        except Exception as exc:
+            logger.error(f"Ошибка при расчёте стоимости: {exc}")
+            df["Стоимость"] = ""
+
+    df = df.drop(columns=["_workId"], errors="ignore")
 
     output_path = os.path.join(output_folder, "ОБЩИЙ_Финальный_перечень_работ.xlsx")
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
@@ -475,5 +631,11 @@ def build_final_works_from_api(
         with open(raw_path, "w", encoding="utf-8") as fh:
             json.dump(combined, fh, ensure_ascii=False, indent=2, default=str)
         logger.info(f"Сырые ответы API сохранены: {raw_path}")
+
+        if cost_raw:
+            cost_path = os.path.join(output_folder, "api_works_cost_response.json")
+            with open(cost_path, "w", encoding="utf-8") as fh:
+                json.dump(cost_raw, fh, ensure_ascii=False, indent=2, default=str)
+            logger.info(f"Сырые ответы API стоимости сохранены: {cost_path}")
 
     return output_path

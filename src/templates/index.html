@@ -3100,12 +3100,14 @@ function previewResultFile(filename) {
                 ? `Показаны первые ${data.previewRows} строк из ${data.totalRows} <span class="preview-badge">Предпросмотр</span>`
                 : `Всего строк: ${data.totalRows}`;
             const costIdx = data.headers.indexOf('Стоимость');
+            const unitCostIdx = data.headers.indexOf('Стоимость за Ед. Изм.');
+            const highlightCols = new Set([costIdx, unitCostIdx].filter(i => i !== -1));
             document.getElementById('previewModalHead').innerHTML = '<tr>' + data.headers.map(h => 
-                `<th${h === 'Стоимость' ? ' style="background:#e6fffa;color:#234e52;font-weight:700;"' : ''}>${h}</th>`
+                `<th${highlightCols.has(data.headers.indexOf(h)) ? ' style="background:#e6fffa;color:#234e52;font-weight:700;"' : ''}>${h}</th>`
             ).join('') + '</tr>';
             document.getElementById('previewModalBody').innerHTML = data.rows.map(row => {
                 const cells = row.map((cell, i) => {
-                    const isCost = i === costIdx && cell !== '-' && cell !== '';
+                    const isCost = highlightCols.has(i) && cell !== '-' && cell !== '';
                     return `<td title="${cell}"${isCost ? ' style="font-weight:600;color:#234e52;background:#f0fff4;"' : ''}>${cell}</td>`;
                 }).join('');
                 return '<tr>' + cells + '</tr>';
