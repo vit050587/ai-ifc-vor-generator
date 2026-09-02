@@ -503,8 +503,7 @@ def build_final_works_from_api(
         Наименование расценки/ресурса = works/name
         Ед. изм.              = works/unitOfMeasure
         Объём работ           = по totalMeasure группы элементов запроса
-        Стоимость за Ед. Изм. = curAll из API стоимости (works/resources)
-        Стоимость             = Объём работ × Стоимость за Ед. Изм.
+        Стоимость             = цена из price_cost.xlsx × Объём работ
 
     Аргументы:
         api_results   — список пар (element, api_response) из fetch_works_from_api.
@@ -515,10 +514,56 @@ def build_final_works_from_api(
         Путь к созданному файлу ОБЩИЙ_Финальный_перечень_работ.xlsx.
     """
     rows: List[Dict[str, Any]] = []
-    all_works: List[Dict[str, Any]] = []
 
-    for element, response in api_results:
+    for element_idx, (element, response) in enumerate(api_results):
+        # Получаем название элемента из разных возможных полей
+        element_name = element.get("buildingElementName") or element.get("name") or f"Элемент {element_idx + 1}"
+        
+        # Дополнительная информация об элементе
+        element_info_parts = []
+        
+        # Добавляем материал, если есть
+        if element.get("characteristics"):
+            for char in element["characteristics"]:
+                if char.get("name") == "Материал" and char.get("values"):
+                    material = char["values"][0].get("strValue", "")
+                    if material:
+                        element_info_parts.append(material)
+        
+        # Добавляем имя элемента из Revit (обрезаем ID после двоеточия)
+        if element.get("additionalCharacteristics"):
+            for char in element["additionalCharacteristics"]:
+                if char.get("name") == "Имя элемента" and char.get("values"):
+                    revit_name = char["values"][0].get("strValue", "")
+                    # Убираем цифровой ID в конце (после последнего двоеточия)
+                    if ":" in revit_name:
+                        parts = revit_name.split(":")
+                        # Если последний элемент - цифры, убираем его
+                        if parts[-1].strip().isdigit():
+                            revit_name = ":".join(parts[:-1])
+                    if revit_name:
+                        element_info_parts.append(revit_name)
+        
+        # Формируем полное название с дополнительной информацией
+        element_full_name = element_name
+        if element_info_parts:
+            element_full_name += f" ({', '.join(element_info_parts)})"
+        
+        # Добавляем информацию о количестве
+        element_count = element.get("elementCount", 1)
         total_measure = element.get("totalMeasure", {})
+        if element_count > 1:
+            element_full_name += f" Кол-во: {element_count}"
+
+        # Строка-заголовок элемента
+        rows.append({
+            "Шифр ТСН": "",
+            "Наименование расценки/ресурса": f"{element_full_name}",
+            "Ед. изм.": "",
+            "Объём работ": "",
+            "_is_header": True,  # Временный маркер для форматирования
+        })
+        
         total_areas = element.get("totalAreas", {}) or {}
         # Суммарный расход арматуры (ReinforcementVolumeRatio, кг) по всем
         # элементам группы. Для работ по установке арматуры пересчитывается
@@ -538,15 +583,23 @@ def build_final_works_from_api(
                     # ReinforcementVolumeRatio в IFC задан в килограммах
                     # (на кубический метр), единица расценки — тонны: кг → т
                     volume = f"{reinforcement_ratio / 1000:.4f}"
-                all_works.append(work)
                 rows.append({
                     "Шифр ТСН": work.get("code", ""),
                     "Наименование расценки/ресурса": work.get("name", ""),
                     "Ед. изм.": _resolve_unit_label(work),
                     "Объём работ": volume,
-                    # id работы для сопоставления со стоимостью из API
-                    "_workId": work.get("id"),
+                    "_is_header": False,
                 })
+        
+        # Добавляем пустую строку после каждого элемента (кроме последнего)
+        if element_idx < len(api_results) - 1:
+            rows.append({
+                "Шифр ТСН": "",
+                "Наименование расценки/ресурса": "",
+                "Ед. изм.": "",
+                "Объём работ": "",
+                "_is_header": False,
+            })
 
     if not rows:
         logger.warning("API подбора работ не вернул ни одной расценки")
@@ -555,62 +608,99 @@ def build_final_works_from_api(
             "Наименование расценки/ресурса": "Работы не подобраны",
             "Ед. изм.": "",
             "Объём работ": "",
+            "_is_header": False,
         })
 
-    df = pd.DataFrame(rows, columns=[
-        "Шифр ТСН", "Наименование расценки/ресурса", "Ед. изм.", "Объём работ",
-        "_workId",
-    ])
+    # Создаем DataFrame с дополнительной колонкой для форматирования
+    df = pd.DataFrame(rows)
+    
+    # Убедимся, что все нужные колонки есть
+    required_columns = ["Шифр ТСН", "Наименование расценки/ресурса", "Ед. изм.", "Объём работ", "_is_header"]
+    for col in required_columns:
+        if col not in df.columns:
+            df[col] = ""
+    
+    df = df[required_columns]
 
+    # Разделяем на заголовки и работы
+    header_mask = df["_is_header"].astype(bool)
+    df_headers = df[header_mask].copy()
+    df_works = df[~header_mask].copy()
+    
     # Корректировка объёмов по нормам расхода (koefs.xlsx)
-    try:
-        df = _get_corrected_volume(df)
-    except Exception as exc:
-        logger.error(f"Ошибка при корректировке объёма работ: {exc}")
-
-    # Стоимость за единицу измерения — из API цифрового сборника
-    # (works/resources, поле curAll). При сбое — fallback на price_cost.xlsx.
-    costs: Dict[int, float] = {}
-    cost_raw: List[Dict[str, Any]] = []
-    try:
-        works_for_cost = [w for w in all_works if w.get("id") is not None]
-        if works_for_cost:
-            costs, cost_raw = fetch_work_costs(works_for_cost)
-    except Exception as exc:
-        logger.error(f"Ошибка при получении стоимости из API: {exc}")
-
-    if costs:
-        df["Стоимость за Ед. Изм."] = df["_workId"].map(
-            lambda wid: costs.get(wid) if wid is not None else None
-        )
-        df["Стоимость за Ед. Изм."] = df["Стоимость за Ед. Изм."].apply(
-            lambda v: round(v, 2) if safe_float(v) > 0 else ""
-        )
-        # Стоимость = Объём работ × Стоимость за Ед. Изм.
-        def _calc_total(row) -> Any:
-            unit_cost = safe_float(row.get("Стоимость за Ед. Изм."), default=0.0)
-            volume = safe_float(row.get("Объём работ"), default=0.0)
-            if unit_cost > 0 and volume > 0:
-                return round(unit_cost * volume, 2)
-            return ""
-
-        df["Стоимость"] = df.apply(_calc_total, axis=1)
-    else:
-        # Fallback: стоимость из price_cost.xlsx (прежнее поведение)
-        logger.warning(
-            "Стоимость из API недоступна — используется price_cost.xlsx"
-        )
+    # Применяем только к строкам с работами
+    if len(df_works) > 0:
         try:
-            df = _add_cost_column(df)
+            # Сохраняем оригинальные индексы
+            original_indices = df_works.index.tolist()
+            
+            # Применяем корректировку
+            df_works_corrected = _get_corrected_volume(df_works)
+            
+            # Восстанавливаем индексы
+            df_works_corrected.index = original_indices
+            df_works = df_works_corrected
+        except Exception as exc:
+            logger.error(f"Ошибка при корректировке объёма работ: {exc}")
+
+    # Стоимость = цена из price_cost.xlsx × Объём работ
+    if len(df_works) > 0:
+        try:
+            # Сохраняем оригинальные индексы
+            original_indices = df_works.index.tolist()
+            
+            # Применяем расчёт стоимости
+            df_works_corrected = _add_cost_column(df_works)
+            
+            # Восстанавливаем индексы
+            df_works_corrected.index = original_indices
+            df_works = df_works_corrected
         except Exception as exc:
             logger.error(f"Ошибка при расчёте стоимости: {exc}")
-            df["Стоимость"] = ""
 
-    df = df.drop(columns=["_workId"], errors="ignore")
+    # Объединяем обратно, сохраняя порядок
+    df = pd.concat([df_headers, df_works]).sort_index()
+    
+    # Убираем временную колонку
+    df = df.drop(columns=["_is_header"])
+
+    print(df.head())
 
     output_path = os.path.join(output_folder, "ОБЩИЙ_Финальный_перечень_работ.xlsx")
+    
+    # Создаем Excel с форматированием
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name="Данные", index=False)
+        
+        # Получаем доступ к листу для форматирования
+        worksheet = writer.sheets["Данные"]
+        
+        # Форматируем заголовки элементов (жирный шрифт, заливка)
+        from openpyxl.styles import Font, PatternFill, Alignment
+        
+        header_font = Font(bold=True, size=11)
+        header_fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+        center_alignment = Alignment(horizontal="center", vertical="center")
+        
+        for row_idx in range(2, len(df) + 2):  # +2 из-за заголовка таблицы
+            cell_value = worksheet.cell(row=row_idx, column=2).value
+            if cell_value and str(cell_value).startswith("==="):
+                for col_idx in range(1, len(df.columns) + 1):
+                    cell = worksheet.cell(row=row_idx, column=col_idx)
+                    cell.font = header_font
+                    cell.fill = header_fill
+                    cell.alignment = center_alignment
+        
+        # Настраиваем ширину колонок
+        worksheet.column_dimensions['A'].width = 15
+        worksheet.column_dimensions['B'].width = 60  # Увеличил для длинных названий
+        worksheet.column_dimensions['C'].width = 10
+        worksheet.column_dimensions['D'].width = 15
+        if 'Стоимость' in df.columns:
+            worksheet.column_dimensions['E'].width = 15
+        
+        # Добавляем автофильтр для удобства
+        worksheet.auto_filter.ref = f"A1:{chr(64 + len(df.columns))}{len(df) + 1}"
 
     logger.info(
         f"Финальный перечень работ из API сохранён: {output_path} "
@@ -631,11 +721,5 @@ def build_final_works_from_api(
         with open(raw_path, "w", encoding="utf-8") as fh:
             json.dump(combined, fh, ensure_ascii=False, indent=2, default=str)
         logger.info(f"Сырые ответы API сохранены: {raw_path}")
-
-        if cost_raw:
-            cost_path = os.path.join(output_folder, "api_works_cost_response.json")
-            with open(cost_path, "w", encoding="utf-8") as fh:
-                json.dump(cost_raw, fh, ensure_ascii=False, indent=2, default=str)
-            logger.info(f"Сырые ответы API стоимости сохранены: {cost_path}")
 
     return output_path

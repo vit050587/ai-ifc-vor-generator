@@ -9,7 +9,7 @@ from config import settings
 from rectangle_utils import rectangles_to_yolo_obb, get_two_points_bbox
 
 class WallsProcessor:
-    def __init__(self, pdf_path, detection_settings, pdf_processor: PdfProcessor | None = None, zoom: float | None = None, model: Path | None = None):
+    def __init__(self, pdf_path, detection_settings, pdf_processor: PdfProcessor | None = None, zoom: float | None = None, model: Path | None = None, dpi: int | None = None):
         self.PDF_PATH = pdf_path
         self.detection_settings = detection_settings
 
@@ -22,7 +22,8 @@ class WallsProcessor:
         self.tiles_path = settings.DEBUG_DIR / self.detection_settings.tiles_dir
         self.tiles_path.mkdir(parents=True, exist_ok=True)
 
-        self.zoom = zoom or self.detection_settings.zoom
+        self.zoom = zoom or self.detection_settings.zoom if not dpi else None
+        self.dpi = dpi
 
         self.walls = None
 
@@ -34,7 +35,8 @@ class WallsProcessor:
             blueprint.tile_size,
             blueprint.tile_overlap,
             self.zoom,
-            exclude_bboxes
+            exclude_bboxes,
+            self.dpi
         )
 
         for i, tile in enumerate(tiles):
@@ -43,10 +45,7 @@ class WallsProcessor:
 
         return tiles
 
-    def get_walls_cords(self, drawing_index: int, drawings: list, layout_processor: LayoutProcessor):
-        """
-        Возвращает стены в глобальных пиксельных координатах изображения PDF.
-        """
+    def _get_tiles(self, drawing_index: int, drawings: list, layout_processor: LayoutProcessor):
         drawings_bboxes = [drawing["object"]["bbox"] if drawing else None for drawing in drawings]
 
         layouts_bboxes = []
@@ -60,6 +59,13 @@ class WallsProcessor:
 
         drawing_bbox_2points = get_two_points_bbox(drawings_bboxes[drawing_index])
         tiles = self._get_blueprint_crops(drawing_index, drawing_bbox_2points, exclude_bboxes=(drawings_bboxes[:drawing_index] + drawings_bboxes[drawing_index + 1:] + layouts_bboxes))
+        return tiles
+
+    def get_walls_cords(self, drawing_index: int, drawings: list, layout_processor: LayoutProcessor):
+        """
+        Возвращает стены в глобальных пиксельных координатах изображения PDF.
+        """
+        tiles = self._get_tiles(drawing_index, drawings, layout_processor)
         walls = []
         detection = self.detection_settings
 

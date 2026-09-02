@@ -8,15 +8,28 @@ from utils import image_to_base64
 from pathlib import Path
 from typing import Tuple
 
+from config import settings
+
 class PdfProcessor:
 
     def __init__(self, pdf_path: Path):
+        Image.MAX_IMAGE_PIXELS = settings.MAX_IMAGE_PIXELS
+
         self.pdf_path = pdf_path
         self.img = None
         self.img_b64 = None
         self.zoom = None
 
-    def pdf_to_base64(self, zoom: float = 2.0) -> Tuple:
+    def pdf_to_base64(self, zoom: float | None = None, dpi: int | None = None) -> Tuple:
+        if zoom is not None and dpi is not None:
+            raise ValueError("Specify either zoom or dpi, not both")
+
+        if dpi is not None:
+            zoom = dpi / 72
+
+        if zoom is None:
+            zoom = 2.0
+        
         if self.img_b64 and self.img and self.zoom == zoom:
             return self.img_b64, self.img
 
@@ -415,7 +428,8 @@ class PdfProcessor:
         tile_height: int,
         overlap_percent: float = 0,
         zoom: float | None = None,
-        exclude_bboxes: list | None = None
+        exclude_bboxes: list | None = None,
+        dpi: int | None = None
     ) -> list[dict]:
         if tile_width <= 0 or tile_height <= 0:
             raise ValueError("tile_width and tile_height must be greater than 0")
@@ -426,6 +440,9 @@ class PdfProcessor:
         if zoom and zoom != self.zoom:
             self.pdf_to_base64(zoom=zoom)
 
+        if dpi:
+            self.pdf_to_base64(dpi=dpi)
+
         if self.img is None:
             self.pdf_to_base64()
 
@@ -433,13 +450,13 @@ class PdfProcessor:
         crop_offset_y = 0
 
         if exclude_bboxes:
-            _, self.img = self.render_obb_rectangles({"white": exclude_bboxes}, width=0, save_path=None, fill_opacity=1, zoom=zoom)
+            _, self.img = self.render_obb_rectangles({"white": exclude_bboxes}, width=0, save_path=None, fill_opacity=1, zoom=self.zoom)
 
         if drawing_bbox:
             image_rect = self.pdf_rect_to_image_rect(drawing_bbox)
             crop_offset_x = max(0, int(image_rect["x0"]))
             crop_offset_y = max(0, int(image_rect["y0"]))
-            _, drawing_img = self.crop_pdf_rect(drawing_bbox, zoom=zoom)
+            _, drawing_img = self.crop_pdf_rect(drawing_bbox, zoom=self.zoom)
         else:
             drawing_img = self.img
 

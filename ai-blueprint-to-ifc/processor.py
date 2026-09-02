@@ -30,7 +30,7 @@ logger = setup_logger(__name__)
 
 class Processor:
     def __init__(self, pdf_path):
-        Image.MAX_IMAGE_PIXELS = None
+        Image.MAX_IMAGE_PIXELS = settings.MAX_IMAGE_PIXELS
 
         self.PDF_PATH = pdf_path
 

@@ -109,7 +109,7 @@ class Settings(BaseSettings):
 
     LOGGING_LEVEL: str = "DEBUG"
 
-    MAX_IMAGE_PIXELS:int=1500*1500
+    MAX_IMAGE_PIXELS:int=800_000_000
     DINO_IMAGE_SIZE: int = 518
     DINO_MAX_BATCH_SIZE: int = 16
     TRANSFORMERS_LOCALS_FILES_ONLY:bool = False
