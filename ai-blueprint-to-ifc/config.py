@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://ollama:11434"
     OLLAMA_CONTEXT_LENGTH: int = 16384
 
+    DEVICE: str = "cuda"
+
     TEMPERATURE: float = 0.0
     TOP_K: int = 1
     TOP_P: float = 1.0
@@ -90,6 +92,7 @@ class Settings(BaseSettings):
     YOLO_LAYOUT_MODEL: Path = MODELS_DIR / "yolo_layout.pt"
     YOLO_LEGEND_LAYOUT_MODEL: Path = MODELS_DIR / "yolo_legend_layout.pt"
     DINO_HATCHING_MODEL: Path = MODELS_DIR / "dino_hatching.pt"
+    HATCH_FINDER_MODEL: Path = MODELS_DIR / "hatch_finder.pt"
 
     NEW_LEGEND_CREATION_SCORE_THRESHOLD: float = 0.0
     HATCHING_SCORE_THRESHOLD: float = 0.5
@@ -114,6 +117,10 @@ class Settings(BaseSettings):
     DINO_MAX_BATCH_SIZE: int = 16
     TRANSFORMERS_LOCALS_FILES_ONLY:bool = False
     TRANSFORMERS_CUDA_NUM:int = 0
+
+    HATCHING_PIXELS_CONFIDENCE: float = 0.5
+    MIN_PIXELS_AREA_REMOVE: int = 100
+    DPI: int = 900
 
     WALL_DETECTION: WallDetectionProfile = Field(default_factory=WallDetectionProfile)
     UNHATCHED_WALL_DETECTION: UnhatchedWallDetectionProfile = Field(default_factory=UnhatchedWallDetectionProfile)

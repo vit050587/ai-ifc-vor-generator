@@ -32,6 +32,7 @@ class LegendLayoutProcessor:
     def get_legend_row_items(
         self,
         min_inside_ratio: float = 0.8,
+        merge_similar: bool = True
     ) -> list[dict[str, Any]]:
         row_items = []
         rows = self.layouts.get("legend_row", [])
@@ -60,7 +61,8 @@ class LegendLayoutProcessor:
                 "legend_descriptions": row_descriptions,
             })
 
-        row_items = self.merge_similar_legend_rows(row_items)
+        if merge_similar:
+            row_items = self.merge_similar_legend_rows(row_items)
         return row_items
 
     def merge_similar_legend_rows(self, row_items: list[dict]):

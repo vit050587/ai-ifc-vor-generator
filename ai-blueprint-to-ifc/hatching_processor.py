@@ -33,12 +33,13 @@ class HatchingProcessor:
 
         self.zoom = None
 
-    def specify_legends(self, legends:list):
+    def specify_legends(self, legends:list, load_deafult=True):
         self.legends = legends
         if legends:
             self.adjust_legends = False
         self._prepare_legends()
-        self.legends += self._load_walls_types("default")
+        if load_deafult:
+            self.legends += self._load_walls_types("default")
 
     def reset_to_default_legends(self):
         self.legends = []

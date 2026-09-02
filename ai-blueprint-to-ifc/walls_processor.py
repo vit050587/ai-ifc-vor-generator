@@ -45,7 +45,7 @@ class WallsProcessor:
 
         return tiles
 
-    def _get_tiles(self, drawing_index: int, drawings: list, layout_processor: LayoutProcessor):
+    def get_tiles(self, drawing_index: int, drawings: list, layout_processor: LayoutProcessor):
         drawings_bboxes = [drawing["object"]["bbox"] if drawing else None for drawing in drawings]
 
         layouts_bboxes = []
@@ -65,7 +65,7 @@ class WallsProcessor:
         """
         Возвращает стены в глобальных пиксельных координатах изображения PDF.
         """
-        tiles = self._get_tiles(drawing_index, drawings, layout_processor)
+        tiles = self.get_tiles(drawing_index, drawings, layout_processor)
         walls = []
         detection = self.detection_settings
 
