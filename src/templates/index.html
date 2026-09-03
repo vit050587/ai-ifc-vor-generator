@@ -2312,7 +2312,7 @@ function updateSelectionUI() {
 }
 
 // ========== Общая группировка превью (КР и АР) ==========
-// КР-режим, иерархия:
+// КР-режим (IFC), иерархия:
 //   L1 — Часть здания
 //   L2 — Код МССК
 //   L3 — Материал (код МССК материала: «Железобетон сборный (СТ 00 15 01)»,
@@ -2320,6 +2320,9 @@ function updateSelectionUI() {
 //   L4 — IFC-тип (только если в группе материала несколько типов)
 //   L5 — Геометрические параметры (толщина, площадь, периметр+сечение и т.д.)
 //   L6 — Наименование элемента (листовая группа со строками)
+// КР-режим (PDF-чертёж), иерархия (часть здания по чертежу не определяется):
+//   L1 — Имя элемента (например «Стена»)
+//   L2 — Материал из таблицы (колонка «Материал», листовая группа со строками)
     // АР-режим, иерархия:
     //   L1 — Часть здания
     //   L2 — Код МССК
@@ -2351,6 +2354,18 @@ function groupRowsCommon(mode) {
     const msskCodeMap = data.msskCodeMap || {};
     
     const totalCols = 1 + (previewColumnHeaders.length || 6) + 2;
+    
+    // Сессии из PDF-чертежей: часть здания (надземная/подземная) по чертежу
+    // не определяется, поэтому группировка выполняется по имени элемента (L1)
+    // → материалу из таблицы — колонка «Материал» (L2).
+    const isPdfSource = String(data.sourceType || '').toLowerCase() === 'pdf';
+    const materialColIdx = data.headers.indexOf('Материал');
+    const getMaterialKey = (rowIndex) => {
+        if (materialColIdx === -1) return 'Материал: не указан';
+        const raw = data.rows[rowIndex]?.[materialColIdx];
+        const s = raw === undefined || raw === null ? '' : String(raw).trim();
+        return (!s || s === '-') ? 'Материал: не указан' : s;
+    };
     
     const getVolume = (rowIndex) => {
         if (volumeIdx === -1) return 0;
@@ -2943,6 +2958,137 @@ function groupRowsCommon(mode) {
         document.getElementById('ungroupBtn').style.display = 'inline-block';
         updateSelectionUI();
         showToast(`Сгруппировано (${mode}): ${Object.keys(groupIndexMap).length} групп`, 'info');
+        return;
+    }
+
+    // ============================================================
+    // Группировка для сессий из PDF-чертежей (КР): часть здания по чертежу
+    // определить нельзя, поэтому иерархия упрощена:
+    //   L1 — Имя элемента (например «Стена»)
+    //   L2 — Материал из таблицы (колонка «Материал», листовая группа со строками)
+    // ============================================================
+    if (isPdfSource && mode === 'КР') {
+        // L1: группировка по имени элемента
+        const pdfNameGroups = {};
+        rowData.forEach(rd => {
+            if (!pdfNameGroups[rd.nameKey]) pdfNameGroups[rd.nameKey] = [];
+            pdfNameGroups[rd.nameKey].push(rd);
+        });
+
+        const sortedPdfNames = Object.keys(pdfNameGroups).sort((a, b) => a.localeCompare(b, 'ru'));
+
+        sortedPdfNames.forEach(nameKey => {
+            const nameRows = pdfNameGroups[nameKey];
+            if (nameRows.length === 0) return;
+
+            let nameVolume = 0;
+            nameRows.forEach(rd => { nameVolume += getVolume(rd.index); });
+            let nameArea = 0;
+            nameRows.forEach(rd => { nameArea += getArea(rd.index); });
+
+            const nameId = 'PDFNAME_' + (groupCounter++);
+            groupIndexMap[nameId] = nameRows.map(r => r.index);
+            groupLevel[nameId] = 1;
+            groupChildren[nameId] = [];
+
+            const nameTr = document.createElement('tr');
+            nameTr.className = 'group-header';
+            nameTr.dataset.groupId = nameId;
+            nameTr.style.cssText = 'background:#e2e8f0 !important; cursor:pointer;';
+            nameTr.onclick = function(e) {
+                if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                toggleGroup(nameId);
+            };
+
+            nameTr.innerHTML = `
+                <td style="text-align:center;">
+                    <span class="group-arrow" id="${nameId}_arrow">▶</span>
+                    <input type="checkbox" class="group-checkbox" data-group-id="${nameId}">
+                </td>
+                <td colspan="${totalCols - 1}" style="font-weight:700; font-size:15px; color:#2d3748;">
+                    📎 ${nameKey}
+                    <span class="group-badge">×${nameRows.length}</span>
+                    <span style="font-size:11px; color:#4a5568; margin-left:12px;">Σ Объём: ${nameVolume.toFixed(2)} м³${fmtAreaSummary(nameArea)}</span>
+                </td>
+            `;
+            body.appendChild(nameTr);
+
+            const nameCb = nameTr.querySelector('.group-checkbox');
+            nameCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(nameId, this.checked); });
+
+            // L2: группировка по материалу из таблицы (листовые группы)
+            const pdfMatGroups = {};
+            nameRows.forEach(rd => {
+                const matKey = getMaterialKey(rd.index);
+                if (!pdfMatGroups[matKey]) pdfMatGroups[matKey] = [];
+                pdfMatGroups[matKey].push(rd);
+            });
+
+            const sortedPdfMatKeys = Object.keys(pdfMatGroups).sort((a, b) => a.localeCompare(b, 'ru'));
+
+            sortedPdfMatKeys.forEach(matKey => {
+                const matRows = pdfMatGroups[matKey];
+                if (matRows.length === 0) return;
+
+                let matVolume = 0;
+                matRows.forEach(rd => { matVolume += getVolume(rd.index); });
+                let matArea = 0;
+                matRows.forEach(rd => { matArea += getArea(rd.index); });
+
+                const matId = 'PDFMAT_' + (groupCounter++);
+                groupIndexMap[matId] = matRows.map(r => r.index);
+                groupLevel[matId] = 2;
+                groupParent[matId] = nameId;
+                groupChildren[matId] = [];
+                groupChildren[nameId].push(matId);
+                leafGroups[matId] = true;
+
+                const firstMatIndex = matRows[0].index;
+
+                const matTr = document.createElement('tr');
+                matTr.className = 'group-row hidden-row';
+                matTr.dataset.group = nameId;
+                matTr.dataset.groupId = matId;
+                matTr.style.cssText = 'background:#f0fff4 !important; cursor:pointer;';
+                matTr.onclick = function(e) {
+                    if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+                    toggleGroup(matId);
+                };
+
+                matTr.innerHTML = `
+                    <td style="text-align:center; padding-left: 30px;">
+                        <span class="group-arrow" id="${matId}_arrow">▶</span>
+                        <input type="checkbox" class="group-checkbox" data-group-id="${matId}" data-first-index="${firstMatIndex}">
+                    </td>
+                    <td colspan="${totalCols - 1}" style="font-weight:600; color:#276749;">
+                        🧱 ${matKey}
+                        <span class="group-badge">×${matRows.length}</span>
+                        <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${matVolume.toFixed(2)} м³${fmtAreaSummary(matArea)}</span>
+                    </td>
+                `;
+                body.appendChild(matTr);
+
+                const matCb = matTr.querySelector('.group-checkbox');
+                matCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(matId, this.checked); });
+
+                // Строки внутри группы материала
+                matRows.forEach(rd => {
+                    rd.tr.classList.add('group-row', 'hidden-row');
+                    rd.tr.dataset.group = matId;
+                    const firstTd = rd.tr.querySelector('td');
+                    if (firstTd) firstTd.style.paddingLeft = '60px';
+                    const cb = rd.tr.querySelector('.row-checkbox');
+                    if (cb) { cb.style.display = 'none'; cb.checked = false; }
+                    rowElementCache.set(rd.index, rd.tr);
+                    body.appendChild(rd.tr);
+                });
+            });
+        });
+
+        document.getElementById('autoGroupBtn').style.display = 'none';
+        document.getElementById('ungroupBtn').style.display = 'inline-block';
+        updateSelectionUI();
+        showToast(`Сгруппировано (PDF): ${Object.keys(groupIndexMap).length} групп`, 'info');
         return;
     }
 
