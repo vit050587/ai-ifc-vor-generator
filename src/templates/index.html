@@ -263,6 +263,27 @@
             margin-left: 6px;
         }
         .group-checkbox { width: 16px; height: 16px; cursor: pointer; margin-left: 4px; }
+        /* Ссылки на позиции цифрового сборника: иконка «внешняя ссылка».
+           Строка имени оформлена как обычная строка группировки (отступы
+           сохраняются), иконка прижимается к правому краю через float:right */
+        .pl-icons {
+            float: right;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding-right: 12px;
+        }
+        .position-link {
+            color: #2b6cb0;
+            text-decoration: none;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            transition: transform 0.15s, color 0.15s;
+        }
+        .position-link:hover { color: #2c5282; transform: scale(1.2); }
+        .position-link svg { display: block; }
+        .pl-more { font-size: 11px; color: #718096; font-weight: 600; }
         .btn {
             padding: 10px 24px;
             border: none;
@@ -1022,6 +1043,108 @@ let currentProcessingType = 'KR';
 let currentViewFilename = null;
 let _previewLoadInFlight = false;
 
+// ========== Ссылки на позиции цифрового сборника (иконка «внешняя ссылка») ==========
+// Карта «имя элемента (без цифрового ID) → [варианты]», где вариант =
+// {part: 'Надземная', geo: 'до 200', positions: [{id, name}, ...]}.
+// Заполняется из GET /api/session/<id>/position_links (файл position_links.json,
+// который строится в фоне сразу после обработки IFC/PDF — до «Запустить обработку»).
+let positionLinks = {};
+let positionLinksLoadedFor = null;   // sessionId, для которого ссылки уже загружены
+let _positionLinksPollTimer = null;
+
+// Нормализация метки геометрической группы к виду бэкенда:
+// 'Толщина: до 200 мм' → 'до 200' (как _extract_geometry_range в ifc_reference_builder)
+function normGeoLabel(label) {
+    if (!label) return '';
+    let s = String(label);
+    const idx = s.indexOf(': ');
+    if (idx !== -1) s = s.substring(idx + 2);
+    return s.replace(/\s*(мм|м²|м3|м³|м)\s*$/, '').trim();
+}
+
+// Выбирает позиции варианта, соответствующего контексту группы (part, geo).
+// Порядок fallback: точное (part, geo) → любой вариант той же части → единственный вариант.
+function pickPositionVariant(nameKey, part, geo) {
+    const variants = positionLinks[nameKey];
+    if (!variants || variants.length === 0) return null;
+    const p = part || 'Надземная';
+    const g = geo || '';
+    let list = variants.filter(v => (v.part || 'Надземная') === p && (v.geo || '') === g);
+    if (list.length === 0) list = variants.filter(v => (v.part || 'Надземная') === p);
+    if (list.length === 0 && variants.length === 1) list = variants;
+    if (list.length === 0) return null;
+    // Сливаем позиции выбранных вариантов (обычно вариант один), дедуп по id
+    const seen = new Set();
+    const positions = [];
+    list.forEach(v => (v.positions || []).forEach(pos => {
+        if (!seen.has(pos.id)) { seen.add(pos.id); positions.push(pos); }
+    }));
+    return positions;
+}
+
+// SVG-иконка «внешняя ссылка» (квадратик со стрелочкой)
+const POSITION_LINK_SVG =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>' +
+    '<polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+
+// HTML иконок-ссылок для группы (nameKey + контекст part/geo).
+// Иконка — квадратик со стрелочкой (переход на другую вкладку),
+// размещается прижатой к правому краю строки группы.
+function positionLinksHtml(nameKey, part, geo) {
+    const positions = pickPositionVariant(nameKey, part, geo);
+    if (!positions || positions.length === 0) return '';
+    const shown = positions.slice(0, 5);
+    return shown.map(p =>
+        `<a class="position-link" href="https://digital-collection.mgexp.org/building-elements/position/${p.id}"` +
+        ` target="_blank" rel="noopener" title="Открыть в цифровом сборнике: ${p.name || 'позиция ' + p.id}"` +
+        ` onclick="event.stopPropagation()">${POSITION_LINK_SVG}</a>`
+    ).join('') + (positions.length > shown.length ? ` <span class="pl-more" title="${positions.map(p => p.id).join(', ')}">+${positions.length - shown.length}</span>` : '');
+}
+
+// Расставляет иконки-ссылки по уже отрисованным заголовкам групп
+// (используется, когда ссылки загрузились после группировки таблицы).
+function applyPositionLinks() {
+    document.querySelectorAll('td[data-name-key]').forEach(td => {
+        const holder = td.querySelector('.pl-icons');
+        if (!holder) return;
+        holder.innerHTML = positionLinksHtml(td.dataset.nameKey, td.dataset.part, td.dataset.geo);
+    });
+}
+
+// Загружает ссылки позиций для сессии. Файл position_links.json строится
+// в фоне, поэтому если ready=false — опрашиваем эндпоинт ещё несколько раз.
+async function loadPositionLinks(sessionId) {
+    if (!sessionId) return;
+    if (positionLinksLoadedFor === sessionId && Object.keys(positionLinks).length > 0) {
+        applyPositionLinks();
+        return;
+    }
+    if (_positionLinksPollTimer) { clearTimeout(_positionLinksPollTimer); _positionLinksPollTimer = null; }
+
+    const maxAttempts = 30;
+    const attemptLoad = async (attempt) => {
+        if (!currentSessionId || currentSessionId !== sessionId) return;
+        try {
+            const response = await fetch(`${API_BASE}/session/${sessionId}/position_links`);
+            if (response.ok) {
+                const data = await response.json();
+                if (data.ready && data.positionLinks && Object.keys(data.positionLinks).length > 0) {
+                    positionLinks = data.positionLinks;
+                    positionLinksLoadedFor = sessionId;
+                    applyPositionLinks();
+                    return;
+                }
+            }
+        } catch (e) { console.error('position_links load error:', e); }
+        if (attempt < maxAttempts) {
+            _positionLinksPollTimer = setTimeout(() => attemptLoad(attempt + 1), 3000);
+        }
+    };
+    attemptLoad(0);
+}
+
 // Кеш для ленивой загрузки строк данных
 const rowElementCache = new Map();
 
@@ -1503,6 +1626,10 @@ async function uploadFile() {
         const data = await response.json();
         currentSessionId = data.sessionId;
         isNewRunMode = false;
+        // Сбрасываем ссылки позиций от предыдущей сессии
+        positionLinks = {};
+        positionLinksLoadedFor = null;
+        if (_positionLinksPollTimer) { clearTimeout(_positionLinksPollTimer); _positionLinksPollTimer = null; }
         startStatusPolling(currentSessionId);
         showToast('Файл загружен, начата обработка', 'success');
         btn.innerHTML = '⏳ Обработка...';
@@ -1573,6 +1700,7 @@ async function onIfcProcessed(sessionId) {
             if (radio) { radio.checked = true; updateProcessingTypeBadges(); }
         }
         renderPreview(preview_data);
+        loadPositionLinks(sessionId);
         if (preview_data.buildingHeight) document.getElementById('buildingHeight').value = preview_data.buildingHeight;
         const blueprintBtns = document.getElementById('blueprintButtons');
         if (blueprintBtns) {
@@ -1629,6 +1757,7 @@ async function startNewRun() {
                 if (radio) { radio.checked = true; updateProcessingTypeBadges(); }
             }
             renderPreview(preview_data);
+            loadPositionLinks(currentSessionId);
             if (preview_data.buildingHeight) document.getElementById('buildingHeight').value = preview_data.buildingHeight;
             showToast(`Загружено ${preview_data.totalRows} строк. Выберите нужные.`, 'info');
         } else { showToast('Ошибка загрузки данных предпросмотра', 'error'); return; }
@@ -2445,7 +2574,8 @@ function groupRowsCommon(mode) {
     // сваи — длина и т.д.), затем внутри каждой группы по имени элемента.
     // ============================================================
     // Группа по имени элемента (листовая, содержит строки)
-    const addNameGroups = (geoParentId, rowsToGroup, padding, level) => {
+    // part/geo — контекст для выбора актуальной ссылки на позицию сборника
+    const addNameGroups = (geoParentId, rowsToGroup, padding, level, part = '', geo = '') => {
         const nameGroups = {};
         rowsToGroup.forEach(rd => {
             if (!nameGroups[rd.nameKey]) nameGroups[rd.nameKey] = [];
@@ -2488,8 +2618,9 @@ function groupRowsCommon(mode) {
                     <span class="group-arrow" id="${nameId}_arrow">▶</span>
                     <input type="checkbox" class="group-checkbox" data-group-id="${nameId}" data-first-index="${firstIndex}">
                 </td>
-                <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500;">
-                    📎 ${nameKey}
+                <td colspan="${totalCols - 1}" style="color:#2b6cb0; font-weight:500; white-space:nowrap;" data-name-key="${nameKey.replace(/"/g, '&quot;')}" data-part="${part}" data-geo="${geo.replace(/"/g, '&quot;')}">
+                    <span class="pl-icons">${positionLinksHtml(nameKey, part, geo)}</span>
+                    ${nameKey}
                     <span class="group-badge">×${nameRows.length}</span>
                     <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${nameVolume.toFixed(2)} м³${fmtAreaSummary(nameArea)}</span>
                 </td>
@@ -2593,8 +2724,10 @@ function groupRowsCommon(mode) {
             const matCb = matTr.querySelector('.group-checkbox');
             matCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(matId, this.checked); });
 
-            // Внутри группы материала — группы по наименованию элемента (L3)
-            addNameGroups(matId, matRows, basePadding + 30, 3);
+            // Внутри группы материала — группы по наименованию элемента (L3).
+            // Геометрии в иерархии АР нет — контекст только по части здания.
+            addNameGroups(matId, matRows, basePadding + 30, 3,
+                matRows[0] ? matRows[0].part : '', '');
         });
     };
 
@@ -2654,8 +2787,11 @@ function groupRowsCommon(mode) {
             const geoCb = geoTr.querySelector('.group-checkbox');
             geoCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(geoId, this.checked); });
             
-            // Внутри геометрической группы — группы по имени элемента
-            addNameGroups(geoId, geoRows, padding + 30, nameLevel);
+            // Внутри геометрической группы — группы по имени элемента.
+            // Контекст для ссылки на позицию сборника: часть здания строк
+            // и геометрический диапазон ('Толщина: до 200 мм' → 'до 200')
+            addNameGroups(geoId, geoRows, padding + 30, nameLevel,
+                geoRows[0] ? geoRows[0].part : '', normGeoLabel(label));
         };
         
         Object.keys(ifcGroups).forEach(ifcType => {
@@ -3005,8 +3141,9 @@ function groupRowsCommon(mode) {
                     <span class="group-arrow" id="${nameId}_arrow">▶</span>
                     <input type="checkbox" class="group-checkbox" data-group-id="${nameId}">
                 </td>
-                <td colspan="${totalCols - 1}" style="font-weight:700; font-size:15px; color:#2d3748;">
-                    📎 ${nameKey}
+                <td colspan="${totalCols - 1}" style="font-weight:700; font-size:15px; color:#2d3748; white-space:nowrap;" data-name-key="${nameKey.replace(/"/g, '&quot;')}" data-part="${nameRows[0] ? nameRows[0].part : ''}" data-geo="">
+                    <span class="pl-icons">${positionLinksHtml(nameKey, nameRows[0] ? nameRows[0].part : '', '')}</span>
+                    ${nameKey}
                     <span class="group-badge">×${nameRows.length}</span>
                     <span style="font-size:11px; color:#4a5568; margin-left:12px;">Σ Объём: ${nameVolume.toFixed(2)} м³${fmtAreaSummary(nameArea)}</span>
                 </td>

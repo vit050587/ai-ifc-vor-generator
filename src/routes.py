@@ -20,7 +20,7 @@ from src.schemas import (
     PreviewResponse, RestoreResponse, HealthResponse,
     SelectRowsResponse, FilterHeightResponse, NewRunResponse,
     RunSwitchResponse, RunsListResponse, ReferenceAcceptedResponse,
-    ReferenceBuildResponse,
+    ReferenceBuildResponse, PositionLinksResponse,
 )
 
 logger = setup_logger(__name__)
@@ -937,6 +937,56 @@ def preview_excel(session_id: str):
         processing_type=s.get("processing_type", "KR"),
         mssk_code_map=get_mssk_code_map(),
         materials_group_map=materials_group_map,
+    ))
+
+
+@bp.route("/api/session/<session_id>/position_links", methods=["GET"])
+def get_position_links(session_id: str):
+    """
+    Ссылки на позиции цифрового сборника для групп элементов сессии.
+    ---
+    tags:
+      - sessions
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+        description: ID сессии
+    responses:
+      200:
+        description: Карта «имя элемента → список позиций (id, name)»
+        schema:
+          type: object
+          properties:
+            sessionId:
+              type: string
+            ready:
+              type: boolean
+            positionLinks:
+              type: object
+      404:
+        description: Сессия не найдена
+    """
+    if not session_id:
+        return _err(ErrorResponse(detail="ID сессии не указан"), 400)
+
+    s = _get_manager().get(session_id)
+    if not s:
+        return _err(ErrorResponse(detail="Сессия не найдена"), 404)
+
+    from src.services.position_links import read_position_links
+
+    session_dir = os.path.join(_get_manager().output_folder, session_id)
+    raw_links = read_position_links(session_dir)
+
+    # Файл может быть ещё не построен (фоновая задача после обработки IFC/PDF)
+    ready = os.path.isfile(os.path.join(session_dir, "position_links.json"))
+
+    return _ok(PositionLinksResponse(
+        session_id=session_id,
+        ready=ready,
+        position_links=raw_links,
     ))
 
 

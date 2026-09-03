@@ -630,7 +630,12 @@ class SessionManager:
                     self._sessions[session_id]["progress"] = 100
                     self._sessions[session_id]["progress_message"] = f"Обработка завершена ({processing_type}). Выберите строки."
                     self._save()
-            
+
+            # В фоне строим ссылки на позиции цифрового сборника
+            # (position_links.json) — чтобы кликабельные иконки 📎 в группах
+            # предпросмотра были доступны сразу, до «Запустить обработку».
+            self._start_position_links_bg(session_id)
+
         except Exception as e:
             import traceback
             error_msg = f"{type(e).__name__}: {str(e)}"
@@ -761,7 +766,10 @@ class SessionManager:
                     self._sessions[session_id]["progress"] = 100
                     self._sessions[session_id]["progress_message"] = f"Обработка завершена ({processing_type}). Выберите строки."
                     self._save()
-                    
+
+            # В фоне строим ссылки на позиции цифрового сборника
+            self._start_position_links_bg(session_id)
+
         except Exception as e:
             import traceback
             error_msg = f"{type(e).__name__}: {str(e)}"
@@ -810,6 +818,53 @@ class SessionManager:
         result = process_pdf(pdf_path, output_folder=session_dir, progress_callback=progress_callback)
         self._update_progress(session_id, 90, "Проверка результатов...")
         return result
+
+    # =====================================================================
+    #  ССЫЛКИ НА ПОЗИЦИИ ЦИФРОВОГО СБОРНИКА (position_links.json)
+    # =====================================================================
+
+    def _start_position_links_bg(self, session_id: str) -> None:
+        """Запускает фоновое построение ссылок на позиции сборника.
+
+        Ссылки (position_links.json) нужны фронтенду для кликабельных
+        иконок 📎 в заголовках групп предпросмотра. Ошибки не влияют
+        на статус сессии — только логируются.
+        """
+        thread = threading.Thread(
+            target=self._build_position_links_bg,
+            args=(session_id,),
+            daemon=True,
+            name=f"PositionLinks-{session_id[:8]}",
+        )
+        try:
+            thread.start()
+        except Exception as exc:
+            logger.warning(
+                f"Не удалось запустить построение ссылок позиций для "
+                f"сессии {session_id}: {exc}"
+            )
+
+    def _build_position_links_bg(self, session_id: str) -> None:
+        try:
+            from src.services.position_links import build_position_links
+
+            session_dir = os.path.join(self.output_folder, session_id)
+            if not os.path.isdir(session_dir):
+                return
+
+            grouped_path = os.path.join(session_dir, "ifc_raw_elements_grouped.json")
+            if not os.path.isfile(grouped_path):
+                logger.info(
+                    f"position_links: в сессии {session_id} нет "
+                    f"ifc_raw_elements_grouped.json — построение ссылок пропущено"
+                )
+                return
+
+            build_position_links(session_dir)
+        except Exception as exc:
+            logger.warning(
+                f"Ошибка построения ссылок позиций для сессии {session_id}: {exc}"
+            )
     
     # =====================================================================
     #  ЗАПУСКИ (runs)

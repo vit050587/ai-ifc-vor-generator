@@ -217,3 +217,33 @@ class RunsListResponse(CamelModel):
     runs: List[RunInfo]
     current_run_id: Optional[str] = None
     total: int
+
+
+class PositionLinkItem(CamelModel):
+    """Позиция цифрового сборника для группы элементов"""
+    id: int
+    name: str = ""
+
+
+class PositionLinkVariant(CamelModel):
+    """Вариант ссылок для группы: контекст (часть здания + геометрия).
+
+    Один nameKey может иметь несколько вариантов (например, стены с тем же
+    именем Revit в подземной и надземной части) — фронтенд выбирает вариант
+    по контексту своей группы (part + geo).
+    """
+    part: str = ""
+    geo: str = ""
+    positions: List[PositionLinkItem] = []
+
+
+class PositionLinksResponse(CamelModel):
+    """Ссылки на позиции цифрового сборника по группам элементов.
+
+    Ключ — имя элемента без цифрового ID (совпадает с nameKey групп
+    в веб-интерфейсе), значение — варианты с контекстом (part, geo).
+    ready=False означает, что файл position_links.json ещё строится.
+    """
+    session_id: str
+    ready: bool = False
+    position_links: Dict[str, List[PositionLinkVariant]] = {}
