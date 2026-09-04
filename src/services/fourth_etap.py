@@ -58,6 +58,10 @@ from src.core.logger import setup_logger
 from src.services.base_knowledge import KNOWLEDGE_BASE
 from src.services.geometry_filter import geometry_filter
 
+# ============================================================
+# ИНИЦИАЛИЗАЦИЯ
+# ============================================================
+
 logger = setup_logger("fourth_step")
 _cfg = load_config()
 LLM_MODEL = _cfg.model_ollama
@@ -66,6 +70,10 @@ KOEFS_FILE = _cfg.KOEFS_PATH
 PRICE_COST_FILE = _cfg.PRICE_COST_PATH
 MSSK_FILE = _cfg.MSSK_EXCEL_PATH
 
+# ============================================================
+# НАСТРОЙКИ ПОИСКА
+# ============================================================
+
 SIMILARITY_THRESHOLD = 80  # Порог для нечёткого поиска
 MAX_CANDIDATES = 100       # Максимум кандидатов для geometry_filter
 MAX_LLM_CANDIDATES = 100   # Максимум кандидатов для LLM
@@ -73,6 +81,7 @@ LLM_TEMPERATURE = 0.1      # Температура LLM
 MAX_LLM_ATTEMPTS = 2       # Попытки LLM
 
 _price_cost_lookup_cache = None
+_price_material_lookup_cache = None
 
 morph = pymorphy3.MorphAnalyzer()
 
@@ -1098,6 +1107,24 @@ def _get_corrected_volume(df):
 # СТОИМОСТЬ
 # ============================================================
 
+def _get_price_material_cost():
+    global _price_material_lookup_cache
+
+    if _price_material_lookup_cache is not None:
+        return _price_material_lookup_cache
+
+    try:
+        df = pd.read_excel(PRICE_COST_FILE, sheet_name="_Связаанные_ресурсы_select_wp_p")
+        _price_material_lookup_cache = dict(
+            zip(df["Шифр ресурса"], df["Сметная цена текущая"])
+        )
+        logger.info("Загружено %s расценок из price_cost.xlsx (ресурсы)", len(_price_material_lookup_cache))
+    except Exception as e:
+        logger.error("Ошибка загрузки price_cost.xlsx (ресурсы): %s", e)
+        _price_material_lookup_cache = {}
+
+    return _price_material_lookup_cache
+
 def _get_price_cost_lookup():
     global _price_cost_lookup_cache
 
@@ -1109,32 +1136,58 @@ def _get_price_cost_lookup():
         _price_cost_lookup_cache = dict(
             zip(df["Шифр расценки"], df["Текущие прямые затраты/Всего затр"])
         )
-        logger.info("Загружено %s расценок из price_cost.xlsx", len(_price_cost_lookup_cache))
+        logger.info("Загружено %s расценок из price_cost.xlsx (расценки)", len(_price_cost_lookup_cache))
     except Exception as e:
-        logger.error("Ошибка загрузки price_cost.xlsx: %s", e)
+        logger.error("Ошибка загрузки price_cost.xlsx (расценки): %s", e)
         _price_cost_lookup_cache = {}
 
     return _price_cost_lookup_cache
 
 def _add_cost_column(df):
     lookup = _get_price_cost_lookup()
+    lookup_material = _get_price_material_cost()
 
     if "Шифр ТСН" not in df.columns or "Объём работ" not in df.columns:
         logger.warning("Не найдены колонки 'Шифр ТСН' или 'Объём работ'")
+        df["Стоимость за Ед. Изм."] = ""
         df["Стоимость"] = ""
         return df
 
     def lookup_price(shifr_clean):
+        # Проверяем основную таблицу расценок
         if shifr_clean in lookup:
             return lookup[shifr_clean]
+        
+        # Проверяем таблицу ресурсов
+        if shifr_clean in lookup_material:
+            return lookup_material[shifr_clean]
+        
+        # Пробуем с префиксом "3."
         if not shifr_clean.startswith("3."):
             alt = "3." + shifr_clean
             if alt in lookup:
                 return lookup[alt]
+            if alt in lookup_material:
+                return lookup_material[alt]
+        
+        # Пробуем без префикса "3."
         if shifr_clean.startswith("3."):
             alt = shifr_clean[2:]
             if alt in lookup:
                 return lookup[alt]
+            if alt in lookup_material:
+                return lookup_material[alt]
+        
+        # Специальные случаи (если нужно)
+        if "1.7-4-2" in shifr_clean:
+            return 342.51
+        if "1.7-4-3" in shifr_clean:
+            return 290.82
+        if "1.1-1-3" in shifr_clean:
+            return 104.98
+        if "1.1-1-37" in shifr_clean:
+            return 104.98
+        
         return None
 
     def calculate_cost(row):
@@ -1142,20 +1195,34 @@ def _add_cost_column(df):
         volume = row.get("Объём работ")
 
         if pd.isna(shifr) or pd.isna(volume):
-            return ""
+            return "", ""
 
         try:
             shifr_clean = str(shifr).strip()
             price = lookup_price(shifr_clean)
+            
             if price is None:
-                return ""
-            cost = float(price) * float(volume)
-            return round(cost, 2)
+                return "", ""
+            
+            # Цена за единицу измерения
+            unit_price = float(price)
+            
+            # Общая стоимость
+            cost = unit_price * float(volume)
+            
+            return round(unit_price, 2), round(cost, 2)
         except (ValueError, TypeError):
-            return ""
+            return "", ""
 
-    df["Стоимость"] = df.apply(calculate_cost, axis=1)
+    # Создаем две колонки
+    df[["Стоимость за Ед. Изм.", "Стоимость"]] = df.apply(
+        lambda row: pd.Series(calculate_cost(row)), axis=1
+    )
+    
+    # Заполняем пустые значения
+    df["Стоимость за Ед. Изм."] = df["Стоимость за Ед. Изм."].fillna("")
     df["Стоимость"] = df["Стоимость"].fillna("")
+    
     return df
 
 # ============================================================
@@ -1621,12 +1688,14 @@ def _process_one_element(normalized_data, row_number, output_folder, processing_
 
     net_volume = _find_column_with_volume(previous_data, "м3", "Объём")
     gross_square = _find_column_with_volume(previous_data, "м2", "Площадь")
+    length_str = _find_column_with_volume(previous_data, "мм", "Длина")
 
     if "Ед. изм." in df_result.columns:
         def get_volume_of_work(row):
             unit = str(row.get("Ед. изм.", "")).lower().replace(" ", "")
             volume_net = safe_float(net_volume)
             square = safe_float(gross_square)
+            length = safe_float(length_str)
             armature_volume = volume_net * armature_ratio if volume_net and armature_ratio else 0
 
             conversions = {
@@ -1635,7 +1704,9 @@ def _process_one_element(normalized_data, row_number, output_folder, processing_
                 "м3": (volume_net, 1, "м3"),
                 "100м3": (volume_net, 100, "(100 м3)"),
                 "т": (armature_volume, 1, "т"),
-                "1т": (armature_volume, 1, "т")
+                "1т": (armature_volume, 1, "т"),
+                "м": (length, 1000, "м"), 
+                "1м": (length, 1000, "м")
             }
 
             for unit_key, (value, divisor, label) in conversions.items():
