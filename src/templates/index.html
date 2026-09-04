@@ -1092,15 +1092,15 @@ const POSITION_LINK_SVG =
 // HTML иконок-ссылок для группы (nameKey + контекст part/geo).
 // Иконка — квадратик со стрелочкой (переход на другую вкладку),
 // размещается прижатой к правому краю строки группы.
+// На группу отображается ровно одна ссылка (первая позиция варианта),
+// как в режиме КР — даже если в position_links.json сохранено несколько.
 function positionLinksHtml(nameKey, part, geo) {
     const positions = pickPositionVariant(nameKey, part, geo);
     if (!positions || positions.length === 0) return '';
-    const shown = positions.slice(0, 5);
-    return shown.map(p =>
-        `<a class="position-link" href="https://digital-collection.mgexp.org/building-elements/position/${p.id}"` +
+    const p = positions[0];
+    return `<a class="position-link" href="https://digital-collection.mgexp.org/building-elements/position/${p.id}"` +
         ` target="_blank" rel="noopener" title="Открыть в цифровом сборнике: ${p.name || 'позиция ' + p.id}"` +
-        ` onclick="event.stopPropagation()">${POSITION_LINK_SVG}</a>`
-    ).join('') + (positions.length > shown.length ? ` <span class="pl-more" title="${positions.map(p => p.id).join(', ')}">+${positions.length - shown.length}</span>` : '');
+        ` onclick="event.stopPropagation()">${POSITION_LINK_SVG}</a>`;
 }
 
 // Расставляет иконки-ссылки по уже отрисованным заголовкам групп

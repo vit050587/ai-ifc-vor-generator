@@ -31,6 +31,8 @@ ifc_raw_elements_grouped.json из корня сессии и отправляе
   * числовые диапазоны («Толщина: более 150 до 200» и т.п.) — по сырому
     значению геометрии из additionalCharacteristics группы.
 
+Для каждого варианта группы сохраняется ровно одна (первая отфильтрованная)
+позиция — у группы элементов одна ссылка на карточку цифрового сборника.
 Фронтенд по выбранному варианту рисует кликабельную иконку 📎 со ссылкой
 https://digital-collection.mgexp.org/building-elements/position/<id>.
 """
@@ -261,7 +263,12 @@ def _extract_positions(
     characteristics: Dict[str, str],
     additional: Dict[str, str],
 ) -> List[Dict[str, Any]]:
-    """Извлекает отфильтрованный список позиций (id + название) из ответа API."""
+    """Извлекает одну наиболее подходящую позицию (id + название) из ответа API.
+
+    Позиции фильтруются по характеристикам группы, затем берётся первая
+    из отфильтрованных — у группы элементов должна быть ровно одна ссылка
+    на карточку цифрового сборника (как в режиме КР).
+    """
     raw: List[Dict[str, Any]] = []
     for item in (response.get("data") or []):
         if not isinstance(item, dict):
@@ -276,7 +283,7 @@ def _extract_positions(
         })
 
     filtered = _filter_positions(raw, characteristics, additional)
-    return [{"id": p["id"], "name": p["name"]} for p in filtered]
+    return [{"id": p["id"], "name": p["name"]} for p in filtered[:1]]
 
 
 def build_position_links(
