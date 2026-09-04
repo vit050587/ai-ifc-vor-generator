@@ -1,905 +1,1924 @@
-# ЭТАП 4: ПОДБОР РАБОТ ПО МАТЕРИАЛУ + КЛЮЧЕВЫМ ФРАЗАМ ИЗ БАЗЫ ЗНАНИЙ
+# ============================================================
+# ЭТАП 4: ПОДБОР РАБОТ
+# ============================================================
+#
+# Логика:
+#
+# JSON элемента
+#       |
+#       +--> IFC
+#       +--> МССК -> find_name_by_code()
+#       +--> материалы из нескольких источников
+#       +--> имя элемента
+#       +--> характеристики
+#       |
+#       v
+# расширенные ключевые слова
+#       |
+#       v
+# БАЗА ЗНАНИЙ AR / KR
+#       |
+#       v
+# поиск кандидатов
+#       |
+#       +--> точный поиск
+#       +--> морфологический поиск
+#       +--> нечёткий поиск
+#       +--> поиск по МССК
+#       +--> поиск по материалу
+#       +--> поиск по фразам базы знаний
+#       |
+#       v
+# рейтинг кандидатов
+#       |
+#       v
+# geometry_filter()
+#       |
+#       v
+# LLM
+#       |
+#       v
+# проверка required
+#       |
+#       v
+# финальный Excel + JSON
+#
+# ============================================================
 
 import pandas as pd
 import json
 import re
 import os
+import math
 import pymorphy3
 import ollama
 from fuzzywuzzy import fuzz
-import math
-
 from src.core.config import load_config
 from src.core.logger import setup_logger
 from src.services.base_knowledge import KNOWLEDGE_BASE
 from src.services.geometry_filter import geometry_filter
 
-
 logger = setup_logger("fourth_step")
 _cfg = load_config()
-
 LLM_MODEL = _cfg.model_ollama
 OLLAMA_URL = _cfg.ollama_url
 KOEFS_FILE = _cfg.KOEFS_PATH
 PRICE_COST_FILE = _cfg.PRICE_COST_PATH
-SIMILARITY_THRESHOLD = 80
+MSSK_FILE = _cfg.MSSK_EXCEL_PATH
 
-_price_cost_lookup_cache = None 
+SIMILARITY_THRESHOLD = 80  # Порог для нечёткого поиска
+MAX_CANDIDATES = 100       # Максимум кандидатов для geometry_filter
+MAX_LLM_CANDIDATES = 100   # Максимум кандидатов для LLM
+LLM_TEMPERATURE = 0.1      # Температура LLM
+MAX_LLM_ATTEMPTS = 2       # Попытки LLM
+
+_price_cost_lookup_cache = None
 
 morph = pymorphy3.MorphAnalyzer()
 
-STOP_WORDS = {'и', 'в', 'на', 'с', 'по', 'к', 'у', 'о', 'от', 'для',
-              'из', 'за', 'под', 'над', 'без', 'до', 'при', 'через',
-              'состав', 'слой', 'материал', 'конструкция', 'стена',
-              'базовая', 'элемент', 'работа', 'не', 'указано', 'указана',
-              'подземная', 'подземный', 'надземная', 'надземный',
-              'цоколь', 'кровля', 'подвал', 'мансарда', 'техническая'}
+STOP_WORDS = {
+    "и", "в", "во", "на", "с", "со", "по", "к", "ко", "у", "о", "об", "от", "из",
+    "за", "под", "над", "без", "до", "при", "через", "для", "как",
+    "состав", "слой", "материал", "конструкция", "базовая", "элемент", "работа",
+    "не", "указано", "указана", "указан",
+    "подземная", "подземный", "подземное",
+    "надземная", "надземный", "надземное",
+    "цоколь", "кровля", "подвал", "мансарда", "техническая", "основной", "основная", "основное",
+    "этаж", "этажа", "этажный",
+    "актовый", "зал"
+}
 
+SYNONYMS = {
+    # ОКНА
+    "окно": ["окна", "оконный", "оконная", "оконные", "оконных", "оконным", "оконного", "оконную"],
+    "окна": ["окно", "оконный", "оконная", "оконные", "оконных"],
+    # ДВЕРИ
+    "дверь": ["двери", "дверной", "дверная", "дверные", "дверных", "дверным", "дверного", "дверной блок", "дверные блоки"],
+    "двери": ["дверь", "дверной", "дверная", "дверные", "дверных"],
+    # АЛЮМИНИЙ
+    "алюминий": ["алюминиевый", "алюминиевая", "алюминиевые", "алюминиевых", "алюминиевым", "алюминиевого"],
+    "алюминиевый": ["алюминий", "алюминиевые", "алюминиевая", "алюминиевых"],
+    # БЕТОН
+    "бетон": ["бетонный", "бетонная", "бетонное", "бетонные", "бетонных", "железобетон", "железобетонный", "железобетонная", "железобетонные"],
+    "железобетон": ["бетон", "бетонный", "железобетонный", "железобетонные"],
+    # КИРПИЧ
+    "кирпич": ["кирпичный", "кирпичная", "кирпичное", "кирпичные", "кирпичных"],
+    "кирпичный": ["кирпич", "кирпичная", "кирпичные", "кирпичных"],
+    # ГАЗОБЕТОН
+    "газобетон": ["газобетонный", "газобетонная", "газобетонное", "газобетонные", "газобетонных"],
+    # МЕТАЛЛ
+    "металл": ["металлический", "металлическая", "металлическое", "металлические", "металлических", "сталь", "стальной", "стальная", "стальные"],
+    "сталь": ["стальной", "стальная", "стальные", "металл", "металлический"],
+    # СТЕКЛО
+    "стекло": ["стеклянный", "стеклянная", "стеклянное", "стеклянные", "стеклопакет", "стеклопакеты"],
+    # ПЛАСТИК
+    "пластик": ["пластиковый", "пластиковая", "пластиковое", "пластиковые", "пвх", "pvc"],
+    "пвх": ["пластик", "пластиковый", "пластиковая", "pvc"],
+    # ДЕРЕВО
+    "дерево": ["деревянный", "деревянная", "деревянное", "деревянные", "деревянных"],
+    # УТЕПЛЕНИЕ
+    "утепление": ["утеплитель", "теплоизоляция", "теплоизоляционный", "теплоизоляционная", "теплоизоляционные"],
+    # ГИДРОИЗОЛЯЦИЯ
+    "гидроизоляция": ["гидроизоляционный", "гидроизоляционная", "гидроизоляционные"],
+    # ПАРОИЗОЛЯЦИЯ
+    "пароизоляция": ["пароизоляционный", "пароизоляционная", "пароизоляционные"],
+    # ШТУКАТУРКА
+    "штукатурка": ["штукатурный", "штукатурная", "штукатурные", "оштукатуривание", "оштукатурить"],
+    # ОКРАСКА
+    "окраска": ["окрасочный", "окрасочная", "окрашивание", "окрасить", "покраска", "покрытие"],
+    # АРМАТУРА
+    "арматура": ["армирование", "армировать", "арматурный", "арматурная", "арматурные", "армированный"],
+    "армирование": ["арматура", "армировать", "арматурный", "арматурная", "арматурные"],
+    # ОПАЛУБКА
+    "опалубка": ["опалубочный", "опалубочная", "распалубка", "распалубливание"],
+    # ПОДОКОННИК
+    "подоконник": ["подоконники", "подоконного", "подоконным"],
+    # ОТЛИВ
+    "отлив": ["отливы", "отливов", "отливом"],
+    # ОТКОС
+    "откос": ["откосы", "откосов", "откосом"],
+    # ОГРАЖДЕНИЕ
+    "ограждение": ["ограждения", "ограждений", "ограждающий", "ограждающие"]
+}
 
-# ========== Промпты ==========
+# ============================================================
+# ВЕСА ПОИСКА
+# ============================================================
 
-PROMPT_AR = """Ты — эксперт-сметчик по архитектурным решениям. Выбери наиболее подходящие работы для создания архитектурного элемента в здании.
+SCORE_EXACT = 20        # Точное совпадение
+SCORE_MORPHOLOGY = 18   # Морфологическое совпадение
+SCORE_KEYWORD = 20      # Ключевое слово
+SCORE_MATERIAL = 35     # Материал
+SCORE_MSSK = 35         # МССК
+SCORE_IFC = 25          # IFC
+SCORE_FUZZY = 5         # Нечёткий поиск
+SCORE_KB = 70           # База знаний (фраза)
+SCORE_RECOMMENDED = 80  # Рекомендуемые работы
+SCORE_REQUIRED = 1000   # Обязательные работы
+
+# ============================================================
+# PROMPT AR
+# ============================================================
+
+PROMPT_AR = """
+Ты — эксперт-сметчик по архитектурным решениям.
+
+Твоя задача — выбрать наиболее подходящие работы для создания
+или устройства указанного архитектурного элемента.
 
 {element_info}
 
-## ВАЖНОЕ ПРАВИЛО:
-Ты МОЖЕШЬ выбирать работы ТОЛЬКО из списка ниже.
-НЕЛЬЗЯ придумывать свои названия работ.
-НУЖНО брать названия ТОЧНО ТАК, КАК ОНИ НАПИСАНЫ в списке.
+## ОСНОВНЫЕ ПРАВИЛА
 
-## ОСОБЕННОСТИ АРХИТЕКТУРНЫХ РЕШЕНИЙ:
-- Для стен учитывай отделку (штукатурка, шпаклёвка, окраска, облицовка, обои)
-- Для перекрытий — устройство полов (стяжка, покрытие, гидроизоляция, подложка)
-- Для дверей — монтаж дверных блоков, установка откосов, наличников, фурнитуры, окраска
-- Для окон — монтаж оконных блоков, установка откосов, подоконников, отливов, москитных сеток
-- Для покрытий — кровельные работы, утепление, пароизоляция, водосточная система
-- Для ограждений — монтаж, окраска, антикоррозийная обработка
-- Учитывай материалы: кирпич, газобетон, керамические блоки, гипсокартон, стекло, пластик, дерево
-- Если материал не указан — выбирай наиболее распространённый вариант для данного типа элемента
-- Для внутренних стен добавляй отделочные работы с двух сторон
-- Для наружных стен добавляй фасадные работы и утепление если применимо
+1. Ты можешь выбирать работы ТОЛЬКО из списка доступных работ.
+2. Нельзя придумывать новые названия работ.
+3. Название выбранной работы должно полностью совпадать
+   с названием в списке доступных работ.
+4. Не добавляй работу, которой нет в списке.
+5. Учитывай одновременно:
+   - тип IFC;
+   - тип элемента;
+   - код МССК;
+   - название элемента по МССК;
+   - все найденные материалы;
+   - характеристики материала;
+   - имя элемента;
+   - размеры;
+   - правила базы знаний.
 
-## ОСОБОЕ ВНИМАНИЕ:
-Работы с пометкой [источник: база_знаний_фраза] ОБЯЗАТЕЛЬНО должны быть включены.
+## ОСОБЕННОСТИ АР
 
-## СПИСОК ДОСТУПНЫХ РАБОТ:
+- Для стен учитывай отделку: штукатурка, шпаклёвка, окраска,
+  облицовка, обои.
+- Для перекрытий учитывай устройство полов: стяжка, покрытие,
+  гидроизоляция, подложка.
+- Для дверей учитывай монтаж дверных блоков, коробок, полотен,
+  фурнитуры, откосов, наличников и окраску.
+- Для окон учитывай монтаж оконных блоков, откосы, подоконники,
+  отливы, герметизацию и другие относящиеся к элементу работы.
+- Для кровель учитывай кровельное покрытие, утепление,
+  гидроизоляцию, пароизоляцию и водосточную систему.
+- Учитывай фактический материал элемента.
+- Не добавляй работы только потому, что они типичны для элемента,
+  если они противоречат указанному материалу.
+
+## БАЗА ЗНАНИЙ
+
+Работы из списка "ОБЯЗАТЕЛЬНЫЕ" должны быть выбраны,
+если они присутствуют среди доступных работ.
+
+Работы из списка "РЕКОМЕНДУЕМЫЕ" следует выбирать,
+если они действительно относятся к данному элементу.
+
+Работы из списка "ЗАПРЕЩЁННЫЕ" выбирать нельзя.
+
+## ДОСТУПНЫЕ РАБОТЫ
+
 {works_text}
 
-## ФОРМАТ ОТВЕТА (ТОЛЬКО JSON):
+## ФОРМАТ ОТВЕТА
+
+Верни ТОЛЬКО JSON:
+
 {{
   "выбранные_работы": [
     {{
       "наименование": "ТОЧНОЕ НАЗВАНИЕ ИЗ СПИСКА",
-      "обоснование": "почему подходит",
-      "категория": "подготовительные/монтажные/отделочные/изоляционные/кровельные/фасадные/заполнение проёмов/остекление/другие"
+      "обоснование": "почему работа подходит",
+      "категория": "подготовительные/монтажные/отделочные/изоляционные/фасадные/заполнение проёмов/остекление/другие"
     }}
   ],
   "рекомендация": "краткий вывод"
-}}"""
+}}
+"""
 
+# ============================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ============================================================
+
+def normalize_text(value):
+    """Приведение текста к удобному для поиска виду."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (list, tuple, set)):
+        return " ".join(normalize_text(x) for x in value if x is not None)
+    if isinstance(value, dict):
+        return " ".join(f"{normalize_text(k)} {normalize_text(v)}" for k, v in value.items() if v is not None)
+    text = str(value).strip()
+    text = text.replace("ё", "е").replace("Ё", "Е")
+    return text
+
+def unique_keep_order(items):
+    """Удаляет дубли, сохраняя порядок."""
+    result = []
+    seen = set()
+    for item in items:
+        item = normalize_text(item)
+        if not item:
+            continue
+        key = item.casefold()
+        if key not in seen:
+            seen.add(key)
+            result.append(item)
+    return result
+
+def normalize_quotes(text):
+    """Заменяет типографские кавычки на обычные."""
+    if not isinstance(text, str):
+        return text
+    text = (text
+            .replace("«", '"')
+            .replace("»", '"')
+            .replace("„", '"')
+            .replace("“", '"')
+            .replace("”", '"')
+            .replace("\n", " "))
+    return text
+
+# ============================================================
+# МССК
+# ============================================================
+
+def find_name_by_code(path, target_code):
+    """
+    Поиск названия по коду МССК.
+    Берём код из первой колонки Excel.
+    Название ищем среди следующих непустых ячеек.
+    Если значение начинается с Ifc — игнорируем его.
+    """
+    df = pd.read_excel(path, header=None)
+    target_code = " ".join(str(target_code).upper().split())
+    for row in df.values.tolist():
+        if not row:
+            continue
+        cell_code = row[0]
+        if cell_code is None or pd.isna(cell_code):
+            continue
+        clean_code = " ".join(str(cell_code).upper().split())
+        if clean_code == target_code:
+            for cell in row[1:]:
+                if cell is None or pd.isna(cell):
+                    continue
+                value = str(cell).strip()
+                if not value or value.lower() == "nan":
+                    continue
+                if not value.startswith("Ifc"):
+                    return value
+            return "Название не найдено (в строке пусто)"
+    return "Код не найден в таблице"
+
+def get_element_mssk_info(normalized_data):
+    source = normalized_data.get("исходные_данные", {}) or {}
+    mssk_code = (source.get("Код мсск") or source.get("Код МССК") or source.get("МССК") or "")
+    mssk_code = normalize_text(mssk_code)
+    if not mssk_code:
+        return {"code": "", "name": ""}
+    if not MSSK_FILE:
+        logger.warning("Путь к файлу МССК не задан.")
+        return {"code": mssk_code, "name": ""}
+    if not os.path.exists(MSSK_FILE):
+        logger.warning("Файл МССК не найден: %s", MSSK_FILE)
+        return {"code": mssk_code, "name": ""}
+    try:
+        name = find_name_by_code(MSSK_FILE, mssk_code)
+    except Exception as e:
+        logger.error("Ошибка поиска названия МССК %s: %s", mssk_code, e)
+        name = ""
+    if name in {"Код не найден в таблице", "Название не найдено (в строке пусто)"}:
+        name = ""
+    return {"code": mssk_code, "name": normalize_text(name)}
+
+# ============================================================
+# ЧИСЛА
+# ============================================================
 
 def safe_float(value, default=0.0):
     """
     Безопасное преобразование значения во float.
-    Поддерживает строки с единицами измерения: "123.45 м2", "1 234,56 мм", "1.62 м³"
-    
-    Args:
-        value: Любое значение для преобразования
-        default: Значение по умолчанию при ошибке (по умолчанию 0.0)
-    
-    Returns:
-        float: Преобразованное значение или default при ошибке
-    
-    Examples:
-        safe_float("123.45 м2") -> 123.45
-        safe_float("1 234,56 мм") -> 1234.56
-        safe_float("1.62 м³") -> 1.62
-        safe_float("14.724 м²") -> 14.724
-        safe_float("abc") -> 0.0
-        safe_float(None) -> 0.0
+    Поддерживает: 123.45, 123,45, 1 234,56 мм, 1.62 м³
     """
     if value is None:
         return default
-    
-    # Если уже число
     if isinstance(value, bool):
         return float(value)
-    
     if isinstance(value, (int, float)):
         if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
             return default
         return float(value)
-    
-    # Если список, словарь и т.д. — не конвертируем
     if isinstance(value, (list, tuple, dict, set)):
         return default
-    
-    # Преобразуем в строку
     try:
         text = str(value).strip()
-    except:
+    except Exception:
         return default
-    
-    if not text or text in ('-', '.', 'nan', 'NaN', 'NAN', 'inf', 'INF', '-inf', '-INF'):
+    if not text or text.lower() in {"nan", "inf", "-inf"}:
         return default
-    
-    # Заменяем неразрывные пробелы и табуляции
-    text = text.replace('\xa0', ' ').replace('\t', ' ')
-    
-    # Обработка запятых и точек
-    if ',' in text and '.' in text:
-        last_dot = text.rfind('.')
-        last_comma = text.rfind(',')
+    text = text.replace("\xa0", " ").replace("\t", " ")
+    if "," in text and "." in text:
+        last_dot = text.rfind(".")
+        last_comma = text.rfind(",")
         if last_dot > last_comma:
-            text = text.replace(',', '')
+            text = text.replace(",", "")
         else:
-            text = text.replace('.', '').replace(',', '.')
-    elif ',' in text:
-        parts = text.split(',')
+            text = text.replace(".", "").replace(",", ".")
+    elif "," in text:
+        parts = text.split(",")
         if len(parts) == 2:
-            text = text.replace(',', '.')
+            text = text.replace(",", ".")
         else:
-            text = text.replace(',', '')
-    
-    # Ищем число: опциональный минус, цифры, опциональная точка с цифрами
-    pattern = r'(-?[\d]+(?:\.[\d]+)?(?:[eE][+-]?[\d]+)?)'
+            text = text.replace(",", "")
+    pattern = r"(-?[\d]+(?:\.[\d]+)?(?:[eE][+-]?[\d]+)?)"
     match = re.search(pattern, text)
-    
     if match:
         try:
             return float(match.group(1))
         except (ValueError, TypeError):
             pass
-    
-    # Если не нашли — пробуем убрать всё лишнее
-    cleaned = ''
-    for i, char in enumerate(text):
-        if char.isdigit():
-            cleaned += char
-        elif char == '.' and '.' not in cleaned:
-            cleaned += char
-        elif char == '-' and i == 0 and len(cleaned) == 0:
-            cleaned += char
-    
-    if cleaned and cleaned not in ('-', '.'):
-        try:
-            return float(cleaned)
-        except (ValueError, TypeError):
-            pass
-    
     return default
 
-def _get_corrected_volume(df):
+# ============================================================
+# МАТЕРИАЛЫ
+# ============================================================
 
-    koefs = pd.read_excel(KOEFS_FILE)
+def collect_materials(normalized_data):
+    """Собирает материал из всех возможных источников JSON."""
+    materials = []
+    material = normalized_data.get("материал", {}) or {}
+    source = normalized_data.get("исходные_данные", {}) or {}
 
-    df_copy = df.copy()
+    # Основное название материала
+    values = [
+        material.get("название", ""),
+        normalized_data.get("материал_определенный", ""),
+        source.get("Материал", "")
+    ]
+    for value in values:
+        value = normalize_text(value)
+        if value and value.casefold() not in {"не указано", "не указан", "-"}:
+            materials.append(value)
 
-    koefs_filtered = koefs[koefs['Шифр ТСН'].isin(df_copy['Шифр ТСН'])].copy()
+    # IfcMaterialLayer::Name
+    def walk(obj):
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                yield str(key), value
+                yield from walk(value)
+        elif isinstance(obj, list):
+            for value in obj:
+                yield "", value
 
-    koefs_filtered_by_material = koefs_filtered[koefs_filtered['Наименование открытой группы ресурсов/\nресурса в составе открытой группы'].isin(df_copy['Наименование расценки/ресурса'])].copy()
+    for key, value in walk(normalized_data):
+        if value and "ifcmateriallayer::name" in str(key).lower():
+            value = normalize_text(value)
+            if value:
+                materials.append(value)
 
-    for idx, koef_row in koefs_filtered_by_material.iterrows():
-        # Находим индекс строки в df
-        df_idx = df_copy[df_copy['Наименование расценки/ресурса'] == koef_row['Наименование открытой группы ресурсов/\nресурса в составе открытой группы']].index[0]
-        
-        # Умножаем объём на норму расхода
-        df_copy.loc[df_idx, 'Объём работ'] = df_copy.loc[df_idx, 'Объём работ'] * koef_row['Норма расхода'] / 100 if koef_row['Норма расхода'] > 100 else df_copy.loc[df_idx, 'Объём работ'] * koef_row['Норма расхода']
+    # Состав из имени
+    composition = normalize_text(normalized_data.get("состав_из_имени", ""))
+    if composition:
+        materials.append(composition)
 
-    print("Готово!")
-    print(df_copy)     
-    return df_copy  
+    # Характеристики материала
+    for container_name in ["качественные_характеристики", "количественные_характеристики"]:
+        container = material.get(container_name, {}) or {}
+        if isinstance(container, dict):
+            for key, value in container.items():
+                value = normalize_text(value)
+                if value:
+                    materials.append(f"{key}: {value}")
 
+    return unique_keep_order(materials)
 
+# ============================================================
+# ИЗВЛЕЧЕНИЕ КЛЮЧЕВЫХ СЛОВ
+# ============================================================
 
 def extract_words(text):
     if not text:
         return []
-    words = []
-    parts = re.split(r'[+;,/]| и | с ', str(text))
-    for part in parts:
-        part = part.strip()
-        if part:
-            found = re.findall(r'[А-Яа-яA-Za-z]{4,}', part)
-            words.extend(found)
-    return list(set([w.lower() for w in words]))
+    text = normalize_text(text)
 
-def normalize_quotes(text):
-    """Заменяет кавычки-ёлочки на прямые кавычки"""
-    if isinstance(text, str):
-        text = text.replace('«', '"').replace('»', '"')
-        text = text.replace('„', '"').replace('“', '"').replace('”', '"')
-        text = text.replace('\n', ' ')
-    return text
+    # Технические обозначения
+    technical = re.findall(
+        r"(?i)\b(?:B\d{1,3}|W\d{1,3}|F\d{1,4}|M\d{2,4}|RAL\s*\d{3,5}|"
+        r"ПВХ|PVC|ГКЛ|ГВЛ|ОСБ|ЦСП|Ifc[A-Za-z]+)\b",
+        text
+    )
 
+    # Обычные слова
+    raw_words = re.findall(
+        r"[А-Яа-яA-Za-z]{3,}(?:-[А-Яа-яA-Za-z]{2,})?|"
+        r"[A-Za-zА-Яа-я]+\d+[A-Za-zА-Яа-я\d]*|\d+[A-Za-zА-Яа-я]+",
+        text
+    )
+
+    result = []
+    for word in raw_words + technical:
+        word = word.strip(' .,:;()[]{}"\'').lower()
+        if not word:
+            continue
+        # Чисто цифровые значения
+        if word.isdigit():
+            if len(word) >= 3:
+                result.append(word)
+            continue
+        if re.fullmatch(r"[а-яa-z-]+", word) and word in STOP_WORDS:
+            continue
+        result.append(word)
+
+        # Морфологическая нормальная форма
+        if re.fullmatch(r"[а-яa-z-]+", word) and len(word) >= 4:
+            try:
+                parsed = morph.parse(word)[0]
+                lemma = parsed.normal_form.lower()
+                if lemma not in STOP_WORDS and len(lemma) >= 3:
+                    result.append(lemma)
+            except Exception:
+                pass
+
+        # Синонимы
+        for synonym in SYNONYMS.get(word, []):
+            synonym = synonym.lower()
+            if synonym not in STOP_WORDS:
+                result.append(synonym)
+
+    return unique_keep_order(result)
+
+def extract_element_search_words(normalized_data, ifc_type, element_type, element_name, mssk_name, materials, composition):
+    """Формирует расширенный набор ключевых слов из всей информации об элементе."""
+    fields = []
+    fields.append(ifc_type)
+    fields.append(element_type)
+    fields.append(mssk_name)
+    fields.append(element_name)
+    fields.append(composition)
+    fields.extend(materials)
+
+    source = normalized_data.get("исходные_данные", {}) or {}
+    material = normalized_data.get("материал", {}) or {}
+
+    # Свойства исходных данных, связанные с материалом
+    for key, value in source.items():
+        if not value:
+            continue
+        key_lower = str(key).lower()
+        if any(term in key_lower for term in ["material", "материал", "ral", "concrete", "армат", "steel", "бетон"]):
+            fields.append(key)
+            fields.append(value)
+
+    # Характеристики материала
+    for container_name in ["качественные_характеристики", "количественные_характеристики"]:
+        container = material.get(container_name, {}) or {}
+        if isinstance(container, dict):
+            for key, value in container.items():
+                fields.append(key)
+                fields.append(value)
+
+    result = []
+    for field in fields:
+        result.extend(extract_words(field))
+    return unique_keep_order(result)
+
+# ============================================================
+# БАЗА ЗНАНИЙ
+# ============================================================
+
+def get_kb_rules(processing_type, ifc_type, mssk_name, materials):
+    """
+    Получает правила из новой структуры:
+    KNOWLEDGE_BASE
+        AR/KR
+            IFC
+                works_rules
+                mssk
+                material
+    """
+    processing_type = str(processing_type).upper()
+    section = KNOWLEDGE_BASE.get(processing_type, {}) or {}
+    ifc_rules = section.get(ifc_type, {}) or {}
+
+    search = []
+    required = []
+    recommended = []
+    forbidden = []
+    sources = []
+
+    def add_rules(block, source_name):
+        if not isinstance(block, dict):
+            return
+        search.extend(block.get("search", []) or [])
+        required.extend(block.get("required", []) or [])
+        recommended.extend(block.get("recommended", []) or [])
+        forbidden.extend(block.get("forbidden", []) or [])
+        sources.append(source_name)
+
+    # Общие правила IFC
+    add_rules(ifc_rules.get("works_rules", {}), f"IFC:{ifc_type}")
+
+    # МССК
+    mssk_rules = ifc_rules.get("mssk", {}) or {}
+    mssk_lower = normalize_text(mssk_name).casefold()
+    if mssk_lower:
+        for mssk_key, rules in mssk_rules.items():
+            key_lower = normalize_text(mssk_key).casefold()
+            if key_lower == mssk_lower or key_lower in mssk_lower or mssk_lower in key_lower:
+                add_rules(rules, f"MSSK:{mssk_key}")
+
+    # Материал
+    material_rules = ifc_rules.get("material", {}) or {}
+    material_text = " ".join(normalize_text(x) for x in materials).casefold()
+    for material_key, rules in material_rules.items():
+        if not isinstance(rules, dict):
+            continue
+        aliases = rules.get("aliases", [material_key]) or []
+        aliases = [normalize_text(x).casefold() for x in aliases]
+        material_key_lower = normalize_text(material_key).casefold()
+        matched = False
+        for alias in aliases:
+            if alias and alias in material_text:
+                matched = True
+                break
+        if not matched and material_key_lower and material_key_lower in material_text:
+            matched = True
+        if matched:
+            add_rules(rules, f"MATERIAL:{material_key}")
+
+    return {
+        "search": unique_keep_order(search),
+        "required": unique_keep_order(required),
+        "recommended": unique_keep_order(recommended),
+        "forbidden": unique_keep_order(forbidden),
+        "sources": unique_keep_order(sources)
+    }
+
+# ============================================================
+# ПОИСК КАНДИДАТА
+# ============================================================
+
+def _ensure_candidate(storage, work_name):
+    if work_name not in storage:
+        storage[work_name] = {
+            "наименование": work_name,
+            "score": 0,
+            "совпадения": [],
+            "тип_поиска": [],
+            "matches": {
+                "ifc": [],
+                "mssk": [],
+                "material": [],
+                "keywords": [],
+                "knowledge": [],
+                "recommended": [],
+                "required": []
+            }
+        }
+    return storage[work_name]
+
+def add_candidate(storage, work_name, score, search_type, source, match=None):
+    item = _ensure_candidate(storage, work_name)
+    item["score"] += score
+    if search_type not in item["тип_поиска"]:
+        item["тип_поиска"].append(search_type)
+    if match:
+        match = normalize_text(match)
+        if match:
+            if match not in item["совпадения"]:
+                item["совпадения"].append(match)
+            if source in item["matches"]:
+                if match not in item["matches"][source]:
+                    item["matches"][source].append(match)
+
+# ============================================================
+# ФОРМЫ СЛОВ
+# ============================================================
+
+def build_word_forms(words):
+    all_forms = {}
+    for word in words:
+        word = normalize_text(word).lower()
+        if not word:
+            continue
+        forms = {word}
+        try:
+            parsed = morph.parse(word)[0]
+            for form in parsed.lexeme:
+                form_word = form.word.lower()
+                if form_word:
+                    forms.add(form_word)
+        except Exception as e:
+            logger.warning('Не удалось получить формы слова "%s": %s', word, e)
+        # Синонимы
+        for synonym in SYNONYMS.get(word, []):
+            forms.add(synonym.lower())
+        all_forms[word] = list(forms)
+    return all_forms
+
+# ============================================================
+# ПОИСК РАБОТ
+# ============================================================
+
+def search_work_candidates(df_works, search_col, all_words, ifc_type, mssk_name, materials, kb_rules):
+    all_found_works = {}
+
+    # Предварительно собираем названия
+    work_rows = []
+    for idx, row in df_works.iterrows():
+        value = row.get(search_col)
+        if pd.isna(value):
+            continue
+        work_name = normalize_text(value)
+        if len(work_name) < 3:
+            continue
+        work_rows.append((idx, work_name, work_name.lower()))
+
+    # Формы слов
+    all_forms = build_word_forms(all_words)
+
+    # Точный + морфологический поиск
+    for word, forms in all_forms.items():
+        for _, work_name, work_lower in work_rows:
+            matched = []
+            for form in forms:
+                if not form:
+                    continue
+                # Для коротких технических обозначений ищем как отдельный фрагмент
+                if len(form) <= 3:
+                    pattern = r"(?<![A-Za-zА-Яа-я0-9])" + re.escape(form) + r"(?![A-Za-zА-Яа-я0-9])"
+                    if re.search(pattern, work_lower):
+                        matched.append(form)
+                else:
+                    if form in work_lower:
+                        matched.append(form)
+            if not matched:
+                continue
+            # Основное слово
+            if word in matched:
+                add_candidate(all_found_works, work_name, SCORE_EXACT, "точный", "keywords", word)
+            # Другие морфологические формы
+            else:
+                for form in matched:
+                    add_candidate(all_found_works, work_name, SCORE_MORPHOLOGY, "морфологический", "keywords", form)
+
+    # Нечёткий поиск
+    for word in all_words:
+        if len(word) < 4:  # Слишком короткие слова дают много мусора
+            continue
+        for _, work_name, work_lower in work_rows:
+            similarity = fuzz.partial_ratio(word, work_lower)
+            if similarity >= SIMILARITY_THRESHOLD:
+                fuzzy_score = SCORE_FUZZY
+                if similarity >= 90:
+                    fuzzy_score += 5
+                if similarity >= 95:
+                    fuzzy_score += 5
+                add_candidate(all_found_works, work_name, fuzzy_score, "нечеткий", "keywords", f"{word} ({similarity}%)")
+
+    # Поиск по IFC
+    ifc_search_phrases = (KNOWLEDGE_BASE
+                          .get(str(processing_type_global).upper(), {})
+                          .get(ifc_type, {})
+                          .get("works_rules", {})
+                          .get("search", []))
+    for phrase in ifc_search_phrases:
+        phrase_lower = normalize_text(phrase).lower()
+        if not phrase_lower:
+            continue
+        for _, work_name, work_lower in work_rows:
+            if phrase_lower in work_lower:
+                add_candidate(all_found_works, work_name, SCORE_IFC, "база_IFC", "ifc", phrase)
+
+    # Поиск по МССК
+    if mssk_name:
+        mssk_words = extract_words(mssk_name)
+        mssk_forms = build_word_forms(mssk_words)
+        for word, forms in mssk_forms.items():
+            for _, work_name, work_lower in work_rows:
+                matched = [form for form in forms if len(form) >= 3 and form in work_lower]
+                for form in matched:
+                    add_candidate(all_found_works, work_name, SCORE_MSSK, "МССК", "mssk", form)
+
+    # Поиск по материалу
+    material_words = []
+    for material in materials:
+        material_words.extend(extract_words(material))
+    material_words = unique_keep_order(material_words)
+    material_forms = build_word_forms(material_words)
+    for word, forms in material_forms.items():
+        for _, work_name, work_lower in work_rows:
+            matched = [form for form in forms if len(form) >= 3 and form in work_lower]
+            for form in matched:
+                add_candidate(all_found_works, work_name, SCORE_MATERIAL, "материал", "material", form)
+
+    # Фразы базы знаний
+    knowledge_phrases = kb_rules["search"]
+    for phrase in knowledge_phrases:
+        phrase_lower = normalize_text(phrase).lower()
+        if not phrase_lower:
+            continue
+        for _, work_name, work_lower in work_rows:
+            if phrase_lower in work_lower:
+                add_candidate(all_found_works, work_name, SCORE_KB, "база_знаний_фраза", "knowledge", phrase)
+
+    # Рекомендуемые
+    for phrase in kb_rules["recommended"]:
+        phrase_lower = normalize_text(phrase).lower()
+        if not phrase_lower:
+            continue
+        for _, work_name, work_lower in work_rows:
+            if phrase_lower in work_lower:
+                add_candidate(all_found_works, work_name, SCORE_RECOMMENDED, "рекомендуемая", "recommended", phrase)
+
+    # Обязательные
+    for phrase in kb_rules["required"]:
+        phrase_lower = normalize_text(phrase).lower()
+        if not phrase_lower:
+            continue
+        for _, work_name, work_lower in work_rows:
+            if phrase_lower in work_lower:
+                add_candidate(all_found_works, work_name, SCORE_REQUIRED, "обязательная", "required", phrase)
+
+    # Удаляем запрещённые
+    forbidden = [normalize_text(x).lower() for x in kb_rules["forbidden"]]
+    if forbidden:
+        filtered = {}
+        for work_name, data in all_found_works.items():
+            work_lower = work_name.lower()
+            is_forbidden = any(phrase in work_lower for phrase in forbidden)
+            if not is_forbidden:
+                filtered[work_name] = data
+        all_found_works = filtered
+
+    return all_found_works
+
+# ============================================================
+# СОРТИРОВКА КАНДИДАТОВ
+# ============================================================
+
+def sort_candidates(candidates):
+    result = list(candidates.items())
+    result.sort(key=lambda item: (item[1].get("score", 0), len(item[1].get("совпадения", []))), reverse=True)
+    return [item[1] for item in result]
+
+# ============================================================
+# РАЗМЕРЫ / ГЕОМЕТРИЯ
+# ============================================================
+
+def prepare_works_for_geometry(works):
+    result = []
+    for work in works:
+        name = work["наименование"]
+        search_types = ", ".join(work.get("тип_поиска", []))
+        result.append(f"{name} [источник: {search_types}]")
+    return result
+
+def restore_geometry_results(geometry_result, candidates):
+    if not geometry_result:
+        return []
+    candidate_by_name = {item["наименование"]: item for item in candidates}
+    result = []
+    for item in geometry_result:
+        text = normalize_text(item)
+        # Убираем номер перед названием
+        text_without_number = re.sub(r"^\s*\d+\.\s*", "", text)
+        # Убираем [источник: ...]
+        clean_name = re.sub(r"\s*\[источник:.*?\]\s*$", "", text_without_number, flags=re.IGNORECASE).strip()
+        # Сначала точное совпадение
+        if clean_name in candidate_by_name:
+            result.append(candidate_by_name[clean_name])
+            continue
+        # Если geometry_filter изменил строку, пробуем найти исходное название внутри
+        for name, candidate in candidate_by_name.items():
+            if (name.lower() in clean_name.lower() or clean_name.lower() in name.lower()):
+                result.append(candidate)
+                break
+    return result
+
+# ============================================================
+# ОБЯЗАТЕЛЬНЫЕ РАБОТЫ
+# ============================================================
+
+def find_required_candidates(candidates, required_phrases):
+    result = []
+    for required in required_phrases:
+        required_lower = normalize_text(required).lower()
+        if not required_lower:
+            continue
+        for candidate in candidates:
+            name = candidate["наименование"].lower()
+            if required_lower in name:
+                result.append(candidate)
+                break
+    # Удаляем дубли
+    unique = {candidate["наименование"]: candidate for candidate in result}
+    return list(unique.values())
+
+def validate_required_works(selected_works, required_phrases):
+    """
+    Проверяет ответ LLM.
+    Возвращает список обязательных работ, которые LLM пропустила.
+    """
+    if not required_phrases:
+        return []
+    selected_names = []
+    for work in selected_works:
+        if not isinstance(work, dict):
+            continue
+        name = normalize_text(work.get("наименование", "")).lower()
+        if name:
+            selected_names.append(name)
+    missing = []
+    for required in required_phrases:
+        required_lower = normalize_text(required).lower()
+        found = False
+        for selected in selected_names:
+            if required_lower in selected or selected in required_lower:
+                found = True
+                break
+        if not found:
+            missing.append(required)
+    return missing
+
+# ============================================================
+# JSON ОТВЕТ LLM
+# ============================================================
+
+def clean_llm_answer(answer):
+    if not answer:
+        return ""
+    answer = answer.strip()
+    if answer.startswith("```json"):
+        answer = answer[len("```json"):]
+    elif answer.startswith("```"):
+        answer = answer[len("```"):]
+    if answer.endswith("```"):
+        answer = answer[:-3]
+    return answer.strip()
+
+def parse_llm_json(answer):
+    answer = clean_llm_answer(answer)
+    try:
+        return json.loads(answer)
+    except json.JSONDecodeError:
+        # Иногда модель пишет что-то до или после JSON
+        start = answer.find("{")
+        end = answer.rfind("}")
+        if start >= 0 and end > start:
+            json_text = answer[start:end + 1]
+            return json.loads(json_text)
+        raise
+
+# ============================================================
+# PROMPT ДЛЯ ПОВТОРНОЙ ПРОВЕРКИ
+# ============================================================
+
+def build_retry_prompt(original_prompt, missing_required):
+    missing_text = "\n".join(f"- {x}" for x in missing_required)
+    return original_prompt + f"""
+
+## КРИТИЧЕСКАЯ ПРОВЕРКА
+
+Предыдущий ответ был отклонён.
+
+Ты пропустил следующие обязательные работы:
+
+{missing_text}
+
+Теперь повтори выбор.
+
+Каждая из указанных обязательных работ должна присутствовать
+в "выбранные_работы", ЕСЛИ она присутствует в списке
+доступных работ.
+
+Напоминаю:
+- нельзя придумывать работы;
+- название должно полностью совпадать со списком;
+- выбирать можно только из списка доступных работ.
+
+Верни ТОЛЬКО JSON.
+"""
+
+# ============================================================
+# ВЫЗОВ LLM
+# ============================================================
+
+def select_works_by_llm(prompt, required_phrases):
+    client = ollama.Client(host=OLLAMA_URL, timeout=120.0)
+    last_answer = ""
+    last_result = None
+
+    for attempt in range(1, MAX_LLM_ATTEMPTS + 1):
+        current_prompt = prompt
+
+        if attempt > 1 and last_result is not None:
+            selected_previous = last_result.get("выбранные_работы", [])
+            missing = validate_required_works(selected_previous, required_phrases)
+            if missing:
+                current_prompt = build_retry_prompt(prompt, missing)
+
+        try:
+            logger.info("Запрос LLM, попытка %s/%s", attempt, MAX_LLM_ATTEMPTS)
+            response = client.chat(
+                model=LLM_MODEL,
+                messages=[{"role": "user", "content": current_prompt}],
+                options={"temperature": LLM_TEMPERATURE}
+            )
+            last_answer = response["message"]["content"].strip()
+            result = parse_llm_json(last_answer)
+
+            if not isinstance(result, dict):
+                raise ValueError("Ответ LLM не является JSON-объектом")
+
+            selected_works = result.get("выбранные_работы", [])
+            if not isinstance(selected_works, list):
+                raise ValueError("Поле выбранные_работы не является списком")
+
+            last_result = result
+            missing = validate_required_works(selected_works, required_phrases)
+
+            if not missing:
+                logger.info("Ответ LLM прошёл проверку обязательных работ.")
+                return result
+
+            logger.warning("LLM пропустил обязательные работы: %s", missing)
+
+        except Exception as e:
+            logger.error("Ошибка LLM, попытка %s: %s", attempt, e)
+            if last_answer:
+                logger.error("Ответ LLM: %s", last_answer[:1000])
+
+    # Если обязательные работы так и не прошли проверку, возвращаем последний результат
+    if last_result is not None:
+        return last_result
+
+    return {
+        "выбранные_работы": [],
+        "рекомендация": "Не удалось получить корректный ответ LLM."
+    }
+
+# ============================================================
+# ИСПРАВЛЕНИЕ ОБЯЗАТЕЛЬНЫХ РАБОТ
+# ============================================================
+
+def force_add_missing_required(selected_works, candidates, required_phrases):
+    """
+    Если LLM всё-таки пропустила обязательную работу,
+    добавляем её программно, но только если такая работа
+    реально есть среди кандидатов.
+    """
+    if not required_phrases:
+        return selected_works
+
+    selected_names = set()
+    for work in selected_works:
+        if not isinstance(work, dict):
+            continue
+        selected_names.add(normalize_text(work.get("наименование", "")).casefold())
+
+    candidate_by_name = {
+        normalize_text(x["наименование"]).casefold(): x
+        for x in candidates
+    }
+
+    for required in required_phrases:
+        required_lower = normalize_text(required).casefold()
+        found = False
+
+        for selected_name in selected_names:
+            if required_lower in selected_name or selected_name in required_lower:
+                found = True
+                break
+
+        if found:
+            continue
+
+        # Ищем среди кандидатов
+        for candidate_name, candidate in candidate_by_name.items():
+            if required_lower in candidate_name:
+                selected_works.append({
+                    "наименование": candidate["наименование"],
+                    "обоснование": "Добавлено программно как обязательная работа базы знаний.",
+                    "категория": "другие"
+                })
+                selected_names.add(candidate_name)
+                logger.warning("Обязательная работа добавлена программно: %s", candidate["наименование"])
+                break
+
+    return selected_works
+
+# ============================================================
+# КОРРЕКТИРОВКА ОБЪЁМА
+# ============================================================
+
+def _get_corrected_volume(df):
+    koefs = pd.read_excel(KOEFS_FILE)
+    df_copy = df.copy()
+
+    if "Шифр ТСН" not in df_copy.columns:
+        return df_copy
+    if "Наименование расценки/ресурса" not in df_copy.columns:
+        return df_copy
+
+    koefs_filtered = koefs[koefs["Шифр ТСН"].isin(df_copy["Шифр ТСН"])].copy()
+    resource_col = "Наименование открытой группы ресурсов/\nресурса в составе открытой группы"
+
+    if resource_col not in koefs_filtered.columns:
+        return df_copy
+
+    koefs_filtered_by_material = koefs_filtered[
+        koefs_filtered[resource_col].isin(df_copy["Наименование расценки/ресурса"])
+    ].copy()
+
+    for _, koef_row in koefs_filtered_by_material.iterrows():
+        resource_name = koef_row[resource_col]
+        matching_indices = df_copy[
+            df_copy["Наименование расценки/ресурса"] == resource_name
+        ].index
+
+        if len(matching_indices) == 0:
+            continue
+
+        df_idx = matching_indices[0]
+
+        if "Объём работ" not in df_copy.columns:
+            continue
+
+        norm = safe_float(koef_row.get("Норма расхода", 0))
+        volume = safe_float(df_copy.loc[df_idx, "Объём работ"])
+
+        if norm > 100:
+            df_copy.loc[df_idx, "Объём работ"] = volume * norm / 100
+        elif norm:
+            df_copy.loc[df_idx, "Объём работ"] = volume * norm
+
+    return df_copy
+
+# ============================================================
+# СТОИМОСТЬ
+# ============================================================
 
 def _get_price_cost_lookup():
-    """Загружает price_cost.xlsx и возвращает словарь {Шифр расценки: Текущие прямые затраты/Всего затр}"""
     global _price_cost_lookup_cache
+
     if _price_cost_lookup_cache is not None:
         return _price_cost_lookup_cache
 
     try:
-        df = pd.read_excel(PRICE_COST_FILE, sheet_name='_Получние_параметры_позиции_sel')
-        _price_cost_lookup_cache = dict(zip(df['Шифр расценки'], df['Текущие прямые затраты/Всего затр']))
-        logger.info(f"Загружено {len(_price_cost_lookup_cache)} расценок из price_cost.xlsx")
+        df = pd.read_excel(PRICE_COST_FILE, sheet_name="_Получние_параметры_позиции_sel")
+        _price_cost_lookup_cache = dict(
+            zip(df["Шифр расценки"], df["Текущие прямые затраты/Всего затр"])
+        )
+        logger.info("Загружено %s расценок из price_cost.xlsx", len(_price_cost_lookup_cache))
     except Exception as e:
-        logger.error(f"Ошибка загрузки price_cost.xlsx: {e}")
+        logger.error("Ошибка загрузки price_cost.xlsx: %s", e)
         _price_cost_lookup_cache = {}
+
     return _price_cost_lookup_cache
 
-
 def _add_cost_column(df):
-    """Добавляет колонку 'Стоимость' = 'Текущие прямые затраты/Всего затр' × 'Объём работ'"""
     lookup = _get_price_cost_lookup()
-    if 'Шифр ТСН' not in df.columns or 'Объём работ' not in df.columns:
-        logger.warning("Не найдены колонки 'Шифр ТСН' или 'Объём работ' для расчёта стоимости")
-        df['Стоимость'] = ''
+
+    if "Шифр ТСН" not in df.columns or "Объём работ" not in df.columns:
+        logger.warning("Не найдены колонки 'Шифр ТСН' или 'Объём работ'")
+        df["Стоимость"] = ""
         return df
 
-    def _lookup_price(shifr_clean):
-        """Возвращает цену по шифру ТСН с учётом разных форматов записи.
-
-        price_cost.xlsx хранит шифры в старом формате '3.6-98-1',
-        а API справочника ТСН отдаёт их без префикса: '6-98-1'.
-        Пробуем точное совпадение, затем оба варианта с префиксом и без.
-        """
+    def lookup_price(shifr_clean):
         if shifr_clean in lookup:
             return lookup[shifr_clean]
-        # Шифр без '3.' — пробуем старый формат price_cost.xlsx ('3.' + шифр)
-        if not shifr_clean.startswith('3.'):
-            alt = '3.' + shifr_clean
+        if not shifr_clean.startswith("3."):
+            alt = "3." + shifr_clean
             if alt in lookup:
                 return lookup[alt]
-        # Шифр с '3.' — пробуем вариант без префикса
-        if shifr_clean.startswith('3.'):
+        if shifr_clean.startswith("3."):
             alt = shifr_clean[2:]
             if alt in lookup:
                 return lookup[alt]
         return None
 
     def calculate_cost(row):
-        shifr = row.get('Шифр ТСН')
-        volume = row.get('Объём работ')
+        shifr = row.get("Шифр ТСН")
+        volume = row.get("Объём работ")
+
         if pd.isna(shifr) or pd.isna(volume):
-            return ''
+            return ""
+
         try:
             shifr_clean = str(shifr).strip()
-            price = _lookup_price(shifr_clean)
+            price = lookup_price(shifr_clean)
             if price is None:
-                return ''
+                return ""
             cost = float(price) * float(volume)
             return round(cost, 2)
         except (ValueError, TypeError):
-            return ''
+            return ""
 
-    df['Стоимость'] = df.apply(calculate_cost, axis=1)
-    df['Стоимость'] = df['Стоимость'].fillna('')
+    df["Стоимость"] = df.apply(calculate_cost, axis=1)
+    df["Стоимость"] = df["Стоимость"].fillna("")
     return df
 
+# ============================================================
+# ПОИСК ОБЪЁМА
+# ============================================================
+
 def _find_column_with_volume(data, marker, extra_marker):
-    if 'Количество_в_группе' in data.keys():
-        logger.info('обнаружены данные после группирвоки')
+    if not isinstance(data, dict):
+        return ""
+
+    if "Количество_в_группе" in data.keys():
+        logger.info("Обнаружены данные после группировки")
         for param, value in data.items():
-            if marker in param and extra_marker in param and value and 'grouped' in param:
+            if (marker in str(param) and extra_marker in str(param) and value and "grouped" in str(param)):
                 return value
         for param, value in data.items():
-            if marker in param and value and 'grouped' in param:
+            if (marker in str(param) and value and "grouped" in str(param)):
                 return value
     else:
         for param, value in data.items():
-            if marker in param and extra_marker in param and value:
+            if (marker in str(param) and extra_marker in str(param) and value):
                 return value
         for param, value in data.items():
-            if marker in param and value:
+            if (marker in str(param) and value):
                 return value
-    
-    return ''
 
+    return ""
+
+# ============================================================
+# ГЛОБАЛЬНЫЙ ТИП ОБРАБОТКИ
+# ============================================================
+
+processing_type_global = "KR"
+
+# ============================================================
+# ОСНОВНАЯ ОБРАБОТКА ОДНОГО ЭЛЕМЕНТА
+# ============================================================
 
 def _process_one_element(normalized_data, row_number, output_folder, processing_type="KR"):
-    """Обработка одного элемента: поиск работ по материалу + базе знаний"""
+    global processing_type_global
+    processing_type_global = str(processing_type).upper()
 
-    # Данные элемента
-    material = normalized_data.get('материал', {})
-    material_name = material.get('название', '')
-    material_quant = material.get('количественные_характеристики', {})
-    material_qual = material.get('качественные_характеристики', {})
+    logger.info("=" * 80)
+    logger.info("Обработка элемента %s", row_number)
 
-    element_description = normalized_data.get('исходные_данные', {})
-    element_type = element_description.get('Тип (RU)', '')
+    # ========================================================
+    # 1. ИСХОДНЫЕ ДАННЫЕ
+    # ========================================================
 
-    sizes = normalized_data.get('размеры', {})
+    material = normalized_data.get("материал", {}) or {}
+    source = normalized_data.get("исходные_данные", {}) or {}
 
-    # Дополнительные поля из нового формата
-    ifc_type = element_description.get('Тип элемента', '')
-    storey_type = element_description.get('Тип_этажа', '')
-    element_part = element_description.get('Этаж', '')
-    composition = normalized_data.get('состав_из_имени', '')
-    material_detected = normalized_data.get('материал_определенный', '')
-    element_name = element_description.get('Имя', '')
-    armature_ratio = safe_float(element_description.get('ReinforcementVolumeRatio', 0)) / 1000.0 if safe_float(element_description.get('ReinforcementVolumeRatio', 0)) else 0.0
-    probably_beton = 'Смесь бетонная' + str(element_description.get('ExpCheck_MaterialConcrete_MGE_ConcreteGrade', '')) + str(element_description.get('Property_ExpCheck_MaterialConcrete.MGE_WaterResist', '')) + str(element_description.get('Property_ExpCheck_MaterialConcrete.MGE_FreezeDurability', ''))
+    material_name = normalize_text(material.get("название", ""))
+    material_quant = (material.get("количественные_характеристики", {}) or {})
+    material_qual = (material.get("качественные_характеристики", {}) or {})
 
+    element_type = normalize_text(source.get("Тип (RU)", ""))
+    ifc_type = normalize_text(source.get("Тип элемента", ""))
+    element_name = normalize_text(source.get("Имя", ""))
+    storey_type = normalize_text(source.get("Тип_этажа", ""))
+    element_part = normalize_text(source.get("Этаж", ""))
+    composition = normalize_text(normalized_data.get("состав_из_имени", ""))
+    material_detected = normalize_text(normalized_data.get("материал_определенный", ""))
 
-    print('armature_ratio:', armature_ratio, type(armature_ratio))
-    if not material_name:
-        material_detected = element_description.get('Имя', '')
+    sizes = (normalized_data.get("размеры", {}) or {})
+    quantitative = (normalized_data.get("количественные", {}) or {})
+    previous_data = source
 
+    # ========================================================
+    # 2. АРМАТУРА
+    # ========================================================
 
-    previous_data = normalized_data.get('исходные_данные', {})
-    quantitative = normalized_data.get('количественные', {})
+    reinforcement_raw = source.get("ReinforcementVolumeRatio", 0)
+    reinforcement_value = safe_float(reinforcement_raw)
+    armature_ratio = reinforcement_value / 1000.0 if reinforcement_value else 0.0
 
-    # Путь к файлу с промежуточными работами
-    works_file = os.path.join(output_folder, f'Промежуточные_работы_{row_number}_после_фильтров.xlsx')
+    # ========================================================
+    # 3. МАТЕРИАЛЫ ИЗ ВСЕХ ИСТОЧНИКОВ
+    # ========================================================
+
+    materials = collect_materials(normalized_data)
+
+    # Если основного материала нет, но есть определённый материал — используем его
+    if not material_name and material_detected:
+        material_name = material_detected
+
+    # ========================================================
+    # 4. МССК
+    # ========================================================
+
+    mssk_info = get_element_mssk_info(normalized_data)
+    mssk_code = mssk_info["code"]
+    mssk_name = mssk_info["name"]
+
+    # ========================================================
+    # 5. КЛЮЧЕВЫЕ СЛОВА
+    # ========================================================
+
+    all_words = extract_element_search_words(
+        normalized_data=normalized_data,
+        ifc_type=ifc_type,
+        element_type=element_type,
+        element_name=element_name,
+        mssk_name=mssk_name,
+        materials=materials,
+        composition=composition
+    )
+
+    # ========================================================
+    # 6. БАЗА ЗНАНИЙ
+    # ========================================================
+
+    kb_rules = get_kb_rules(
+        processing_type=processing_type,
+        ifc_type=ifc_type,
+        mssk_name=mssk_name,
+        materials=materials
+    )
+
+    knowledge_phrases = kb_rules["search"]
+    required_phrases = kb_rules["required"]
+    recommended_phrases = kb_rules["recommended"]
+    forbidden_phrases = kb_rules["forbidden"]
+
+    logger.info("IFC: %s", ifc_type)
+    logger.info("Тип RU: %s", element_type)
+    logger.info("МССК: %s", mssk_code)
+    logger.info("Название МССК: %s", mssk_name)
+    logger.info("Материалы: %s", materials)
+    logger.info("Ключевые слова: %s", all_words)
+    logger.info("Источники KB: %s", kb_rules["sources"])
+    logger.info("Required: %s", required_phrases)
+    logger.info("Recommended: %s", recommended_phrases)
+    logger.info("Forbidden: %s", forbidden_phrases)
+
+    # ========================================================
+    # 7. ФАЙЛ ПРОМЕЖУТОЧНЫХ РАБОТ
+    # ========================================================
+
+    works_file = os.path.join(output_folder, f"Промежуточные_работы_{row_number}_после_фильтров.xlsx")
     if not os.path.exists(works_file):
-        logger.warning(f"Файл работ не найден для строки {row_number}")
+        logger.warning("Файл работ не найден: %s", works_file)
         return
 
-    logger.info(f"Обработка элемента {row_number}: материал={material_name}, IFC={ifc_type}, тип={processing_type}")
+    logger.info("Загрузка работ: %s", works_file)
+    try:
+        df_works = pd.read_excel(works_file)
+    except Exception as e:
+        logger.error("Ошибка чтения файла работ: %s", e)
+        return
 
-    df_works = pd.read_excel(works_file)
+    # ========================================================
+    # 8. КОЛОНКА С НАЗВАНИЕМ
+    # ========================================================
 
-    # Ищем колонку с наименованием
     search_col = None
-    for col in df_works.columns:
-        if col == 'Наименование':
-            search_col = col
-            break
-    if not search_col:
+    if "Наименование" in df_works.columns:
+        search_col = "Наименование"
+    else:
         for col in df_works.columns:
-            if 'наименование' in col.lower() and 'расценк' in col.lower():
+            col_lower = str(col).lower()
+            if "наименование" in col_lower and "расценк" in col_lower:
                 search_col = col
                 break
+
     if not search_col:
-        logger.warning("Колонка с наименованием не найдена")
+        logger.warning("Колонка с наименованием работы не найдена.")
         return
 
-    # === Шаг 1: Извлечение ключевых слов ===
-    all_words = []
+    # ========================================================
+    # 9. ПОИСК КАНДИДАТОВ
+    # ========================================================
 
-    if material_name and material_name not in ['не указано', '-']:
-        all_words.extend(extract_words(material_name))
-    if material_detected and material_detected not in ['не указано', '-']:
-        all_words.extend(extract_words(material_detected))
-    if composition:
-        all_words.extend(extract_words(composition))
+    candidates = search_work_candidates(
+        df_works=df_works,
+        search_col=search_col,
+        all_words=all_words,
+        ifc_type=ifc_type,
+        mssk_name=mssk_name,
+        materials=materials,
+        kb_rules=kb_rules
+    )
 
-    for key, value in material_qual.items():
-        if value:
-            all_words.extend(extract_words(value))
-    for key, value in material_quant.items():
-        if value and isinstance(value, str):
-            all_words.extend(extract_words(value))
-
-    all_words = [w for w in all_words if w not in STOP_WORDS and len(w) > 3]
-    all_words = list(set(all_words))
-    logger.info(f"Ключевые слова: {all_words}")
-
-    # === Шаг 1.5: Ключевые фразы из базы знаний ===
-    knowledge_phrases = []
-    knowledge_phrases_material = []
-    if ifc_type in KNOWLEDGE_BASE:
-        beton_pattern = r'B\d{2}(?!\d)|W\d(?!\d)|F\d{3}(?!\d)'
-        if re.search(beton_pattern, element_name) or 'бетон' in element_name.lower() or 'бетон' in material_name.lower():
-            base_material = 'бетон'
-        else:
-            base_material = ''
-        knowledge_phrases = list(KNOWLEDGE_BASE[ifc_type].get('keywords_for_search', []))
-        knowledge_phrases_material = list(KNOWLEDGE_BASE[ifc_type].get('material_key_words', {}).get(base_material, []))
-        knowledge_phrases.extend(knowledge_phrases_material)
-        logger.info(f"Ключевые фразы из базы знаний: {knowledge_phrases}")
-
-    # === Шаг 2: Поиск форм слов ===
-    all_forms = {}
-    for word in all_words:
-        try:
-            parsed = morph.parse(word)[0]
-            forms = list(set([form.word for form in parsed.lexeme]))
-            all_forms[word] = forms
-        except Exception as e:
-            logger.warning(f'Не удалось проанализировать слово "{word}": {e}')
-            all_forms[word] = [word]
-
-    # === Шаг 3: Поиск работ ===
-    all_found_works = {}
-
-    # Точный поиск по формам
-    for word, forms in all_forms.items():
-        for idx, row in df_works.iterrows():
-            work_name = str(row[search_col]) if pd.notna(row[search_col]) else ''
-            if not work_name or len(work_name) < 3:
-                continue
-
-            work_lower = work_name.lower()
-            matched_forms = [form for form in forms if form.lower() in work_lower]
-
-            if matched_forms:
-                if work_name not in all_found_works:
-                    all_found_works[work_name] = {
-                        'наименование': work_name,
-                        'совпадения': [],
-                        'тип_поиска': []
-                    }
-                all_found_works[work_name]['совпадения'].extend(matched_forms)
-                if 'точный' not in all_found_works[work_name]['тип_поиска']:
-                    all_found_works[work_name]['тип_поиска'].append('точный')
-
-    # Нечёткий поиск
-    all_work_names = [str(row[search_col]) for _, row in df_works.iterrows()
-                      if pd.notna(row[search_col]) and len(str(row[search_col])) > 3]
-
-    for word in all_words:
-        for work_name in all_work_names:
-            similarity = fuzz.partial_ratio(word, work_name.lower())
-            if similarity >= SIMILARITY_THRESHOLD:
-                if work_name not in all_found_works:
-                    all_found_works[work_name] = {
-                        'наименование': work_name,
-                        'совпадения': [],
-                        'тип_поиска': []
-                    }
-                if 'нечеткий' not in all_found_works[work_name]['тип_поиска']:
-                    all_found_works[work_name]['тип_поиска'].append('нечеткий')
-
-    # Поиск по ключевым фразам из базы знаний
-    if ifc_type in KNOWLEDGE_BASE and knowledge_phrases:
-        for keyword_phrase in knowledge_phrases:
-            keyword_phrase_lower = keyword_phrase.lower()
-            for idx, row in df_works.iterrows():
-                work_name = str(row[search_col]) if pd.notna(row[search_col]) else ''
-                if not work_name or len(work_name) < 3:
-                    continue
-                if keyword_phrase_lower in work_name.lower():
-                    if work_name not in all_found_works:
-                        all_found_works[work_name] = {
-                            'наименование': work_name,
-                            'совпадения': [keyword_phrase],
-                            'тип_поиска': []
-                        }
-                    if 'база_знаний_фраза' not in all_found_works[work_name]['тип_поиска']:
-                        all_found_works[work_name]['тип_поиска'].append('база_знаний_фраза')
-
-    
-    base_works = KNOWLEDGE_BASE.get(ifc_type, '')
-    
-    base_works_words = []
-
-    base_works_words_str = ''
-
-    if base_works:
-        base_works_words = base_works.get('keywords_for_search', '')
-        if base_works_words:
-            base_works_words_str = ', '. join(base_works_words)
-
-    # === Шаг 4: Сортировка ===
-    def sort_key(x):
-        score = 0
-        if 'точный' in x[1]['тип_поиска']:
-            score += 1000
-        if 'нечеткий' in x[1]['тип_поиска']:
-            score += 100
-        if 'база_знаний_фраза' in x[1]['тип_поиска']:
-            score += 10
-        return score
-
-    unique_works = {}
-    for work_name, work_data in all_found_works.items():
-        key = work_name.strip()
-        if key not in unique_works:
-            unique_works[key] = work_data
-
-    sorted_works = list(unique_works.items())
-    sorted_works.sort(key=sort_key, reverse=True)
-    sorted_works = [work_data for work_name, work_data in sorted_works]
-
-    logger.info(f"Найдено работ: {len(sorted_works)}")
+    sorted_works = sort_candidates(candidates)
+    logger.info("Найдено кандидатов: %s", len(sorted_works))
 
     if not sorted_works:
-        logger.warning(f"Работы не найдены для элемента {row_number}")
+        logger.warning("Работы не найдены для элемента %s", row_number)
         return
 
-    # === Шаг 5: LLM-отбор ===
-    top_works = sorted_works[:100]
+    # ========================================================
+    # 10. TOP КАНДИДАТОВ
+    # ========================================================
+
+    top_works = sorted_works[:MAX_CANDIDATES]
+
+    # ========================================================
+    # 11. ГЕОМЕТРИЧЕСКИЙ ФИЛЬТР
+    # ========================================================
+
+    geometry_input = prepare_works_for_geometry(top_works)
+    try:
+        geometry_result = geometry_filter(geometry_input, sizes, ifc_type)
+        filtered_works = restore_geometry_results(geometry_result, top_works)
+    except Exception as e:
+        logger.error("Ошибка geometry_filter: %s", e)
+        filtered_works = top_works
+
+    # Если геометрический фильтр ничего не вернул — не теряем кандидатов
+    if not filtered_works:
+        logger.warning("После geometry_filter кандидатов нет. Используем исходный список.")
+        filtered_works = top_works
+
+    filtered_works = filtered_works[:MAX_LLM_CANDIDATES]
+
+    # ========================================================
+    # 12. ОБЯЗАТЕЛЬНЫЕ КАНДИДАТЫ
+    # ========================================================
+
+    required_candidates = find_required_candidates(sorted_works, required_phrases)
+
+    # Добавляем обязательные работы, если geometry_filter их удалил
+    existing_names = {x["наименование"] for x in filtered_works}
+    for required_candidate in required_candidates:
+        name = required_candidate["наименование"]
+        if name not in existing_names:
+            filtered_works.append(required_candidate)
+            existing_names.add(name)
+
+    # ========================================================
+    # 13. ФИНАЛЬНЫЙ СПИСОК ДЛЯ LLM
+    # ========================================================
+
     works_list = []
-    for i, work in enumerate(top_works, 1):
-        search_type = ', '.join(work['тип_поиска'])
-        works_list.append(f"{i}. {work['наименование']} [источник: {search_type}]")
-
-
-    #Фильтрация по геометрическим параметрам объекта (толщина для стен, площадь для плит и т.д.)
-    works_list = geometry_filter(works_list, sizes, ifc_type)
-
-        
+    for index, work in enumerate(filtered_works, 1):
+        search_type = ", ".join(work.get("тип_поиска", []))
+        works_list.append(f"{index}. {work['наименование']} [источник: {search_type}]")
     works_text = "\n".join(works_list)
 
+    # ========================================================
+    # 14. ИНФОРМАЦИЯ ОБ ЭЛЕМЕНТЕ
+    # ========================================================
+
     element_info = f"""
-## ОПИСАНИЕ ЭЛЕМЕНТА:
-- Тип IFC: {ifc_type}
-- Тип элемента: {element_type}
-- Описание элемента: {element_name}
-- Материал: {material_name}
-- Материал (определенный): {material_detected}
-- Состав: {composition if composition else 'не указан'}
-- Тип этажа: {storey_type if storey_type else 'не указан'}
-- Часть здания: {element_part if element_part else 'не указана'}
-- Количественные характеристики: {json.dumps(material_quant, ensure_ascii=False, indent=2)}
-- Качественные характеристики: {json.dumps(material_qual, ensure_ascii=False, indent=2)}
-- Размеры: {json.dumps(sizes, ensure_ascii=False, indent=2)}
+## ИНФОРМАЦИЯ ОБ ЭЛЕМЕНТЕ
+
+### Идентификация
+
+- Тип IFC: {ifc_type or "не указан"}
+- Тип элемента: {element_type or "не указан"}
+- Код МССК: {mssk_code or "не указан"}
+- Название по МССК: {mssk_name or "не найдено"}
+- Имя элемента: {element_name or "не указано"}
+
+### Материалы
+
+Все найденные источники материала:
+
+{json.dumps(materials, ensure_ascii=False, indent=2)}
+
+Основной материал:
+{material_name or "не указан"}
+
+Определённый материал:
+{material_detected or "не указан"}
+
+Состав из имени:
+{composition or "не указан"}
+
+### Характеристики материала
+
+Количественные:
+{json.dumps(material_quant, ensure_ascii=False, indent=2)}
+
+Качественные:
+{json.dumps(material_qual, ensure_ascii=False, indent=2)}
+
+### Размеры
+
+{json.dumps(sizes, ensure_ascii=False, indent=2)}
+
+### Дополнительные количественные данные
+
+{json.dumps(quantitative, ensure_ascii=False, indent=2)}
+
+### Расположение
+
+Тип этажа:
+{storey_type or "не указан"}
+
+Часть здания / этаж:
+{element_part or "не указан"}
+
+### Ключевые слова для поиска
+
+{", ".join(all_words)}
+
+### Источники правил базы знаний
+
+{", ".join(kb_rules["sources"]) or "нет"}
+
+### ОБЯЗАТЕЛЬНЫЕ РАБОТЫ
+
+{json.dumps(required_phrases, ensure_ascii=False, indent=2)}
+
+### РЕКОМЕНДУЕМЫЕ РАБОТЫ
+
+{json.dumps(recommended_phrases, ensure_ascii=False, indent=2)}
+
+### ЗАПРЕЩЁННЫЕ РАБОТЫ
+
+{json.dumps(forbidden_phrases, ensure_ascii=False, indent=2)}
 """
-    
-    material_base_works_str = ''
 
-    if base_works:
-        base_materials_works = base_works.get('material_key_words', '')
-        
-        beton_pattern = r'B\d{2}(?!\d)|W\d(?!\d)|F\d{3}(?!\d)'
+    # ========================================================
+    # 15. PROMPT
+    # ========================================================
 
-        for word in all_words:
-            if 'бетон' in word or 'железобетон' in word:
-                base_material = 'бетон'
-                element_info += f"\n -Бетонная смесь по описанию ifc: {probably_beton}"
-                break
-        else: 
-            base_material = ''
-        if not base_material:
-            if re.search(beton_pattern, element_name) or 'бетон' in element_name.lower():
-                base_material = 'бетон'
-            else:
-                base_material = ''
-
-        if base_material and base_materials_works:
-            material_base_works_list = base_materials_works.get(base_material, '')
-            material_base_works_str = ', '. join(material_base_works_list) + '\n ВАЖНО Если в названии объекта нет указания на материал железобетонной смеси, то выбирай Смесь бетонная тяжелого бетона БСТ на гранитном щебне, крупность заполнителя от 5 до 20 мм, класс прочности В7,5 (М100), П3'
-
-    
-
-    try:
-        if base_works_words_str:
-            element_info += f"\n -Работы для класса {ifc_type} обязательно должны содержать: {base_works_words_str}"
-            print(f'Класс: {base_works_words_str}') 
-    except Exception as e:
-        print('Информации по работам по классам нет')
-    
-    try:
-        print(f'Материал: {material_base_works_str}')
-        element_info += f"""\n -Работы для этого элемента обязательно должны содержать: {material_base_works_str}. \n Если не будет хотя бы одной работы из этого списка в ответе, то я тебя уволю
-        НИ В КОЕМ СЛУЧАЕ НЕЛЬЗЯ ЗАБЫВАТЬ ПРО РАБОТЫ: {material_base_works_str}. Без них ответ будет считаться неверным."""
-    except Exception as e:
-        print('Информации по работам по материалу нет')
-
-
-    # === Выбор промпта в зависимости от типа обработки ===
-    if processing_type == "AR":
+    if processing_type.upper() == "AR":
         prompt = PROMPT_AR.format(element_info=element_info, works_text=works_text)
     else:
-        prompt = f"""Ты — эксперт-сметчик. Выбери наиболее подходящие работы для создания строительного элемента в здании.
+        prompt = f"""
+Ты — эксперт-сметчик по строительным конструкциям.
 
-{element_info}  
+Твоя задача — выбрать наиболее подходящие работы
+для создания или устройства указанного строительного элемента.
 
-## ВАЖНОЕ ПРАВИЛО:
-Ты МОЖЕШЬ выбирать работы ТОЛЬКО из списка ниже.
-НЕЛЬЗЯ придумывать свои названия работ.
-НУЖНО брать названия ТОЧНО ТАК, КАК ОНИ НАПИСАНЫ в списке.
+{element_info}
 
-Если нет точного совпадения по бетонной смеси, цементу, кирпичу и прочему, выбери и включи в список самый подходящий (если нет похожих, то ничего не добавляй)
-Если элемент относится к подземной или цокольной части здания, то это не является автостоянкой, если это не указано явно
+## ОСНОВНЫЕ ПРАВИЛА
 
-ВАЖНО: в установку армутурных изделей не входит сама арматура, поэтому их нужно обязательно включить в список отдельно. Причем бери любую арматуру или арматурные заготовки (например, первую попавшуюся в списке), если нет точного совпадения по марке арматуры. Если есть точное совпадение по марке арматуры, то бери её.
+1. Выбирать можно ТОЛЬКО работы из списка ниже.
+2. Нельзя придумывать собственные названия работ.
+3. Название должно полностью совпадать с названием в списке доступных работ.
+4. Нельзя выбирать работу, которой нет в списке.
+5. Учитывай IFC, МССК, материал, имя элемента, характеристики и размеры одновременно.
 
-## ОСОБОЕ ВНИМАНИЕ К РАБОТАМ ИЗ БАЗЫ ЗНАНИЙ:
-Работы с пометкой [источник: база_знаний_фраза] ОБЯЗАТЕЛЬНО должны быть включены.
+## ПРАВИЛА КР
 
+- Если элемент железобетонный, учитывай бетонные, арматурные и опалубочные работы.
+- Установка арматурных изделий не заменяет саму арматуру
+  или арматурные заготовки, если соответствующая работа присутствует в списке.
+- Если точного совпадения марки бетона нет, выбирай наиболее подходящую бетонную смесь.
+- Если элемент относится к подземной или цокольной части,
+  это само по себе не означает автостоянку.
+- Не добавляй работы, которые явно относятся к другому типу конструкции или материалу.
 
-## СПИСОК ДОСТУПНЫХ РАБОТ:
+## БАЗА ЗНАНИЙ
+
+Работы из списка ОБЯЗАТЕЛЬНЫЕ должны быть выбраны,
+если они присутствуют среди доступных работ.
+
+Рекомендуемые работы выбирай, если они действительно соответствуют элементу.
+
+Запрещённые работы выбирать нельзя.
+
+## ДОСТУПНЫЕ РАБОТЫ
+
 {works_text}
 
+## ФОРМАТ ОТВЕТА
 
+Верни ТОЛЬКО JSON:
 
-## ФОРМАТ ОТВЕТА (ТОЛЬКО JSON):
 {{
   "выбранные_работы": [
     {{
       "наименование": "ТОЧНОЕ НАЗВАНИЕ ИЗ СПИСКА",
-      "обоснование": "почему подходит",
+      "обоснование": "почему работа подходит",
       "категория": "подготовительные/опалубочные/арматурные/бетонные/уход за бетоном/гидроизоляционные/пароизоляционные/теплоизоляционные/отделочные/монтажные/другие"
     }}
   ],
   "рекомендация": "краткий вывод"
-}}"""
+}}
+"""
 
-    try:
-        print(f'Материал: {material_base_works_str}')
-        prompt += f"""\n Перед тем как дать ответ, проверь, что в выбранных работах есть все работы из списка: {material_base_works_str}."""
-    except Exception as e:
-        print('Информации по работам по материалу нет')
-    try:
-        client = ollama.Client(host=OLLAMA_URL, timeout=120.0)
-        response = client.chat(
-            model=LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            options={'temperature': 0.1}
+    # ========================================================
+    # 16. LLM
+    # ========================================================
+
+    result = select_works_by_llm(prompt, required_phrases)
+    selected_works = result.get("выбранные_работы", [])
+
+    # ========================================================
+    # 17. ФИНАЛЬНАЯ ПРОГРАММНАЯ ПРОВЕРКА
+    # ========================================================
+
+    selected_works = force_add_missing_required(selected_works, filtered_works, required_phrases)
+    result["выбранные_работы"] = selected_works
+
+    if not selected_works:
+        logger.warning("LLM не выбрала работы для элемента %s", row_number)
+        return
+
+    # ========================================================
+    # 18. ФОРМИРОВАНИЕ EXCEL
+    # ========================================================
+
+    rows = []
+    df_works["normalized_col"] = df_works[search_col].apply(normalize_quotes)
+
+    for work in selected_works:
+        if not isinstance(work, dict):
+            continue
+
+        work_name = normalize_quotes(
+            normalize_text(work.get("наименование", "")).replace("'", '"')
         )
-        answer = response['message']['content'].strip()
 
-        if answer.startswith('```json'):
-            answer = answer[7:]
-        if answer.startswith('```'):
-            answer = answer[3:]
-        if answer.endswith('```'):
-            answer = answer[:-3]
-        answer = answer.strip()
+        if not work_name:
+            continue
 
-        result = json.loads(answer)
-        selected_works = result.get('выбранные_работы', [])
+        logger.info("Выбрана работа: %s", work_name)
 
-        print(f"Выбранные работы для элемента {row_number}: {selected_works}")
-
-        if not selected_works:
-            logger.warning(f"LLM не выбрал работы для элемента {row_number}")
-            return
-        # === Шаг 6: Формируем Excel ===
-        rows = []
-        for work in selected_works:
-            work_name = normalize_quotes(work['наименование'].replace("'", '"').replace("ё", "е"))
-            print(work_name)
-            df_works['normalized_col'] = df_works[search_col].apply(normalize_quotes)
-            matching = df_works[df_works['normalized_col'] == work_name]
+        # Точное совпадение
+        matching = df_works[df_works["normalized_col"] == work_name]
+        if len(matching) > 0:
+            row_data = matching.iloc[0].to_dict()
+        else:
+            # Частичное совпадение
+            matching = df_works[
+                df_works["normalized_col"].str.contains(re.escape(work_name), case=False, na=False)
+            ]
             if len(matching) > 0:
                 row_data = matching.iloc[0].to_dict()
             else:
-                matching = df_works[df_works['normalized_col'].str.contains(re.escape(element_type[:-2].lower()), case=False, na=False) &
-                    df_works['normalized_col'].str.contains(re.escape(work_name), case=False, na=False)
+                # Если название длинное, пробуем первые 65 символов
+                short_name = work_name[:65]
+                matching = df_works[
+                    df_works["normalized_col"].str.contains(re.escape(short_name), case=False, na=False)
                 ]
                 if len(matching) > 0:
                     row_data = matching.iloc[0].to_dict()
                 else:
-                    matching = df_works[df_works['normalized_col'].str.contains(re.escape(work_name[:65]), case=False, na=False)
-                ]
-                    if len(matching) > 0:
-                        row_data = matching.iloc[0].to_dict()
+                    logger.warning("Не удалось найти работу в исходном Excel: %s", work_name)
+                    row_data = {search_col: work_name}
+
+        row_data["Категория"] = work.get("категория", "")
+        row_data["Обоснование"] = work.get("обоснование", "")
+        rows.append(row_data)
+
+    if not rows:
+        logger.warning("После обработки ответа LLM не осталось строк для Excel.")
+        return
+
+    df_result = pd.DataFrame(rows)
+
+    # ========================================================
+    # 19. УДАЛЕНИЕ ЛИШНИХ КОЛОНОК
+    # ========================================================
+
+    cols_to_drop = [
+        "Ед. изм", "Наименование работ", "IFC класс",
+        "Формула расчёта объёмов работ и расхода материалов",
+        "Обозначения", "Обоснование", "Категория", "V по смете",
+        "normalized_col", "Параметризация", "№ п/п"
+    ]
+    df_result = df_result.drop([c for c in cols_to_drop if c in df_result.columns], axis=1)
+
+    # ========================================================
+    # 20. ОБЪЁМ РАБОТ
+    # ========================================================
+
+    net_volume = _find_column_with_volume(previous_data, "м3", "Объём")
+    gross_square = _find_column_with_volume(previous_data, "м2", "Площадь")
+
+    if "Ед. изм." in df_result.columns:
+        def get_volume_of_work(row):
+            unit = str(row.get("Ед. изм.", "")).lower().replace(" ", "")
+            volume_net = safe_float(net_volume)
+            square = safe_float(gross_square)
+            armature_volume = volume_net * armature_ratio if volume_net and armature_ratio else 0
+
+            conversions = {
+                "м2": (square, 1, "м2"),
+                "100м2": (square, 100, "(100 м2)"),
+                "м3": (volume_net, 1, "м3"),
+                "100м3": (volume_net, 100, "(100 м3)"),
+                "т": (armature_volume, 1, "т"),
+                "1т": (armature_volume, 1, "т")
+            }
+
+            for unit_key, (value, divisor, label) in conversions.items():
+                if unit_key == unit and value:
+                    converted = safe_float(value) / divisor
+                    if divisor > 1:
+                        decimals = 4
+                    elif "м2" in unit_key:
+                        decimals = 2
                     else:
-                        row_data = {search_col: work_name}
+                        decimals = 3
+                    return f"{converted:.{decimals}f}"
 
-            row_data['Категория'] = work.get('категория', '')
-            row_data['Обоснование'] = work.get('обоснование', '')
-            rows.append(row_data)
+            return ""
 
-        df_result = pd.DataFrame(rows)
+        df_result["Объём работ"] = df_result.apply(get_volume_of_work, axis=1)
+    else:
+        logger.warning("Колонка 'Ед. изм.' не найдена.")
+        df_result["Объём работ"] = ""
 
-        cols_to_drop = ["Ед. изм", "Наименование работ", "IFC класс",
-                        "Формула расчёта объёмов работ и расхода материалов",
-                        "Обозначения", "Обоснование", "Категория", "V по смете", "normalized_col",
-                        "Параметризация", "№ п/п"]
-        df_result = df_result.drop([c for c in cols_to_drop if c in df_result.columns], axis=1)
+    # ========================================================
+    # 21. КОРРЕКТИРОВКА ОБЪЁМА
+    # ========================================================
 
-        # Объём работ
-        net_volume = _find_column_with_volume(previous_data, "м3", "Объём")
-        gross_square = _find_column_with_volume(previous_data, "м2", "Площадь")
-
-        if 'Ед. изм.' in df_result.columns:
-            def get_volume_of_work(row):
-                unit = str(row.get('Ед. изм.', '')).lower().replace(' ', '')
-                
-                conversions = {
-                    'м2': (gross_square, 1, 'м2'),
-                    '100м2': (gross_square, 100, '(100 м2)'),
-                    'м3': (net_volume, 1, 'м3'),
-                    '100м3': (net_volume, 100, '(100 м3)'),
-                    'т': (safe_float(net_volume) * armature_ratio if safe_float(net_volume) and armature_ratio else 0, 1, 'т'),
-                    '1т': (safe_float(net_volume) * armature_ratio if safe_float(net_volume) and armature_ratio else 0, 1, 'т')
-                }
-                
-                for unit_key, (value, divisor, label) in conversions.items():
-                    if unit_key == unit and value:
-                        converted = safe_float(value) / divisor
-                        decimals = 4 if divisor > 1 else (2 if 'м2' in unit_key else 3)
-                        return f"{converted:.{decimals}f}"
-                
-                return ''
-            df_result['Объём работ'] = df_result.apply(get_volume_of_work, axis=1)
-        else:
-            logger.warning("Колонка 'Ед. изм.' не найдена в df_result. Объём работ не будет рассчитан.")
-            df_result['Объём работ'] = ''
-        
-        try:
-            df_result = _get_corrected_volume(df_result)
-        except Exception as e: 
-            logger.error(f"Ошибка при корректировке объёма работ: {e}")
-
-        # Добавляем колонку "Стоимость"
-        try:
-            df_result = _add_cost_column(df_result)
-        except Exception as e:
-            logger.error(f"Ошибка при расчёте стоимости: {e}")
-
-        # Сохраняем
-        ifc_class = normalized_data.get('основные_характеристики', {}).get('ifc_class', '')
-        if not ifc_class:
-            ifc_class = normalized_data.get('качественные', {}).get('Тип элемента', '')
-
-        output_filename = os.path.join(output_folder, f'Финальный_перечень_работ_{ifc_class}_{row_number}.xlsx')
-        df_result.to_excel(output_filename, index=False)
-
-        json_filename = os.path.join(output_folder, f'Подобранные_работы_{row_number}.json')
-        with open(json_filename, 'w', encoding='utf-8') as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-
-        # Сохраняем все найденные работы
-        all_works_output = {
-            'элемент': {
-                'тип_ifc': ifc_type,
-                'тип_элемента': element_type,
-                'материал': {
-                    'название': material_name,
-                    'определенный': material_detected,
-                    'состав': composition,
-                    'количественные': material_quant,
-                    'качественные': material_qual
-                },
-                'размеры': sizes,
-                'тип_этажа': storey_type,
-                'часть_здания': element_part
-            },
-            'ключевые_слова_из_материала': all_words,
-            'ключевые_фразы_из_базы': knowledge_phrases if ifc_type in KNOWLEDGE_BASE else [],
-            'найденные_работы': sorted_works,
-            'тип_обработки': processing_type
-        }
-        all_json_filename = os.path.join(output_folder, f'Все_найденные_работы_{row_number}.json')
-        with open(all_json_filename, 'w', encoding='utf-8') as f:
-            json.dump(all_works_output, f, ensure_ascii=False, indent=2, default=str)
-
-        logger.info(f"Сохранено: {output_filename}")
-
+    try:
+        df_result = _get_corrected_volume(df_result)
     except Exception as e:
-        logger.error(f"Ошибка LLM для элемента {row_number}: {e}")
-        if 'answer' in locals():
-            logger.error(f"Ответ LLM: {answer[:500]}")
+        logger.error("Ошибка корректировки объёма: %s", e)
 
+    # ========================================================
+    # 22. СТОИМОСТЬ
+    # ========================================================
+
+    try:
+        df_result = _add_cost_column(df_result)
+    except Exception as e:
+        logger.error("Ошибка расчёта стоимости: %s", e)
+
+    # ========================================================
+    # 23. СОХРАНЕНИЕ ФИНАЛЬНОГО EXCEL
+    # ========================================================
+
+    ifc_class = normalize_text(
+        normalized_data.get("основные_характеристики", {}).get("ifc_class", "")
+    )
+    if not ifc_class:
+        ifc_class = normalize_text(
+            normalized_data.get("качественные", {}).get("Тип элемента", "")
+        )
+    if not ifc_class:
+        ifc_class = ifc_type
+
+    output_filename = os.path.join(
+        output_folder,
+        f"Финальный_перечень_работ_{ifc_class}_{row_number}.xlsx"
+    )
+    try:
+        df_result.to_excel(output_filename, index=False)
+    except Exception as e:
+        logger.error("Ошибка сохранения Excel: %s", e)
+        return
+
+    # ========================================================
+    # 24. Сохраняем JSON выбранных работ
+    # ========================================================
+
+    json_filename = os.path.join(output_folder, f"Подобранные_работы_{row_number}.json")
+    try:
+        with open(json_filename, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error("Ошибка сохранения JSON: %s", e)
+
+    # ========================================================
+    # 25. СОХРАНЯЕМ ВСЕ КАНДИДАТЫ
+    # ========================================================
+
+    all_works_output = {
+        "элемент": {
+            "тип_ifc": ifc_type,
+            "тип_элемента": element_type,
+            "мсск": {"код": mssk_code, "название": mssk_name},
+            "имя": element_name,
+            "материалы": materials,
+            "материал": {
+                "название": material_name,
+                "определенный": material_detected,
+                "состав": composition,
+                "количественные": material_quant,
+                "качественные": material_qual
+            },
+            "размеры": sizes,
+            "тип_этажа": storey_type,
+            "часть_здания": element_part
+        },
+        "ключевые_слова": all_words,
+        "база_знаний": {
+            "источники": kb_rules["sources"],
+            "search": knowledge_phrases,
+            "required": required_phrases,
+            "recommended": recommended_phrases,
+            "forbidden": forbidden_phrases
+        },
+        "найденные_работы": sorted_works,
+        "кандидаты_после_геометрии": filtered_works,
+        "выбранные_работы": selected_works,
+        "тип_обработки": processing_type
+    }
+
+    all_json_filename = os.path.join(output_folder, f"Все_найденные_работы_{row_number}.json")
+    try:
+        with open(all_json_filename, "w", encoding="utf-8") as f:
+            json.dump(all_works_output, f, ensure_ascii=False, indent=2, default=str)
+    except Exception as e:
+        logger.error("Ошибка сохранения полного JSON: %s", e)
+
+    logger.info("Сохранено: %s", output_filename)
+    logger.info("Элемент %s обработан.", row_number)
+
+# ============================================================
+# ОБЪЕДИНЕНИЕ ФИНАЛЬНЫХ ПЕРЕЧНЕЙ
+# ============================================================
 
 def merge_final_worklists(input_folder):
-    """
-    Объединяет все файлы 'Финальный_перечень_работ_*.xlsx' в один файл.
-    Перед данными каждого файла вставляет строку со значениями переменных
-    ifc_class, name_element, global_id из соответствующего JSON файла
-    """
-    
-    output_file = os.path.join(input_folder, 'ОБЩИЙ_Финальный_перечень_работ.xlsx')
-    
-    # Ищем все финальные перечни
+    output_file = os.path.join(input_folder, "ОБЩИЙ_Финальный_перечень_работ.xlsx")
+
+    # Ищем Excel
     excel_files = []
     for filename in os.listdir(input_folder):
-        if filename.startswith('Финальный_перечень_работ_') and filename.endswith('.xlsx'):
-            if not filename.startswith('ОБЩИЙ_'):
-                excel_files.append(filename)
-    
+        if (filename.startswith("Финальный_перечень_работ_")
+                and filename.endswith(".xlsx")
+                and not filename.startswith("ОБЩИЙ_")):
+            excel_files.append(filename)
+
     if not excel_files:
-        logger.error("❌ Файлы 'Финальный_перечень_работ_*.xlsx' не найдены!")
+        logger.error("Файлы финальных перечней не найдены.")
         return None
-    
-    # Сортируем по номеру
-    excel_files.sort(key=lambda x: int(re.search(r'_(\d+)\.xlsx$', x).group(1)) 
-                     if re.search(r'_(\d+)\.xlsx$', x) else 0)
-    
-    logger.info(f"📁 Найдено файлов для объединения: {len(excel_files)}")
-    print(f"Найдено файлов: {len(excel_files)}")
-    print("-" * 50)
-    
+
+    # Сортировка по номеру
+    def sort_filename(filename):
+        match = re.search(r"_(\d+)\.xlsx$", filename)
+        if match:
+            return int(match.group(1))
+        return 0
+
+    excel_files.sort(key=sort_filename)
+    logger.info("Найдено файлов для объединения: %s", len(excel_files))
+
     all_parts = []
-    
-    # Читаем первый файл чтобы узнать все колонки
+
+    # Первый файл
     first_file_path = os.path.join(input_folder, excel_files[0])
     first_df = pd.read_excel(first_file_path)
     all_columns = first_df.columns.tolist()
     num_columns = len(all_columns)
-    
+
+    # Все файлы
     for filename in excel_files:
         file_path = os.path.join(input_folder, filename)
-        match = re.search(r'_(\d+)\.xlsx$', filename)
-        row_number = match.group(1) if match else '1'
-        
+        match = re.search(r"_(\d+)\.xlsx$", filename)
+        row_number = match.group(1) if match else "1"
+
         try:
-            # Читаем Excel файл
             df = pd.read_excel(file_path)
-            
-            # Ищем соответствующий JSON файл
+
+            # JSON нормализованных данных
             json_filename = f"Нормализованные_данные_элемента_{row_number}.json"
             json_path = os.path.join(input_folder, json_filename)
-            
-            # Значения по умолчанию
-            ifc_class = ''
-            name_elem = ''
-            global_id = ''
-            
-            # Если JSON существует, читаем из него значения
+
+            ifc_class = ""
+            name_elem = ""
+            global_id = ""
+            floor = ""
+
             if os.path.exists(json_path):
-                with open(json_path, 'r', encoding='utf-8') as file:
+                with open(json_path, "r", encoding="utf-8") as file:
                     try:
                         data = json.load(file)
-                        prev_data = data.get('исходные_данные', '')
-                        ifc_class = prev_data.get('Тип элемента', '')
-                        global_id = prev_data.get('GlobalId', '')
-                        name_elem = prev_data.get('Имя', '')
-                        floor = prev_data.get('Тип_этажа', '')
-                        
-                        logger.info(f"Данные из JSON для {filename}:")
-                        logger.info(f"  ifc_class: {ifc_class}")
-                        logger.info(f"  name_element: {name_elem}")
-                        logger.info(f"  global_id: {global_id}")
-                        
+                        prev_data = data.get("исходные_данные", {}) or {}
+                        ifc_class = normalize_text(prev_data.get("Тип элемента", ""))
+                        global_id = normalize_text(prev_data.get("GlobalId", ""))
+                        name_elem = normalize_text(prev_data.get("Имя", ""))
+                        floor = normalize_text(prev_data.get("Тип_этажа", ""))
                     except json.JSONDecodeError:
-                        logger.warning(f"Ошибка чтения JSON: {json_filename}")
-            else:
-                logger.warning(f"JSON файл не найден: {json_filename}")
-            
-            # Создаем строку со значениями переменных
+                        logger.warning("Ошибка чтения JSON: %s", json_filename)
+
+            # Разделитель
             separator_row = {}
-            separator_row[all_columns[0]] = ifc_class + " " + name_elem + " " + global_id + " " + floor 
-            
-            # Остальные колонки оставляем пустыми
+            separator_row[all_columns[0]] = f"{ifc_class} {name_elem} {global_id} {floor}"
             for col in all_columns[1:]:
-                separator_row[col] = ''
-            
-            empty_row = pd.DataFrame([[' '] * num_columns], columns=all_columns)
-            
+                separator_row[col] = ""
+
             separator = pd.DataFrame([separator_row])
-            
-            # Добавляем разделитель и данные
+            empty_row = pd.DataFrame([[" "] * num_columns], columns=all_columns)
+
             all_parts.append(separator)
             all_parts.append(df)
             all_parts.append(empty_row)
-            
-            print(f"✓ {filename} - {len(df)} строк(и)")
-            print(f"  ifc_class: {ifc_class}, name: {name_elem}, id: {global_id}")
-            
+
+            logger.info("Объединён %s: %s строк", filename, len(df))
+
         except Exception as e:
-            logger.error(f"Ошибка при обработке {filename}: {e}")
-            print(f"✗ Ошибка: {filename} - {e}")
-    
-    if all_parts:
-        # Объединяем все части
-        result = pd.concat(all_parts, ignore_index=True)
-        
-        # Сохраняем результат
-        result.to_excel(output_file, index=False)
-        
-        print("-" * 50)
-        print(f"✅ ОБЪЕДИНЕНИЕ ЗАВЕРШЕНО!")
-        print(f"📁 Объединено файлов: {len(excel_files)}")
-        print(f"📊 Всего строк: {len(result)}")
-        print(f"💾 Сохранено: {output_file}")
-        
-        return result
-    else:
-        logger.warning("Нет данных для объединения!")
+            logger.error("Ошибка обработки %s: %s", filename, e)
+
+    # Объединение
+    if not all_parts:
+        logger.warning("Нет данных для объединения.")
         return None
 
+    result = pd.concat(all_parts, ignore_index=True)
+    result.to_excel(output_file, index=False)
+
+    logger.info("Объединение завершено.")
+    logger.info("Файл: %s", output_file)
+    return result
+
+# ============================================================
+# ЧЕТВЁРТЫЙ ЭТАП
+# ============================================================
 
 def fourth_step(input_folder, processing_type="KR"):
-    """Четвёртый этап: подбор работ по материалу + базе знаний"""
-    logger.info(f"НАЧАТ ЧЕТВЁРТЫЙ ЭТАП (тип: {processing_type})")
+    """
+    Четвёртый этап:
+    подбор работ по данным JSON,
+    базе знаний, материалу, МССК и IFC.
+    """
+    global processing_type_global
+    processing_type_global = str(processing_type).upper()
 
-    count = sum(1 for f in os.listdir(input_folder)
-                if f.endswith('.json') and f.startswith('Нормализованные_данные'))
+    logger.info("=" * 80)
+    logger.info("НАЧАТ ЧЕТВЁРТЫЙ ЭТАП")
+    logger.info("Тип обработки: %s", processing_type_global)
 
-    logger.info(f"Найдено файлов: {count}")
+    # Проверка МССК
+    if MSSK_FILE:
+        if os.path.exists(MSSK_FILE):
+            logger.info("Файл МССК: %s", MSSK_FILE)
+        else:
+            logger.warning("Файл МССК не найден: %s", MSSK_FILE)
 
+    # Нормализованные JSON
+    json_files = []
     for filename in os.listdir(input_folder):
-        if filename.endswith('.json') and filename.startswith('Нормализованные_данные'):
-            file_path = os.path.join(input_folder, filename)
-            match = re.search(r'(\d+)(?=\.json$)', filename)
-            row_number = match.group(1) if match else '1'
+        if (filename.endswith(".json")
+                and filename.startswith("Нормализованные_данные")):
+            json_files.append(filename)
 
-            with open(file_path, 'r', encoding='utf-8') as file:
-                logger.info(f"Загрузка нормализованных данных из {filename}")
-                try:
-                    data = json.load(file)
-                    _process_one_element(data, row_number, input_folder, processing_type)
-                    logger.info(f"Обработан файл: {filename}")
-                except json.JSONDecodeError:
-                    logger.warning(f"Ошибка чтения JSON в файле: {filename}")
-    
-    merge_final_worklists(input_folder)
+    json_files.sort()
+    logger.info("Найдено нормализованных JSON: %s", len(json_files))
 
-    logger.info(f"ЧЕТВЁРТЫЙ ЭТАП ЗАВЕРШЕН (тип: {processing_type})")
+    # Обработка
+    for filename in json_files:
+        file_path = os.path.join(input_folder, filename)
+        match = re.search(r"(\d+)(?=\.json$)", filename)
+        row_number = match.group(1) if match else "1"
+
+        logger.info("-" * 80)
+        logger.info("Загрузка: %s", filename)
+
+        try:
+            with open(file_path, "r", encoding="utf-8") as file:
+                data = json.load(file)
+
+            _process_one_element(
+                data,
+                row_number,
+                input_folder,
+                processing_type_global
+            )
+            logger.info("Обработан файл: %s", filename)
+
+        except json.JSONDecodeError as e:
+            logger.error("Ошибка JSON %s: %s", filename, e)
+
+        except Exception as e:
+            logger.error("Ошибка обработки %s: %s", filename, e)
+
+    # Объединение
+    try:
+        merge_final_worklists(input_folder)
+    except Exception as e:
+        logger.error("Ошибка объединения финальных перечней: %s", e)
+
+    logger.info("=" * 80)
+    logger.info("ЧЕТВЁРТЫЙ ЭТАП ЗАВЕРШЕН")
+    logger.info("=" * 80)
