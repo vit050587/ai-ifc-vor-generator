@@ -34,7 +34,12 @@ import requests
 from src.core.config import load_config
 from src.core.keycloak import KeycloakTokenProvider
 from src.core.logger import setup_logger
-from src.services.fourth_etap import _get_corrected_volume, _add_cost_column
+from src.services.fourth_etap import (
+    _get_corrected_volume,
+    _add_cost_column,
+    add_total_row,
+    format_money,
+)
 
 logger = setup_logger(__name__)
 
@@ -691,6 +696,15 @@ def build_final_works_from_api(
             logger.error(f"Ошибка при расчёте стоимости: {exc}")
             df_works["Стоимость"] = ""
 
+    # Форматирование денежных колонок: разряды через пробел,
+    # 2 знака после точки (например, '392 458.21')
+    if "Стоимость за Ед. Изм." in df_works.columns:
+        df_works["Стоимость за Ед. Изм."] = df_works["Стоимость за Ед. Изм."].apply(
+            format_money
+        )
+    if "Стоимость" in df_works.columns:
+        df_works["Стоимость"] = df_works["Стоимость"].apply(format_money)
+
     # Теперь добавляем заголовки элементов в обработанный DataFrame
     final_rows = []
     current_position = 0
@@ -741,6 +755,9 @@ def build_final_works_from_api(
 
     # Убираем временную колонку для Excel
     df_for_excel = df.drop(columns=["_is_header"])
+
+    # Итоговая строка: сумма всех значений колонки 'Стоимость'
+    df_for_excel = add_total_row(df_for_excel)
 
     output_path = os.path.join(output_folder, "ОБЩИЙ_Финальный_перечень_работ.xlsx")
     

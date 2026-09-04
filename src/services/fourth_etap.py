@@ -1827,6 +1827,71 @@ def _process_one_element(normalized_data, row_number, output_folder, processing_
     logger.info("Элемент %s обработан.", row_number)
 
 # ============================================================
+# ФОРМАТИРОВАНИЕ ДЕНЕЖНЫХ ЗНАЧЕНИЙ
+# ============================================================
+
+def format_money(value) -> str:
+    """Форматирует денежное значение для финального перечня работ.
+
+    Разряды тысяч разделяются пробелом, после точки — ровно 2 знака.
+    Пример: 392458.206 -> '392 458.21'. Для пустых/невалидных/нулевых
+    значений возвращается пустая строка.
+    """
+    try:
+        if value is None or (isinstance(value, float) and math.isnan(value)):
+            return ""
+        num = float(str(value).replace(" ", "").replace("\u00a0", ""))
+    except (ValueError, TypeError):
+        return ""
+    if num != num or num in (float("inf"), float("-inf")):
+        return ""
+    if num <= 0:
+        return ""
+    return f"{num:,.2f}".replace(",", " ")
+
+
+def _parse_money(value) -> float:
+    """Преобразует отформатированное денежное значение обратно во float."""
+    try:
+        if value is None or (isinstance(value, float) and math.isnan(value)):
+            return 0.0
+        num = float(str(value).replace(" ", "").replace("\u00a0", ""))
+        if num != num or num in (float("inf"), float("-inf")):
+            return 0.0
+        return num
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def add_total_row(df):
+    """Добавляет последней строкой 'ИТОГО:' с суммой колонки 'Стоимость'.
+
+    Аргументы:
+        df — DataFrame финального перечня работ (денежные колонки уже
+             отформатированы format_money).
+
+    Возвращает:
+        DataFrame с добавленной итоговой строкой (или исходный, если
+        колонки 'Стоимость' нет).
+    """
+    if "Стоимость" not in df.columns:
+        return df
+
+    total = sum(_parse_money(v) for v in df["Стоимость"])
+
+    total_row = {col: "" for col in df.columns}
+    label_col = (
+        "Наименование расценки/ресурса"
+        if "Наименование расценки/ресурса" in df.columns
+        else df.columns[0]
+    )
+    total_row[label_col] = "ИТОГО:"
+    total_row["Стоимость"] = format_money(total)
+
+    return pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
+
+
+# ============================================================
 # ОБЪЕДИНЕНИЕ ФИНАЛЬНЫХ ПЕРЕЧНЕЙ
 # ============================================================
 
@@ -1917,6 +1982,15 @@ def merge_final_worklists(input_folder):
         return None
 
     result = pd.concat(all_parts, ignore_index=True)
+
+    # Денежные колонки: разряды через пробел, 2 знака после точки
+    for money_col in ("Стоимость за Ед. Изм.", "Стоимость"):
+        if money_col in result.columns:
+            result[money_col] = result[money_col].apply(format_money)
+
+    # Итоговая строка: сумма всех значений колонки 'Стоимость'
+    result = add_total_row(result)
+
     result.to_excel(output_file, index=False)
 
     logger.info("Объединение завершено.")
