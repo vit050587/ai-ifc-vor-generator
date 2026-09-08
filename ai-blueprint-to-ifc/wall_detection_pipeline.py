@@ -56,7 +56,11 @@ class WallDetectionPipeline:
         for i, drawing in enumerate(drawings):
             walls_processor = WallsProcessor(self.pdf_path, self.wall_detection, self.pdf_processor, dpi=settings.DPI)
             tiles = walls_processor.get_tiles(i, drawings, self.layout_processor)
-            self.hatching_detector.get_walls(tiles, self.hatching_processor.legends)
+            walls_polygons = self.hatching_detector.get_walls(tiles, self.hatching_processor.legends)
+            walls_polygons_pdf = self.pdf_processor.image_polygons_to_pdf_polygons(
+                walls_polygons,
+                dpi=settings.DPI,
+            )
 
             print(len(tiles))
 
@@ -64,5 +68,5 @@ class WallDetectionPipeline:
         blueprint_scale = self.layout_processor.get_blueprint_scale()
         if not blueprint_scale or blueprint_scale == (0, 0):
             return None
-            
+
         return blueprint_scale

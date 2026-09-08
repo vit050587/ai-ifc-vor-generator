@@ -1,3 +1,4 @@
+# session_manager.py
 import json
 import os
 import shutil
@@ -1015,6 +1016,9 @@ class SessionManager:
             "grouped_data": grouped_data or {},
             "files": [],
             "created_at": datetime.utcnow().isoformat() + "Z",
+            "final_json_status": None,
+            "final_json_error": None,
+            "final_json_processing_type": None,
         }
         
         runs.append(run)
@@ -1178,10 +1182,7 @@ class SessionManager:
             unique_indices = sorted(set(row_indices))
             df_filtered = df_original.iloc[unique_indices].reset_index(drop=True)
 
-            # Подмешиваем колонку с материалами («Свойство::IfcMaterialLayer::Name»)
-            # из сырого дампа IFC по GlobalId. В АР группировка выполняется по
-            # главному материалу, в КР — по коду МССК материала
-            # (монолитный/сборный ж/б и бетон: «СТ 00 15 01», «СТ 00 10 02» и т.п.).
+            # Подмешиваем колонку с материалами
             if processing_type in ("AR", "KR"):
                 try:
                     mat_map = self._load_material_layer_map(session_id)
@@ -1389,7 +1390,33 @@ class SessionManager:
 
                 self._update_progress(session_id, 95, f"Запуск {run_number}: Сохранение результатов...")
             
-            # Собираем финальные файлы
+            # =====================================================================
+            #  АВТОМАТИЧЕСКАЯ СБОРКА ФИНАЛЬНОГО JSON (ДО сбора файлов)
+            # =====================================================================
+            self._update_progress(session_id, 97, f"Запуск {run_number}: Сборка финального JSON ({processing_type})...")
+            
+            ifc_file_name = self._sessions.get(session_id, {}).get("ifc_file_name", "")
+            if not ifc_file_name:
+                ifc_file_name = self._sessions.get(session_id, {}).get("pdf_file_name", "source.pdf")
+            
+            try:
+                from src.services.ifc_json_builder import build_final_json
+                
+                output_filename = f"final_result_{processing_type}.json"
+                result = build_final_json(
+                    input_folder=run_dir,
+                    source_file=ifc_file_name,
+                    discipline=processing_type,
+                    output_filename=output_filename
+                )
+                logger.info(f"Финальный JSON сформирован: {output_filename}")
+                    
+            except Exception as e:
+                logger.error(f"Ошибка при сборке финального JSON: {e}", exc_info=True)
+            
+            # =====================================================================
+            #  ТЕПЕРЬ СОБИРАЕМ ФИНАЛЬНЫЕ ФАЙЛЫ (включая final_result_*.json)
+            # =====================================================================
             final_files = []
             skip_patterns = {'filtered_elements.xlsx', 'building_parts.json', 'materials.json'}
             
@@ -1398,7 +1425,8 @@ class SessionManager:
                 if os.path.isfile(fpath):
                     if f in skip_patterns:
                         continue
-                    if f.endswith('json'):
+                    # Исключаем промежуточные JSON, но оставляем final_result_*.json и selected_elements_grouped.json
+                    if f.endswith('.json') and not f.startswith('final_result_') and f != 'selected_elements_grouped.json':
                         continue
                     if f.startswith('Нормализованные_данные_элемента_') or f.endswith('.ifc'):
                         continue
@@ -1413,16 +1441,17 @@ class SessionManager:
             
             final_files.sort(key=lambda x: x['filename'])
 
-            # КР: включаем в результаты JSON групп выбранных элементов,
-            # отправленный в API подбора работ.
+            # Для КР: включаем группы выбранных элементов
             if processing_type == "KR":
                 api_request_path = os.path.join(run_dir, 'selected_elements_grouped.json')
                 if os.path.isfile(api_request_path):
-                    final_files.append({
-                        "path": api_request_path,
-                        "filename": "группы выбранных элементов.json",
-                        "size": os.path.getsize(api_request_path),
-                    })
+                    # Проверяем, не добавлен ли уже этот файл
+                    if not any(f['path'] == api_request_path for f in final_files):
+                        final_files.append({
+                            "path": api_request_path,
+                            "filename": "группы выбранных элементов.json",
+                            "size": os.path.getsize(api_request_path),
+                        })
             
             # Добавляем справочные JSON из корня сессии
             for src_name, display_name in [
@@ -1437,8 +1466,7 @@ class SessionManager:
                         "size": os.path.getsize(src_path),
                     })
 
-            # Включаем в результаты файлы с исходными параметрами элементов
-            # (XLSX + JSON-копия) — создаются в обоих режимах (КР и АР).
+            # Включаем файлы с исходными параметрами
             from src.services.ifc_raw_dump import RAW_DUMP_FILENAME, RAW_DUMP_JSON_FILENAME
             for dump_name in (RAW_DUMP_FILENAME, RAW_DUMP_JSON_FILENAME):
                 raw_dump_path = os.path.join(session_dir, dump_name)
@@ -1458,6 +1486,8 @@ class SessionManager:
                             run['status'] = 'completed'
                             run['files'] = final_files
                             run['building_height'] = building_height
+                            run['final_json_status'] = 'completed'
+                            run['final_json_processing_type'] = processing_type
                             break
                     
                     self._sessions[session_id]['runs'] = runs
@@ -1482,6 +1512,204 @@ class SessionManager:
                             break
                     self._sessions[session_id]['runs'] = runs
                     self._save()
+    
+    # =====================================================================
+    #  СБОРКА ФИНАЛЬНОГО JSON (по номеру запуска)
+    # =====================================================================
+
+    def _find_run_by_number(self, session_id: str, run_number: int) -> Optional[Dict[str, Any]]:
+        """
+        Находит запуск по его номеру.
+        
+        Args:
+            session_id: ID сессии
+            run_number: Номер запуска (1, 2, 3, ...)
+            
+        Returns:
+            Словарь с данными запуска или None
+        """
+        s = self.get(session_id)
+        if not s:
+            return None
+        
+        for run in s.get('runs', []):
+            if run.get('run_number') == run_number:
+                return run
+        
+        return None
+    
+    def _get_run_dir_by_number(self, session_id: str, run_number: int) -> str:
+        """
+        Возвращает путь к директории запуска по номеру.
+        
+        Args:
+            session_id: ID сессии
+            run_number: Номер запуска (1, 2, 3, ...)
+            
+        Returns:
+            Путь к директории запуска
+        """
+        session_dir = os.path.join(self.output_folder, session_id)
+        return os.path.join(session_dir, f'run_{run_number:03d}')
+    
+    def build_final_json_by_number(self, session_id: str, run_number: int, processing_type: str = "KR") -> Dict[str, Any]:
+        """
+        Запуск сборки финального JSON по номеру запуска.
+        
+        Args:
+            session_id: ID сессии
+            run_number: Номер запуска (1, 2, 3, ...)
+            processing_type: "KR" или "AR"
+            
+        Returns:
+            Dict с информацией о запущенной сборке
+        """
+        s = self.get(session_id)
+        if not s:
+            raise KeyError("Сессия не найдена")
+        
+        # Находим запуск по номеру
+        target_run = self._find_run_by_number(session_id, run_number)
+        if not target_run:
+            raise ValueError(f"Запуск с номером {run_number} не найден")
+        
+        if target_run.get('status') != 'completed':
+            raise RuntimeError(f"Запуск {run_number} ещё не завершён (статус: {target_run.get('status')})")
+        
+        processing_type = processing_type.upper()
+        if processing_type not in ("KR", "AR"):
+            processing_type = "KR"
+        
+        # Определяем директорию запуска
+        run_dir = self._get_run_dir_by_number(session_id, run_number)
+        
+        if not os.path.isdir(run_dir):
+            raise RuntimeError(f"Директория запуска не найдена: {run_dir}")
+        
+        # Исходный IFC-файл
+        ifc_file_name = s.get("ifc_file_name", "")
+        if not ifc_file_name:
+            ifc_file_name = s.get("pdf_file_name", "source.pdf")
+        
+        run_id = target_run.get('run_id')
+        
+        # Обновляем статус запуска
+        with self._state_lock:
+            if session_id in self._sessions:
+                runs = self._sessions[session_id].get('runs', [])
+                for run in runs:
+                    if run.get('run_number') == run_number:
+                        run['final_json_status'] = 'building'
+                        run['final_json_error'] = None
+                        run['final_json_processing_type'] = processing_type
+                        break
+                self._sessions[session_id]['runs'] = runs
+                self._save()
+        
+        # Запускаем сборку в фоне
+        thread = threading.Thread(
+            target=self._build_final_json_bg,
+            args=(session_id, run_id, run_dir, ifc_file_name, processing_type),
+            daemon=True,
+            name=f"FinalJSON-{processing_type}-{session_id[:8]}-Run{run_number}"
+        )
+        thread.start()
+        
+        return {
+            "session_id": session_id,
+            "run_id": run_id,
+            "run_number": run_number,
+            "status": "building",
+            "processing_type": processing_type,
+            "message": f"Сборка финального JSON ({processing_type}) для запуска {run_number} запущена"
+        }
+    
+    def get_final_json_status_by_number(self, session_id: str, run_number: int) -> Dict[str, Any]:
+        """
+        Получение статуса сборки финального JSON по номеру запуска.
+        
+        Args:
+            session_id: ID сессии
+            run_number: Номер запуска (1, 2, 3, ...)
+            
+        Returns:
+            Dict со статусом сборки
+        """
+        s = self.get(session_id)
+        if not s:
+            raise KeyError("Сессия не найдена")
+        
+        target_run = self._find_run_by_number(session_id, run_number)
+        if not target_run:
+            raise ValueError(f"Запуск с номером {run_number} не найден")
+        
+        status = target_run.get('final_json_status', 'none')
+        error = target_run.get('final_json_error')
+        processing_type = target_run.get('final_json_processing_type', target_run.get('processing_type', 'KR'))
+        
+        return {
+            "session_id": session_id,
+            "run_id": target_run.get('run_id'),
+            "run_number": run_number,
+            "status": status,
+            "processing_type": processing_type,
+            "error": error
+        }
+    
+    def get_final_json_result_by_number(self, session_id: str, run_number: int) -> Optional[Dict[str, Any]]:
+        """
+        Получение результата сборки финального JSON по номеру запуска.
+        Ищет файл напрямую в директории запуска.
+        
+        Args:
+            session_id: ID сессии
+            run_number: Номер запуска (1, 2, 3, ...)
+            
+        Returns:
+            Собранный JSON или None, если не найден
+        """
+        s = self.get(session_id)
+        if not s:
+            raise KeyError("Сессия не найдена")
+        
+        target_run = self._find_run_by_number(session_id, run_number)
+        if not target_run:
+            raise ValueError(f"Запуск с номером {run_number} не найден")
+        
+        run_dir = self._get_run_dir_by_number(session_id, run_number)
+        
+        logger.info(f"Поиск final_result в: {run_dir}")
+        
+        # 1. Ищем в директории запуска
+        if os.path.isdir(run_dir):
+            for fname in os.listdir(run_dir):
+                if fname.startswith('final_result_') and fname.endswith('.json'):
+                    path = os.path.join(run_dir, fname)
+                    logger.info(f"Найден файл: {fname}")
+                    with open(path, 'r', encoding='utf-8') as fh:
+                        return json.load(fh)
+        
+        # 2. Ищем в списке файлов запуска
+        for f in target_run.get('files', []):
+            if f.get('filename', '').startswith('final_result_') and f.get('filename', '').endswith('.json'):
+                path = f.get('path')
+                if path and os.path.isfile(path):
+                    logger.info(f"Найден файл в списке: {f.get('filename')}")
+                    with open(path, 'r', encoding='utf-8') as fh:
+                        return json.load(fh)
+        
+        # 3. Ищем в корне сессии
+        session_dir = os.path.join(self.output_folder, session_id)
+        if os.path.isdir(session_dir):
+            for fname in os.listdir(session_dir):
+                if fname.startswith('final_result_') and fname.endswith('.json'):
+                    path = os.path.join(session_dir, fname)
+                    logger.info(f"Найден файл в корне сессии: {fname}")
+                    with open(path, 'r', encoding='utf-8') as fh:
+                        return json.load(fh)
+        
+        logger.warning(f"Финальный JSON не найден для запуска {run_number}")
+        return None
     
     # =====================================================================
     #  ФИЛЬТРАЦИЯ ПО ВЫСОТЕ

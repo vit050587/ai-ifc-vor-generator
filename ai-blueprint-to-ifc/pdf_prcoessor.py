@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Tuple
 
 from config import settings
+from mask_polygonizer import (
+    PdfMaskPolygon,
+    PdfPolygonizedMask,
+    PolygonizedMask,
+)
 
 class PdfProcessor:
 
@@ -102,16 +107,33 @@ class PdfProcessor:
         zoom: float | None = None,
     ) -> tuple[float, float]:
         """Переводит точку из пикселей отрендеренного изображения в PDF points."""
+        transform = self._get_image_to_pdf_transform(zoom)
+        return self._transform_image_point(x, y, transform)
+
+    def _get_image_to_pdf_transform(
+        self,
+        zoom: float | None = None,
+    ) -> tuple[float, fitz.Matrix]:
+        """Prepare a reusable image-to-PDF transform."""
         if zoom is not None and zoom != self.zoom:
             self.pdf_to_base64(zoom)
         elif self.zoom is None:
             self.pdf_to_base64()
 
-        doc = fitz.open(self.pdf_path)
-        page = doc[0]
-        point = fitz.Point(float(x) / self.zoom, float(y) / self.zoom)
-        point = point * page.derotation_matrix
+        with fitz.open(self.pdf_path) as doc:
+            derotation_matrix = fitz.Matrix(doc[0].derotation_matrix)
 
+        return self.zoom, derotation_matrix
+
+    @staticmethod
+    def _transform_image_point(
+        x: float,
+        y: float,
+        transform: tuple[float, fitz.Matrix],
+    ) -> tuple[float, float]:
+        zoom, derotation_matrix = transform
+        point = fitz.Point(float(x) / zoom, float(y) / zoom)
+        point = point * derotation_matrix
         return point.x, point.y
 
     def image_obb_to_pdf_obb(
@@ -120,15 +142,23 @@ class PdfProcessor:
         zoom: float | None = None,
     ) -> dict:
         """Переводит один OBB из пикселей изображения в координаты PDF."""
+        transform = self._get_image_to_pdf_transform(zoom)
+        return self._image_obb_to_pdf_obb(rectangle, transform)
+
+    def _image_obb_to_pdf_obb(
+        self,
+        rectangle: dict,
+        transform: tuple[float, fitz.Matrix],
+    ) -> dict:
         bbox = rectangle.get("bbox", rectangle)
 
         try:
             converted_bbox = {}
             for point_index in range(1, 5):
-                x, y = self._image_point_to_pdf_point(
+                x, y = self._transform_image_point(
                     bbox[f"x{point_index}"],
                     bbox[f"y{point_index}"],
-                    zoom if point_index == 1 else None,
+                    transform,
                 )
                 converted_bbox[f"x{point_index}"] = x
                 converted_bbox[f"y{point_index}"] = y
@@ -150,10 +180,58 @@ class PdfProcessor:
         zoom: float | None = None,
     ) -> list[dict]:
         """Переводит список OBB из пикселей изображения в координаты PDF."""
+        if not rectangles:
+            return []
+
+        transform = self._get_image_to_pdf_transform(zoom)
         return [
-            self.image_obb_to_pdf_obb(rectangle, zoom if index == 0 else None)
-            for index, rectangle in enumerate(rectangles)
+            self._image_obb_to_pdf_obb(rectangle, transform)
+            for rectangle in rectangles
         ]
+
+    def image_polygons_to_pdf_polygons(
+        self,
+        polygonized_mask: PolygonizedMask,
+        dpi: int | None = None,
+    ) -> PdfPolygonizedMask:
+        """Convert global rendered-image polygons to global PDF coordinates."""
+        zoom = dpi / 72 if dpi else None
+        transform = self._get_image_to_pdf_transform(zoom)
+        image_zoom, _ = transform
+
+        def convert_ring(points):
+            return [
+                self._transform_image_point(x, y, transform)
+                for x, y in points
+            ]
+
+        polygons = [
+            PdfMaskPolygon(
+                channel_id=polygon.channel_id,
+                exterior=convert_ring(polygon.exterior),
+                holes=[convert_ring(hole) for hole in polygon.holes],
+                area=polygon.area / (image_zoom ** 2),
+            )
+            for polygon in polygonized_mask.polygons
+        ]
+
+        page_corners = convert_ring(
+            [
+                (0, 0),
+                (polygonized_mask.width, 0),
+                (polygonized_mask.width, polygonized_mask.height),
+                (0, polygonized_mask.height),
+            ]
+        )
+        xs = [point[0] for point in page_corners]
+        ys = [point[1] for point in page_corners]
+
+        return PdfPolygonizedMask(
+            width=max(xs) - min(xs),
+            height=max(ys) - min(ys),
+            channel_count=polygonized_mask.channel_count,
+            polygons=polygons,
+        )
 
     def cropped_image_obbs_to_pdf_obbs(
         self,

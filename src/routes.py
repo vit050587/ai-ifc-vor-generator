@@ -1,3 +1,4 @@
+# routes.py
 import io
 import os
 import zipfile
@@ -21,6 +22,7 @@ from src.schemas import (
     SelectRowsResponse, FilterHeightResponse, NewRunResponse,
     RunSwitchResponse, RunsListResponse, ReferenceAcceptedResponse,
     ReferenceBuildResponse, PositionLinksResponse,
+    FinalJsonBuildResponse, FinalJsonStatusResponse, FinalJsonResultResponse,
 )
 
 logger = setup_logger(__name__)
@@ -900,10 +902,7 @@ def preview_excel(session_id: str):
     except Exception as e:
         logger.warning(f"Не удалось прочитать высоту: {e}")
 
-    # Карта материалов для группировки превью по материалу (GlobalId → {name, order, code}).
-    # Строится для АР (главный материал из IfcMaterialLayer::Name) и для КР
-    # (код материала MGE_MaterialCode / IfcMaterialLayer::Name:
-    #  «Железобетон сборный (СТ 00 15 01)», «Бетон монолитный (СТ 00 10 02)» и т.п.).
+    # Карта материалов для группировки превью по материалу
     materials_group_map = None
     if s.get("processing_type", "KR") in ("AR", "KR"):
         try:
@@ -1461,7 +1460,7 @@ def select_rows(session_id: str):
         return _err(ErrorResponse(detail=f"Ошибка сервера: {str(e)}"), 500)
 
 
-# ========== НОВЫЕ ЭНДПОИНТЫ ДЛЯ ПОВТОРНЫХ ЗАПУСКОВ ==========
+# ========== ЭНДПОИНТЫ ДЛЯ ПОВТОРНЫХ ЗАПУСКОВ ==========
 
 @bp.route("/api/session/<session_id>/new_run", methods=["POST"])
 def new_run(session_id: str):
@@ -1782,4 +1781,190 @@ def get_3d_model_status(session_id: str):
         return _err(ErrorResponse(detail="Сессия не найдена"), 404)
     except Exception as e:
         logger.error(f"Ошибка получения статуса 3D модели: {e}", exc_info=True)
+        return _err(ErrorResponse(detail=f"Ошибка сервера: {str(e)}"), 500)
+
+
+# ========== ЭНДПОИНТЫ ДЛЯ СБОРКИ ФИНАЛЬНОГО JSON (по номеру запуска) ==========
+
+@bp.route("/api/session/<session_id>/run/<int:run_number>/build_final_json", methods=["POST"])
+def build_final_json_by_number(session_id: str, run_number: int):
+    """
+    Запуск сборки финального JSON (АР/КР) по номеру запуска.
+    ---
+    tags:
+      - processing
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+        description: ID сессии
+      - name: run_number
+        in: path
+        type: integer
+        required: true
+        description: Номер запуска (1, 2, 3, ...)
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            processingType:
+              type: string
+              enum: ["KR", "AR"]
+              default: "KR"
+              description: Тип обработки
+    responses:
+      200:
+        description: Сборка запущена
+      400:
+        description: Ошибка валидации
+      404:
+        description: Сессия или запуск не найдены
+      409:
+        description: Запуск ещё не завершён
+      500:
+        description: Внутренняя ошибка
+    """
+    if not session_id or not run_number:
+        return _err(ErrorResponse(detail="ID сессии и номер запуска обязательны"), 400)
+    
+    data = request.get_json() or {}
+    processing_type = data.get("processingType", "KR").upper()
+    
+    if processing_type not in ("KR", "AR"):
+        processing_type = "KR"
+    
+    logger.info(f"build_final_json: session={session_id}, run_number={run_number}, type={processing_type}")
+    
+    try:
+        result = _get_manager().build_final_json_by_number(session_id, run_number, processing_type)
+        return _ok(FinalJsonBuildResponse(**result))
+    except KeyError:
+        return _err(ErrorResponse(detail="Сессия не найдена"), 404)
+    except ValueError as e:
+        return _err(ErrorResponse(detail=str(e)), 404)
+    except RuntimeError as e:
+        return _err(ErrorResponse(detail=str(e)), 409)
+    except Exception as e:
+        logger.error(f"Ошибка запуска сборки финального JSON: {e}", exc_info=True)
+        return _err(ErrorResponse(detail=f"Ошибка сервера: {str(e)}"), 500)
+
+
+@bp.route("/api/session/<session_id>/run/<int:run_number>/final_json/status", methods=["GET"])
+def get_final_json_status_by_number(session_id: str, run_number: int):
+    """
+    Получение статуса сборки финального JSON по номеру запуска.
+    ---
+    tags:
+      - processing
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+      - name: run_number
+        in: path
+        type: integer
+        required: true
+        description: Номер запуска (1, 2, 3, ...)
+    responses:
+      200:
+        description: Статус сборки
+      404:
+        description: Сессия или запуск не найдены
+    """
+    if not session_id or not run_number:
+        return _err(ErrorResponse(detail="ID сессии и номер запуска обязательны"), 400)
+    
+    try:
+        result = _get_manager().get_final_json_status_by_number(session_id, run_number)
+        return _ok(FinalJsonStatusResponse(**result))
+    except KeyError:
+        return _err(ErrorResponse(detail="Сессия не найдена"), 404)
+    except ValueError as e:
+        return _err(ErrorResponse(detail=str(e)), 404)
+    except Exception as e:
+        logger.error(f"Ошибка получения статуса финального JSON: {e}", exc_info=True)
+        return _err(ErrorResponse(detail=f"Ошибка сервера: {str(e)}"), 500)
+
+
+@bp.route("/api/session/<session_id>/run/<int:run_number>/final_json/result", methods=["GET"])
+def get_final_json_result_by_number(session_id: str, run_number: int):
+    """
+    Получение результата сборки финального JSON по номеру запуска.
+    ---
+    tags:
+      - processing
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+      - name: run_number
+        in: path
+        type: integer
+        required: true
+        description: Номер запуска (1, 2, 3, ...)
+    responses:
+      200:
+        description: Результат сборки
+      202:
+        description: Сборка ещё выполняется
+      404:
+        description: Сессия, запуск или результат не найдены
+      409:
+        description: Сборка завершилась с ошибкой
+    """
+    if not session_id or not run_number:
+        return _err(ErrorResponse(detail="ID сессии и номер запуска обязательны"), 400)
+    
+    try:
+        manager = _get_manager()
+        
+        # Получаем статус
+        status_result = manager.get_final_json_status_by_number(session_id, run_number)
+        
+        if status_result['status'] == 'error':
+            return _err(
+                ErrorResponse(detail=status_result.get('error') or "Ошибка сборки финального JSON"),
+                409
+            )
+        
+        # Получаем результат напрямую
+        result = manager.get_final_json_result_by_number(session_id, run_number)
+        
+        if result is None:
+            # Если статус completed, но результат не найден
+            if status_result['status'] == 'completed':
+                return _err(ErrorResponse(detail="Результат не найден"), 404)
+            # Если сборка ещё выполняется
+            response = _ok(
+                FinalJsonResultResponse(
+                    session_id=session_id,
+                    run_id=str(run_number),
+                    status=status_result['status'] or 'building',
+                    processing_type=status_result.get('processing_type', 'KR'),
+                    result=None
+                ),
+                status=202
+            )
+            response.headers["Retry-After"] = "2"
+            return response
+        
+        return _ok(FinalJsonResultResponse(
+            session_id=session_id,
+            run_id=str(run_number),
+            status="completed",
+            processing_type=result.get('discipline', status_result.get('processing_type', 'KR')),
+            result=result
+        ))
+        
+    except KeyError:
+        return _err(ErrorResponse(detail="Сессия не найдена"), 404)
+    except ValueError as e:
+        return _err(ErrorResponse(detail=str(e)), 404)
+    except Exception as e:
+        logger.error(f"Ошибка получения результата финального JSON: {e}", exc_info=True)
         return _err(ErrorResponse(detail=f"Ошибка сервера: {str(e)}"), 500)

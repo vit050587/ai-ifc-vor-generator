@@ -1,3 +1,4 @@
+# schemas.py
 from __future__ import annotations
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,7 +28,7 @@ class SessionFull(CamelModel):
     created_at: str
     status: str
     source_type: Optional[str] = None
-    processing_type: str = "KR"  # ← ДОБАВЛЕНО: тип обработки (KR/AR)
+    processing_type: str = "KR"
     ifc_file_name: Optional[str] = None
     pdf_file_name: Optional[str] = None
     excel_file_name: Optional[str] = None
@@ -40,7 +41,6 @@ class SessionFull(CamelModel):
     progress_message: str = ""
     has_results: bool = False
     is_reference_session: bool = False
-    # Поля для поддержки множественных запусков
     runs: Optional[List[Dict[str, Any]]] = None
     current_run_id: Optional[str] = None
 
@@ -53,7 +53,7 @@ class SessionListResponse(CamelModel):
 class UploadResponse(CamelModel):
     session_id: str
     status: str
-    source_type: str  # "ifc" или "pdf"
+    source_type: str
     processing_type: str = "KR"
     message: str
 
@@ -162,7 +162,7 @@ class HealthResponse(CamelModel):
     timestamp: str
 
 
-# ========== НОВЫЕ СХЕМЫ ДЛЯ ПОДДЕРЖКИ МНОЖЕСТВЕННЫХ ЗАПУСКОВ ==========
+# ========== СХЕМЫ ДЛЯ ПОДДЕРЖКИ МНОЖЕСТВЕННЫХ ЗАПУСКОВ ==========
 
 class RunInfo(CamelModel):
     """Информация об одном запуске обработки"""
@@ -178,6 +178,8 @@ class RunInfo(CamelModel):
     files: List[SessionFile] = []
     created_at: str
     error: Optional[str] = None
+    final_json_status: Optional[str] = None
+    final_json_error: Optional[str] = None
 
 
 class NewRunRequest(CamelModel):
@@ -187,7 +189,7 @@ class NewRunRequest(CamelModel):
     row_materials: Dict[str, str] = {}
     building_height: Optional[float] = None
     grouped_data: Optional[Dict[str, Any]] = None
-    processing_type: str = "KR"  # ← ДОБАВЛЕНО
+    processing_type: str = "KR"
 
 
 class NewRunResponse(CamelModel):
@@ -226,24 +228,49 @@ class PositionLinkItem(CamelModel):
 
 
 class PositionLinkVariant(CamelModel):
-    """Вариант ссылок для группы: контекст (часть здания + геометрия).
-
-    Один nameKey может иметь несколько вариантов (например, стены с тем же
-    именем Revit в подземной и надземной части) — фронтенд выбирает вариант
-    по контексту своей группы (part + geo).
-    """
+    """Вариант ссылок для группы: контекст (часть здания + геометрия)"""
     part: str = ""
     geo: str = ""
     positions: List[PositionLinkItem] = []
 
 
 class PositionLinksResponse(CamelModel):
-    """Ссылки на позиции цифрового сборника по группам элементов.
-
-    Ключ — имя элемента без цифрового ID (совпадает с nameKey групп
-    в веб-интерфейсе), значение — варианты с контекстом (part, geo).
-    ready=False означает, что файл position_links.json ещё строится.
-    """
+    """Ссылки на позиции цифрового сборника по группам элементов"""
     session_id: str
     ready: bool = False
     position_links: Dict[str, List[PositionLinkVariant]] = {}
+
+
+# ========== СХЕМЫ ДЛЯ СБОРКИ ФИНАЛЬНОГО JSON ==========
+
+# schemas.py - обновленные схемы для финального JSON
+
+class FinalJsonBuildResponse(CamelModel):
+    """Ответ при запуске сборки финального JSON"""
+    session_id: str
+    run_id: Optional[str] = None
+    run_number: Optional[int] = None
+    status: str
+    processing_type: str = "KR"
+    message: str
+
+
+class FinalJsonStatusResponse(CamelModel):
+    """Статус сборки финального JSON"""
+    session_id: str
+    run_id: Optional[str] = None
+    run_number: Optional[int] = None
+    status: str
+    processing_type: str = "KR"
+    error: Optional[str] = None
+
+
+class FinalJsonResultResponse(CamelModel):
+    """Результат сборки финального JSON"""
+    session_id: str
+    run_id: Optional[str] = None
+    run_number: Optional[int] = None
+    status: str
+    processing_type: str = "KR"
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None

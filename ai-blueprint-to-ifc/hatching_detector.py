@@ -1,4 +1,5 @@
 from hatchfinder import HatchFinder
+from mask_polygonizer import MaskPolygonizer
 from tqdm import tqdm
 from typing import Any
 from PIL import Image, ImageDraw
@@ -17,13 +18,13 @@ class HatchingDetector:
     def __init__(self, detection_settings: WallDetectionProfile) -> None:
         self.detection_settings = detection_settings
         self.hatch_finder = HatchFinder(load_model_path=settings.HATCH_FINDER_MODEL, device=settings.DEVICE)
+        self.mask_polygonizer = MaskPolygonizer()
         
 
     def get_walls(self, tiles: list[dict[str, Any]], legend_entries: list[dict[str, Any]]):
         """
         Возвращает стены в глобальных пиксельных координатах изображения PDF.
         """
-        walls = []
         detection = self.detection_settings
         tile_size = self.detection_settings.image_size
         overlap = self.detection_settings.tile_overlap / 2
@@ -55,6 +56,8 @@ class HatchingDetector:
 
         min_pixels = self.scale_area_threshold(settings.MIN_PIXELS_AREA_REMOVE, settings.DPI)
         result_matrix_binary = self.remove_small_regions(result_matrix_binary, min_pixels)
+
+        walls = self.mask_polygonizer.process(result_matrix_binary)
 
         return walls
 
