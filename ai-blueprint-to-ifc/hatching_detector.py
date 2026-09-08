@@ -3,22 +3,28 @@ from mask_polygonizer import MaskPolygonizer
 from tqdm import tqdm
 from typing import Any
 from PIL import Image, ImageDraw
+from pathlib import Path
 import torch
+import torch.nn.functional as F
 import numpy as np
+import hashlib
 from scipy import ndimage
+from joblib import Memory
 
 from logger import setup_logger
 from config import settings, WallDetectionProfile
 
 logger = setup_logger(__name__)
 
-
+memory = Memory("cache/hatching_detector", verbose=0)
 
 class HatchingDetector:
     def __init__(self, detection_settings: WallDetectionProfile) -> None:
         self.detection_settings = detection_settings
         self.hatch_finder = HatchFinder(load_model_path=settings.HATCH_FINDER_MODEL, device=settings.DEVICE)
         self.mask_polygonizer = MaskPolygonizer()
+
+        self.memory = memory
         
 
     def get_walls(self, tiles: list[dict[str, Any]], legend_entries: list[dict[str, Any]]):
@@ -35,12 +41,30 @@ class HatchingDetector:
         result_matrix = torch.zeros((len(legend_entries), height, width), device=settings.DEVICE, dtype=torch.float16)
         mask_image = self._create_inner_mask(tile_size, tile_size, overlap)
 
+        if settings.USE_TILES_CACHE:
+            self._calculate_symbols_hash(legend_entries)
+            mask_hash = self._image_hash(mask_image)
+            model_version = self.get_model_version(settings.HATCH_FINDER_MODEL)
+
         for tile_index, tile in enumerate(tqdm(tiles, desc="Обработка плиток", unit="tile")):
+            if settings.USE_TILES_CACHE:
+                tile_hash = self._image_hash(tile["image"])
             for entry_index, legend_entry in enumerate(legend_entries):
-                accumulated_matrix = torch.zeros((tile_size, tile_size), device=settings.DEVICE)
+                accumulated_matrix = torch.zeros((tile_size, tile_size), device=settings.DEVICE, dtype=torch.float16)
                 for symbol in legend_entry["legend_symbols"]:
                     symbol_image = symbol["image"]
-                    tile_matrix = self.hatch_finder.infer(tile["image"], mask_image, symbol_image).squeeze()
+                    if settings.USE_TILES_CACHE:
+                        tile_matrix = self.infer_tile(tile_hash, mask_hash, symbol["hash"], model_version, tile["image"], mask_image, symbol_image)
+                    else:
+                        tile_matrix = (
+                            self.hatch_finder
+                            .infer(tile["image"], mask_image, symbol_image)
+                            .squeeze()
+                            .to(
+                                device=accumulated_matrix.device,
+                                dtype=accumulated_matrix.dtype,
+                            )
+                        )
                     accumulated_matrix = torch.maximum(accumulated_matrix, tile_matrix)
                 self.insert_patch(result_matrix, accumulated_matrix, entry_index, tile["x0"], tile["y0"], overlap)
 
@@ -59,7 +83,63 @@ class HatchingDetector:
 
         walls = self.mask_polygonizer.process(result_matrix_binary)
 
-        return walls
+        debug_matrix = self.resize_binary_matrix(
+            result_matrix_binary,
+            source_dpi=settings.DPI,
+            target_dpi=settings.DEBUG_DPI,
+        )
+
+        del result_matrix_binary
+
+        return {"walls": walls, "matrix": debug_matrix.cpu()}
+
+    def infer_tile(
+            self, 
+            tile_hash: str,
+            mask_hash: str,
+            symbol_hash: str,
+            model_version: str,
+            tile_image,
+            mask_image,
+            symbol_image,):
+        matrix = self._infer_cached(
+            tile_hash,
+            mask_hash,
+            symbol_hash,
+            model_version,
+            self.hatch_finder.infer,
+            tile_image,
+            mask_image,
+            symbol_image,
+        )
+        return torch.from_numpy(matrix).to(settings.DEVICE)
+
+    @staticmethod
+    @memory.cache(
+        ignore=[
+            "infer_function",
+            "tile_image",
+            "mask_image",
+            "symbol_image",
+        ]
+    )
+    def _infer_cached(
+        tile_hash,
+        mask_hash,
+        symbol_hash,
+        model_version,
+        infer_function,
+        tile_image,
+        mask_image,
+        symbol_image,
+    ):
+        result = infer_function(
+            tile_image,
+            mask_image,
+            symbol_image,
+        ).squeeze()
+
+        return result.detach().cpu().to(torch.float16).numpy()
 
     def _create_inner_mask(
         self,
@@ -227,3 +307,54 @@ class HatchingDetector:
             result[channel][remove[labels]] = False
 
         return torch.from_numpy(result).to(device)
+
+    def resize_binary_matrix(
+        self,
+        matrix: torch.Tensor,
+        source_dpi: int,
+        target_dpi: int,
+    ) -> torch.Tensor:
+        channels, height, width = matrix.shape
+        scale = target_dpi / source_dpi
+
+        target_height = round(height * scale)
+        target_width = round(width * scale)
+
+        result = torch.empty(
+            (channels, target_height, target_width),
+            dtype=torch.bool,
+            device=matrix.device,
+        )
+
+        for channel in range(channels):
+            resized = F.interpolate(
+                matrix[channel][None, None].to(torch.float32),
+                size=(target_height, target_width),
+                mode="nearest",
+            )[0, 0]
+
+            result[channel].copy_(resized >= 0.5)
+
+        return result
+
+    
+
+    @staticmethod
+    def _image_hash(image: Image.Image) -> str:
+        digest = hashlib.sha256()
+        digest.update(image.mode.encode())
+        digest.update(str(image.size).encode())
+        digest.update(image.tobytes())
+        return digest.hexdigest()
+
+    def _calculate_symbols_hash(self, legends: list[dict[str, Any]]):
+        for entry_index, legend_entry in enumerate(legends):
+            for symbol in legend_entry["legend_symbols"]:
+                symbol["hash"] = self._image_hash(symbol["image"])
+
+    @staticmethod
+    def get_model_version(model_path: str | Path) -> str:
+        path = Path(model_path).resolve()
+        stat = path.stat()
+
+        return f"{path}:{stat.st_size}:{stat.st_mtime_ns}"

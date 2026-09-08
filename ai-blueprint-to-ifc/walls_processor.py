@@ -4,8 +4,10 @@ from yolo_service import YoloService
 from pathlib import Path
 from typing import Any, Tuple
 from tqdm import tqdm
+from dataclasses import asdict
 
 from config import settings
+from polygons_converter import WallObb
 from rectangle_utils import rectangles_to_yolo_obb, get_two_points_bbox
 
 class WallsProcessor:
@@ -124,35 +126,57 @@ class WallsProcessor:
         walls: list[dict[str, Any]],
         blueprint_scale: Tuple[int, int],
     ) -> list[dict[str, Any]]:
-        """
-        Переводит глобальные пиксельные координаты стен в реальные миллиметры.
-
-        Исходный список не изменяется.
-        """
-        scale_from, scale_to = blueprint_scale
-
-        if scale_from <= 0 or scale_to <= 0:
-            raise ValueError(
-                "Значения blueprint_scale должны быть больше нуля"
-            )
-        if self.zoom <= 0:
+        """Convert wall coordinates from rendered-image pixels to real mm."""
+        scale_ratio = self._get_blueprint_scale_ratio(blueprint_scale)
+        if self.zoom is None or self.zoom <= 0:
             raise ValueError("zoom должен быть больше нуля")
 
-        # Пиксели рендера -> PDF points -> мм на листе -> реальные мм.
-        mm_per_pixel = (
-            (1 / self.zoom)
-            * (25.4 / 72)
-            * (scale_to / scale_from)
+        mm_per_pixel = (1 / self.zoom) * (25.4 / 72) * scale_ratio
+        return self._scale_walls(
+            walls,
+            coefficient=mm_per_pixel,
+            bbox_key="bbox",
         )
 
-        converted = []
+    def scale_pdf_walls_coords(
+        self,
+        walls: list[WallObb],
+        blueprint_scale: Tuple[int, int],
+    ) -> list[dict[str, Any]]:
+        """Convert wall coordinates from PDF points to real millimetres."""
+        scale_ratio = self._get_blueprint_scale_ratio(blueprint_scale)
+        mm_per_pdf_point = (25.4 / 72) * scale_ratio
+        return self._scale_walls(
+            walls,
+            coefficient=mm_per_pdf_point,
+            bbox_key="bbox_pdf",
+            measurement_keys=("length", "thickness"),
+        )
+
+    @staticmethod
+    def _get_blueprint_scale_ratio(
+        blueprint_scale: Tuple[int, int],
+    ) -> float:
+        scale_from, scale_to = blueprint_scale
+        if scale_from <= 0 or scale_to <= 0:
+            raise ValueError("Значения blueprint_scale должны быть больше нуля")
+        return scale_to / scale_from
+
+    @staticmethod
+    def _scale_walls(
+        walls: list[dict[str, Any]] | list[WallObb],
+        coefficient: float,
+        bbox_key: str,
+        measurement_keys: tuple[str, ...] = (),
+    ) -> list[dict[str, Any]]:
+        converted: list[dict[str, Any]] = []
         for wall in walls:
-            bbox = wall.get("bbox", wall)
+            wall_data = asdict(wall) if isinstance(wall, WallObb) else wall
+            bbox = wall_data.get(bbox_key, wall_data)
             try:
                 converted_bbox = {
                     f"{axis}{point_index}": (
-                        float(bbox[f"{axis}{point_index}"])
-                        * mm_per_pixel
+                        float(bbox[f"{axis}{point_index}"]) * coefficient
                     )
                     for point_index in range(1, 5)
                     for axis in ("x", "y")
@@ -162,9 +186,14 @@ class WallsProcessor:
                     "Каждый OBB должен содержать числовые x1, y1 ... x4, y4"
                 ) from exc
 
-            if "bbox" in wall:
-                converted_wall = dict(wall)
+            if bbox_key in wall_data:
+                converted_wall = dict(wall_data)
                 converted_wall["bbox"] = converted_bbox
+                for key in measurement_keys:
+                    if key in converted_wall:
+                        converted_wall[key] = (
+                            float(converted_wall[key]) * coefficient
+                        )
             else:
                 converted_wall = converted_bbox
 

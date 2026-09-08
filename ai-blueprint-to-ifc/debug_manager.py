@@ -6,6 +6,7 @@ import os
 import shutil
 from typing import List, Any
 from PIL import Image
+import torch
 
 from logger import setup_logger
 from config import settings
@@ -149,6 +150,119 @@ def save_blueprint_walls_by_material(
             color_map_file.write(materials_colors_md)
 
     return img_with_labels, materials_colors_md
+
+
+def save_blueprint_masks_by_material(
+    folder_name: str,
+    matrices: list[torch.Tensor],
+    pdf_processor: PdfProcessor,
+    file_name: str | Path,
+    legends: list[dict],
+    fill_opacity: float = 0.5,
+) -> None:
+    """Save global binary channel masks overlaid on the rendered PDF page."""
+    fill_opacity = float(fill_opacity)
+    if 1 < fill_opacity <= 100:
+        fill_opacity /= 100
+    if not 0 <= fill_opacity <= 1:
+        raise ValueError("fill_opacity must be from 0 to 1 or from 0 to 100")
+
+    for matrix in matrices:
+        if not isinstance(matrix, torch.Tensor):
+            raise TypeError("Each debug matrix must be a torch.Tensor")
+        if matrix.ndim != 3:
+            raise ValueError(
+                "Each debug matrix must have shape [N, H, W], "
+                f"got {tuple(matrix.shape)}"
+            )
+        if matrix.device.type != "cpu":
+            raise ValueError("Debug matrices must be moved to CPU before saving")
+
+    _, page_image = pdf_processor.pdf_to_base64(dpi=settings.DEBUG_DPI)
+    painted_image = page_image.convert("RGB")
+    channel_count = max(
+        max((matrix.shape[0] for matrix in matrices), default=0),
+        len(legends),
+    )
+    material_colors: dict[str, str] = {}
+    opacity = round(255 * fill_opacity)
+
+    for channel_id in range(channel_count):
+        if channel_id < len(legends):
+            material = str(
+                legends[channel_id].get("full_description", f"channel_{channel_id}")
+            )
+        else:
+            material = f"channel_{channel_id}"
+
+        color = material_colors.setdefault(
+            material,
+            MATERIAL_COLORS[len(material_colors) % len(MATERIAL_COLORS)],
+        )
+        channel_mask = Image.new("L", painted_image.size, 0)
+
+        for matrix in matrices:
+            if channel_id >= matrix.shape[0]:
+                continue
+
+            height = min(int(matrix.shape[1]), painted_image.height)
+            width = min(int(matrix.shape[2]), painted_image.width)
+            if height == 0 or width == 0:
+                continue
+
+            binary = (
+                matrix[channel_id, :height, :width]
+                .to(dtype=torch.uint8)
+                .mul(255)
+                .numpy()
+            )
+            binary_mask = Image.fromarray(binary)
+            # Paste only selected pixels, preserving masks from other drawings.
+            channel_mask.paste(opacity, (0, 0, width, height), binary_mask)
+
+        if channel_id < len(legends):
+            mask_draw = ImageDraw.Draw(channel_mask)
+            for symbol in legends[channel_id].get("legend_symbols", []):
+                bbox_pdf = symbol.get("bbox")
+                if bbox_pdf is None:
+                    continue
+
+                bbox = pdf_processor.pdf_obb_to_image_obb(bbox_pdf)
+                try:
+                    points = [
+                        (
+                            float(bbox[f"x{point_index}"]),
+                            float(bbox[f"y{point_index}"]),
+                        )
+                        for point_index in range(1, 5)
+                    ]
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ValueError(
+                        "Each legend symbol bbox must contain numeric "
+                        "x1, y1 ... x4, y4"
+                    ) from exc
+
+                mask_draw.polygon(points, fill=opacity)
+                mask_draw.line(
+                    points + [points[0]],
+                    fill=255,
+                    width=2,
+                    joint="curve",
+                )
+
+        painted_image.paste(color, (0, 0), channel_mask)
+
+    output_path = settings.DEBUG_DIR / folder_name / settings.DEBUG_IMAGES_DIR / file_name
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    painted_image.save(output_path)
+
+    color_map_path = output_path.with_suffix(".materials.md")
+    color_map_path.write_text(
+        _format_material_colors_markdown(material_colors),
+        encoding="utf-8",
+    )
+
+
 def _get_wall_material(wall: dict) -> str:
     best_hatching = wall.get("hatching", {}).get("best")
     if best_hatching:

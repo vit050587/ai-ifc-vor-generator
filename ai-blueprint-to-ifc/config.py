@@ -35,6 +35,19 @@ class WallTrimSettings(BaseModel):
     overlap_threshold: float = Field(default=0.01, ge=0, le=1)
 
 
+class PolygonConversionSettings(BaseModel):
+    curved_walls_mode: Literal["skip", "approximate"] = "skip"
+    straight_simplification_tolerance: float = Field(default=0.15, ge=0) # Допустимое отклонение при упрощении прямых контуров.
+    curve_approximation_tolerance: float = Field(default=1.5, gt=0) # Точность аппроксимации кривой прямыми хордами.
+    parallel_angle_tolerance_degrees: float = Field(default=7.5, ge=0, lt=90) # Допустимое различие направлений двух границ стены. (градусы)
+    min_parallel_overlap_ratio: float = Field(default=0.5, gt=0, le=1) # Минимальная доля взаимного перекрытия параллельных границ.
+    min_wall_length: float = Field(default=2.0, gt=0) # Минимальная длина создаваемого OBB стены.
+    min_wall_thickness: float = Field(default=0.15, gt=0) # Минимальная допустимая толщина стены.
+    max_wall_thickness: float = Field(default=10000.0, gt=0) # Максимальная допустимая толщина стены.
+    min_length_to_thickness_ratio: float = Field(default=1, gt=0) # Минимальная вытянутость стены. (Соотношение)
+    deduplication_tolerance: float = Field(default=0.25, gt=0)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -121,11 +134,16 @@ class Settings(BaseSettings):
     HATCHING_PIXELS_CONFIDENCE: float = 0.5
     MIN_PIXELS_AREA_REMOVE: int = 100
     DPI: int = 900
+    DEBUG_DPI: int = 350
+    USE_TILES_CACHE: bool = True
 
     WALL_DETECTION: WallDetectionProfile = Field(default_factory=WallDetectionProfile)
     UNHATCHED_WALL_DETECTION: UnhatchedWallDetectionProfile = Field(default_factory=UnhatchedWallDetectionProfile)
     WALL_MERGE: WallMergeSettings = Field(default_factory=WallMergeSettings)
     WALL_TRIM: WallTrimSettings = Field(default_factory=WallTrimSettings)
+    POLYGON_CONVERSION: PolygonConversionSettings = Field(
+        default_factory=PolygonConversionSettings
+    )
 
 
 settings = Settings()
