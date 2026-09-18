@@ -1,6 +1,22 @@
-# KODA.md — проект ai-ifc-vor-generator
+# [DISABLED] # KODA.md — проект ai-ifc-vor-generator
 
 Инструкционный контекст для ИИ-агентов и разработчиков, работающих с репозиторием.
+
+> **ВАЖНО (действующие правила разработки):**
+>
+> 1. Дальнейшая разработка ведётся **только в режиме АР** (архитектурные решения).
+>    Изменения **не должны затрагивать режим КР** (конструктивные решения, подбор работ
+>    через API ТСН). Код КР меняется только по явному запросу пользователя.
+> 2. После **каждого** изменения, затрагивающего режим АР, обязательно **актуализируется
+>    файл [`readme_ar.md`](./readme_ar.md)** — в него вносятся описания внесённых изменений.
+>    Документация всегда должна соответствовать текущему состоянию кода.
+> 3. **Источник истины по АР — [`readme_ar.md`](./readme_ar.md).** Перед любой правкой
+>    АР-пайплайна нужно свериться с ним: он описывает актуальный порядок модулей,
+>    создаваемые файлы и используемые справочники `data/`. При расхождении кода и
+>    `readme_ar.md` расхождение устраняется: приводится в соответствие **документ**
+>    (при намеренном изменении поведения) либо **код** (при случайной регрессии).
+> 4. Подробные границы области АР, перечень затрагиваемых модулей/справочников/артефактов
+>    и список «неприкосновенного» для КР — см. **§8 «Правила разработки»**.
 
 ---
 
@@ -68,13 +84,14 @@ ai-ifc-vor-generator/
 │       ├── session_manager.py # SessionManager: сессии, runs, фоновые потоки, sessions.json
 │       ├── zero_step.py       # Извлечение элементов из IFC (КР/АР), нормализация, XLSX
 │       ├── ifc_raw_dump.py    # «Сырой» дамп свойств/QTO/материалов + расчёт по bbox
+│       ├── selection_template_builder.py # АР: заполнение шаблона параметров подбора (data/selection_parameters.json + карта соответствия) по каждому элементу → Параметры_подбора_элементов.json
 │       ├── ifc_reference_builder.py # JSON-справочники (все элементы / группы)
-│       ├── first_etap.py      # Этап 1 (АР): анализ элемента LLM
-│       ├── second_etap.py     # Этап 2 (АР): фильтрация по части здания
-│       ├── third_etap.py      # Этап 3 (АР): фильтрация по высоте (+LLM)
-│       ├── fourth_etap.py     # Этап 4 (АР): подбор работ + объём/стоимость
-│       ├── base_knowledge.py  # База ключевых слов работ для подбора
-│       ├── geometry_filter.py # Фильтрация работ по геометрии элемента
+│       ├── works_table_selector.py  # АР: детерминированный подбор таблиц работ (8 шагов data/algorithm.md)
+│       ├── works_fetcher.py        # АР: работы из цифрового сборника (larix): период ТСН → period.json, работы таблиц → Подобранные_работы.json
+│       ├── ifc_json_builder.py      # Сборка финального JSON (final_result_AR.json / final_result_KR.json)
+│       ├── position_links.py  # Ссылки на позиции цифрового сборника (position_links.json, КР)
+│       ├── pd_parser.py       # Разбор PDF ПОС через LLM → ПОС_глобальные_константы.json
+│       ├── works_cost.py      # Расчёт/форматирование стоимости работ финального перечня (КР)
 │       ├── group_excel.py     # Группировка элементов (КР и АР), правила группировки
 │       ├── api_works_lookup.py# Подбор работ через API ТСН (КР)
 │       ├── materials_lookup.py# Карта МССК-кодов материалов (АР)
@@ -104,14 +121,20 @@ ai-ifc-vor-generator/
 │   ├── prompts/               # Промпты VLM для чертежей (get_scale.txt, get_text_from_image.txt)
 │   └── logger.py, utils.py, run.py, debug_manager.py  # Вспомогательные модули
 │
-├── prompts/                   # Промпты пайплайна (src)
-│   └── element_analyze.txt    # Промпт этапа 1 (нормализация характеристик элемента)
+├── prompts/                   # Промпты пайплайна (src; сейчас пусто — промпты встроены в модули)
 │
 ├── data/                      # Справочники (только чтение!)
+│   ├── algorithm.md                          # Спецификация 8-шагового алгоритма подбора работ (АР)
 │   ├── perechen_kr.xlsx, perechen_kr_1.xlsx  # Перечни работ (КР)
-│   ├── perechen_ar.xlsx                      # Перечень работ (АР)
-│   ├── koefs.xlsx                            # Нормы расхода (корректировка объёма)
-│   ├── price_cost.xlsx                       # Стоимость расценок (Шифр → прямые затраты)
+│   ├── koefs.xlsx                            # Нормы расхода (корректировка объёма, КР)
+│   ├── price_cost.xlsx                       # Стоимость расценок (Шифр → прямые затраты, КР)
+│   ├── ifc_to_collections.json               # Правила IfcClass (+PredefinedType) → сборники (АР)
+│   ├── msck_elements_compact.json            # Дерево МССК-элементов (АР, шаг 3 подбора)
+│   ├── tree_work_compact.json                # Дерево 41 сборника ГЭСН/ТСН-2001 с таблицами (АР)
+│   ├── works_classification.json             # Классификация сборников + схема 7 констант (АР)
+│   ├── params_registry.json                  # Реестр параметров ПОС для LLM-извлечения (АР; вкл. доп. константы: floor_height, soil_group, movement_distance, crane_capacity, bucket_capacity, equipment_power)
+│   ├── selection_parameters.json             # Перечень параметров подбора работ из 3 главы perechen_kr_1.xlsx — шаблон для заполнения по элементам (АР)
+│   ├── selection_parameters_mapping.json     # Расширяемая карта «параметр шаблона → ключи сырого дампа / ключевые слова / константы» (АР)
 │   ├── elements_mssk.xlsx / elements_mssk_nested.json  # МССК-справочник элементов
 │   └── materials_mssk.xlsx / materials_mssk_nested.json # МССК-справочник материалов
 │
@@ -199,11 +222,14 @@ make clean     # остановить и удалить volumes (внимани�
 ### 5.4. Подбор работ
 
 - **КР**: фильтр выбранных строк по типам/материалам → группировка (`group_excel.process_ifc_excel`) → конвертация в `ifc_raw_elements_grouped.json` → POST-запросы в API ТСН (`digital-collection/building-elements/positions`) → формирование `ОБЩИЙ_Финальный_перечень_работ.xlsx` (объём корректируется по `koefs.xlsx`, стоимость — по `price_cost.xlsx`).
-- **АР**: четырёхэтапный LLM-пайплайн:
-  1. `first_etap` — нормализация характеристик элемента LLM (промпт `element_analyze.txt`);
-  2. `second_etap` — фильтрация работ по части здания (надземная/подземная/цоколь);
-  3. `third_etap` — фильтрация по высоте (паттерны + LLM-проверка, высота типового этажа);
-  4. `fourth_etap` — подбор работ по материалу/ключевым словам + LLM-отбор, расчёт объёмов и стоимости.
+- **АР**: детерминированный алгоритм (без LLM и внешнего API) по `data/algorithm.md`:
+  1. применение материалов пользователя → `materials.json`, фильтрация выбранных строк → `filtered_elements.xlsx`;
+  2. группировка `group_excel.process_ifc_excel_ar` (МССК → Материал → Наименование) → `Дерево_проекта_выбранные_элементы.xlsx`, `filtered_elements_grouped_AR.json`, `Дерево_проекта.xlsx` (всё здание), `ДЛЯ_СМЕТЧИКА_сгруппированный.xlsx`, `building_parts.json`;
+  3. `works_table_selector.build_works_tables_json` — 8 шагов алгоритма (нормализация элемента, сборники-кандидаты по `ifc_to_collections.json`, уточнение по МССК, переключатель технологии, выбор таблиц по ключевым словам, правила по сборникам COMPLEX/SEPARATE, 7 констант проекта, объёмы QTO) → `Подобранные_таблицы_работ.json`;
+  4. `works_fetcher.fetch_and_save_works` — работы из цифрового сборника (larix): актуальный период ТСН (`baseTypeCode=TSN`, «индекс» в `title`, максимальный `dateStart`) → `period.json` (корень сессии); работы по шифрам подобранных таблиц (`catalog/work-process/list`) → `Подобранные_работы.json` (в `run_<NNN>/`; ошибка API не прерывает запуск);
+  5. `ifc_json_builder.build_final_json` → `final_result_AR.json`.
+- Опционально: разбор PDF ПОС (`pd_parser.py` через LLM по `data/params_registry.json`) → `ПОС_глобальные_константы.json` — константы (5 из схемы `works_classification.json` + доп. `floor_height`, `soil_group`, `movement_distance`, `crane_capacity`, `bucket_capacity`, `equipment_power`) подставляются в подбор работ и в шаблоны параметров.
+- На этапе 0 (после `zero_step`) заполняется универсальный шаблон параметров подбора: `selection_template_builder.py` по каждому элементу сырого дампа (`data/selection_parameters.json` + карта `data/selection_parameters_mapping.json`) → `Параметры_подбора_элементов.json` в корне сессии.
 - Все артефакты (XLSX, JSON, дампы) сохраняются в `run_<NNN>/` каждого запуска.
 
 ---
@@ -217,7 +243,7 @@ make clean     # остановить и удалить volumes (внимани�
 | `outputs/sessions.json` | Метаданные сессий, запусков, файлов, прогресс. Потокобезопасно (`RLock`), атомарная запись через tmp-файл + `os.replace`, резервное копирование при повреждении |
 | `outputs/<session_id>/` | Файлы результатов сессии (`original/`, `run_<NNN>/`, справочники) |
 | `uploads/<session_id>/` | Загруженные пользователем файлы |
-| `data/` | Статические справочники: перечни (KR/AR), `koefs.xlsx` (нормы расхода), `price_cost.xlsx` (стоимость), `elements_mssk*`, `materials_mssk*` |
+| `data/` | Статические справочники (только чтение): `algorithm.md`, `ifc_to_collections.json`, `msck_elements_compact.json`, `tree_work_compact.json`, `works_classification.json`, `params_registry.json`, МССК-справочники `elements_mssk*`/`materials_mssk*`, перечни `perechen_kr*.xlsx`, `koefs.xlsx`, `price_cost.xlsx` |
 | **Ollama** | Локальная LLM (Qwen3-VL-8B — чертежи, YandexGPT-5-Lite-8B — этапы АР) |
 | **API ТСН** (`normativ.mgexp.org/...`) | Подбор работ в режиме КР |
 | **Keycloak** (`normativ-idm.mgexp.org/...`) | Выдача/обновление Bearer-токена (client_credentials) |
@@ -244,6 +270,67 @@ make clean     # остановить и удалить volumes (внимани�
 
 ## 8. Правила разработки
 
+### 8.1. Область разработки — только режим АР
+
+1. Дальнейшая разработка ведётся **исключительно в режиме АР** (архитектурные решения).
+   Изменения **не должны затрагивать режим КР** (конструктивные решения); код КР
+   меняется только по явному запросу пользователя.
+2. **Затрагиваемые АР-модули** (`src/services/`):
+   - этап 0: `zero_step.py` (АР-ветка, `ELEMENT_TYPES_AR`), `ifc_raw_dump.py`,
+     `ifc_reference_builder.py`, `position_links.py`, `pdf_processor.py`;
+   - этап 1: `works_table_selector.py` (ключевой модуль подбора — 8 шагов
+     `data/algorithm.md`), `works_fetcher.py` (работы из цифрового сборника
+     larix: период ТСН → `period.json`, работы таблиц →
+     `Подобранные_работы.json`), `group_excel.py` (`process_ifc_excel_ar` /
+     `group_elements_ar`), `materials_lookup.py`, `mssk_lookup.py`,
+     `ifc_json_builder.py`;
+   - опционально: `pd_parser.py` (разбор PDF ПОС через LLM);
+   - оркестрация: `session_manager.py` (АР-ветки `_run_processing_pipeline_in_run`),
+     `routes.py` (АР-эндпоинты: `upload_pos`, `works_constants` и т. д.),
+     `schemas.py`.
+3. **«Неприкосновенное» для КР** (не менять без явного запроса):
+   `api_works_lookup.py` (подбор через API ТСН), `works_cost.py` (расчёт/
+   форматирование стоимости, выделен из удалённого legacy `fourth_etap`),
+   КР-ветки `zero_step.py` (`ELEMENT_TYPES_KR`) и `group_excel.py`
+   (`process_ifc_excel`), КР-логика `ifc_json_builder`
+   (`selected_elements_grouped.json`, `final_result_KR.json`),
+   `serializer.py`, справочники `perechen_kr*.xlsx`. При рефакторинге
+   общего кода (`zero_step.py`, `group_excel.py`, `session_manager.py`,
+   `routes.py`) поведение режима КР должно оставаться **побайтово
+   неизменным** на уровне результатов.
+4. **Справочники АР в `data/`** (только чтение): `algorithm.md` (спецификация
+   8-шагового алгоритма — «источник истины» для `works_table_selector`),
+   `ifc_to_collections.json`, `msck_elements_compact.json`,
+   `tree_work_compact.json`, `works_classification.json` (включая схему 7
+   глобальных констант), `params_registry.json`, `elements_mssk_nested.json`,
+   `materials_mssk_nested.json`. Файлы `koefs.xlsx`, `price_cost.xlsx`
+   в текущем АР-конвейере не используются (только КР).
+5. **Артефакты АР**: новые/изменённые файлы результатов — только в
+   `outputs/<session_id>/` и `outputs/<session_id>/run_<NNN>/`
+   (`materials.json`, `filtered_elements.xlsx`, `Дерево_проекта*.xlsx`,
+   `filtered_elements_grouped_AR.json`, `ДЛЯ_СМЕТЧИКА_сгруппированный.xlsx`,
+    `building_parts.json`, `Подобранные_таблицы_работ.json`,
+    `Подобранные_работы.json` (larix, в `run_<NNN>/`), `period.json`
+    (корень сессии), `final_result_AR.json`, `ПОС_глобальные_константы.json`). Имена файлов —
+   на русском, как в существующем конвейере.
+
+### 8.2. Актуализация документации
+
+1. После **каждого** изменения, затрагивающего режим АР (код пайплайна,
+   эндпоинты, схемы, файлы результатов, справочники, параметры запуска),
+   обязательно обновляется файл [`readme_ar.md`](./readme_ar.md) — в него
+   вносятся описания внесённых изменений (новые/изменённые шаги пайплайна,
+   создаваемые файлы, используемые справочники).
+2. Документация всегда должна соответствовать текущему состоянию кода.
+3. **Источник истины по АР — `readme_ar.md`.** Перед любой правкой АР-пайплайна
+   нужно свериться с ним: он описывает актуальный порядок модулей, создаваемые
+   файлы и используемые справочники `data/`. При расхождении кода и
+   `readme_ar.md` расхождение устраняется: приводится в соответствие
+   **документ** (при намеренном изменении поведения) либо **код**
+   (при случайной регрессии).
+
+### 8.3. Общие правила
+
 1. **Виртуальное окружение**: все команды — через `.venv/bin/pip` и `.venv/bin/python`. Системный Python не используется.
 2. **Стиль**: PEP8, докстринги для новых функций/классов, комментарии — на русском или английском (как принято в проекте). Имена выходных файлов — **на русском** (`ДЛЯ_СМЕТЧИКА_...`, `Дерево_проекта...`, `ОБЩИЙ_Финальный_перечень_работ.xlsx`).
 3. **Обратная совместимость**: при изменении публичных функций сохраняется прежний API. Пример: `element_types = ELEMENT_TYPES_KR` — алиас для внешнего кода.
@@ -263,7 +350,7 @@ make clean     # остановить и удалить volumes (внимани�
 
 - **Проверить статус/ошибку сессии**: `outputs/sessions.json` — поля `status`, `error`, `progress_message`; логи пишутся в консоль и в файлы.
 - **Отладка отдельного модуля**: `./.venv/bin/python -m src.services.<модуль> ...` или временный скрипт внутри проекта.
-- **Почему элемент не попал в перечень**: режим КР — смотреть `ifc_raw_elements_grouped.json` и `api_works_response.json` (сырые ответы API ТСН); режим АР — промежуточные файлы этапов в `run_<NNN>/`.
+- **Почему элемент не попал в перечень**: режим КР — смотреть `ifc_raw_elements_grouped.json` и `api_works_response.json` (сырые ответы API ТСН); режим АР — поле `note` элемента в `Подобранные_таблицы_работ.json` (причина, если сборники не определены), а также промежуточные файлы `run_<NNN>/`.
 - **Изменение пайплайна PDF**: править код в `ai-blueprint-to-ifc/`, настройки порогов/моделей — в `ai-blueprint-to-ifc/config.py`.
 - **Добавление IFC-класса**: дополнить списки в `zero_step.py` (`ELEMENT_TYPES_KR`, `_ARCH_TYPES`); учесть дедупликацию по классу между режимами (при совпадении приоритет у архитектурной метки).
 

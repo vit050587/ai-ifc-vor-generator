@@ -1,5 +1,4 @@
 from hatchfinder import HatchFinder
-from mask_polygonizer import MaskPolygonizer
 from tqdm import tqdm
 from typing import Any
 from PIL import Image, ImageDraw
@@ -11,23 +10,39 @@ import hashlib
 from scipy import ndimage
 from joblib import Memory
 
+import debug_manager
+
 from logger import setup_logger
 from config import settings, WallDetectionProfile
+from pdf_prcoessor import PdfProcessor
+from matrix_processor import MatrixProcessor
+from polygon_converter import RegionPolygon
+from obb_converter import RegionOBB
 
 logger = setup_logger(__name__)
 
 memory = Memory("cache/hatching_detector", verbose=0)
 
 class HatchingDetector:
-    def __init__(self, detection_settings: WallDetectionProfile) -> None:
+    def __init__(
+        self,
+        detection_settings: WallDetectionProfile,
+        pdf_processor: PdfProcessor,
+    ) -> None:
         self.detection_settings = detection_settings
+        self.pdf_processor = pdf_processor
         self.hatch_finder = HatchFinder(load_model_path=settings.HATCH_FINDER_MODEL, device=settings.DEVICE)
-        self.mask_polygonizer = MaskPolygonizer()
+        self.matrix_processor = MatrixProcessor()
 
         self.memory = memory
         
 
-    def get_walls(self, tiles: list[dict[str, Any]], legend_entries: list[dict[str, Any]]):
+    def get_walls(
+        self,
+        tiles: list[dict[str, Any]],
+        legend_entries: list[dict[str, Any]],
+        drawing_index: int = 0,
+    ):
         """
         Возвращает стены в глобальных пиксельных координатах изображения PDF.
         """
@@ -38,7 +53,13 @@ class HatchingDetector:
         width = max(tile["x1"] for tile in tiles)
         height = max(tile["y1"] for tile in tiles)
 
-        result_matrix = torch.zeros((len(legend_entries), height, width), device=settings.DEVICE, dtype=torch.float16)
+        channel_id_2_entry_id = self._get_channel_id_2_entry_id_dict(legend_entries)
+
+        # Если не найдено ни одной стены в легенде
+        if not channel_id_2_entry_id:
+            return {"walls": [], "matrix_debug_object": None}
+
+        result_matrix = torch.zeros((len(channel_id_2_entry_id), height, width), device=settings.DEVICE, dtype=torch.float16)
         mask_image = self._create_inner_mask(tile_size, tile_size, overlap)
 
         if settings.USE_TILES_CACHE:
@@ -49,7 +70,8 @@ class HatchingDetector:
         for tile_index, tile in enumerate(tqdm(tiles, desc="Обработка плиток", unit="tile")):
             if settings.USE_TILES_CACHE:
                 tile_hash = self._image_hash(tile["image"])
-            for entry_index, legend_entry in enumerate(legend_entries):
+            for channel_id, entry_id in channel_id_2_entry_id.items():
+                legend_entry = legend_entries[entry_id]
                 accumulated_matrix = torch.zeros((tile_size, tile_size), device=settings.DEVICE, dtype=torch.float16)
                 for symbol in legend_entry["legend_symbols"]:
                     symbol_image = symbol["image"]
@@ -66,7 +88,22 @@ class HatchingDetector:
                             )
                         )
                     accumulated_matrix = torch.maximum(accumulated_matrix, tile_matrix)
-                self.insert_patch(result_matrix, accumulated_matrix, entry_index, tile["x0"], tile["y0"], overlap)
+                self.insert_patch(result_matrix, accumulated_matrix, channel_id, tile["x0"], tile["y0"], overlap)
+
+        result_matrix = self.resize_probability_matrix(result_matrix, settings.DPI, settings.MATRIX_COMPRESSION_DPI)
+
+        if settings.SAVE_PROBABILITY_HEATMAPS:
+            debug_manager.save_probability_heatmaps_by_material(
+                folder_name="full",
+                drawing_index=drawing_index,
+                matrix=result_matrix,
+                channel_id_2_entry_id=channel_id_2_entry_id,
+                pdf_processor=self.pdf_processor,
+                legends=legend_entries,
+                source_dpi=settings.MATRIX_COMPRESSION_DPI,
+                target_dpi=settings.PROBABILITY_HEATMAP_DEBUG_DPI,
+                threshold=settings.HATCHING_PIXELS_CONFIDENCE,
+            )
 
         result_matrix = self._keep_channel_max(result_matrix)
         channels = result_matrix.shape[0]
@@ -78,20 +115,34 @@ class HatchingDetector:
         result_matrix_binary = self._class_map_to_bool(class_map, channels)
         del class_map
 
-        min_pixels = self.scale_area_threshold(settings.MIN_PIXELS_AREA_REMOVE, settings.DPI)
-        result_matrix_binary = self.remove_small_regions(result_matrix_binary, min_pixels)
+        matrix_result = self.matrix_processor.process(result_matrix_binary)
+        polygons_and_obb: list[RegionPolygon | RegionOBB] = matrix_result["geometry_parts"]
+        result_matrix_binary = matrix_result["matrix"]
 
-        walls = self.mask_polygonizer.process(result_matrix_binary)
+        for entry in polygons_and_obb:
+            entry.entry_index = channel_id_2_entry_id[entry.channel_index]
+
+        debug_manager.save_torch_matrix(result_matrix_binary, Path(f"{settings.DEBUG_DIR}/{drawing_index}/matrix.pt"))
 
         debug_matrix = self.resize_binary_matrix(
             result_matrix_binary,
-            source_dpi=settings.DPI,
+            source_dpi=settings.MATRIX_COMPRESSION_DPI,
             target_dpi=settings.DEBUG_DPI,
         )
 
         del result_matrix_binary
 
-        return {"walls": walls, "matrix": debug_matrix.cpu()}
+        return {"walls": polygons_and_obb, "matrix_debug_object": {"matrix": debug_matrix.cpu(), "channel_id_2_entry_id": channel_id_2_entry_id}}
+
+    def _get_channel_id_2_entry_id_dict(self, legends: list[dict[str, Any]]):
+        channel_id_2_entry_id = {}
+        channel_id_current = 0
+        for e_i, entry in enumerate(legends):
+            if not entry.get("element_type", None) == "not_wall":
+                channel_id_2_entry_id[channel_id_current] = e_i
+                channel_id_current += 1
+
+        return channel_id_2_entry_id
 
     def infer_tile(
             self, 
@@ -273,40 +324,6 @@ class HatchingDetector:
                     result[class_chunk[valid].long(), pixel_indices] = True
 
         return result.view(channels, height, width)
-    
-    def scale_area_threshold(
-        self,
-        base_pixels: int,
-        dpi: int
-    ) -> int:
-        """Scale pixel area threshold relative to a reference DPI."""
-        return int(base_pixels * (dpi / 900) ** 2)
-
-    def remove_small_regions(
-        self,
-        matrix: torch.Tensor,
-        min_pixels: int,
-    ) -> torch.Tensor:
-        """Remove connected regions smaller than min_pixels from each channel."""
-        device = matrix.device
-        result = matrix.cpu().numpy()
-
-        structure = ndimage.generate_binary_structure(2, 2)
-
-        for channel in range(result.shape[0]):
-            labels, _ = ndimage.label(
-                result[channel],
-                structure=structure,
-            )
-
-            sizes = np.bincount(labels.ravel())
-
-            remove = sizes < min_pixels
-            remove[0] = False
-
-            result[channel][remove[labels]] = False
-
-        return torch.from_numpy(result).to(device)
 
     def resize_binary_matrix(
         self,
@@ -358,3 +375,32 @@ class HatchingDetector:
         stat = path.stat()
 
         return f"{path}:{stat.st_size}:{stat.st_mtime_ns}"
+
+    def resize_probability_matrix(
+        self,
+        matrix: torch.Tensor,
+        source_dpi: int,
+        target_dpi: int,
+    ) -> torch.Tensor:
+        channels, height, width = matrix.shape
+        scale = target_dpi / source_dpi
+
+        target_height = round(height * scale)
+        target_width = round(width * scale)
+
+        result = torch.empty(
+            (channels, target_height, target_width),
+            dtype=matrix.dtype,
+            device=matrix.device,
+        )
+
+        for channel in range(channels):
+            resized = F.interpolate(
+                matrix[channel][None, None],
+                size=(target_height, target_width),
+                mode="area",
+            )[0, 0]
+
+            result[channel].copy_(resized)
+
+        return result

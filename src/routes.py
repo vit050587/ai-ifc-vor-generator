@@ -11,7 +11,7 @@ from flask import (
     send_file, render_template,
     jsonify, redirect, Response
 )
-from src.services.session_manager import SessionManager
+from src.services.session_manager import SessionManager, POS_CONSTANTS_FILENAME
 from src.services.mssk_lookup import get_mssk_code_map
 from src.core.logger import setup_logger
 from src.core.config import load_config
@@ -23,6 +23,7 @@ from src.schemas import (
     RunSwitchResponse, RunsListResponse, ReferenceAcceptedResponse,
     ReferenceBuildResponse, PositionLinksResponse,
     FinalJsonBuildResponse, FinalJsonStatusResponse, FinalJsonResultResponse,
+    WorksConstantsResponse, PosUploadResponse,
 )
 
 logger = setup_logger(__name__)
@@ -208,6 +209,12 @@ def upload_ifc():
         required: false
         default: "KR"
         description: Тип обработки — KR (конструктивные решения) или AR (архитектурные решения)
+      - name: posFile
+        in: formData
+        type: file
+        required: false
+        description: Дополнительный PDF-файл ПОС (только для режима AR) — из него
+          извлекаются глобальные константы подбора работ
     responses:
       200:
         description: Файл принят, сессия создана, обработка запущена
@@ -277,6 +284,16 @@ def upload_ifc():
         else:
             result = _get_manager().process_pdf(f, f.filename, processing_type)
             result["source_type"] = "pdf"
+
+        # Дополнительный файл ПОС (режим АР): разбирается в фоне,
+        # константы сохраняются в ПОС_глобальные_константы.json
+        pos_file = request.files.get("posFile")
+        if pos_file and pos_file.filename and processing_type == "AR":
+            try:
+                _get_manager().upload_pos(result["session_id"], pos_file, pos_file.filename)
+            except ValueError as e:
+                logger.warning(f"Файл ПОС не принят: {e}")
+
         return _ok(UploadResponse(**result))
     except ValueError as e:
         return _err(ErrorResponse(detail=str(e)), 400)
@@ -723,11 +740,13 @@ def restore_session(session_id: str):
     # Получаем файлы текущего запуска
     current_files = []
     current_run_id = s.get("current_run_id")
+    current_run_floor_height = None
     if current_run_id:
         runs = s.get("runs", [])
         for run in runs:
             if run.get("run_id") == current_run_id:
                 current_files = run.get("files", [])
+                current_run_floor_height = run.get("floor_height")
                 break
     
     if not current_files:
@@ -742,6 +761,7 @@ def restore_session(session_id: str):
         files=current_files,
         construction_types=s.get("construction_types", {}),
         building_height=s.get("building_height"),
+        floor_height=current_run_floor_height,
         selected_rows_count=len(s.get("selected_rows", []) or []),
         source_type=s.get("source_type"),
         runs=s.get("runs", []),
@@ -848,13 +868,17 @@ def preview_excel(session_id: str):
         if f == "materials_colors.md":
             has_materials_md = True
 
-    # JSON/XLSX-справочники лежат в корне директории сессии
-    if os.path.exists(session_dir):
+    # JSON/XLSX-справочники лежат в корне директории сессии.
+    # Показываем их наличие только для КР: в АР цифровой сборник не
+    # используется, справочники не строятся и кнопки не отображаются.
+    if os.path.exists(session_dir) and s.get("processing_type", "KR") == "KR":
         has_ifc_elements_json = os.path.exists(os.path.join(session_dir, "ifc_elements_output.json"))
         has_ifc_grouped_json = os.path.exists(os.path.join(session_dir, "ifc_raw_elements_grouped.json"))
 
     # После чтения основного Excel
     building_height = None
+    floor_height = None
+    height_sheet = None
     try:
         xls = pd.ExcelFile(excel_path)
         
@@ -902,6 +926,27 @@ def preview_excel(session_id: str):
     except Exception as e:
         logger.warning(f"Не удалось прочитать высоту: {e}")
 
+    # Высота основного этажа (АР) — строка «Высота основного этажа» листа высот
+    if height_sheet:
+        try:
+            df_floor = pd.read_excel(excel_path, sheet_name=height_sheet)
+            for _, row_data in df_floor.iterrows():
+                row_values = [str(v).lower() for v in row_data.values]
+                if not any("основного этажа" in v for v in row_values):
+                    continue
+                for v in row_data.values:
+                    try:
+                        val = float(v)
+                    except (ValueError, TypeError):
+                        continue
+                    if 0 < val < 10000:
+                        floor_height = val
+                        break
+                if floor_height is not None:
+                    break
+        except Exception as e:
+            logger.warning(f"Не удалось прочитать высоту этажа: {e}")
+
     # Карта материалов для группировки превью по материалу
     materials_group_map = None
     if s.get("processing_type", "KR") in ("AR", "KR"):
@@ -928,6 +973,7 @@ def preview_excel(session_id: str):
         total_rows=len(df),
         saved_types=saved_types,
         building_height=building_height,
+        floor_height=floor_height,
         source_type=source_type,
         has_blueprint_image=has_blueprint_image,
         has_materials_md=has_materials_md,
@@ -937,6 +983,230 @@ def preview_excel(session_id: str):
         mssk_code_map=get_mssk_code_map(),
         materials_group_map=materials_group_map,
     ))
+
+
+@bp.route("/api/session/<session_id>/works_constants", methods=["GET"])
+def get_works_constants(session_id: str):
+    """
+    Схема констант подбора работ (АР) + значения, определённые по модели IFC.
+    ---
+    tags:
+      - processing
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+        description: ID сессии
+    responses:
+      200:
+        description: Список констант (name, title, values, default) и
+          определённые из IFC значения (высота здания, высота этажа)
+        schema:
+          type: object
+          properties:
+            sessionId:
+              type: string
+            processingType:
+              type: string
+            constants:
+              type: array
+              items:
+                type: object
+            detected:
+              type: object
+      404:
+        description: Сессия не найдена
+    """
+    if not session_id:
+        return _err(ErrorResponse(detail="ID сессии не указан"), 400)
+
+    s = _get_manager().get(session_id)
+    if not s:
+        return _err(ErrorResponse(detail="Сессия не найдена"), 404)
+
+    from src.services.works_table_selector import get_constants_schema
+
+    detected: dict = {}
+
+    # Значения высот из IFC_глобальные_константы.json (формируется zero_step
+    # по отметкам элементов IFC; основной источник).
+    ifc_constants_path = os.path.join(
+        _get_manager().output_folder, session_id, "IFC_глобальные_константы.json"
+    )
+    if os.path.isfile(ifc_constants_path):
+        try:
+            with open(ifc_constants_path, "r", encoding="utf-8") as f:
+                ifc_data = json.load(f)
+            ifc_detected = {
+                k: v.get("value")
+                for k, v in (ifc_data.get("constants") or {}).items()
+                if isinstance(v, dict)
+            }
+            for key in ("building_height_m", "floor_height", "total_height_m",
+                        "top_elevation_m", "min_ground_elevation_m"):
+                try:
+                    val = float(ifc_detected.get(key))
+                    # min_ground_elevation_m может быть 0 (отметка земли)
+                    if val > 0 or (key == "min_ground_elevation_m" and val >= 0):
+                        # В UI константа высоты этажа называется floor_height_m
+                        detected["floor_height_m" if key == "floor_height" else key] = round(val, 3)
+                except (TypeError, ValueError):
+                    continue
+            # Строковая константа «Этажность здания» (одноэтажное/многоэтажное),
+            # определённая по колонке «Этаж» IFC — передаётся как есть.
+            # Для старых сессий (без константы в IFC_глобальные_константы.json) —
+            # fallback по Excel полной модели.
+            storeys_type = ifc_detected.get("building_storeys_type")
+            if not storeys_type:
+                try:
+                    from src.services.zero_step import detect_storeys_type_from_session
+
+                    storeys_type = detect_storeys_type_from_session(
+                        os.path.join(_get_manager().output_folder, session_id)
+                    )
+                except Exception as e:
+                    logger.warning(f"Не удалось определить этажность здания: {e}")
+            if storeys_type:
+                detected["building_storeys_type"] = str(storeys_type)
+        except Exception as e:
+            logger.warning(f"Не удалось прочитать константы IFC: {e}")
+
+    # Fallback: значения высот из листа 'Высота_здания' исходного Excel сессии
+    # (для сессий, обработанных до появления IFC_глобальные_константы.json).
+    if not detected:
+        excel_path = _get_manager()._get_original_excel_path(session_id)
+        if excel_path and os.path.exists(excel_path):
+            try:
+                df_height = pd.read_excel(excel_path, sheet_name="Высота_здания")
+                label_col = None
+                value_col = None
+                for col in df_height.columns:
+                    cl = str(col).lower()
+                    if label_col is None and "параметр" in cl:
+                        label_col = col
+                    if value_col is None and "значение_м" in cl and not cl.endswith("_мм"):
+                        value_col = col
+                if label_col is not None and value_col is not None:
+                    labels_map = {
+                        "высота надземной части": "building_height_m",
+                        "высота основного этажа": "floor_height_m",
+                        "общая высота здания": "total_height_m",
+                        "максимальная отметка надземной части": "top_elevation_m",
+                    }
+                    for _, row_data in df_height.iterrows():
+                        label = str(row_data.get(label_col, "")).strip().lower()
+                        key = labels_map.get(label)
+                        if not key:
+                            continue
+                        try:
+                            val = float(row_data.get(value_col))
+                            if val > 0:
+                                detected[key] = round(val, 3)
+                        except (ValueError, TypeError):
+                            continue
+            except Exception as e:
+                logger.warning(f"Не удалось прочитать высоты из Excel: {e}")
+
+    # Значения констант из файла ПОС (ПОС_глобальные_константы.json в сессии)
+    pos_detected: dict = {}
+    pos_ready = False
+    pos_file_name = None
+    pos_constants_path = os.path.join(
+        _get_manager().output_folder, session_id, POS_CONSTANTS_FILENAME
+    )
+    if os.path.isfile(pos_constants_path):
+        try:
+            with open(pos_constants_path, "r", encoding="utf-8") as f:
+                pos_data = json.load(f)
+            pos_detected = {
+                k: v.get("value")
+                for k, v in (pos_data.get("constants") or {}).items()
+                if isinstance(v, dict) and v.get("value")
+            }
+            pos_ready = True
+            pos_file_name = pos_data.get("file_name")
+        except Exception as e:
+            logger.warning(f"Не удалось прочитать константы ПОС: {e}")
+
+    return _ok(WorksConstantsResponse(
+        session_id=session_id,
+        processing_type=s.get("processing_type", "KR"),
+        constants=get_constants_schema(),
+        detected=detected,
+        pos_detected=pos_detected,
+        pos_ready=pos_ready,
+        pos_file_name=pos_file_name,
+        pos_status=s.get("pos_status"),
+    ))
+
+
+@bp.route("/api/session/<session_id>/upload_pos", methods=["POST"])
+def upload_pos(session_id: str):
+    """
+    Загрузка PDF-файла ПОС (проект организации строительства) для сессии (АР).
+    ---
+    tags:
+      - upload
+    consumes:
+      - multipart/form-data
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+        description: ID сессии
+      - name: file
+        in: formData
+        type: file
+        required: true
+        description: PDF-файл ПОС, максимум 500 МБ
+    responses:
+      200:
+        description: Файл ПОС принят, фоновый разбор глобальных констант запущен
+        schema:
+          type: object
+          properties:
+            sessionId:
+              type: string
+            status:
+              type: string
+              example: "pos_processing"
+            message:
+              type: string
+      400:
+        description: Ошибка валидации (не PDF, не режим АР и т.п.)
+      404:
+        description: Сессия не найдена
+    """
+    if not session_id:
+        return _err(ErrorResponse(detail="ID сессии не указан"), 400)
+    if "file" not in request.files:
+        return _err(ErrorResponse(detail="Файл не передан"), 400)
+
+    f = request.files["file"]
+    if not f.filename:
+        return _err(ErrorResponse(detail="Пустое имя файла"), 400)
+    if not f.filename.lower().endswith(".pdf"):
+        return _err(ErrorResponse(detail="Файл ПОС должен быть в формате PDF"), 400)
+
+    f.seek(0, 2)
+    size = f.tell()
+    f.seek(0)
+    max_size = 500 * 1024 * 1024
+    if size > max_size:
+        return _err(ErrorResponse(detail=f"Файл слишком большой. Максимум {max_size // (1024*1024)} МБ"), 413)
+
+    try:
+        result = _get_manager().upload_pos(session_id, f, f.filename)
+        logger.info(f"Файл ПОС принят для сессии {session_id}: {f.filename}")
+        return _ok(PosUploadResponse(**result))
+    except ValueError as e:
+        status = 404 if "не найдена" in str(e).lower() else 400
+        return _err(ErrorResponse(detail=str(e)), status)
+    except Exception as e:
+        logger.error(f"Ошибка загрузки файла ПОС: {e}", exc_info=True)
+        return _err(ErrorResponse(detail=f"Внутренняя ошибка: {str(e)}"), 500)
 
 
 @bp.route("/api/session/<session_id>/position_links", methods=["GET"])
@@ -1362,6 +1632,9 @@ def select_rows(session_id: str):
             buildingHeight:
               type: number
               description: Высота здания в метрах (1-10000)
+            floorHeight:
+              type: number
+              description: Высота этажа в метрах (1-10000, режим АР)
             groupedData:
               type: object
             processingType:
@@ -1390,12 +1663,23 @@ def select_rows(session_id: str):
     row_types = data.get("rowTypes", data.get("row_types", {}))
     row_materials = data.get("rowMaterials", data.get("row_materials", {}))
     building_height = data.get("buildingHeight", data.get("building_height"))
+    floor_height = data.get("floorHeight", data.get("floor_height"))
     grouped_data = data.get("groupedData", data.get("grouped_data", {}))
     processing_type = data.get("processingType", "KR").upper()
+    global_constants = data.get("globalConstants", data.get("global_constants", {})) or {}
 
     # Валидация processing_type
     if processing_type not in ("KR", "AR"):
         processing_type = "KR"
+
+    # Валидация констант проекта (АР): словарь {имя константы: значение}
+    if not isinstance(global_constants, dict):
+        return _err(ErrorResponse(detail="globalConstants должен быть объектом {имя: значение}"), 400)
+    global_constants = {
+        str(k): str(v).strip()
+        for k, v in global_constants.items()
+        if v is not None and str(v).strip()
+    }
 
     if not all_rows and (not row_indices or len(row_indices) == 0):
         return _err(ErrorResponse(detail="Выберите хотя бы одну строку"), 400)
@@ -1409,6 +1693,17 @@ def select_rows(session_id: str):
                 return _err(ErrorResponse(detail="Слишком большая высота здания"), 400)
         except (ValueError, TypeError):
             return _err(ErrorResponse(detail="Некорректное значение высоты"), 400)
+
+    # Высота этажа (АР) — необязательный параметр
+    if floor_height is not None:
+        try:
+            floor_height = float(floor_height)
+            if floor_height <= 0:
+                return _err(ErrorResponse(detail="Высота этажа должна быть положительным числом"), 400)
+            if floor_height > 10000:
+                return _err(ErrorResponse(detail="Слишком большая высота этажа"), 400)
+        except (ValueError, TypeError):
+            return _err(ErrorResponse(detail="Некорректное значение высоты этажа"), 400)
 
     # Валидация материалов
     if row_materials:
@@ -1448,7 +1743,9 @@ def select_rows(session_id: str):
             row_materials,
             building_height, 
             grouped_data,
-            processing_type
+            processing_type,
+            global_constants,
+            floor_height
         )
         return _ok(SelectRowsResponse(**result))
     except KeyError:
@@ -1494,6 +1791,9 @@ def new_run(session_id: str):
               type: object
             buildingHeight:
               type: number
+            floorHeight:
+              type: number
+              description: Высота этажа в метрах (1-10000, режим АР)
             groupedData:
               type: object
             processingType:
@@ -1519,12 +1819,22 @@ def new_run(session_id: str):
     row_types = data.get("rowTypes", data.get("row_types", {}))
     row_materials = data.get("rowMaterials", data.get("row_materials", {}))
     building_height = data.get("buildingHeight", data.get("building_height"))
+    floor_height = data.get("floorHeight", data.get("floor_height"))
     grouped_data = data.get("groupedData", data.get("grouped_data", {}))
     processing_type = data.get("processingType", "KR").upper()
+    global_constants = data.get("globalConstants", data.get("global_constants", {})) or {}
 
     # Валидация processing_type
     if processing_type not in ("KR", "AR"):
         processing_type = "KR"
+
+    if not isinstance(global_constants, dict):
+        return _err(ErrorResponse(detail="globalConstants должен быть объектом {имя: значение}"), 400)
+    global_constants = {
+        str(k): str(v).strip()
+        for k, v in global_constants.items()
+        if v is not None and str(v).strip()
+    }
 
     if not row_indices or len(row_indices) == 0:
         return _err(ErrorResponse(detail="Выберите хотя бы одну строку"), 400)
@@ -1539,6 +1849,17 @@ def new_run(session_id: str):
         except (ValueError, TypeError):
             return _err(ErrorResponse(detail="Некорректное значение высоты"), 400)
 
+    # Высота этажа (АР) — необязательный параметр
+    if floor_height is not None:
+        try:
+            floor_height = float(floor_height)
+            if floor_height <= 0:
+                return _err(ErrorResponse(detail="Высота этажа должна быть положительным числом"), 400)
+            if floor_height > 10000:
+                return _err(ErrorResponse(detail="Слишком большая высота этажа"), 400)
+        except (ValueError, TypeError):
+            return _err(ErrorResponse(detail="Некорректное значение высоты этажа"), 400)
+
     logger.info(f"new_run: session={session_id}, строк={len(row_indices)}, тип={processing_type}")
 
     try:
@@ -1549,7 +1870,9 @@ def new_run(session_id: str):
             row_materials or {},
             building_height,
             grouped_data or {},
-            processing_type
+            processing_type,
+            global_constants,
+            floor_height
         )
         return _ok(NewRunResponse(**result))
     except KeyError:

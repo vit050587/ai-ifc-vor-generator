@@ -36,6 +36,8 @@ class WallTrimSettings(BaseModel):
 
 
 class PolygonConversionSettings(BaseModel):
+    junction_gap_radius_ratio: float = Field(default=3.0, ge=0, le=4, description="Radius of inward wedge simplification at angled junctions, in local wall thicknesses; 0 disables.")
+    final_min_wall_length: float = Field(default=1.0, ge=0, description="Minimum longest OBB side in PDF points after merging; 0 disables filtering.")
     curved_walls_mode: Literal["skip", "approximate"] = "skip"
     straight_simplification_tolerance: float = Field(default=0.15, ge=0) # Допустимое отклонение при упрощении прямых контуров.
     curve_approximation_tolerance: float = Field(default=1.5, gt=0) # Точность аппроксимации кривой прямыми хордами.
@@ -47,6 +49,48 @@ class PolygonConversionSettings(BaseModel):
     min_length_to_thickness_ratio: float = Field(default=1, gt=0) # Минимальная вытянутость стены. (Соотношение)
     deduplication_tolerance: float = Field(default=0.25, gt=0)
 
+class MatrixProcessorSettings(BaseModel):
+    error_threshold: float = 0.03
+    matrix_dpi: int = 600
+    base_dpi: int = 450
+
+    boundary_threshold: float = 0.7
+
+    obb_max_area_error: float = 0.15
+    obb_corner_angle_tolerance: float = 20.0  # degrees
+    obb_parallel_angle_tolerance: float = 3.0  # degrees between opposing straight sides
+    obb_max_parts: int = 128
+    obb_residual_margin_px: float = 3.0  # pixels at base_dpi
+
+    minimum_obb_or_polygon_area_px: float = 11.0
+
+    @property
+    def window_radius(self) -> int:
+        return int(13 * self.matrix_dpi / self.base_dpi)
+
+    @property
+    def contour_sample_stride(self) -> int:
+        return int(4 * self.matrix_dpi / self.base_dpi)
+
+    @property
+    def epsilon(self) -> int:
+        return int(2 * self.matrix_dpi / self.base_dpi)
+
+    @property
+    def obb_boundary_tolerance(self) -> float:
+        return 8.0 * self.matrix_dpi / self.base_dpi
+
+    @property
+    def obb_min_part_side(self) -> float:
+        return 8.0 * self.matrix_dpi / self.base_dpi
+
+    @property
+    def obb_residual_margin(self) -> float:
+        return self.obb_residual_margin_px * self.matrix_dpi / self.base_dpi
+
+    @property
+    def minimum_obb_or_polygon_area(self) -> float:
+        return self.minimum_obb_or_polygon_area_px * (self.matrix_dpi / self.base_dpi)**2
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -60,8 +104,10 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
 
     OLLAMA_MODEL_NAME: str = "hf.co/unsloth/Qwen3-VL-8B-Instruct-GGUF:Q5_K_M"
+    OLLAMA_MODEL_TG_NAME: str = "qwen3:14b"
     OLLAMA_BASE_URL: str = "http://ollama:11434"
     OLLAMA_CONTEXT_LENGTH: int = 16384
+    OLLAMA_KEEP_ALIVE: str = "30m"
 
     DEVICE: str = "cuda"
 
@@ -73,6 +119,8 @@ class Settings(BaseSettings):
     MIROSTAT_TAU: float = 30.0
     FREQUENCY_PENALTY: float = 0.0
     PRESENCE_PENALTY: float = 0.0
+    OLLAMA_NUM_CTX: int = 4096
+    OLLAMA_NUM_PREDICT: int = 1024
 
     # Пути
     LOG_DIR: Path = Path("/app/logs")
@@ -134,8 +182,12 @@ class Settings(BaseSettings):
     HATCHING_PIXELS_CONFIDENCE: float = 0.5
     MIN_PIXELS_AREA_REMOVE: int = 100
     DPI: int = 900
-    DEBUG_DPI: int = 350
+    MATRIX_COMPRESSION_DPI: int = 600
+    DEBUG_DPI: int = 450
+    SAVE_PROBABILITY_HEATMAPS: bool = False
+    PROBABILITY_HEATMAP_DEBUG_DPI: int = 350
     USE_TILES_CACHE: bool = True
+    FALLBACK_THRESHOLD: float = 0.005
 
     WALL_DETECTION: WallDetectionProfile = Field(default_factory=WallDetectionProfile)
     UNHATCHED_WALL_DETECTION: UnhatchedWallDetectionProfile = Field(default_factory=UnhatchedWallDetectionProfile)
@@ -143,6 +195,11 @@ class Settings(BaseSettings):
     WALL_TRIM: WallTrimSettings = Field(default_factory=WallTrimSettings)
     POLYGON_CONVERSION: PolygonConversionSettings = Field(
         default_factory=PolygonConversionSettings
+    )
+    MATRIX_PROCESSOR: MatrixProcessorSettings = Field(
+        default_factory=lambda data: MatrixProcessorSettings(
+            matrix_dpi=data["MATRIX_COMPRESSION_DPI"]
+        )
     )
 
 

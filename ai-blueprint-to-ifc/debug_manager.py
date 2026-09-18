@@ -3,10 +3,12 @@ from PIL import Image, ImageDraw, ImageFont
 import json
 from pdf_prcoessor import PdfProcessor
 import os
+import re
 import shutil
 from typing import List, Any
 from PIL import Image
 import torch
+import numpy as np
 
 from logger import setup_logger
 from config import settings
@@ -99,12 +101,26 @@ def save_blueprint_walls_by_material(
     fill_opacity: float,
     confidence: float | None = None,
     save_md: bool = True,
-    zoom: float = settings.WALL_DETECTION.zoom
+    zoom: float = settings.WALL_DETECTION.zoom,
+    draw_obbs: bool = True,
+    draw_polygons: bool = True,
 ):
+    fill_opacity = float(fill_opacity)
+    if 1 < fill_opacity <= 100:
+        fill_opacity /= 100
+    if not 0 <= fill_opacity <= 1:
+        raise ValueError("fill_opacity must be from 0 to 1 or from 0 to 100")
+
     grouped_walls: dict[str, list[dict]] = {}
     material_colors: dict[str, str] = {}
+    obb_walls: list[dict] = []
+    grouped_polygons: dict[str, list[dict]] = {}
 
     for wall in walls:
+        is_polygon = "polygon" in wall
+        if (is_polygon and not draw_polygons) or (not is_polygon and not draw_obbs):
+            continue
+
         material = _get_wall_material(wall)
         if material not in material_colors:
             material_colors[material] = MATERIAL_COLORS[
@@ -112,9 +128,16 @@ def save_blueprint_walls_by_material(
             ]
 
         color = material_colors[material]
-        grouped_walls.setdefault(color, []).append(wall)
+        if is_polygon:
+            grouped_polygons.setdefault(color, []).append(wall)
+        else:
+            drawable_wall = dict(wall)
+            if "obb_pdf" in wall:
+                drawable_wall["bbox_pdf"] = wall["obb_pdf"]
+            grouped_walls.setdefault(color, []).append(drawable_wall)
+            obb_walls.append(drawable_wall)
 
-    for legend_row in legend_row_items:
+    for legend_row in legend_row_items if draw_obbs else []:
         material = legend_row["full_description"]
         if material not in material_colors or not all("bbox" in symbol for symbol in legend_row["legend_symbols"]):
             continue
@@ -125,18 +148,32 @@ def save_blueprint_walls_by_material(
     output_path = settings.DEBUG_DIR / folder_name / settings.DEBUG_IMAGES_DIR / file_name
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    _, painted_walls_image = pdf_processor.render_obb_rectangles(
-        grouped_walls,
-        width=2,
-        fill_opacity=fill_opacity,
-        zoom=zoom
-    )
-    img_with_labels = pdf_processor.draw_obb_labels(
-        painted_walls_image,
-        walls,
-        label_key="id",
-        zoom=zoom
-    )
+    if draw_obbs:
+        _, painted_walls_image = pdf_processor.render_obb_rectangles(
+            grouped_walls,
+            width=2,
+            fill_opacity=fill_opacity,
+            zoom=zoom,
+        )
+        img_with_labels = pdf_processor.draw_obb_labels(
+            painted_walls_image,
+            obb_walls,
+            label_key="id",
+            zoom=zoom,
+        )
+    else:
+        _, img_with_labels = pdf_processor.pdf_to_base64(zoom=zoom)
+        img_with_labels = img_with_labels.copy()
+
+    if grouped_polygons:
+        img_with_labels = pdf_processor.render_pdf_polygons(
+            grouped_polygons,
+            image=img_with_labels,
+            fill_opacity=fill_opacity,
+            zoom=zoom,
+            width=2,
+            label_key="id",
+        )
 
     if confidence:
         draw_text_in_top_left_corner(img_with_labels, f"Conf: {round(confidence*100, 1)}%")
@@ -154,7 +191,7 @@ def save_blueprint_walls_by_material(
 
 def save_blueprint_masks_by_material(
     folder_name: str,
-    matrices: list[torch.Tensor],
+    matrices: list[dict[str, Any]],
     pdf_processor: PdfProcessor,
     file_name: str | Path,
     legends: list[dict],
@@ -167,7 +204,12 @@ def save_blueprint_masks_by_material(
     if not 0 <= fill_opacity <= 1:
         raise ValueError("fill_opacity must be from 0 to 1 or from 0 to 100")
 
-    for matrix in matrices:
+    if not matrices:
+        return
+
+    for matrix_entry in matrices:
+        matrix = matrix_entry["matrix"]
+        channel_id_2_entry_id = matrix_entry["channel_id_2_entry_id"]
         if not isinstance(matrix, torch.Tensor):
             raise TypeError("Each debug matrix must be a torch.Tensor")
         if matrix.ndim != 3:
@@ -177,33 +219,37 @@ def save_blueprint_masks_by_material(
             )
         if matrix.device.type != "cpu":
             raise ValueError("Debug matrices must be moved to CPU before saving")
+        if not isinstance(channel_id_2_entry_id, dict):
+            raise TypeError("channel_id_2_entry_id must be a dict")
+        if any(channel_id not in channel_id_2_entry_id for channel_id in range(matrix.shape[0])):
+            raise ValueError("channel_id_2_entry_id must contain every matrix channel")
 
     _, page_image = pdf_processor.pdf_to_base64(dpi=settings.DEBUG_DPI)
     painted_image = page_image.convert("RGB")
-    channel_count = max(
-        max((matrix.shape[0] for matrix in matrices), default=0),
-        len(legends),
-    )
-    material_colors: dict[str, str] = {}
     opacity = round(255 * fill_opacity)
+    material_masks: dict[str, Image.Image] = {}
+    material_entry_ids: dict[str, set[int]] = {}
+    material_colors: dict[str, str] = {}
 
-    for channel_id in range(channel_count):
-        if channel_id < len(legends):
+    for matrix_entry in matrices:
+        matrix = matrix_entry["matrix"]
+        channel_id_2_entry_id = matrix_entry["channel_id_2_entry_id"]
+
+        for channel_id in range(matrix.shape[0]):
+            entry_id = channel_id_2_entry_id[channel_id]
+            if not isinstance(entry_id, int) or not 0 <= entry_id < len(legends):
+                raise ValueError(
+                    f"Legend entry id {entry_id!r} for channel {channel_id} is out of range"
+                )
+
             material = str(
-                legends[channel_id].get("full_description", f"channel_{channel_id}")
+                legends[entry_id].get("full_description", f"entry_{entry_id}")
             )
-        else:
-            material = f"channel_{channel_id}"
-
-        color = material_colors.setdefault(
-            material,
-            MATERIAL_COLORS[len(material_colors) % len(MATERIAL_COLORS)],
-        )
-        channel_mask = Image.new("L", painted_image.size, 0)
-
-        for matrix in matrices:
-            if channel_id >= matrix.shape[0]:
-                continue
+            material_entry_ids.setdefault(material, set()).add(entry_id)
+            material_mask = material_masks.get(material)
+            if material_mask is None:
+                material_mask = Image.new("L", painted_image.size, 0)
+                material_masks[material] = material_mask
 
             height = min(int(matrix.shape[1]), painted_image.height)
             width = min(int(matrix.shape[2]), painted_image.width)
@@ -218,11 +264,12 @@ def save_blueprint_masks_by_material(
             )
             binary_mask = Image.fromarray(binary)
             # Paste only selected pixels, preserving masks from other drawings.
-            channel_mask.paste(opacity, (0, 0, width, height), binary_mask)
+            material_mask.paste(opacity, (0, 0, width, height), binary_mask)
 
-        if channel_id < len(legends):
-            mask_draw = ImageDraw.Draw(channel_mask)
-            for symbol in legends[channel_id].get("legend_symbols", []):
+    for material_index, (material, material_mask) in enumerate(material_masks.items()):
+        mask_draw = ImageDraw.Draw(material_mask)
+        for entry_id in material_entry_ids[material]:
+            for symbol in legends[entry_id].get("legend_symbols", []):
                 bbox_pdf = symbol.get("bbox")
                 if bbox_pdf is None:
                     continue
@@ -250,7 +297,9 @@ def save_blueprint_masks_by_material(
                     joint="curve",
                 )
 
-        painted_image.paste(color, (0, 0), channel_mask)
+        color = MATERIAL_COLORS[material_index % len(MATERIAL_COLORS)]
+        material_colors[material] = color
+        painted_image.paste(color, (0, 0), material_mask)
 
     output_path = settings.DEBUG_DIR / folder_name / settings.DEBUG_IMAGES_DIR / file_name
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -261,6 +310,169 @@ def save_blueprint_masks_by_material(
         _format_material_colors_markdown(material_colors),
         encoding="utf-8",
     )
+
+
+def save_probability_heatmaps_by_material(
+    folder_name: str,
+    drawing_index: int,
+    matrix: torch.Tensor,
+    channel_id_2_entry_id: dict[int, int],
+    pdf_processor: PdfProcessor,
+    legends: list[dict],
+    source_dpi: int,
+    target_dpi: int,
+    threshold: float,
+    max_opacity: float = 0.7,
+) -> None:
+    """Save one fixed-scale probability heatmap overlay per matrix channel."""
+    if matrix.ndim != 3:
+        raise ValueError(
+            "Probability matrix must have shape [N, H, W], "
+            f"got {tuple(matrix.shape)}"
+        )
+    if target_dpi <= 0:
+        raise ValueError("target_dpi must be greater than zero")
+    if source_dpi <= 0:
+        raise ValueError("source_dpi must be greater than zero")
+    if not 0 <= threshold <= 1:
+        raise ValueError("threshold must be from 0 to 1")
+    if not 0 <= max_opacity <= 1:
+        raise ValueError("max_opacity must be from 0 to 1")
+    if any(channel_id not in channel_id_2_entry_id for channel_id in range(matrix.shape[0])):
+        raise ValueError("channel_id_2_entry_id must contain every matrix channel")
+
+    _, page_image = pdf_processor.pdf_to_base64(dpi=target_dpi)
+    page_image = page_image.convert("RGB")
+    output_dir = (
+        settings.DEBUG_DIR
+        / folder_name
+        / "probability_heatmaps"
+        / f"drawing_{drawing_index}"
+    )
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    used_names: set[str] = set()
+    scale = target_dpi / source_dpi
+    target_height = max(1, round(int(matrix.shape[1]) * scale))
+    target_width = max(1, round(int(matrix.shape[2]) * scale))
+
+    for channel_id in range(matrix.shape[0]):
+        entry_id = channel_id_2_entry_id[channel_id]
+        if not isinstance(entry_id, int) or not 0 <= entry_id < len(legends):
+            raise ValueError(
+                f"Legend entry id {entry_id!r} for channel {channel_id} is out of range"
+            )
+        material = str(
+            legends[entry_id].get("full_description", f"entry_{entry_id}")
+        )
+        file_stem = _unique_debug_file_stem(
+            _sanitize_debug_file_name(material),
+            used_names,
+        )
+
+        # Move only one channel to RAM at a time to avoid retaining another
+        # complete copy of the probability matrix.
+        probability = (
+            matrix[channel_id]
+            .detach()
+            .to(device="cpu", dtype=torch.float32)
+            .clamp_(0, 1)
+            .numpy()
+        )
+        probability_image = Image.fromarray(probability, mode="F").resize(
+            (target_width, target_height),
+            resample=Image.Resampling.BILINEAR,
+        )
+        probability = np.asarray(probability_image, dtype=np.float32)
+
+        height = min(page_image.height, probability.shape[0])
+        width = min(page_image.width, probability.shape[1])
+        probability = probability[:height, :width]
+        visible = probability >= threshold
+        display_probability = _normalize_probability_for_heatmap(
+            probability,
+            threshold,
+        )
+        heatmap = _probability_to_heatmap(display_probability)
+
+        # Keep values at the threshold visible while leaving everything below
+        # it fully transparent. Higher confidence gradually increases opacity.
+        min_opacity = min(0.25, max_opacity)
+        alpha = np.where(
+            visible,
+            min_opacity + display_probability * (max_opacity - min_opacity),
+            0,
+        )
+        alpha = np.rint(alpha * 255).astype(np.uint8)
+
+        overlay = Image.fromarray(
+            np.dstack((heatmap, alpha)),
+            mode="RGBA",
+        )
+        result = page_image.copy()
+        result.paste(overlay, (0, 0), overlay)
+        result.save(output_dir / f"{file_stem}.png")
+
+
+def _normalize_probability_for_heatmap(
+    probability: np.ndarray,
+    threshold: float,
+) -> np.ndarray:
+    """Expand [threshold, 1] to [0, 1] and emphasize high-score differences."""
+    if threshold >= 1:
+        return (probability >= 1).astype(np.float32)
+
+    normalized = np.clip(
+        (probability - threshold) / (1 - threshold),
+        0,
+        1,
+    )
+    return np.square(normalized, dtype=np.float32)
+
+
+def _probability_to_heatmap(probability: np.ndarray) -> np.ndarray:
+    """Map probabilities in [0, 1] to a fixed blue-to-red color scale."""
+    values = np.rint(probability * 255).astype(np.uint8)
+    anchor_positions = np.asarray([0, 64, 128, 191, 255])
+    anchor_colors = np.asarray(
+        [
+            (0, 0, 255),
+            (0, 255, 255),
+            (0, 255, 0),
+            (255, 255, 0),
+            (255, 0, 0),
+        ],
+        dtype=np.float32,
+    )
+    lut = np.empty((256, 3), dtype=np.uint8)
+    lut_values = np.arange(256)
+    for color_channel in range(3):
+        lut[:, color_channel] = np.rint(
+            np.interp(
+                lut_values,
+                anchor_positions,
+                anchor_colors[:, color_channel],
+            )
+        ).astype(np.uint8)
+    return lut[values]
+
+
+def _sanitize_debug_file_name(value: str) -> str:
+    sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).strip(" .")
+    sanitized = re.sub(r"\s+", " ", sanitized)
+    return sanitized[:180] or "material"
+
+
+def _unique_debug_file_stem(file_stem: str, used_names: set[str]) -> str:
+    candidate = file_stem
+    suffix = 2
+    while candidate.casefold() in used_names:
+        candidate = f"{file_stem}_{suffix}"
+        suffix += 1
+    used_names.add(candidate.casefold())
+    return candidate
 
 
 def _get_wall_material(wall: dict) -> str:
@@ -322,7 +534,7 @@ def save_legend_rows(legend_rows):
             symbol["image"].save(path / f"symbol_{s_i}.png")
         for d_i, description in enumerate(legend_row.get("legend_descriptions", [])):
             description["image"].save(path / f"description_{d_i}.png")
-        map_for_save[folder_name] = legend_row["full_description"]
+        map_for_save[folder_name] = {"description": legend_row["full_description"], "element_type": legend_row.get("element_type", None)}
     
     with (settings.DEBUG_LEGEND_LAYOUTS_FILTERED_DIR / "map.json").open("w", encoding="utf-8") as f:
         json.dump(map_for_save, f, indent=2, ensure_ascii=False)
@@ -374,3 +586,6 @@ def draw_text_in_top_left_corner(
     )
     return image
 
+def save_torch_matrix(matrix: torch.Tensor, path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(matrix, path)

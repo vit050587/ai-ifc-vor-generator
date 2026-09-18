@@ -8,6 +8,7 @@ import copy
 from dino_service import DinoService
 from pdf_prcoessor import PdfProcessor
 from ollama_service import OllamaService
+from ollama_service_tg import OllamaServiceTg
 from drawing_statistics_analyzer import DrawingStatisticsAnalyzer
 from rectangle_utils import get_two_points_bbox
 from debug_manager import save_legend_rows
@@ -23,17 +24,19 @@ class HatchingProcessor:
         ollama_service: OllamaService,
         drawing_statistics: DrawingStatisticsAnalyzer,
         dino_service: DinoService,
-        pdf_processor: PdfProcessor | None = None
+        pdf_processor: PdfProcessor | None = None,
+        ollama_service_tg: OllamaServiceTg | None = None
     ):
         self.dino_service = dino_service
         self.drawing_statistics = drawing_statistics
         self.pdf_processor = pdf_processor
         self.ollama_service = ollama_service
+        self.ollama_service_tg = ollama_service_tg
         self.reset_to_default_legends()
 
         self.zoom = None
 
-    def specify_legends(self, legends:list, load_deafult=True):
+    def specify_legends(self, legends:list, load_deafult: bool =True):
         self.legends = legends
         if legends:
             self.adjust_legends = False
@@ -218,6 +221,7 @@ class HatchingProcessor:
         for legend in self.legends:
             if not "full_description" in legend:
                 legend["full_description"] = self._get_description(legend["legend_descriptions"])
+                legend["element_type"] = self._get_element_type_by_description(legend["full_description"])
             for description in legend["legend_descriptions"]:
                 if not "image" in description:
                     _, description["image"] = self.pdf_processor.crop_pdf_rect(get_two_points_bbox(description["bbox"]), zoom=settings.HATCHING_ZOOM)
@@ -253,6 +257,19 @@ class HatchingProcessor:
             image_text_json = self.ollama_service.extract_from_drawing(img_b64, settings.OLLAMA_MODEL_NAME, "get_text_from_image")
             description_texts.append(image_text_json.get("text", ""))
         return " ".join(description_texts)
+
+    def _get_element_type_by_description(self, description: str):
+        if self.ollama_service_tg is None:
+            return None
+
+        payload = {"data": json.dumps({"description" : description}, ensure_ascii=False)}
+
+        result = self.ollama_service_tg.get_tg_model_answer("get_element_type", payload)
+        if not isinstance(result, dict):
+            return None
+
+        verdict = result.get("verdict", None)
+        return verdict if isinstance(verdict, str) else None
 
     @staticmethod
     def _apply_description_bbox_horizontal_modifier(bbox: dict[str, float]):

@@ -1,0 +1,13 @@
+Return the element type based on the description.
+
+DATA:
+{data}
+
+RESPONSE FORMAT:
+{{
+    "verdict": wall | not_wall | uncertain | insufficient_data
+}}
+
+wall - any layer or part of a wall, or the wall itself
+
+Return only JSON. No extra text.

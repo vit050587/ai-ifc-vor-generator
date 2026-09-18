@@ -1,3 +1,4 @@
+# ifc_json_builder.py
 """
 Сборщик JSON для IFC-данных
 Поддерживает два режима:
@@ -624,7 +625,7 @@ class KRBuilder:
         """Извлечение данных элемента из группы."""
         first_element = {}
         
-        # 1. Извлекаем данные из additionalCharacteristics
+        # 1. Извлекаем имя элемента из additionalCharacteristics
         for char in group.get("additionalCharacteristics", []):
             name = char.get("name", "")
             values = char.get("values", [])
@@ -652,7 +653,7 @@ class KRBuilder:
                 elif name == "Расположение":
                     first_element["Расположение"] = value
         
-        # 3. Ищем соответствие в filtered_groups_mssk для получения ВСЕХ данных
+        # 3. Ищем соответствие в filtered_groups_mssk (СТАРАЯ ЛОГИКА ДЛЯ GUIDs)
         element_name = first_element.get("Имя", "")
         element_name_clean = clean_element_name(element_name)
         matched_fg = None
@@ -684,54 +685,60 @@ class KRBuilder:
                             matched_fg = fg
                             break
         
-        # 4. Если нашли соответствие, берем ВСЕ данные из matched_fg
+        # 4. Если нашли соответствие в filtered_groups_mssk
         if matched_fg:
             fe = matched_fg.get("first_element", {})
-            # Обновляем first_element всеми данными из matched_fg
+            # Обновляем first_element данными из matched_fg
             for key, value in fe.items():
                 if value and value != "-" and not pd.isna(value):
                     first_element[key] = value
             
-            # Получаем индексы для сбора GUIDs
+            # СТАРАЯ ЛОГИКА СБОРА GUIDs
             indices = matched_fg.get("indices", [])
             if indices and self.data["elements_df"] is not None:
                 all_guids = collect_guids_from_indices(indices, self.data["elements_df"])
                 if all_guids:
                     first_element["AllGuids"] = all_guids
         
-        # 5. Если matched_fg не найден, ищем в elements_df напрямую по имени
-        if not matched_fg and self.data["elements_df"] is not None:
+        # 5. ДОПОЛНИТЕЛЬНО: ищем данные в elements_df (для геометрии)
+        # GUIDs НЕ трогаем - только дополняем first_element данными
+        if self.data["elements_df"] is not None:
             df = self.data["elements_df"]
-            if "Имя" in df.columns:
-                # Ищем строку с таким же именем
-                mask = df["Имя"].astype(str).str.contains(element_name_clean, na=False, case=False)
+            
+            # Ищем колонку "Имя" в Excel
+            name_col = None
+            for col in df.columns:
+                if col == "Имя":
+                    name_col = col
+                    break
+            
+            if name_col and name_col in df.columns:
+                # Пробуем найти по точному совпадению
+                mask_exact = df[name_col].astype(str) == element_name
+                
+                # Пробуем найти по частичному совпадению
+                mask_partial = df[name_col].astype(str).str.contains(
+                    element_name_clean, na=False, case=False, regex=False
+                )
+                
+                mask = mask_exact if mask_exact.any() else mask_partial
+                
                 if mask.any():
                     row = df[mask].iloc[0]
+                    # Дополняем first_element данными из Excel
+                    # НЕ трогаем AllGuids - они уже собраны правильно
                     for key, value in row.items():
-                        if value and not pd.isna(value) and value != "-":
+                        if key == "AllGuids":
+                            continue  # Пропускаем, GUIDs уже собраны
+                        if value is not None and not pd.isna(value) and str(value) != "-":
                             first_element[key] = value
-                    
-                    # Собираем GUIDs
-                    guid_col = None
-                    for col in df.columns:
-                        if "GlobalId" in str(col):
-                            guid_col = col
-                            break
-                    
-                    if guid_col:
-                        guids = df[mask][guid_col].astype(str).tolist()
-                        first_element["AllGuids"] = guids
         
-        # 6. GUIDs
+        # 6. GUIDs (СТАРАЯ ЛОГИКА)
         guids = first_element.get("AllGuids", [])
         if not guids and first_element.get("GlobalId"):
             guids.append(str(first_element["GlobalId"]))
         
-        # 7. Добавляем общие данные из группы
-        first_element["_total_volume"] = self._get_total_volume(group)
-        first_element["_total_area"] = self._get_total_area(group)
-        
-        # 8. Определяем category и typeName
+        # 7. Определяем category и typeName
         category = group.get("buildingElementName", "")
         if not category:
             category = first_element.get("Тип (RU)", "")
@@ -750,34 +757,73 @@ class KRBuilder:
         }
     
     def _get_total_volume(self, group: Dict) -> float:
-        """Получение общего объёма из группы."""
-        if "total_volume" in group and group["total_volume"]:
-            return safe_float(group["total_volume"])
-        
+        """Получение общего объёма группы (суммарный)."""
+        # 1. Сначала пробуем totalMeasure
         total_measure = group.get("totalMeasure", {})
-        if total_measure.get("value"):
-            return safe_float(total_measure["value"])
+        if total_measure:
+            measure_type = total_measure.get("type", "")
+            value = safe_float(total_measure.get("value", 0))
+            
+            # Если тип volume - это суммарный объём группы
+            if measure_type == "volume" and value > 0:
+                return value
         
-        first_element = group.get("first_element", {})
-        for key in ["Объём, м3", "QTO_Qto_WallBaseQuantities_Объём_NetVolume_м3", "QTO_bbox::Объём_м3"]:
-            if key in first_element and first_element[key] != "-":
-                return safe_float(first_element[key])
+        # 2. Затем total_volume (агрегированное поле из группировки)
+        if "total_volume" in group and group["total_volume"]:
+            value = safe_float(group["total_volume"])
+            if value > 0:
+                return value
+        
+        # 3. Если totalMeasure.type == "count", значит объёма в группе нет
+        # В этом случае суммируем объёмы всех элементов из Excel
+        if total_measure.get("type") == "count":
+            count = safe_float(total_measure.get("value", 0))
+            if count > 0 and self.data["elements_df"] is not None:
+                # Суммируем объёмы по всем элементам группы
+                # Но у нас нет индексов для этой группы в selected_elements_grouped.json
+                # Поэтому используем first_element как приближение
+                first_element = group.get("first_element", {})
+                volume = first_element.get("Объём, м3", "")
+                if volume and volume != "-" and not pd.isna(volume):
+                    volume_val = safe_float(volume)
+                    if volume_val > 0:
+                        # Это объём ОДНОГО элемента, умножаем на count
+                        return volume_val * count
         
         return 0.0
     
     def _get_total_area(self, group: Dict) -> float:
-        """Получение общей площади из группы."""
+        """Получение общей площади группы (суммарная)."""
+        # 1. Сначала пробуем totalAreas - это суммарные площади группы
         total_areas = group.get("totalAreas", {})
         if total_areas:
-            for key in ["Площадь, м2", "QTO_Qto_WallBaseQuantities_Площадь_GrossSideArea_м2",
-                       "QTO_Qto_WallBaseQuantities_Площадь_GROSS_м2", "Площадь_GrossSideArea_м2"]:
-                if key in total_areas and total_areas[key]:
-                    return safe_float(total_areas[key])
+            # Приоритет: "Площадь, м2" (суммарная площадь группы)
+            if "Площадь, м2" in total_areas:
+                value = safe_float(total_areas["Площадь, м2"])
+                if value > 0:
+                    return value
+            
+            # Затем другие ключи площади
+            for key in ["Площадь_GrossSideArea_м2", 
+                       "QTO_Qto_WallBaseQuantities_Площадь_GrossSideArea_м2",
+                       "QTO_Qto_WallBaseQuantities_Площадь_GROSS_м2"]:
+                if key in total_areas:
+                    value = safe_float(total_areas[key])
+                    if value > 0:
+                        return value
+            
+            # Затем первое доступное значение
+            for key, val in total_areas.items():
+                value = safe_float(val)
+                if value > 0:
+                    return value
         
-        first_element = group.get("first_element", {})
-        for key in ["Площадь, м2", "QTO_Qto_WallBaseQuantities_Площадь_GrossSideArea_м2"]:
-            if key in first_element and first_element[key] != "-":
-                return safe_float(first_element[key])
+        # 2. Если totalAreas пуст, но есть totalMeasure с area
+        total_measure = group.get("totalMeasure", {})
+        if total_measure.get("type") == "area":
+            value = safe_float(total_measure.get("value", 0))
+            if value > 0:
+                return value
         
         return 0.0
     
@@ -799,163 +845,179 @@ class KRBuilder:
     def _build_properties(self, group: Dict) -> Dict:
         """Сбор свойств из группы."""
         properties = {}
+        first_element = group.get("first_element", {})
         
-        # Получаем first_element из разных источников
-        first_element = dict(group.get("first_element", {}))
+        # Определяем тип элемента
+        ifc_class = first_element.get("Тип элемента", "")
+        element_type = first_element.get("Тип (RU)", "")
         
-        # Функция для получения значения из характеристик
-        def get_char_value(char_list, name):
-            """Ищет значение характеристики по имени."""
-            if not char_list:
-                return None
-            for char in char_list:
-                if char.get("name") == name:
-                    values = char.get("values", [])
-                    if values:
-                        return values[0].get("strValue", "")
-            return None
-        
-        # Дополняем first_element данными из additionalCharacteristics
-        additional_chars = group.get("additionalCharacteristics", [])
-        for char in additional_chars:
-            name = char.get("name", "")
-            values = char.get("values", [])
-            if values and name:
-                value = values[0].get("strValue", "")
-                if value and value != "-":
-                    first_element[name] = value
-        
-        # Дополняем first_element данными из characteristics
-        characteristics = group.get("characteristics", [])
-        for char in characteristics:
-            name = char.get("name", "")
-            values = char.get("values", [])
-            if values and name:
-                value = values[0].get("strValue", "")
-                if value and value != "-":
-                    first_element[name] = value
-        
-        # ТЕПЕРЬ first_element содержит все данные
+        # ===== ОБЩИЕ СВОЙСТВА ДЛЯ ВСЕХ =====
         
         # Материал
         material = first_element.get("Материал", "")
-        if material and material != "-":
-            properties["material"] = material
+        if material and material != "-" and not pd.isna(material):
+            properties["material"] = str(material)
         
         # Слой материала
         material_layer = first_element.get("Свойство::IfcMaterialLayer::Name", "")
-        if material_layer and material_layer != "-":
-            properties["materialLayer"] = material_layer
+        if material_layer and material_layer != "-" and not pd.isna(material_layer):
+            properties["materialLayer"] = str(material_layer)
         
         # Класс бетона
         concrete_class = first_element.get("ExpCheck_MaterialConcrete_MGE_ConcreteGrade", "")
-        if concrete_class and concrete_class != "-":
-            properties["concreteClass"] = concrete_class
+        if concrete_class and concrete_class != "-" and not pd.isna(concrete_class):
+            properties["concreteClass"] = str(concrete_class)
         
         # Водонепроницаемость
         water_resist = first_element.get("ExpCheck_MaterialConcrete_MGE_WaterResist", "")
-        if water_resist and water_resist != "-":
-            properties["waterResistance"] = water_resist
+        if water_resist and water_resist != "-" and not pd.isna(water_resist):
+            properties["waterResistance"] = str(water_resist)
         
         # Морозостойкость
         freeze_durability = first_element.get("ExpCheck_MaterialConcrete_MGE_FreezeDurability", "")
-        if freeze_durability and freeze_durability != "-":
-            properties["freezeDurability"] = freeze_durability
-        
-        # ===== ГЕОМЕТРИЧЕСКИЕ ПАРАМЕТРЫ =====
-        
-        # Длина (мм)
-        length = first_element.get("Длина, мм", first_element.get("QTO_bbox::Длина_мм", ""))
-        if length and length != "-" and not pd.isna(length):
-            properties["lengthMm"] = safe_float(length)
-        
-        # Ширина (мм)
-        width = first_element.get("Ширина, мм", first_element.get("QTO_bbox::Ширина_мм", ""))
-        if width and width != "-" and not pd.isna(width):
-            properties["widthMm"] = safe_float(width)
-        
-        # Высота (мм)
-        height = first_element.get("Высота, мм", first_element.get("QTO_bbox::Высота_мм", ""))
-        if height and height != "-" and not pd.isna(height):
-            properties["heightMm"] = safe_float(height)
-        
-        # Периметр (мм)
-        perimeter = first_element.get("Периметр, мм", "")
-        if perimeter and perimeter != "-" and not pd.isna(perimeter):
-            properties["perimeterMm"] = safe_float(perimeter)
-        
-        # Площадь (м2)
-        area = first_element.get("Площадь, м2", "")
-        if area and area != "-" and not pd.isna(area):
-            properties["areaM2"] = safe_float(area)
-        
-        # Объём (м3)
-        volume = first_element.get("Объём, м3", first_element.get("QTO_bbox::Объём_м3", ""))
-        if volume and volume != "-" and not pd.isna(volume):
-            properties["volumeM3"] = safe_float(volume)
+        if freeze_durability and freeze_durability != "-" and not pd.isna(freeze_durability):
+            properties["freezeDurability"] = str(freeze_durability)
         
         # Армирование
         reinforcement = self._get_reinforcement(group)
-        if reinforcement:
+        if reinforcement and reinforcement != "-":
             properties["reinforcementVolumeRatio"] = safe_float(reinforcement)
         
         # Расположение
-        location = get_char_value(characteristics, "Расположение")
+        location = None
+        for char in group.get("characteristics", []):
+            if char.get("name") == "Расположение":
+                values = char.get("values", [])
+                if values:
+                    location = values[0].get("strValue")
+                break
+        
         if location:
             properties["location"] = location
         
-        # Уровень этажа (мм)
-        level_mm = first_element.get("Уровень_этажа_мм", "")
-        if level_mm and level_mm != "-" and not pd.isna(level_mm):
-            properties["levelMm"] = safe_float(level_mm)
+        # ===== ГЕОМЕТРИЧЕСКИЕ ПАРАМЕТРЫ (БЕЗ ПЛОЩАДЕЙ, ОБЪЁМОВ, DEPTH, HEIGHT) =====
+        
+        # Для стен (IfcWall)
+        if ifc_class == "IfcWall" or "Стена" in element_type:
+            # Толщина стены (ширина)
+            thickness = first_element.get("Ширина, мм", "")
+            if thickness and thickness != "-" and not pd.isna(thickness):
+                properties["thicknessMm"] = safe_float(thickness)
+        
+        # Для колонн (IfcColumn)
+        elif ifc_class == "IfcColumn" or "Колонн" in element_type:
+            # Наименьшая сторона
+            width = first_element.get("Ширина, мм", "")
+            if width and width != "-" and not pd.isna(width):
+                width_val = safe_float(width)
+                properties["minSideMm"] = width_val
+            
+            # Периметр
+            perimeter = first_element.get("Периметр, мм", "")
+            if perimeter and perimeter != "-" and not pd.isna(perimeter):
+                properties["perimeterMm"] = safe_float(perimeter)
+            elif "minSideMm" in properties:
+                # Если периметр не указан, предполагаем квадрат
+                properties["perimeterMm"] = 4 * properties["minSideMm"]
+        
+        # Для балок (IfcBeam)
+        elif ifc_class == "IfcBeam" or "Балк" in element_type:
+            # Ширина сечения
+            width = first_element.get("Ширина, мм", "")
+            if width and width != "-" and not pd.isna(width):
+                properties["widthMm"] = safe_float(width)
+            
+            # Периметр сечения
+            perimeter = first_element.get("Периметр, мм", "")
+            if perimeter and perimeter != "-" and not pd.isna(perimeter):
+                properties["perimeterMm"] = safe_float(perimeter)
+        
+        # Для плит (IfcSlab)
+        elif ifc_class == "IfcSlab" or "Плит" in element_type or "Перекрыт" in element_type:
+            # Толщина плиты
+            thickness = first_element.get("Ширина, мм", "")
+            if thickness and thickness != "-" and not pd.isna(thickness):
+                properties["thicknessMm"] = safe_float(thickness)
+        
+        # Для фундаментов (IfcFooting)
+        elif ifc_class == "IfcFooting" or "Фундамент" in element_type:
+            # Ширина
+            width = first_element.get("Ширина, мм", "")
+            if width and width != "-" and not pd.isna(width):
+                properties["widthMm"] = safe_float(width)
+        
+        # Для остальных - общие параметры
+        else:
+            # Ширина
+            width = first_element.get("Ширина, мм", "")
+            if width and width != "-" and not pd.isna(width):
+                properties["widthMm"] = safe_float(width)
         
         return properties
     
     def _build_positions_from_api(self, group: Dict) -> List[Dict]:
-        """Формирование позиций из ответа API."""
+        """Формирование позиций ТОЛЬКО из works в ответе API."""
         positions = []
         
         if not self.data["api_works"]:
             return positions
         
+        # Получаем имя элемента из группы
+        group_element_name = ""
+        for char in group.get("additionalCharacteristics", []):
+            if char.get("name") == "Имя элемента":
+                values = char.get("values", [])
+                if values:
+                    group_element_name = values[0].get("strValue", "")
+                break
+        
+        group_element_name_clean = clean_element_name(group_element_name)
+        
+        # Получаем значения из группы
         total_volume = self._get_total_volume(group)
         total_area = self._get_total_area(group)
         reinforcement = self._get_reinforcement(group)
         
+        # Ищем соответствующий result в api_works
         results = self.data["api_works"].get("results", [])
+        
+        # Для отслеживания уже добавленных работ
+        seen_codes = set()
+        
         for result_item in results:
+            # Получаем имя элемента из result
+            result_element = result_item.get("element", {})
+            result_element_name = ""
+            for char in result_element.get("additionalCharacteristics", []):
+                if char.get("name") == "Имя элемента":
+                    values = char.get("values", [])
+                    if values:
+                        result_element_name = values[0].get("strValue", "")
+                    break
+            
+            result_element_name_clean = clean_element_name(result_element_name)
+            
+            # СОПОСТАВЛЯЕМ по имени элемента
+            if group_element_name_clean and result_element_name_clean:
+                if group_element_name_clean != result_element_name_clean:
+                    continue
+            
+            # Обрабатываем ТОЛЬКО works из response.data
             response_data = result_item.get("response", {}).get("data", [])
             
             for data_item in response_data:
-                main_position = {
-                    "positionType": "work",
-                    "code": data_item.get("code", ""),
-                    "name": data_item.get("fullName", data_item.get("name", "")),
-                    "unit": data_item.get("unitOfMeasure", ""),
-                    "quantity": total_volume if total_volume else None,
-                    "quantityStatus": "calculated" if total_volume else "missing_data",
-                    "selectionParameters": {},
-                    "quantityCalculation": None
-                }
-                
-                for char in data_item.get("characteristics", []):
-                    main_position["selectionParameters"][char.get("name", "")] = char.get("value", "")
-                
-                if total_volume:
-                    main_position["quantityCalculation"] = {
-                        "sourceProperty": "NetVolume",
-                        "sourceValue": total_volume,
-                        "sourceUnit": "м³",
-                        "conversionFactor": 1.0,
-                        "formula": f"{total_volume}"
-                    }
-                
-                positions.append(main_position)
-                
+                # Пропускаем основную позицию (data_item) и берём ТОЛЬКО works
                 for work in data_item.get("works", []):
+                    work_code = work.get("code", "")
+                    
+                    # Пропускаем дубликаты
+                    if work_code in seen_codes:
+                        continue
+                    seen_codes.add(work_code)
+                    
                     work_position = {
                         "positionType": "work",
-                        "code": work.get("code", ""),
+                        "code": work_code,
                         "name": work.get("name", ""),
                         "unit": work.get("unitOfMeasure", ""),
                         "quantity": None,
@@ -964,41 +1026,47 @@ class KRBuilder:
                         "quantityCalculation": None
                     }
                     
+                    # Заполняем selectionParameters из characteristics
                     for char in work.get("characteristics", []):
                         work_position["selectionParameters"][char.get("name", "")] = char.get("value", "")
                     
-                    unit = work.get("unitOfMeasure", "").lower()
+                    # Рассчитываем quantity
+                    work_unit = work.get("unitOfMeasure", "").lower()
                     
-                    if "м2" in unit and total_area:
-                        work_position["quantity"] = total_area
-                        work_position["quantityStatus"] = "calculated"
-                        work_position["quantityCalculation"] = {
-                            "sourceProperty": "GrossSideArea",
-                            "sourceValue": total_area,
-                            "sourceUnit": "м²",
-                            "conversionFactor": 1.0,
-                            "formula": f"{total_area}"
-                        }
-                    elif "м3" in unit and total_volume:
-                        work_position["quantity"] = total_volume
-                        work_position["quantityStatus"] = "calculated"
-                        work_position["quantityCalculation"] = {
-                            "sourceProperty": "NetVolume",
-                            "sourceValue": total_volume,
-                            "sourceUnit": "м³",
-                            "conversionFactor": 1.0,
-                            "formula": f"{total_volume}"
-                        }
-                    elif "т" in unit and reinforcement:
-                        work_position["quantity"] = reinforcement / 1000.0
-                        work_position["quantityStatus"] = "calculated"
-                        work_position["quantityCalculation"] = {
-                            "sourceProperty": "ReinforcementVolumeRatio",
-                            "sourceValue": reinforcement,
-                            "sourceUnit": "кг/м³",
-                            "conversionFactor": 0.001,
-                            "formula": f"{reinforcement} / 1000"
-                        }
+                    if "м3" in work_unit or "m3" in work_unit or "m[3" in work_unit:
+                        if total_volume > 0:
+                            work_position["quantity"] = round(total_volume, 2)
+                            work_position["quantityStatus"] = "calculated"
+                            work_position["quantityCalculation"] = {
+                                "sourceProperty": "NetVolume",
+                                "sourceValue": total_volume,
+                                "sourceUnit": "м³",
+                                "conversionFactor": 1.0,
+                                "formula": f"{total_volume}"
+                            }
+                    elif "м2" in work_unit or "m2" in work_unit:
+                        if total_area > 0:
+                            work_position["quantity"] = round(total_area, 2)
+                            work_position["quantityStatus"] = "calculated"
+                            work_position["quantityCalculation"] = {
+                                "sourceProperty": "GrossSideArea",
+                                "sourceValue": total_area,
+                                "sourceUnit": "м²",
+                                "conversionFactor": 1.0,
+                                "formula": f"{total_area}"
+                            }
+                    elif "т" in work_unit or "t" in work_unit:
+                        if reinforcement > 0:
+                            quantity_tons = reinforcement / 1000.0
+                            work_position["quantity"] = round(quantity_tons, 3)
+                            work_position["quantityStatus"] = "calculated"
+                            work_position["quantityCalculation"] = {
+                                "sourceProperty": "ReinforcementVolumeRatio",
+                                "sourceValue": reinforcement,
+                                "sourceUnit": "кг",
+                                "conversionFactor": 0.001,
+                                "formula": f"{reinforcement} / 1000"
+                            }
                     
                     positions.append(work_position)
         
@@ -1018,6 +1086,11 @@ class KRBuilder:
         element_groups = []
         for idx, group in enumerate(self.data["selected_groups"], 1):
             element_data = self._extract_element_data(group)
+            
+            # ВАЖНО: добавляем first_element обратно в group
+            group["first_element"] = element_data["first_element"]
+            
+            # Теперь _build_properties получит правильный first_element
             properties = self._build_properties(group)
             positions = self._build_positions_from_api(group)
             

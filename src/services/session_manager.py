@@ -10,20 +10,19 @@ from typing import Dict, List, Optional, Any
 from collections import Counter
 import pandas as pd
 from werkzeug.utils import secure_filename
-from src.core.prompt_manager import PromptManager
 from src.core.logger import setup_logger
-from src.services.zero_step import zero_step
-from src.services.first_etap import first_step
-from src.services.second_etap import second_step
-from src.services.third_etap import third_step
-from src.services.fourth_etap import fourth_step
+from src.services.zero_step import zero_step, IFC_CONSTANTS_FILENAME
 from src.services.pdf_processor import process_pdf
 from src.services.serializer import _make_glb_file
-from src.services.group_excel import process_ifc_excel, process_ifc_excel_ar, process_ifc_excel_mssk
+from src.services.group_excel import process_ifc_excel_ar, process_ifc_excel_mssk
 
 from openpyxl import load_workbook
 
 logger = setup_logger(__name__)
+
+# Имя JSON-файла с глобальными константами, найденными в файле ПОС
+# (сохраняется в корень сессии)
+POS_CONSTANTS_FILENAME = "ПОС_глобальные_константы.json"
 
 
 class SessionManager:
@@ -43,10 +42,6 @@ class SessionManager:
         os.makedirs(upload_folder, exist_ok=True)
         os.makedirs(output_folder, exist_ok=True)
         os.makedirs(os.path.dirname(sessions_file) or ".", exist_ok=True)
-        
-        # Инициализируем PromptManager
-        self.prompt_manager = PromptManager()
-        self.prompt_manager.load_all()
     
     # =====================================================================
     #  БАЗОВЫЕ МЕТОДЫ (load/save/update/get/delete)
@@ -563,31 +558,67 @@ class SessionManager:
             zero_step(ifc_path, output_folder=session_dir, write_full_data=False,
                       processing_type=processing_type)
 
-            # Формируем справочные JSON
+            # Глобальные константы, определённые по модели IFC
+            # (IFC_глобальные_константы.json в корне сессии), регистрируем
+            # в списке файлов сессии — доступны для скачивания.
             try:
-                from src.services.ifc_reference_builder import build_reference_from_ifc
-                build_reference_from_ifc(ifc_path, session_dir, processing_type)
-            except Exception as e:
-                logger.warning(f"Не удалось сформировать JSON-файлы справочника для IFC: {e}", exc_info=True)
-
-            # Добавляем справочные JSON в список файлов сессии, чтобы они были
-            # доступны для просмотра/скачивания сразу после обработки IFC.
-            with self._state_lock:
-                if session_id in self._sessions:
-                    current_files = self._sessions[session_id].get("files", [])
-                    for src_name, display_name in [
-                        ("ifc_elements_output.json", "все элементы.json"),
-                        ("ifc_raw_elements_grouped.json", "группы элементов.json"),
-                    ]:
-                        src_path = os.path.join(session_dir, src_name)
-                        if os.path.isfile(src_path):
-                            current_files.append({
-                                "path": src_path,
-                                "filename": display_name,
-                                "size": os.path.getsize(src_path),
+                ifc_constants_path = os.path.join(session_dir, IFC_CONSTANTS_FILENAME)
+                if os.path.isfile(ifc_constants_path):
+                    with self._state_lock:
+                        if session_id in self._sessions:
+                            files = [
+                                f for f in self._sessions[session_id].get("files", [])
+                                if f.get("filename") != IFC_CONSTANTS_FILENAME
+                            ]
+                            files.append({
+                                "path": ifc_constants_path,
+                                "filename": IFC_CONSTANTS_FILENAME,
+                                "size": os.path.getsize(ifc_constants_path),
                             })
-                    self._sessions[session_id]["files"] = current_files
-                    self._save()
+                            self._sessions[session_id]["files"] = files
+                            self._save()
+            except Exception as e:
+                logger.warning(
+                    f"Не удалось зарегистрировать {IFC_CONSTANTS_FILENAME} "
+                    f"для сессии {session_id}: {e}",
+                )
+
+            # Заполняем универсальный шаблон параметров подбора работ
+            # (data/selection_parameters.json) значениями из сырого дампа:
+            # Параметры_подбора_элементов.json в корне сессии. Аддитивный шаг —
+            # новый файл, существующие результаты не меняются.
+            self._build_selection_parameters_templates(session_id, session_dir)
+
+            # Формируем справочные JSON (ifc_elements_output.json,
+            # ifc_raw_elements_grouped.json) и ссылки на позиции цифрового
+            # сборника — это функциональность режима КР. В режиме АР подбор
+            # работ выполняется детерминированным алгоритмом, цифровой
+            # сборник не используется, поэтому справочники не строятся.
+            if processing_type == "KR":
+                try:
+                    from src.services.ifc_reference_builder import build_reference_from_ifc
+                    build_reference_from_ifc(ifc_path, session_dir, processing_type)
+                except Exception as e:
+                    logger.warning(f"Не удалось сформировать JSON-файлы справочника для IFC: {e}", exc_info=True)
+
+                # Добавляем справочные JSON в список файлов сессии, чтобы они были
+                # доступны для просмотра/скачивания сразу после обработки IFC.
+                with self._state_lock:
+                    if session_id in self._sessions:
+                        current_files = self._sessions[session_id].get("files", [])
+                        for src_name, display_name in [
+                            ("ifc_elements_output.json", "все элементы.json"),
+                            ("ifc_raw_elements_grouped.json", "группы элементов.json"),
+                        ]:
+                            src_path = os.path.join(session_dir, src_name)
+                            if os.path.isfile(src_path):
+                                current_files.append({
+                                    "path": src_path,
+                                    "filename": display_name,
+                                    "size": os.path.getsize(src_path),
+                                })
+                        self._sessions[session_id]["files"] = current_files
+                        self._save()
 
             self._update_progress(session_id, 80, "Проверка результатов...")
             
@@ -635,7 +666,9 @@ class SessionManager:
             # В фоне строим ссылки на позиции цифрового сборника
             # (position_links.json) — чтобы кликабельные иконки 📎 в группах
             # предпросмотра были доступны сразу, до «Запустить обработку».
-            self._start_position_links_bg(session_id)
+            # Только для КР: в АР цифровой сборник не используется.
+            if processing_type == "KR":
+                self._start_position_links_bg(session_id)
 
         except Exception as e:
             import traceback
@@ -736,9 +769,14 @@ class SessionManager:
             excel_for_smetchik, excel_all_data = self._check_and_merge_sheets(
                 excel_for_smetchik, excel_all_data
             )
-            
+
             if not os.path.exists(excel_for_smetchik):
                 raise RuntimeError("Не удалось найти созданный Excel файл")
+
+            # Заполняем универсальный шаблон параметров подбора работ, если
+            # пайплайн PDF сформировал сырой дамп параметров
+            # (IFC_исходные_параметры.json). Аддитивный шаг.
+            self._build_selection_parameters_templates(session_id, session_dir)
             
             original_dir = self._prepare_original_dir(session_dir)
             
@@ -769,7 +807,10 @@ class SessionManager:
                     self._save()
 
             # В фоне строим ссылки на позиции цифрового сборника
-            self._start_position_links_bg(session_id)
+            # (position_links.json). Только для КР: в АР цифровой сборник
+            # не используется.
+            if processing_type == "KR":
+                self._start_position_links_bg(session_id)
 
         except Exception as e:
             import traceback
@@ -803,6 +844,45 @@ class SessionManager:
             merge_sheets_to_file(excel_for_smetchik, 'ДЛЯ_СМЕТЧИКА_объединенный.xlsx'),
             merge_sheets_to_file(excel_all_data, 'IFC_ВСЕ_ДАННЫЕ_объединенный.xlsx'),
         )
+
+    def _build_selection_parameters_templates(self, session_id: str, session_dir: str) -> None:
+        """Заполнение шаблона параметров подбора (Параметры_подбора_элементов.json).
+
+        Обёртка над selection_template_builder.build_selection_parameters:
+        строит файл по каждому элементу сырого дампа и регистрирует его в
+        списке файлов сессии. Ошибки не прерывают обработку — файл
+        вспомогательный (аддитивный шаг, на подбор работ не влияет).
+        """
+        try:
+            from src.services.selection_template_builder import (
+                build_selection_parameters,
+                OUTPUT_FILENAME,
+            )
+            output_path = build_selection_parameters(session_dir)
+            if output_path and os.path.isfile(output_path):
+                with self._state_lock:
+                    if session_id in self._sessions:
+                        files = [
+                            f for f in self._sessions[session_id].get("files", [])
+                            if f.get("filename") != OUTPUT_FILENAME
+                        ]
+                        files.append({
+                            "path": output_path,
+                            "filename": OUTPUT_FILENAME,
+                            "size": os.path.getsize(output_path),
+                        })
+                        self._sessions[session_id]["files"] = files
+                        self._save()
+                logger.info(
+                    f"Сохранён файл шаблонов параметров подбора в корень сессии: {output_path}"
+                )
+        except Exception as e:
+            import traceback
+            logger.warning(
+                f"Не удалось заполнить шаблоны параметров подбора "
+                f"для сессии {session_id}: {e}",
+            )
+            logger.debug(traceback.format_exc())
     
     def _process_pdf_with_progress(self, session_id: str, pdf_path: str, session_dir: str) -> Dict[str, str]:
         last_update_time = [0]
@@ -819,6 +899,149 @@ class SessionManager:
         result = process_pdf(pdf_path, output_folder=session_dir, progress_callback=progress_callback)
         self._update_progress(session_id, 90, "Проверка результатов...")
         return result
+
+    # =====================================================================
+    #  ФАЙЛ ПОС: ГЛОБАЛЬНЫЕ КОНСТАНТЫ ПОДБОРА РАБОТ (АР)
+    # =====================================================================
+
+    def upload_pos(self, session_id: str, file, original_name: str) -> Dict[str, Any]:
+        """Приём PDF-файла ПОС (проект организации строительства) для сессии.
+
+        Файл сохраняется в папку сессии, запускается фоновый разбор глобальных
+        констант (pd_parser.parse_pos_constants). Результат сохраняется в
+        ПОС_глобальные_константы.json в корне сессии.
+        """
+        s = self.get(session_id)
+        if not s:
+            raise ValueError("Сессия не найдена")
+        if s.get("processing_type", "KR").upper() != "AR":
+            raise ValueError("Файл ПОС поддерживается только в режиме АР")
+        if not file or not original_name:
+            raise ValueError("Отсутствует файл или имя файла")
+        if not str(original_name).lower().endswith(".pdf"):
+            raise ValueError("Файл ПОС должен быть в формате PDF")
+
+        safe_name = secure_filename(original_name) or "pos.pdf"
+        session_dir = os.path.join(self.output_folder, session_id)
+        os.makedirs(session_dir, exist_ok=True)
+        pos_path = os.path.join(session_dir, f"pos_{safe_name}")
+
+        try:
+            file.save(pos_path)
+            if not os.path.exists(pos_path) or os.path.getsize(pos_path) == 0:
+                raise ValueError("Ошибка сохранения файла ПОС")
+        except Exception as e:
+            logger.error(f"Ошибка сохранения файла ПОС: {e}")
+            raise
+
+        # Сбрасываем предыдущий результат разбора
+        old_result = os.path.join(session_dir, POS_CONSTANTS_FILENAME)
+        if os.path.exists(old_result):
+            try:
+                os.remove(old_result)
+            except OSError:
+                pass
+
+        self._update(
+            session_id,
+            pos_file_name=original_name,
+            pos_file_path=pos_path,
+            pos_status="pos_processing",
+            pos_error=None,
+            pos_progress_message="Разбор файла ПОС...",
+        )
+
+        thread = threading.Thread(
+            target=self._process_pos_bg,
+            args=(session_id, pos_path, original_name),
+            daemon=True,
+            name=f"POS-Processing-{session_id[:8]}",
+        )
+        thread.start()
+
+        return {
+            "session_id": session_id,
+            "status": "pos_processing",
+            "message": "Файл ПОС принят, начат разбор глобальных констант",
+        }
+
+    def _process_pos_bg(self, session_id: str, pos_path: str, original_name: str) -> None:
+        """Фоновый разбор ПОС: извлечение глобальных констант и сохранение JSON."""
+        try:
+            from src.core.config import load_config
+            from src.services import pd_parser
+
+            cfg = load_config()
+            parser_config = pd_parser.Config(
+                llm_base_url=cfg.ollama_url,
+                llm_model=cfg.model_ollama,
+            )
+
+            def _progress(message: str) -> None:
+                self._update(session_id, pos_progress_message=message)
+
+            result = pd_parser.parse_pos_constants(
+                pos_path, use_llm=True, config=parser_config, progress=_progress,
+            )
+            result["file_name"] = original_name
+            result["generated_at"] = datetime.utcnow().isoformat() + "Z"
+
+            session_dir = os.path.join(self.output_folder, session_id)
+            out_path = os.path.join(session_dir, POS_CONSTANTS_FILENAME)
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, ensure_ascii=False, indent=2)
+
+            # Регистрируем файл в списке файлов сессии (доступен для скачивания)
+            with self._state_lock:
+                if session_id in self._sessions:
+                    files = [
+                        f for f in self._sessions[session_id].get("files", [])
+                        if f.get("filename") != POS_CONSTANTS_FILENAME
+                    ]
+                    files.append({
+                        "path": out_path,
+                        "filename": POS_CONSTANTS_FILENAME,
+                        "size": os.path.getsize(out_path),
+                    })
+                    self._sessions[session_id]["files"] = files
+                    self._save()
+
+            # Перезаполняем шаблоны параметров подбора: в раздел constants
+            # Параметры_подбора_элементов.json должны попасть константы,
+            # найденные из ПОС (первоначальный файл строится на этапе 0,
+            # до разбора ПОС).
+            self._build_selection_parameters_templates(session_id, session_dir)
+
+            detected = {
+                k: v.get("value")
+                for k, v in (result.get("constants") or {}).items()
+                if isinstance(v, dict) and v.get("value")
+            }
+            found = len(detected)
+            self._update(
+                session_id,
+                pos_status="pos_completed",
+                pos_error=None,
+                pos_constants_detected=detected,
+                pos_progress_message=f"Разбор ПОС завершён: найдено констант - {found}",
+            )
+            logger.info(
+                f"Разбор ПОС для сессии {session_id} завершён, "
+                f"констант найдено: {found} -> {out_path}"
+            )
+        except Exception as e:
+            import traceback
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            logger.error(
+                f"Ошибка разбора ПОС для сессии {session_id}:\n"
+                f"{traceback.format_exc()}"
+            )
+            self._update(
+                session_id,
+                pos_status="pos_error",
+                pos_error=error_msg,
+                pos_progress_message=f"Ошибка разбора ПОС: {error_msg}",
+            )
 
     # =====================================================================
     #  ССЫЛКИ НА ПОЗИЦИИ ЦИФРОВОГО СБОРНИКА (position_links.json)
@@ -940,7 +1163,9 @@ class SessionManager:
                 construction_materials: Dict[int, str] = None,
                 building_height: float = None, 
                 grouped_data: Dict[str, Any] = None,
-                processing_type: str = "KR") -> Dict[str, Any]:
+                processing_type: str = "KR",
+                global_constants: Dict[str, str] = None,
+                floor_height: float = None) -> Dict[str, Any]:
         
         s = self.get(session_id)
         if not s:
@@ -1013,7 +1238,9 @@ class SessionManager:
             "construction_types": construction_types or {},
             "construction_materials": construction_materials or {},
             "building_height": building_height,
+            "floor_height": floor_height,
             "grouped_data": grouped_data or {},
+            "global_constants": global_constants or {},
             "files": [],
             "created_at": datetime.utcnow().isoformat() + "Z",
             "final_json_status": None,
@@ -1036,7 +1263,7 @@ class SessionManager:
             target=self._run_processing_pipeline_in_run,
             args=(session_id, run_id, run_number, run_dir, run_excel_path, 
                 row_indices, construction_types or {}, construction_materials or {}, 
-                building_height, processing_type),
+                building_height, processing_type, global_constants or {}),
             daemon=True,
             name=f"Pipeline-Run{run_number}-{session_id[:8]}"
         )
@@ -1073,6 +1300,7 @@ class SessionManager:
             "status": target_run.get('status'),
             "files": target_run.get('files', []),
             "building_height": target_run.get('building_height'),
+            "floor_height": target_run.get('floor_height'),
         }
     
     def get_run(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
@@ -1095,7 +1323,9 @@ class SessionManager:
                     all_rows: bool = False, row_types: Dict[int, str] = None,
                     row_materials: Dict[int, str] = None,
                     building_height: float = None, grouped_data: Dict[str, Any] = None,
-                    processing_type: str = "KR") -> Dict[str, Any]:
+                    processing_type: str = "KR",
+                    global_constants: Dict[str, str] = None,
+                    floor_height: float = None) -> Dict[str, Any]:
         s = self.get(session_id)
         if not s:
             raise KeyError("Сессия не найдена")
@@ -1125,7 +1355,8 @@ class SessionManager:
             session_id, row_indices, 
             row_types or {}, row_materials or {},
             building_height, grouped_data or {},
-            processing_type
+            processing_type, global_constants or {},
+            floor_height
         )
     
     def _run_processing_pipeline_in_run(self, session_id: str, run_id: str, 
@@ -1134,7 +1365,8 @@ class SessionManager:
                                          construction_types: Dict[int, str],
                                          construction_materials: Dict[int, str],
                                          building_height: float = None,
-                                         processing_type: str = "KR") -> None:
+                                         processing_type: str = "KR",
+                                         global_constants: Dict[str, str] = None) -> None:
         try:
             processing_type = processing_type.upper()
             if processing_type not in ("KR", "AR"):
@@ -1360,7 +1592,7 @@ class SessionManager:
                     session_id, 40,
                     f"Запуск {run_number}: Запрос работ к API справочника ТСН..."
                 )
-                api_results = fetch_works_from_api(api_groups)
+                api_results = fetch_works_from_api(api_groups, building_height)
 
                 self._update_progress(
                     session_id, 80,
@@ -1370,23 +1602,105 @@ class SessionManager:
 
                 self._update_progress(session_id, 95, f"Запуск {run_number}: Сохранение результатов...")
             else:
-                # Этапы 1-4 (АР)
-                self._update_progress(session_id, 20, f"Запуск {run_number}: Этап 1 — Анализ через LLM...")
-                first_step(
-                    prompt_manager=self.prompt_manager,
-                    file=excel_path,
-                    rows=[i+1 for i in row_indices],
-                    output_folder=run_dir
+                # АР: подбор таблиц работ по алгоритму data/algorithm.md
+                # (детерминированный подбор сборников/таблиц ГЭСН/ТСН-2001
+                # по типу элемента, МССК, материалу и константам проекта).
+                from src.services.works_table_selector import (
+                    build_works_tables_json,
+                    WORKS_TABLES_JSON_FILENAME,
                 )
 
-                self._update_progress(session_id, 40, f"Запуск {run_number}: Этап 2 — Фильтрация по части здания ({processing_type})...")
-                second_step(input_folder=run_dir, processing_type=processing_type)
+                self._update_progress(
+                    session_id, 30,
+                    f"Запуск {run_number}: Подбор таблиц работ по алгоритму (АР)..."
+                )
 
-                self._update_progress(session_id, 60, f"Запуск {run_number}: Этап 3 — Фильтрация по высоте...")
-                third_step(input_folder=run_dir, building_height=building_height)
+                raw_dump_json = os.path.join(session_dir, 'IFC_исходные_параметры.json')
 
-                self._update_progress(session_id, 90, f"Запуск {run_number}: Этап 4 — Формирование перечня ({processing_type})...")
-                fourth_step(input_folder=run_dir, processing_type=processing_type)
+                # Этажность здания (building_storeys_type): если не задана в UI —
+                # подставляем из файлов сессии (IFC_глобальные_константы.json,
+                # fallback — Excel полной модели; zero_step.detect_storeys_type_from_session).
+                # Влияет на выбор таблиц Сб. 7 (одноэтажные vs многоэтажные здания).
+                if not (global_constants or {}).get("building_storeys_type"):
+                    try:
+                        from src.services.zero_step import detect_storeys_type_from_session
+
+                        storeys_type = detect_storeys_type_from_session(session_dir)
+                        if storeys_type:
+                            global_constants = dict(global_constants or {})
+                            global_constants["building_storeys_type"] = storeys_type
+                            logger.info(
+                                f"Этажность здания подставлена из сессии: {storeys_type}"
+                            )
+                    except Exception as exc:
+                        logger.warning(f"Не удалось определить этажность здания: {exc}")
+
+                works_json_path = os.path.join(run_dir, WORKS_TABLES_JSON_FILENAME)
+                build_works_tables_json(
+                    excel_path=filtered_path,
+                    output_path=works_json_path,
+                    global_constants=global_constants or {},
+                    raw_dump_json_path=raw_dump_json if os.path.isfile(raw_dump_json) else None,
+                )
+
+                # АР: получение работ из цифрового сборника (larix) по шифрам
+                # подобранных таблиц: актуальный период ТСН → period.json
+                # (корень сессии), работы таблиц → Подобранные_работы.json
+                # (в папку запуска run_<NNN>/).
+                self._update_progress(
+                    session_id, 60,
+                    f"Запуск {run_number}: Получение работ из цифрового сборника (АР)..."
+                )
+                try:
+                    from src.services.works_fetcher import fetch_and_save_works
+
+                    fetch_and_save_works(works_json_path, session_dir, run_dir)
+                except Exception as exc:
+                    # Шаг вспомогательный: ошибка внешнего API не должна
+                    # ломать финальную сборку запуска.
+                    logger.error(
+                        f"Не удалось получить работы из цифрового сборника: {exc}",
+                        exc_info=True,
+                    )
+
+                # АР: финальный подбор подходящих работ через LLM —
+                # для каждой группы элементов из работ-кандидатов цифрового
+                # сборника (Подобранные_работы.json) LLM выбирает нужные
+                # работы → Финальный_перечень_работ.json/.xlsx
+                # (в папке запуска run_<NNN>/).
+                self._update_progress(
+                    session_id, 75,
+                    f"Запуск {run_number}: Подбор подходящих работ через LLM (АР)..."
+                )
+                try:
+                    from src.services.works_fetcher import WORKS_JSON_FILENAME
+                    from src.services.works_final_selector import (
+                        FINAL_WORKS_JSON_FILENAME,
+                        FINAL_WORKS_XLSX_FILENAME,
+                        select_final_works,
+                    )
+
+                    works_fetcher_path = os.path.join(run_dir, WORKS_JSON_FILENAME)
+                    final_json_path = os.path.join(run_dir, FINAL_WORKS_JSON_FILENAME)
+                    final_xlsx_path = os.path.join(run_dir, FINAL_WORKS_XLSX_FILENAME)
+                    # Удаляем результаты прошлой попытки (при повторном запуске
+                    # в той же папке), чтобы не отдавать устаревшие файлы
+                    for stale_path in (final_json_path, final_xlsx_path):
+                        if os.path.isfile(stale_path):
+                            os.remove(stale_path)
+
+                    select_final_works(
+                        tables_json_path=works_json_path,
+                        works_json_path=works_fetcher_path,
+                        run_dir=run_dir,
+                    )
+                except Exception as exc:
+                    # Шаг вспомогательный: ошибка LLM не должна ломать
+                    # финальную сборку запуска.
+                    logger.error(
+                        f"Не удалось выполнить финальный подбор работ через LLM: {exc}",
+                        exc_info=True,
+                    )
 
                 self._update_progress(session_id, 95, f"Запуск {run_number}: Сохранение результатов...")
             
@@ -1419,18 +1733,30 @@ class SessionManager:
             # =====================================================================
             final_files = []
             skip_patterns = {'filtered_elements.xlsx', 'building_parts.json', 'materials.json'}
+            # JSON с подбором таблиц работ (АР) сохраняется в итоговые файлы
+            allowed_json = {
+                'Подобранные_таблицы_работ.json', 'Подобранные_работы.json',
+                'Финальный_перечень_работ.json',
+            }
+            # Финальный перечень работ АР (JSON + XLSX, works_final_selector)
+            allowed_final_works = {
+                'Финальный_перечень_работ.json', 'Финальный_перечень_работ.xlsx',
+            }
             
             for f in os.listdir(run_dir):
                 fpath = os.path.join(run_dir, f)
                 if os.path.isfile(fpath):
                     if f in skip_patterns:
                         continue
-                    # Исключаем промежуточные JSON, но оставляем final_result_*.json и selected_elements_grouped.json
-                    if f.endswith('.json') and not f.startswith('final_result_') and f != 'selected_elements_grouped.json':
+                    # Исключаем промежуточные JSON, но оставляем final_result_*.json,
+                    # selected_elements_grouped.json и Подобранные_таблицы_работ.json
+                    if f.endswith('.json') and not f.startswith('final_result_') \
+                            and f != 'selected_elements_grouped.json' and f not in allowed_json:
                         continue
                     if f.startswith('Нормализованные_данные_элемента_') or f.endswith('.ifc'):
                         continue
-                    if any(f.startswith(p) for p in ['Промежуточные_работы_', 'height', 'Финальный', 'Подобранные', 'Все_найденные']):
+                    if any(f.startswith(p) for p in ['Промежуточные_работы_', 'height', 'Финальный', 'Все_найденные']) \
+                            and f not in allowed_json and f not in allowed_final_works:
                         continue
                     
                     final_files.append({
@@ -1453,18 +1779,20 @@ class SessionManager:
                             "size": os.path.getsize(api_request_path),
                         })
             
-            # Добавляем справочные JSON из корня сессии
-            for src_name, display_name in [
-                ("ifc_elements_output.json", "все элементы.json"),
-                ("ifc_raw_elements_grouped.json", "группы элементов.json"),
-            ]:
-                src_path = os.path.join(session_dir, src_name)
-                if os.path.isfile(src_path):
-                    final_files.append({
-                        "path": src_path,
-                        "filename": display_name,
-                        "size": os.path.getsize(src_path),
-                    })
+            # Добавляем справочные JSON из корня сессии (только КР:
+            # в АР цифровой сборник не используется и справочники не строятся)
+            if processing_type == "KR":
+                for src_name, display_name in [
+                    ("ifc_elements_output.json", "все элементы.json"),
+                    ("ifc_raw_elements_grouped.json", "группы элементов.json"),
+                ]:
+                    src_path = os.path.join(session_dir, src_name)
+                    if os.path.isfile(src_path):
+                        final_files.append({
+                            "path": src_path,
+                            "filename": display_name,
+                            "size": os.path.getsize(src_path),
+                        })
 
             # Включаем файлы с исходными параметрами
             from src.services.ifc_raw_dump import RAW_DUMP_FILENAME, RAW_DUMP_JSON_FILENAME
@@ -1476,7 +1804,32 @@ class SessionManager:
                         "filename": dump_name,
                         "size": os.path.getsize(raw_dump_path),
                     })
-            
+
+            # АР: период ТСН из цифрового сборника (larix) — общий для запусков,
+            # хранится в корне сессии; Подобранные_работы.json пишется в
+            # run_<NNN>/ и попадает в итоговые файлы через allowed_json выше
+            if processing_type == "AR":
+                from src.services.works_fetcher import PERIOD_JSON_FILENAME
+                ar_path = os.path.join(session_dir, PERIOD_JSON_FILENAME)
+                if os.path.isfile(ar_path):
+                    final_files.append({
+                        "path": ar_path,
+                        "filename": PERIOD_JSON_FILENAME,
+                        "size": os.path.getsize(ar_path),
+                    })
+
+                # АР: в итоговую выдачу запуска входит только финальная таблица
+                # работ (структура как в КР: шифры, объёмы, стоимость, ИТОГО);
+                # остальные артефакты (Подобранные_таблицы_работ.json,
+                # Подобранные_работы.json, Финальный_перечень_работ.json,
+                # final_result_AR.json и промежуточные файлы) остаются в
+                # run_<NNN>/ на диске (доступны для отладки), но не отдаются
+                # как результаты запуска
+                ar_final_files = {
+                    'Финальный_перечень_работ.xlsx',
+                }
+                final_files = [f for f in final_files if f['filename'] in ar_final_files]
+
             # Обновляем run
             with self._state_lock:
                 if session_id in self._sessions:

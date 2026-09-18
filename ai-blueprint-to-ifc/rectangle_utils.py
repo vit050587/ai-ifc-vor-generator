@@ -811,3 +811,12 @@ def get_two_points_bbox(four_points_bbox: dict | None):
     x = [four_points_bbox["x1"], four_points_bbox["x2"], four_points_bbox["x3"], four_points_bbox["x4"]]
     y = [four_points_bbox["y1"], four_points_bbox["y2"], four_points_bbox["y3"], four_points_bbox["y4"]]
     return {"x0": min(x), "y0": min(y), "x1": max(x), "y1": max(y)}
+
+
+def get_4p_bbox_area(four_points_bbox: dict | None) -> float | None:
+    if not four_points_bbox:
+        return None
+    
+    x = [four_points_bbox["x1"], four_points_bbox["x2"], four_points_bbox["x3"], four_points_bbox["x4"]]
+    y = [four_points_bbox["y1"], four_points_bbox["y2"], four_points_bbox["y3"], four_points_bbox["y4"]]
+    return (max(x) - min(x)) * (max(y) - min(y))

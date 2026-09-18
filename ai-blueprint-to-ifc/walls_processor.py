@@ -7,6 +7,8 @@ from tqdm import tqdm
 from dataclasses import asdict
 
 from config import settings
+from obb_converter import RegionOBB
+from polygon_converter import RegionPolygon
 from polygons_converter import WallObb
 from rectangle_utils import rectangles_to_yolo_obb, get_two_points_bbox
 
@@ -140,18 +142,56 @@ class WallsProcessor:
 
     def scale_pdf_walls_coords(
         self,
-        walls: list[WallObb],
+        walls: list[RegionOBB | RegionPolygon],
         blueprint_scale: Tuple[int, int],
     ) -> list[dict[str, Any]]:
-        """Convert wall coordinates from PDF points to real millimetres."""
+        """Convert PDF geometry to millimetres while preserving its shape type."""
         scale_ratio = self._get_blueprint_scale_ratio(blueprint_scale)
         mm_per_pdf_point = (25.4 / 72) * scale_ratio
-        return self._scale_walls(
-            walls,
-            coefficient=mm_per_pdf_point,
-            bbox_key="bbox_pdf",
-            measurement_keys=("length", "thickness"),
-        )
+
+        def scale_ring(points) -> list[list[float]]:
+            return [
+                [float(x) * mm_per_pdf_point, float(y) * mm_per_pdf_point]
+                for x, y in points
+            ]
+
+        converted = []
+        for wall in walls:
+            if not isinstance(wall, (RegionOBB, RegionPolygon)):
+                raise TypeError(f"Unsupported wall geometry: {type(wall).__name__}")
+            if wall.entry_index is None:
+                raise ValueError("Wall geometry has no legend entry index")
+
+            wall_data = {
+                "legend_entry_id": wall.entry_index,
+                "source_polygon_id": wall.global_id,
+            }
+            if isinstance(wall, RegionOBB):
+                wall_data["obb_pdf"] = {
+                    f"{axis}{index}": float(point[axis_index])
+                    for index, point in enumerate(wall.polygon, start=1)
+                    for axis_index, axis in enumerate(("x", "y"))
+                }
+                corners = scale_ring(wall.polygon)
+                wall_data["obb"] = {
+                    f"{axis}{index}": point[axis_index]
+                    for index, point in enumerate(corners, start=1)
+                    for axis_index, axis in enumerate(("x", "y"))
+                }
+            else:
+                wall_data["polygon_pdf"] = [
+                    [float(x), float(y)] for x, y in wall.polygon
+                ]
+                wall_data["holes_pdf"] = [
+                    [[float(x), float(y)] for x, y in hole] for hole in wall.holes
+                ]
+                wall_data["polygon"] = scale_ring(wall.polygon)
+                wall_data["holes"] = [scale_ring(hole) for hole in wall.holes]
+                wall_data["width_mm"] = wall.temp_width * mm_per_pdf_point
+                wall_data["area_mm2"] = wall.temp_area * mm_per_pdf_point ** 2
+            converted.append(wall_data)
+
+        return converted
 
     @staticmethod
     def _get_blueprint_scale_ratio(

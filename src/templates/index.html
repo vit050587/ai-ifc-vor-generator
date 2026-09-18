@@ -730,6 +730,20 @@
                     <span class="name" id="fileName"></span>
                     <button class="btn btn-sm btn-danger" onclick="resetUpload()">✕</button>
                 </div>
+                <!-- Файл ПОС (режим АР): из него извлекаются глобальные константы -->
+                <div id="posUploadBlock" style="display:none;margin-top:12px;">
+                    <div class="upload-area" id="posUploadArea" style="padding:14px 16px;">
+                        <input type="file" id="posFileInput" accept=".pdf" hidden>
+                        <div class="icon" style="font-size:22px;">📑</div>
+                        <div class="text" style="font-size:14px;">Файл ПОС (PDF) — необязательно</div>
+                        <div class="hint" style="font-size:12px;">Проект организации строительства: из него будут определены глобальные константы (опалубка, схема бетонирования, краны и т.д.)</div>
+                    </div>
+                    <div id="posFileInfo" style="display:none;" class="file-info">
+                        <span>📑</span>
+                        <span class="name" id="posFileName"></span>
+                        <button class="btn btn-sm btn-danger" onclick="resetPosUpload()">✕</button>
+                    </div>
+                </div>
                 <div class="progress-wrap" id="uploadProgressWrap" style="display:none;">
                     <div class="progress-bar" id="uploadProgressBar"></div>
                 </div>
@@ -782,9 +796,18 @@
                         <input type="number" id="buildingHeight" value="56" step="0.5" min="1" max="10000" style="max-width:150px;">
                         <div class="hint" id="buildingHeightHint">От 1 до 10000 м</div>
                     </div>
+                    <div id="buildingHeightARWrap" style="display:none;">
+                        <label for="buildingHeightAR">Высота здания (м):</label>
+                        <input type="number" id="buildingHeightAR" value="56" step="0.5" min="1" max="10000" style="max-width:150px;">
+                        <div class="hint">От 1 до 10000 м</div>
+                    </div>
                     <button class="btn btn-primary" id="selectRowsBtn" onclick="confirmRowSelection()" disabled>
                         🚀 Запустить обработку (<span id="selectedCount">0</span>)
                     </button>
+                </div>
+                <div id="arConstantsPanel" style="display:none;margin-top:16px;">
+                    <div style="font-size:15px;font-weight:600;margin-bottom:10px;color:#2d3748;">Параметры влияющие на расценки</div>
+                    <div id="arConstantsFields" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;"></div>
                 </div>
                 <div class="progress-wrap mt-12" id="processingProgressWrap" style="display:none;">
                     <div class="progress-bar" id="processingProgressBar"></div>
@@ -1115,8 +1138,17 @@ function applyPositionLinks() {
 
 // Загружает ссылки позиций для сессии. Файл position_links.json строится
 // в фоне, поэтому если ready=false — опрашиваем эндпоинт ещё несколько раз.
+// Только для КР: в АР цифровой сборник не используется.
 async function loadPositionLinks(sessionId) {
     if (!sessionId) return;
+    if (currentProcessingType !== 'KR') {
+        // АР: ссылки не используются — очищаем, чтобы не остались иконки
+        // от предыдущей КР-сессии
+        positionLinks = {};
+        positionLinksLoadedFor = null;
+        applyPositionLinks();
+        return;
+    }
     if (positionLinksLoadedFor === sessionId && Object.keys(positionLinks).length > 0) {
         applyPositionLinks();
         return;
@@ -1177,6 +1209,255 @@ function onProcessingTypeChange() {
     
     const typeName = currentProcessingType === 'KR' ? 'Конструктивные решения' : 'Архитектурные решения';
     showToast(`Режим: ${typeName}`, 'info');
+    updateArConstantsPanel();
+    updatePosUploadVisibility();
+}
+
+// ========== Параметры влияющие на расценки (АР) ==========
+let worksConstantsSchema = [];
+let worksConstantsDetected = {};
+let worksConstantsPosDetected = {};
+let worksConstantsLoaded = false;
+let _posConstantsPollTimer = null;
+
+function updateArConstantsPanel() {
+    const panel = document.getElementById('arConstantsPanel');
+    if (!panel) return;
+    const isAR = currentProcessingType === 'AR';
+    panel.style.display = isAR ? 'block' : 'none';
+    if (isAR) loadWorksConstants();
+}
+
+async function loadWorksConstants() {
+    if (!currentSessionId) return;
+    try {
+        const response = await fetch(`${API_BASE}/session/${currentSessionId}/works_constants`);
+        if (!response.ok) return;
+        const data = await response.json();
+        worksConstantsSchema = data.constants || [];
+        worksConstantsDetected = data.detected || {};
+        worksConstantsPosDetected = data.posDetected || {};
+        worksConstantsLoaded = true;
+        _lastAutoConstants = {};
+        // Автоподстановка высоты здания (АР) из значения, определённого по IFC
+        const buildingInput = document.getElementById('buildingHeightAR');
+        if (buildingInput && worksConstantsDetected.building_height_m !== undefined) {
+            buildingInput.value = worksConstantsDetected.building_height_m;
+        }
+        renderArConstantsFields();
+        // Разбор ПОС может завершиться позже загрузки панели (панель рисуется
+        // сразу после обработки IFC) — следим за статусом и по завершении
+        // дозагружаем константы из ПОС.
+        trackPosConstants(data.posStatus);
+    } catch (e) { console.warn('Не удалось загрузить константы подбора работ:', e); }
+}
+
+// Слежение за фоновым разбором ПОС: панель констант рисуется сразу после
+// обработки IFC, а константы из ПОС (опалубка, краны, ковш, мощность и т.д.)
+// появляются позже. Пока posStatus === 'pos_processing', опрашиваем
+// works_constants; по завершении перезагружаем панель (ручной выбор
+// пользователя сохраняется — см. renderArConstantsFields).
+function trackPosConstants(posStatus) {
+    if (_posConstantsPollTimer) { clearTimeout(_posConstantsPollTimer); _posConstantsPollTimer = null; }
+    if (posStatus !== 'pos_processing') return;
+    const poll = async () => {
+        try {
+            const response = await fetch(`${API_BASE}/session/${currentSessionId}/works_constants`);
+            if (!response.ok) { _posConstantsPollTimer = setTimeout(poll, 3000); return; }
+            const data = await response.json();
+            if (data.posStatus === 'pos_processing') {
+                _posConstantsPollTimer = setTimeout(poll, 3000);
+                return;
+            }
+            _posConstantsPollTimer = null;
+            worksConstantsSchema = data.constants || [];
+            worksConstantsDetected = data.detected || {};
+            worksConstantsPosDetected = data.posDetected || {};
+            renderArConstantsFields();
+            if (data.posStatus === 'pos_completed') {
+                showToast(`Разбор ПОС завершён: параметры расценок подставлены из файла ПОС${data.posFileName ? ` (${data.posFileName})` : ''}`, 'success');
+            } else if (data.posStatus === 'pos_error') {
+                showToast('Ошибка разбора ПОС: параметры из файла ПОС не подставлены', 'warning');
+            }
+        } catch (e) {
+            console.warn('Не удалось опросить статус разбора ПОС:', e);
+            _posConstantsPollTimer = setTimeout(poll, 3000);
+        }
+    };
+    _posConstantsPollTimer = setTimeout(poll, 3000);
+}
+
+function heightToRange(h) {
+    if (!h || h <= 0) return '';
+    if (h <= 30) return 'до 30';
+    if (h <= 40) return '30-40';
+    if (h <= 57) return '40-57';
+    if (h <= 75) return '57-75';
+    if (h <= 105) return '75-105';
+    if (h <= 150) return '105-150';
+    if (h <= 250) return '150-250';
+    return 'свыше 200 (шпиль)';
+}
+
+// Числовое значение → вариант из списка значений константы (values схемы)
+function floorHeightToValue(h) {
+    if (!h || h <= 0) return '';
+    if (h <= 3.6) return 'до 3,6 м';
+    if (h <= 4) return 'до 4 м';
+    if (h <= 6) return 'до 6 м';
+    return 'свыше 6 м';
+}
+
+function craneCapacityToValue(t) {
+    if (!t || t <= 0) return '';
+    if (t <= 5) return 'до 5 т';
+    if (t <= 10) return 'до 10 т';
+    if (t <= 16) return 'до 16 т';
+    if (t <= 20) return 'до 20 т';
+    return 'свыше 20 т';
+}
+
+function bucketCapacityToValue(v) {
+    if (!v || v <= 0) return '';
+    if (v <= 0.25) return 'до 0,25 м3';
+    if (v <= 0.5) return 'до 0,5 м3';
+    if (v <= 1) return 'до 1 м3';
+    if (v <= 1.8) return 'до 1,8 м3';
+    return '3-15 м3 (скрепер)';
+}
+
+function equipmentPowerToValue(p) {
+    if (!p || p <= 0) return '';
+    if (p <= 30) return 'до 30 кВт';
+    if (p <= 59) return '59 кВт';
+    if (p <= 79) return '79 кВт';
+    if (p <= 96) return '96 кВт';
+    if (p <= 132) return '132 кВт';
+    return 'свыше 132 кВт';
+}
+
+// Число из значения, найденного IFC/ПОС (null, если не число)
+function constNum(v) {
+    if (v === undefined || v === null || v === '') return null;
+    const n = parseFloat(v);
+    return isNaN(n) ? null : n;
+}
+
+// Автоподстановка значения константы: приоритет IFC → файл ПОС → default.
+// Для числовых констант (floor_height, crane_capacity, bucket_capacity,
+// equipment_power) найденное число переводится в вариант из списка values.
+function autoSelectConstant(c) {
+    const posValue = worksConstantsPosDetected[c.name];
+    switch (c.name) {
+        case 'building_height_m': {
+            const ifcH = constNum(worksConstantsDetected.building_height_m);
+            if (ifcH) return { value: heightToRange(ifcH), hint: `Определено по IFC: ${ifcH} м. ` };
+            if (posValue) return { value: posValue, hint: 'Определено по файлу ПОС. ' };
+            return { value: c.default || '', hint: '' };
+        }
+        case 'floor_height': {
+            const ifcH = constNum(worksConstantsDetected.floor_height_m);
+            const posH = constNum(posValue);
+            if (ifcH) return { value: floorHeightToValue(ifcH), hint: `Определено по IFC: ${ifcH} м. ` };
+            if (posH) return { value: floorHeightToValue(posH), hint: `Определено по файлу ПОС: ${posH} м. ` };
+            return { value: c.default || '', hint: '' };
+        }
+        case 'building_storeys_type': {
+            // Этажность здания: определяется по IFC по наибольшему числовому
+            // индикатору в колонке «Этаж» (>= 2, т.е. есть 2-й этаж → многоэтажное)
+            if (worksConstantsDetected.building_storeys_type) {
+                return { value: worksConstantsDetected.building_storeys_type,
+                    hint: 'Определено по IFC (колонка «Этаж»: наибольший номер этажа >= 2 → многоэтажное). ' };
+            }
+            if (posValue) return { value: posValue, hint: 'Определено по файлу ПОС. ' };
+            return { value: c.default || '', hint: '' };
+        }
+        case 'crane_type': {
+            if (posValue) return { value: posValue, hint: 'Определено по файлу ПОС. ' };
+            return { value: c.default || '', hint: '' };
+        }
+        case 'crane_capacity': {
+            const t = constNum(posValue);
+            if (t) return { value: craneCapacityToValue(t), hint: `Определено по файлу ПОС: ${t} т. ` };
+            return { value: c.default || '', hint: '' };
+        }
+        case 'bucket_capacity': {
+            const v = constNum(posValue);
+            if (v) return { value: bucketCapacityToValue(v), hint: `Определено по файлу ПОС: ${v} м3. ` };
+            return { value: c.default || '', hint: '' };
+        }
+        case 'equipment_power': {
+            const p = constNum(posValue);
+            if (p) return { value: equipmentPowerToValue(p), hint: `Определено по файлу ПОС: ${p} кВт. ` };
+            return { value: c.default || '', hint: '' };
+        }
+        default:
+            if (worksConstantsDetected[c.name] !== undefined) {
+                return { value: worksConstantsDetected[c.name], hint: 'Определено по IFC. ' };
+            }
+            if (posValue) return { value: posValue, hint: 'Определено по файлу ПОС. ' };
+            return { value: c.default || '', hint: '' };
+    }
+}
+
+// Последние автоподстановки значений констант (name → value). Нужны, чтобы при
+// перерисовке панели отличать ручной выбор пользователя от автоподставленного
+// значения (IFC/ПОС/по умолчанию).
+let _lastAutoConstants = {};
+
+function renderArConstantsFields() {
+    const wrap = document.getElementById('arConstantsFields');
+    if (!wrap) return;
+    // Значения, действительно изменённые пользователем вручную, имеют приоритет над
+    // автоподстановкой при перерисовке (например, после завершения разбора ПОС).
+    // Ручным выбором считается только значение, отличное от прошлой автоподстановки:
+    // иначе автозаполненное по умолчанию (например, «деревянная щитовая» до
+    // завершения разбора ПОС) блокировало бы подстановку значения из файла ПОС.
+    const userSelected = {};
+    wrap.querySelectorAll('select[data-const-name]').forEach(sel => {
+        if (sel.value && sel.value !== _lastAutoConstants[sel.dataset.constName]) {
+            userSelected[sel.dataset.constName] = sel.value;
+        }
+    });
+    wrap.innerHTML = '';
+    _lastAutoConstants = {};
+
+    worksConstantsSchema.forEach(c => {        const field = document.createElement('div');
+        const selectId = `arConst_${c.name}`;
+        let options = '<option value="">— не выбрано —</option>';
+        (c.values || []).forEach(v => {
+            options += `<option value="${v}">${v}</option>`;
+        });
+
+        const { value: autoValue, hint: sourceHint } = autoSelectConstant(c);
+        _lastAutoConstants[c.name] = autoValue || '';
+        let selectedValue = userSelected[c.name] || autoValue;
+        if (selectedValue && !(c.values || []).includes(selectedValue)) selectedValue = '';
+
+        let extraHint = sourceHint + (c.affects || '');
+        if (c.stage === 'next_stage') {
+            extraHint = 'Не влияет на подбор таблиц (следующий этап). ' + extraHint;
+        }
+        // Описание показывается при наведении курсора на название поля (title)
+        const escAttr = s => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
+        // Визуально как поле «Высота этажа»: подпись сверху + компактный контрол
+        field.innerHTML = `
+            <label for="${selectId}" title="${escAttr(extraHint)}" style="font-size:14px;font-weight:500;display:block;margin-bottom:4px;color:#4a5568;">${c.title || c.name}${c.unit ? ', ' + c.unit : ''}</label>
+            <select id="${selectId}" data-const-name="${c.name}" style="max-width:150px;">${options}</select>
+        `;
+        wrap.appendChild(field);
+        const sel = field.querySelector('select');
+        if (selectedValue) sel.value = selectedValue;
+    });
+}
+
+function collectArConstants() {
+    const result = {};
+    document.querySelectorAll('#arConstantsFields select[data-const-name]').forEach(sel => {
+        if (sel.value) result[sel.dataset.constName] = sel.value;
+    });
+    return result;
 }
 
 function updateProcessingTypeBadges() {
@@ -1185,12 +1466,31 @@ function updateProcessingTypeBadges() {
         const badge = document.getElementById(id);
         if (badge) badge.textContent = badgeText;
     });
-    // В режиме АР показываем высоту этажа, в КР — высоту здания.
+    // В режиме АР показываем высоту этажа + высоту здания, в КР — только высоту здания.
     const isAR = currentProcessingType === 'AR';
     const label = document.getElementById('buildingHeightLabel');
     if (label) label.textContent = isAR ? 'Высота этажа (м):' : 'Высота здания (м):';
     const hint = document.getElementById('buildingHeightHint');
     if (hint) hint.textContent = isAR ? 'Высота этажа, от 1 до 10000 м' : 'Высота здания, от 1 до 10000 м';
+    const arWrap = document.getElementById('buildingHeightARWrap');
+    if (arWrap) arWrap.style.display = isAR ? 'block' : 'none';
+    // АР: материал задаётся автоматически по МССК — селектор массового
+    // назначения материала скрыт (в КР доступен).
+    const globalMatSelect = document.getElementById('globalMaterialSelect');
+    if (globalMatSelect) globalMatSelect.style.display = isAR ? 'none' : '';
+}
+
+// Подстановка высот в поля интерфейса с учётом режима:
+// КР — единственное поле «Высота здания»; АР — «Высота этажа» + «Высота здания».
+function applyHeightsToInputs(buildingHeight, floorHeight) {
+    const floorInput = document.getElementById('buildingHeight');
+    const buildingInput = document.getElementById('buildingHeightAR');
+    if (currentProcessingType === 'AR') {
+        if (buildingInput && buildingHeight) buildingInput.value = buildingHeight;
+        if (floorHeight && floorInput) floorInput.value = floorHeight;
+    } else if (buildingHeight && floorInput) {
+        floorInput.value = buildingHeight;
+    }
 }
 
 // ========== Состояние зума ==========
@@ -1588,6 +1888,44 @@ uploadArea.addEventListener('drop', (e) => {
 });
 fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFileSelect(e.target.files[0]); });
 
+// ========== Файл ПОС (режим АР) ==========
+const posUploadArea = document.getElementById('posUploadArea');
+const posFileInput = document.getElementById('posFileInput');
+let posSelectedFile = null;
+
+posUploadArea.addEventListener('click', () => posFileInput.click());
+posUploadArea.addEventListener('dragover', (e) => { e.preventDefault(); posUploadArea.classList.add('dragover'); });
+posUploadArea.addEventListener('dragleave', () => posUploadArea.classList.remove('dragover'));
+posUploadArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    posUploadArea.classList.remove('dragover');
+    if (e.dataTransfer.files.length) {
+        const file = e.dataTransfer.files[0];
+        if (file.name.toLowerCase().endsWith('.pdf')) handlePosFileSelect(file);
+        else showToast('Файл ПОС должен быть в формате PDF', 'error');
+    }
+});
+posFileInput.addEventListener('change', (e) => { if (e.target.files.length) handlePosFileSelect(e.target.files[0]); });
+
+function handlePosFileSelect(file) {
+    posSelectedFile = file;
+    document.getElementById('posFileName').textContent = file.name;
+    document.getElementById('posFileInfo').style.display = 'flex';
+}
+
+function resetPosUpload() {
+    posSelectedFile = null;
+    document.getElementById('posFileInfo').style.display = 'none';
+    posFileInput.value = '';
+}
+
+// Показывает блок загрузки ПОС только в режиме АР
+function updatePosUploadVisibility() {
+    const block = document.getElementById('posUploadBlock');
+    if (!block) return;
+    block.style.display = currentProcessingType === 'AR' ? 'block' : 'none';
+}
+
 function handleFileSelect(file) {
     selectedFile = file;
     document.getElementById('fileName').textContent = file.name;
@@ -1615,6 +1953,9 @@ async function uploadFile() {
     const formData = new FormData();
     formData.append('file', selectedFile);
     formData.append('processingType', currentProcessingType);
+    if (currentProcessingType === 'AR' && posSelectedFile) {
+        formData.append('posFile', posSelectedFile);
+    }
     try {
         const response = await fetch(`${API_BASE}/upload_ifc`, { method: 'POST', body: formData });
         if (!response.ok) {
@@ -1630,8 +1971,10 @@ async function uploadFile() {
         positionLinks = {};
         positionLinksLoadedFor = null;
         if (_positionLinksPollTimer) { clearTimeout(_positionLinksPollTimer); _positionLinksPollTimer = null; }
+        if (_posConstantsPollTimer) { clearTimeout(_posConstantsPollTimer); _posConstantsPollTimer = null; }
         startStatusPolling(currentSessionId);
         showToast('Файл загружен, начата обработка', 'success');
+        resetPosUpload();
         btn.innerHTML = '⏳ Обработка...';
     } catch (e) {
         showToast(e.message, 'error');
@@ -1701,7 +2044,9 @@ async function onIfcProcessed(sessionId) {
         }
         renderPreview(preview_data);
         loadPositionLinks(sessionId);
-        if (preview_data.buildingHeight) document.getElementById('buildingHeight').value = preview_data.buildingHeight;
+        applyHeightsToInputs(preview_data.buildingHeight, preview_data.floorHeight);
+        updateArConstantsPanel();
+        updatePosUploadVisibility();
         const blueprintBtns = document.getElementById('blueprintButtons');
         if (blueprintBtns) {
             const isPdf = preview_data.sourceType === 'pdf';
@@ -1758,7 +2103,9 @@ async function startNewRun() {
             }
             renderPreview(preview_data);
             loadPositionLinks(currentSessionId);
-            if (preview_data.buildingHeight) document.getElementById('buildingHeight').value = preview_data.buildingHeight;
+            applyHeightsToInputs(preview_data.buildingHeight, preview_data.floorHeight);
+            updateArConstantsPanel();
+            updatePosUploadVisibility();
             showToast(`Загружено ${preview_data.totalRows} строк. Выберите нужные.`, 'info');
         } else { showToast('Ошибка загрузки данных предпросмотра', 'error'); return; }
     } catch (e) { showToast('Ошибка загрузки данных: ' + e.message, 'error'); return; }
@@ -1767,8 +2114,19 @@ async function startNewRun() {
 
 async function confirmRowSelection() {
     if (selectedRows.size === 0) { showToast('Выберите хотя бы одну строку', 'warning'); return; }
-    const height = parseFloat(document.getElementById('buildingHeight').value);
-    if (!height || height <= 0 || height > 10000) { showToast('Некорректная высота (допустимо: 1-10000 м)', 'warning'); return; }
+    const isAR = currentProcessingType === 'AR';
+    let height = null;
+    let floorHeight = null;
+    if (isAR) {
+        // АР: «Высота этажа (м)» — основной входной параметр, рядом «Высота здания (м)».
+        floorHeight = parseFloat(document.getElementById('buildingHeight').value);
+        height = parseFloat(document.getElementById('buildingHeightAR').value);
+        if (!floorHeight || floorHeight <= 0 || floorHeight > 10000) { showToast('Некорректная высота этажа (допустимо: 1-10000 м)', 'warning'); return; }
+        if (!height || height <= 0 || height > 10000) { showToast('Некорректная высота здания (допустимо: 1-10000 м)', 'warning'); return; }
+    } else {
+        height = parseFloat(document.getElementById('buildingHeight').value);
+        if (!height || height <= 0 || height > 10000) { showToast('Некорректная высота (допустимо: 1-10000 м)', 'warning'); return; }
+    }
     const btn = document.getElementById('selectRowsBtn');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Запуск...';
@@ -1813,8 +2171,10 @@ async function confirmRowSelection() {
         rowMaterials: selectedRowMaterials,
         buildingHeight: height,
         groupedData: null,
-        processingType: currentProcessingType
+        processingType: currentProcessingType,
+        globalConstants: currentProcessingType === 'AR' ? collectArConstants() : {}
     };
+    if (floorHeight !== null) payload.floorHeight = floorHeight;
     
     try {
         const response = await fetch(endpoint, {
@@ -1952,7 +2312,7 @@ async function onRunSelectChange() {
         const data = await response.json();
         currentRunId = data.run_id;
         renderResults(data.files || [], { runs: [], current_run_id: currentRunId });
-        if (data.building_height) document.getElementById('buildingHeight').value = data.building_height;
+        applyHeightsToInputs(data.buildingHeight ?? data.building_height, data.floorHeight ?? data.floor_height);
         showToast(`Переключено на Запуск ${data.run_number}`, 'info');
         updateProcessingTypeBadges();
         await loadRuns();
@@ -2100,6 +2460,11 @@ function renderPreview(data) {
     const head = document.getElementById('previewHead');
     const body = document.getElementById('previewBody');
     if (!head || !body) return;
+    // В режиме АР «Часть здания» и «Материал» — только отображаемые значения
+    // (как «Тип элемента»), пользователь их не редактирует. В КР поведение прежнее.
+    const isAR = data.processingType === 'AR';
+    const globalMatSelect = document.getElementById('globalMaterialSelect');
+    if (globalMatSelect) globalMatSelect.style.display = isAR ? 'none' : '';
     const typeFloorIdx = data.headers.indexOf('Этаж');
     const materialIdx = data.headers.indexOf('Материал');
     const requiredColumns = ['№ п/п', 'Имя', 'Тип элемента', 'Толщина, мм', 'Объём, м3', 'Площадь, м2'];
@@ -2151,6 +2516,19 @@ function renderPreview(data) {
         rowParts[index] = defaultPart;
         let defaultMaterial = '-';
         if (materialIdx !== -1 && row[materialIdx] && row[materialIdx] !== '-') defaultMaterial = row[materialIdx].trim();
+        // АР: по умолчанию показываем материал по коду МССК — ту же группу
+        // материала из data/materials_mssk_nested.json, по которой группируются
+        // элементы (GlobalId → {name, order, code} в data.materialsGroupMap).
+        // Если МССК-кода нет («Прочее»/«Многослойные») — оставляем исходное
+        // значение колонки «Материал».
+        if (data.processingType === 'AR' && data.materialsGroupMap) {
+            const gidIdx = data.headers.indexOf('GlobalId');
+            if (gidIdx !== -1) {
+                const gid = row[gidIdx] ? String(row[gidIdx]).trim() : '';
+                const matInfo = gid ? data.materialsGroupMap[gid] : null;
+                if (matInfo && matInfo.code && matInfo.name) defaultMaterial = matInfo.name;
+            }
+        }
         rowMaterials[index] = defaultMaterial;
         const orderedRow = previewColumnHeaders.map(h => {
             const actualCol = columnMapping[h];
@@ -2160,19 +2538,31 @@ function renderPreview(data) {
         const standardOptions = ['-', 'Бетон', 'Цемент', 'Кирпич', 'Дерево'];
         let materialOptions = [...standardOptions];
         if (!standardOptions.includes(defaultMaterial) && defaultMaterial !== '-') materialOptions.push(defaultMaterial);
+        const partLabels = { 'Подземная': 'Подземная часть', 'Цоколь': 'Цокольная часть', 'Надземная': 'Надземная часть' };
+        const partLabel = partLabels[defaultPart] || defaultPart;
+        // АР: значения «Часть здания» и «Материал» выводятся как обычный текст.
+        // КР: прежние элементы выбора (часть — заблокированный select, материал — редактируемый).
+        let partCell, materialCell;
+        if (isAR) {
+            partCell = `<td title="${partLabel}">${partLabel}</td>`;
+            materialCell = `<td title="${defaultMaterial}">${defaultMaterial}</td>`;
+        } else {
+            partCell = `<td><select class="part-select" data-index="${index}" disabled style="background:#f7fafc; color:#4a5568; cursor:not-allowed; width:100%; padding:4px 8px; border:1px solid #e2e8f0; border-radius:4px; font-size:12px;">
+                <option value="Подземная" ${defaultPart === 'Подземная' ? 'selected' : ''}>Подземная часть</option>
+                <option value="Цоколь" ${defaultPart === 'Цоколь' ? 'selected' : ''}>Цокольная часть</option>
+                <option value="Надземная" ${defaultPart === 'Надземная' ? 'selected' : ''}>Надземная часть</option>
+            </select></td>`;
+            materialCell = `<td><select class="material-select" data-index="${index}" title="${defaultMaterial}" onchange="updateRowMaterial(${index}, this.value)" style="width:120px;">
+                ${materialOptions.map(opt => `<option value="${opt}" ${defaultMaterial === opt ? 'selected' : ''}>${opt}</option>`).join('')}
+            </select></td>`;
+        }
         const tr = document.createElement('tr');
         tr.dataset.rowIndex = index;
         tr.innerHTML = `
             <td style="text-align:center;"><input type="checkbox" class="row-checkbox" data-index="${index}" onchange="toggleRowSelection(${index})"></td>
             ${orderedRow.map(cell => `<td title="${cell}">${cell}</td>`).join('')}
-            <td><select class="part-select" data-index="${index}" disabled style="background:#f7fafc; color:#4a5568; cursor:not-allowed; width:100%; padding:4px 8px; border:1px solid #e2e8f0; border-radius:4px; font-size:12px;">
-                <option value="Подземная" ${defaultPart === 'Подземная' ? 'selected' : ''}>Подземная часть</option>
-                <option value="Цоколь" ${defaultPart === 'Цоколь' ? 'selected' : ''}>Цокольная часть</option>
-                <option value="Надземная" ${defaultPart === 'Надземная' ? 'selected' : ''}>Надземная часть</option>
-            </select></td>
-            <td><select class="material-select" data-index="${index}" onchange="updateRowMaterial(${index}, this.value)" style="width:120px;">
-                ${materialOptions.map(opt => `<option value="${opt}" ${defaultMaterial === opt ? 'selected' : ''}>${opt}</option>`).join('')}
-            </select></td>`;
+            ${partCell}
+            ${materialCell}`;
         body.appendChild(tr);
         rowElementCache.set(index, tr);
     });
@@ -2553,9 +2943,9 @@ function groupRowsCommon(mode) {
         const index = parseInt(tr.dataset.rowIndex);
         if (isNaN(index)) return;
         
-        const tds = tr.querySelectorAll('td');
-        const partSelect = tds[tds.length - 2]?.querySelector('select');
-        const part = partSelect ? partSelect.value : 'Надземная';
+        // Часть здания берём из rowParts: в АР ячейка — обычный текст (select нет),
+        // в КР select заблокирован и его значение совпадает с rowParts[index].
+        const part = rowParts[index] || 'Надземная';
         const typeRu = typeRuIdx !== -1 ? (data.rows[index]?.[typeRuIdx] || 'Неизвестно') : 'Неизвестно';
         const name = nameIdx !== -1 ? (data.rows[index]?.[nameIdx] || '') : '';
         const mssk = resolveMsskGroup(index);
@@ -3792,12 +4182,14 @@ async function restoreSession(sessionId) {
         const data = await response.json();
         currentSessionId = sessionId;
         currentRunId = data.current_run_id || null;
-        if (data.buildingHeight) document.getElementById('buildingHeight').value = data.buildingHeight;
         if (data.processingType || data.processing_type) {
             currentProcessingType = data.processingType || data.processing_type;
             const radio = document.querySelector(`input[name="processingType"][value="${currentProcessingType}"]`);
             if (radio) { radio.checked = true; updateProcessingTypeBadges(); }
         }
+        applyHeightsToInputs(data.buildingHeight, data.floorHeight);
+        updateArConstantsPanel();
+        updatePosUploadVisibility();
         showToast('Сессия восстановлена', 'success');
         switchTab('process');
         if (data.status === 'completed') {

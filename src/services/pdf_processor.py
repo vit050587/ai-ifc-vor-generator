@@ -250,14 +250,17 @@ def _process_pdf_unlocked(
                 df_all[col] = '-'
 
         # Формируем ifc_elements_output.json и ifc_raw_elements_grouped.json
-        # (аналогично пайплайну IFC из ifc_reference_builder.py)
-        try:
-            from src.services.ifc_reference_builder import build_reference_from_pdf
-            build_reference_from_pdf(df_all, output_folder_str, processing_type)
-        except Exception as e:
-            if reference_only:
-                raise
-            logger.warning(f"Не удалось сформировать JSON-файлы справочника для PDF: {e}", exc_info=True)
+        # (аналогично пайплайну IFC из ifc_reference_builder.py).
+        # Только для КР и режима справочников: в АР цифровой сборник
+        # не используется, справочники не строятся.
+        if reference_only or processing_type == "KR":
+            try:
+                from src.services.ifc_reference_builder import build_reference_from_pdf
+                build_reference_from_pdf(df_all, output_folder_str, processing_type)
+            except Exception as e:
+                if reference_only:
+                    raise
+                logger.warning(f"Не удалось сформировать JSON-файлы справочника для PDF: {e}", exc_info=True)
 
         if reference_only:
             return {

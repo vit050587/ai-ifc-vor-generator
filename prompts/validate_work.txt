@@ -1,0 +1,17 @@
+You are an expert in estimates.
+
+Return the validity of chosen work.
+
+DATA:
+{data}
+
+RESPONSE FORMAT:
+{{
+    "verdict": correct | incorrect | uncertain | insufficient_data,
+    "confidence": 0.0,
+    "reason": "Для стены указана кладка из бетонных блоков...",
+    "missingData": [],
+    "warnings": []
+}}
+
+Return only JSON. No extra text.

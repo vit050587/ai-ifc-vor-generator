@@ -13,7 +13,7 @@ PdfPoint = tuple[float, float]
 class MaskPolygon:
     """One selected region from a mask channel, in pixel coordinates."""
 
-    channel_id: int
+    legend_entry_id: int
     exterior: list[Point]
     holes: list[list[Point]] = field(default_factory=list)
     area: float = 0.0
@@ -33,7 +33,7 @@ class PolygonizedMask:
 class PdfMaskPolygon:
     """One mask region expressed in PDF points."""
 
-    channel_id: int
+    legend_entry_id: int
     exterior: list[PdfPoint]
     holes: list[list[PdfPoint]] = field(default_factory=list)
     area: float = 0.0
@@ -50,7 +50,7 @@ class PdfPolygonizedMask:
 
 
 class MaskPolygonizer:
-    def process(self, binary_matrix: torch.Tensor) -> PolygonizedMask:
+    def process(self, binary_matrix: torch.Tensor, channel_id_2_entry_id: dict[int, int]) -> PolygonizedMask:
         """Convert an [N, H, W] binary tensor to polygons grouped by channel."""
         self._validate(binary_matrix)
 
@@ -98,7 +98,7 @@ class MaskPolygonizer:
                 )
                 polygons.append(
                     MaskPolygon(
-                        channel_id=channel_id,
+                        legend_entry_id=channel_id_2_entry_id[channel_id],
                         exterior=exterior,
                         holes=holes,
                         area=max(area, 0.0),

@@ -4,11 +4,231 @@ import ifcopenshell
 import pandas as pd
 import os
 import re
+import json
+from datetime import datetime
+from pathlib import Path
 
 from src.core.logger import setup_logger
 from src.services.ifc_raw_dump import _compute_bbox_quantities
 
 logger = setup_logger("zero_step")
+
+# Имя JSON-файла с глобальными константами, определёнными по модели IFC
+# (высоты здания/этажа, отметки). Записывается в корень сессии рядом с
+# height.txt; значения из него используются подбором работ (АР).
+IFC_CONSTANTS_FILENAME = 'IFC_глобальные_константы.json'
+
+# Заголовки констант, не входящих в схему works_classification.json
+# (синхронизировано с EXTRA_POS_CONSTANTS в pd_parser.py).
+# floor_height, crane_type, crane_capacity, bucket_capacity, equipment_power
+# входят в схему global_constants — их заголовки берутся из схемы.
+_EXTRA_CONSTANT_TITLES = {
+    'soil_group': 'Группа грунтов',
+    'movement_distance': 'Расстояние перемещения грунта',
+}
+
+# IFC-специфичные константы (в файле ПОС не определяются).
+_IFC_ONLY_CONSTANT_TITLES = {
+    'total_height_m': 'Общая высота здания, м',
+    'min_ground_elevation_m': 'Минимальная отметка надземной части, м',
+    'top_elevation_m': 'Максимальная отметка надземной части, м',
+}
+
+# Минимальный номер этажа, при котором здание считается многоэтажным:
+# наибольший числовой индикатор в колонке «Этаж» >= MULTISTORY_THRESHOLD
+# (наличие 2-го этажа делает здание многоэтажным).
+MULTISTORY_THRESHOLD = 2
+
+
+def _storey_indicator(storey_name):
+    """Числовой индикатор этажа из значения колонки «Этаж».
+
+    Правила (аналогичны _classify_storey_type_ar):
+      'К01_1_этаж_основной'       → 1
+      'К01_12_этаж_основной'      → 12
+      'К01_-1/1_этаж_цокольный'   → 1 (цокольный этаж считается надземным)
+      'К01_-1_подземный этаж'     → None (подземные этажи не учитываются)
+      'К01_Крыша'                 → None (нет числового индикатора)
+
+    Returns:
+        int или None: номер надземного этажа.
+    """
+    if storey_name is None:
+        return None
+    for segment in re.split(r'[_\s]+', str(storey_name).strip()):
+        seg = segment.strip()
+        if re.match(r'^\d+$', seg):
+            return int(seg)
+        m = re.match(r'^-(\d+)\s*/\s*(\d+)$', seg)
+        if m:
+            return int(m.group(2))
+    return None
+
+
+def detect_storeys_type(storey_names):
+    """Определяет этажность здания по значениям колонки «Этаж».
+
+    Берётся наибольший числовой индикатор этажа по всем элементам:
+    если он >= 2 (в здании есть 2-й этаж) — здание многоэтажное,
+    иначе одноэтажное.
+
+    Args:
+        storey_names: iterable значений колонки «Этаж» (имена этажей IFC).
+
+    Returns:
+        str или None: 'одноэтажное' / 'многоэтажное'; None, если ни у одного
+        этажа нет числового индикатора (этажность определить нельзя).
+    """
+    numbers = [n for n in (_storey_indicator(s) for s in storey_names) if n is not None]
+    if not numbers:
+        return None
+    return 'многоэтажное' if max(numbers) >= MULTISTORY_THRESHOLD else 'одноэтажное'
+
+
+def detect_storeys_type_from_session(session_dir):
+    """Этажность здания по файлам сессии (полная модель, не выбранные строки).
+
+    Источники по приоритету:
+      1. ``IFC_глобальные_константы.json`` — константа ``building_storeys_type``,
+         определённая в zero_step по колонке «Этаж» всех элементов модели;
+      2. ``ДЛЯ_СМЕТЧИКА_исправленный.xlsx`` (original/ или корень сессии) —
+         fallback для сессий, обработанных до появления константы.
+
+    Args:
+        session_dir: путь к папке сессии (outputs/<session_id>).
+
+    Returns:
+        str или None: 'одноэтажное' / 'многоэтажное'.
+    """
+    # 1. IFC_глобальные_константы.json
+    constants_path = os.path.join(session_dir, IFC_CONSTANTS_FILENAME)
+    if os.path.isfile(constants_path):
+        try:
+            with open(constants_path, encoding='utf-8') as f:
+                data = json.load(f)
+            const = (data.get('constants') or {}).get('building_storeys_type')
+            if isinstance(const, dict) and const.get('value'):
+                return str(const['value'])
+        except Exception as exc:
+            logger.warning(f"Не удалось прочитать {constants_path}: {exc}")
+
+    # 2. Excel сессии: колонка «Этаж» всех элементов модели
+    excel_path = os.path.join(session_dir, 'original', 'ДЛЯ_СМЕТЧИКА_исправленный.xlsx')
+    if not os.path.isfile(excel_path):
+        excel_path = os.path.join(session_dir, 'ДЛЯ_СМЕТЧИКА_исправленный.xlsx')
+    if os.path.isfile(excel_path):
+        try:
+            df = pd.read_excel(excel_path, sheet_name='Данные')
+            if 'Этаж' in df.columns:
+                return detect_storeys_type(df['Этаж'].tolist())
+        except Exception as exc:
+            logger.warning(f"Не удалось прочитать {excel_path}: {exc}")
+
+    return None
+
+
+def _schema_constant_titles():
+    """Заголовки схемных констант из data/works_classification.json.
+
+    Возвращает {имя константы: title} в порядке следования в схеме.
+    При ошибке чтения возвращается пустой словарь.
+    """
+    schema_path = (Path(__file__).resolve().parents[2] / 'data'
+                   / 'works_classification.json')
+    try:
+        with open(schema_path, encoding='utf-8') as f:
+            data = json.load(f)
+        return {c.get('name'): c.get('title', '')
+                for c in data.get('global_constants', []) if c.get('name')}
+    except Exception as exc:
+        logger.warning(f"Не удалось прочитать {schema_path}: {exc}")
+        return {}
+
+
+def _build_ifc_constants(building_height_info, ifc_file_name):
+    """Глобальные константы IFC в структуре ПОС_глобальные_константы.json.
+
+    Каждая константа имеет тот же набор полей, что и в pd_parser
+    (extract_pos_constants): {name, title, value, found, raw_values,
+    quote, page, source}. Файл содержит полный перечень констант (как в
+    ПОС): константы, не определяемые по модели IFC, записываются со
+    значением null и found=false — их значения берутся из ПОС или по
+    умолчанию (приоритет источников: IFC → ПОС).
+
+    Args:
+        building_height_info: высотные характеристики модели (м).
+        ifc_file_name: имя исходного IFC-файла.
+
+    Returns:
+        dict: {document, constants, warnings, file_name, generated_at}.
+    """
+    # Значения, вычисленные по модели IFC (определены всегда)
+    ifc_values = {
+        'building_height_m': building_height_info['Высота_надземной_части_м'],
+        'floor_height': building_height_info.get('Высота_основного_этажа_м', 0.0),
+        'total_height_m': building_height_info['Общая_высота_здания_м'],
+        'min_ground_elevation_m': building_height_info['Минимальная_отметка_надземной_части_м'],
+        'top_elevation_m': building_height_info['Максимальная_отметка_надземной_части_м'],
+    }
+
+    # Этажность здания ('одноэтажное'/'многоэтажное') — по наибольшему
+    # числовому индикатору в колонке «Этаж». Записывается только если
+    # определилась (иначе значение берётся из ПОС или по умолчанию).
+    storeys_type = building_height_info.get('Этажность_здания')
+    if storeys_type:
+        ifc_values['building_storeys_type'] = storeys_type
+
+    # Полный перечень констант в порядке ПОС: схема → доп. константы →
+    # IFC-специфичные.
+    ordered = []
+    for name, title in _schema_constant_titles().items():
+        ordered.append((name, title))
+    for name, title in _EXTRA_CONSTANT_TITLES.items():
+        if not any(n == name for n, _ in ordered):
+            ordered.append((name, title))
+    for name, title in _IFC_ONLY_CONSTANT_TITLES.items():
+        if not any(n == name for n, _ in ordered):
+            ordered.append((name, title))
+
+    constants = {}
+    for name, title in ordered:
+        if name in ifc_values:
+            value = ifc_values[name]
+            constants[name] = {
+                'name': name,
+                'title': title,
+                'value': value,
+                'found': True,
+                'raw_values': [value],
+                'quote': '',
+                'page': None,
+                'source': 'IFC',
+            }
+        else:
+            # Не определяется по IFC — заполняется из ПОС или по умолчанию
+            constants[name] = {
+                'name': name,
+                'title': title,
+                'value': None,
+                'found': False,
+                'raw_values': [],
+                'quote': '',
+                'page': None,
+                'source': '',
+            }
+
+    return {
+        'document': {
+            'name': ifc_file_name,
+            'pages': None,
+            'object': '',
+            'cipher': '',
+        },
+        'constants': constants,
+        'warnings': [],
+        'file_name': ifc_file_name,
+        'generated_at': datetime.now().isoformat(timespec='seconds'),
+    }
 
  
 # Список IFC-классов для режима КР (конструктивные решения).
@@ -119,6 +339,38 @@ def classify_storey_type(storey_name, elevation_mm):
     return 'Не определен'
 
 
+def _classify_storey_type_ar(storey_name):
+    """Классифицирует тип этажа в режиме АР строго по числовому индикатору
+    в значении «Этаж» (без анализа слов и отметок этажа).
+
+    Правила (числовой индикатор ищется в сегментах значения, разделённых
+    «_» и пробелами; текстовые префиксы К01_, С01_ и т.п. игнорируются):
+      'К01_-1/1_этаж_цокольный'   → Цокольный (индикатор вида «-N/M»)
+      'К01_-1_подземный этаж_основной' → Подземный (индикатор — отрицательное число)
+      'К01_1_этаж_основной'       → Надземный (индикатор — положительное число)
+      'К01_Крыша'                 → Надземный (нет числового индикатора)
+
+    Классификация выполняется ТОЛЬКО по наличию определяющих числовых
+    значений — не по словам («цоколь», «подвал» и т.п.) и не по отметке
+    этажа (в отличие от classify_storey_type, используемой в режиме КР).
+    """
+    if storey_name is None:
+        return 'Надземный'
+    s = str(storey_name).strip()
+    if not s or s in ('-', 'nan'):
+        return 'Надземный'
+    for segment in re.split(r'[_\s]+', s):
+        seg = segment.strip()
+        if re.match(r'^-\d+\s*/\s*\d+$', seg):
+            return 'Цокольный'
+        if re.match(r'^-\d+$', seg):
+            return 'Подземный'
+        if re.match(r'^\d+$', seg):
+            return 'Надземный'
+    # Нет числового индикатора — Надземный (крыша, технический этаж и т.п.)
+    return 'Надземный'
+
+
 def find_main_floor_height(storeys):
     """Определяет высоту основного (типового) этажа по отметкам этажей.
 
@@ -166,8 +418,15 @@ def find_main_floor_height(storeys):
     return round(floor_cm / 100, 3)
 
 
-def get_element_storey(element):
-    """Извлекает информацию об этаже, на котором находится элемент"""
+def get_element_storey(element, processing_type: str = "KR"):
+    """Извлекает информацию об этаже, на котором находится элемент
+
+    processing_type: режим обработки — "KR" (по умолчанию) или "AR".
+        В режиме АР тип этажа классифицируется строго по числовому
+        индикатору в значении «Этаж» (_classify_storey_type_ar),
+        в режиме КР — по-прежнему через classify_storey_type
+        (слова + отметка этажа; поведение КР не меняется).
+    """
     storey_info = {
         'Этаж': '-',
         'Уровень_этажа_мм': '-',
@@ -191,9 +450,13 @@ def get_element_storey(element):
                                     elev_val = elev_val / 1000
                                 storey_info['Уровень_этажа_мм'] = round(elev_val * 1000, 2)
                         
-                        storey_info['Тип_этажа'] = classify_storey_type(
-                            storey_info['Этаж'], 
-                            storey_info['Уровень_этажа_мм']
+                        storey_info['Тип_этажа'] = (
+                            _classify_storey_type_ar(storey_info['Этаж'])
+                            if str(processing_type).upper() == 'AR'
+                            else classify_storey_type(
+                                storey_info['Этаж'],
+                                storey_info['Уровень_этажа_мм']
+                            )
                         )
                         break
     except Exception as e:
@@ -461,7 +724,7 @@ def get_element_info(element, processing_type: str = "KR"):
     }
     
     # Информация об этаже
-    info.update(get_element_storey(element))
+    info.update(get_element_storey(element, processing_type=processing_type))
     
     # Материал
     material_found = False
@@ -888,6 +1151,12 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
             f"Уровни элементов не найдены, используется высота по этажам: "
             f"{building_height_info['Высота_надземной_части_м']} м"
         )
+
+    # Этажность здания: по наибольшему числовому индикатору в колонке
+    # «Этаж» параметров элементов (> 2 → многоэтажное).
+    storeys_type = detect_storeys_type(el.get('Этаж') for el in elements)
+    building_height_info['Этажность_здания'] = storeys_type
+    logger.info(f"Этажность здания (по колонке «Этаж»): {storeys_type}")
 
     df = pd.DataFrame(elements)
     df = df.fillna('-')
@@ -1790,6 +2059,20 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
 
     with open(height_file, 'w', encoding='utf-8') as file:
         file.write(str(primary_height))
+
+    # Глобальные константы, определённые по модели IFC: сохраняются отдельным
+    # JSON-файлом (структура идентична ПОС_глобальные_константы.json — полный
+    # перечень констант, приоритет источников: IFC → ПОС).
+    ifc_constants_doc = _build_ifc_constants(
+        building_height_info, Path(ifc_file).name)
+    ifc_constants_file = os.path.join(
+        os.path.dirname(height_file) or '.', IFC_CONSTANTS_FILENAME)
+    try:
+        with open(ifc_constants_file, 'w', encoding='utf-8') as f:
+            json.dump(ifc_constants_doc, f, ensure_ascii=False, indent=2)
+        logger.info(f"Глобальные константы IFC сохранены: {ifc_constants_file}")
+    except Exception as exc:
+        logger.warning(f"Не удалось записать {ifc_constants_file}: {exc}")
 
     with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
         df_smetchik.to_excel(writer, sheet_name='Данные', index=False)

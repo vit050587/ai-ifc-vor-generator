@@ -71,17 +71,16 @@ ai-ifc-vor-generator/
 │       ├── session_manager.py # Управление сессиями, запусками, фоновыми потоками
 │       ├── zero_step.py       # Извлечение элементов из IFC (КР/АР), нормализация
 │       ├── ifc_raw_dump.py    # «Сырой» дамп свойств/QTO/материалов + расчёт по bbox
-│       ├── ifc_reference_builder.py # Построение JSON-справочников из IFC/PDF
-│       ├── first_etap.py      # Этап 1 (АР): анализ элемента через LLM
-│       ├── second_etap.py     # Этап 2 (АР): фильтрация по части здания
-│       ├── third_etap.py      # Этап 3 (АР): фильтрация по высоте
-│       ├── fourth_etap.py     # Этап 4 (АР): подбор работ + объём/стоимость
-│       ├── base_knowledge.py  # База ключевых слов работ для подбора
-│       ├── geometry_filter.py # Фильтрация работ по геометрии элемента
+│       ├── ifc_reference_builder.py # Построение JSON-справочников из IFC/PDF (КР)
+│       ├── works_table_selector.py  # АР: детерминированный подбор таблиц работ
+│       ├── ifc_json_builder.py      # Сборка финального JSON
+│       ├── position_links.py  # Ссылки на позиции цифрового сборника (КР)
+│       ├── works_cost.py      # Расчёт/форматирование стоимости перечня (КР)
 │       ├── group_excel.py     # Группировка элементов (КР и АР), правила группировки
 │       ├── api_works_lookup.py# Подбор работ через API справочника ТСН (КР)
 │       ├── materials_lookup.py# Карта МССК-кодов материалов (АР)
 │       ├── mssk_lookup.py     # Карта МССК-кодов элементов
+│       ├── pd_parser.py       # Разбор PDF ПОС через LLM (АР)
 │       ├── pdf_processor.py   # Обёртка пайплайна обработки PDF
 │       └── serializer.py      # Экспорт IFC → GLB (3D модель)
 │
@@ -111,13 +110,16 @@ ai-ifc-vor-generator/
 │       ├── get_scale.txt
 │       └── get_text_from_image.txt
 │
-├── prompts/                   # Промпты этапов пайплайна
-│   └── element_analyze.txt    # Анализ характеристик элемента (этап 1)
+├── prompts/                   # Промпты пайплайна (сейчас пусто — промпты встроены в модули)
 ├── data/                      # Справочники и входные данные
 │   ├── perechen_kr.xlsx, perechen_kr_1.xlsx  # Перечни работ (КР)
-│   ├── perechen_ar.xlsx                      # Перечень работ (АР)
-│   ├── koefs.xlsx                            # Нормы расхода (корректировка объёма)
-│   ├── price_cost.xlsx                       # Стоимость расценок
+│   ├── koefs.xlsx                            # Нормы расхода (корректировка объёма, КР)
+│   ├── price_cost.xlsx                       # Стоимость расценок (КР)
+│   ├── ifc_to_collections.json               # Правила IfcClass → сборники (АР)
+│   ├── msck_elements_compact.json            # Дерево МССК-элементов (АР)
+│   ├── tree_work_compact.json                # Дерево сборников ГЭСН/ТСН-2001 (АР)
+│   ├── works_classification.json             # Классификация сборников + 7 констант (АР)
+│   ├── params_registry.json                  # Реестр параметров ПОС (АР)
 │   ├── elements_mssk.xlsx / elements_mssk_nested.json  # Справочник МССК элементов
 │   └── materials_mssk.xlsx / materials_mssk_nested.json # Справочник МССК материалов
 │
@@ -187,6 +189,13 @@ ai-ifc-vor-generator/
   изображения чертежа с разметкой и markdown-условных обозначений материалов.
 - **Фильтрация по высоте** и расчёт высоты основного этажа (в АР важна высота типового этажа,
   а не общая высота здания).
+- **Константы подбора работ (АР)**: эндпоинт `works_constants` отдаёт схему констант и значения,
+  определённые из IFC и из файла ПОС; загрузка ПОС (`upload_pos`) разбирает PDF ПОС через LLM
+  в `ПОС_глобальные_константы.json`; константы передаются в запуски вместе с выбором строк
+  (`globalConstants`, `floorHeight` в `select_rows` / `new_run`).
+- **Сборка финального JSON по запросу**: для каждого запуска доступна отдельная сборка
+  (`build_final_json` / `final_json/status` / `final_json/result`) со статусами и ошибками
+  (`finalJsonStatus` / `finalJsonError` в `RunInfo`).
 
 ---
 
@@ -195,12 +204,11 @@ ai-ifc-vor-generator/
 | Файл | Назначение |
 |------|-----------|
 | `data/perechen_kr.xlsx`, `perechen_kr_1.xlsx` | Перечень доступных расценок/работ для режима КР |
-| `data/perechen_ar.xlsx` | Перечень работ для режима АР |
-| `data/koefs.xlsx` | Нормы расхода/коэффициенты для корректировки объёмов работ |
-| `data/price_cost.xlsx` | Стоимость расценок (Шифр → Текущие прямые затраты) |
+| `data/koefs.xlsx` | Нормы расхода/коэффициенты для корректировки объёмов работ (КР) |
+| `data/price_cost.xlsx` | Стоимость расценок (Шифр → Текущие прямые затраты) (КР) |
+| `data/ifc_to_collections.json`, `msck_elements_compact.json`, `tree_work_compact.json`, `works_classification.json`, `params_registry.json` | Справочники детерминированного подбора работ (АР) |
 | `data/elements_mssk.xlsx`, `elements_mssk_nested.json` | МССК-справочник строительных элементов (иерархия категория→назначение→класс→подкласс) |
 | `data/materials_mssk.xlsx`, `materials_mssk_nested.json` | МССК-справочник материалов (для группировки АР элементов по слоям) |
-| `prompts/element_analyze.txt` | Промпт этапа 1 (нормализация характеристик элемента) |
 
 Новые/изменённые файлы-результаты в `outputs/<session_id>/`:
 
@@ -271,14 +279,28 @@ ai-ifc-vor-generator/
 ### Обработка (выбор строк и запуски)
 | Метод | Путь | Описание |
 |-------|------|----------|
-| POST | `/ifc-vor/api/session/<id>/select_rows` | Выбор строк (`rowIndices`, `allRows`, `rowTypes`, `rowMaterials`, `buildingHeight`, `processingType`) и запуск обработки |
-| POST | `/ifc-vor/api/session/<id>/new_run` | Новый запуск обработки (без повтора извлечения из файла) |
+| POST | `/ifc-vor/api/session/<id>/select_rows` | Выбор строк (`rowIndices`, `allRows`, `rowTypes`, `rowMaterials`, `buildingHeight`, `processingType`; АР — также `floorHeight` и `globalConstants`) и запуск обработки |
+| POST | `/ifc-vor/api/session/<id>/new_run` | Новый запуск обработки (без повтора извлечения из файла; АР — `floorHeight`, `globalConstants`) |
 | GET | `/ifc-vor/api/session/<id>/runs` | Список запусков сессии |
 | POST | `/ifc-vor/api/session/<id>/switch_run/<run_id>` | Переключение на другой запуск |
 | POST | `/ifc-vor/api/session/<id>/filter_height` | Обновить высоту здания |
 
 Статусы сессии: `ifc_processing` / `pdf_processing` / `selecting_rows` / `processing` /
 `completed` / `error` (маппинг в краткий `status`: `processing`, `selecting_rows`, ...).
+
+### Константы подбора работ и ПОС (АР)
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | `/ifc-vor/api/session/<id>/works_constants` | Схема констант подбора работ (`works_classification.json`) + значения, определённые из IFC и ПОС (`constants`, `detected`, `posDetected`, `posReady`, `posStatus`) |
+| POST | `/ifc-vor/api/session/<id>/upload_pos` | Загрузка PDF ПОС: фоновый разбор через LLM → `ПОС_глобальные_константы.json` |
+| GET | `/ifc-vor/api/session/<id>/position_links` | Ссылки на позиции цифрового сборника по группам элементов (`position_links.json`) |
+
+### Финальный JSON
+| Метод | Путь | Описание |
+|-------|------|----------|
+| POST | `/ifc-vor/api/session/<id>/run/<run_number>/build_final_json` | Запустить сборку финального JSON для запуска (`final_result_AR.json` / `final_result_KR.json`) |
+| GET | `/ifc-vor/api/session/<id>/run/<run_number>/final_json/status` | Статус сборки финального JSON |
+| GET | `/ifc-vor/api/session/<id>/run/<run_number>/final_json/result` | Результат сборки финального JSON |
 
 ### Файлы и просмотр
 | Метод | Путь | Описание |
@@ -330,14 +352,13 @@ ai-ifc-vor-generator/
      (Шифр ТСН, наименование, ед. изм., объём; объём корректируется по `koefs.xlsx`,
      стоимость — по `price_cost.xlsx`).
 
-- **Режим АР (локальная LLM, этапы 1–4):**
-  1. **Этап 1** (`first_etap`): каждый элемент анализируется LLM — выделяются размеры, материал,
-     описание (промпт `element_analyze.txt`).
-  2. **Этап 2** (`second_etap`): фильтрация работ по **части здания** (надземная/подземная/цоколь).
-  3. **Этап 3** (`third_etap`): фильтрация по **высоте** (паттерны + LLM-проверка).
-  4. **Этап 4** (`fourth_etap`): подбор работ по материалу/ключевым словам из базы знаний
-     + LLM-отбор (промпт специальный для АР), расчёт объёмов и стоимости,
-     сборка `ОБЩИЙ_Финальный_перечень_работ.xlsx`.
+- **Режим АР (локальный детерминированный подбор, `works_table_selector`):**
+  1. Применение материалов пользователя, фильтрация выбранных строк.
+  2. Группировка (МССК → Материал → Наименование) → деревья проекта и группы для сметчика.
+  3. Детерминированный подбор таблиц работ (8 шагов по `data/algorithm.md`,
+     справочники `ifc_to_collections.json`, `msck_elements_compact.json`,
+     `tree_work_compact.json`, `works_classification.json`) → `Подобранные_таблицы_работ.json`.
+  4. Сборка `final_result_AR.json` (`ifc_json_builder`).
 
 В обоих режимах:
 - дополнительно формируются `Дерево_проекта*.xlsx`, справочные JSON и сырой дамп IFC;
@@ -368,7 +389,7 @@ make clean     # остановить и удалить volumes
 - `OLLAMA_BASE_URL` — адрес Ollama;
 - `OLLAMA_MODEL_NAME` — VLM для обработки чертежей (Qwen3-VL-8B);
 - `NORMS_LLM_MODEL` — LLM для этапов АР (YandexGPT-5-Lite-8B);
-- `DOCUMENTS_PATH`, `AR_DOCUMENTS_PATH`, `KOEFS_PATH`, `PRICE_COST_PATH` — справочники;
+- `DOCUMENTS_PATH`, `KOEFS_PATH`, `PRICE_COST_PATH` — справочники;
 - `WORKS_API_URL`, `WORKS_API_TOKEN` — API справочника ТСН;
 - `KEYCLOAK_TOKEN_URL`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET` — авто-токен Keycloak;
 - `UPLOAD_FOLDER`, `OUTPUT_FOLDER`, `SESSIONS_FILE` — каталоги данных;

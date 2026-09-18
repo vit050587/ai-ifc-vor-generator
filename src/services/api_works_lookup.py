@@ -34,7 +34,7 @@ import requests
 from src.core.config import load_config
 from src.core.keycloak import KeycloakTokenProvider
 from src.core.logger import setup_logger
-from src.services.fourth_etap import (
+from src.services.works_cost import (
     _get_corrected_volume,
     _add_cost_column,
     add_total_row,
@@ -172,14 +172,126 @@ def _fetch_one(element: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
+# =====================================================================
+#  ФИЛЬТРАЦИЯ ГРУПП РАБОТ ПО ВЫСОТЕ ЗДАНИЯ
+# =====================================================================
+
+def _height_in_range(height: float, range_obj: Any) -> bool:
+    """Проверяет, попадает ли высота здания в диапазон группы работ.
+
+    Диапазон приходит от API в виде
+        {"min": 57.0, "minMathNotation": ">", "max": 75.0,
+         "maxMathNotation": "<="}
+    Группа без диапазона (например, «Уход за бетоном») применяется
+    при любой высоте.
+
+    Аргументы:
+        height     — высота здания, м.
+        range_obj  — словарь range из workGroups (или None/{} — любая высота).
+
+    Возвращает:
+        True, если высота попадает в диапазон группы.
+    """
+    if not isinstance(range_obj, dict) or not range_obj:
+        return True
+
+    minimum = range_obj.get("min")
+    maximum = range_obj.get("max")
+    min_notation = str(range_obj.get("minMathNotation") or ">").strip()
+    max_notation = str(range_obj.get("maxMathNotation") or "<=").strip()
+
+    if minimum is not None:
+        try:
+            if min_notation == ">=":
+                if not height >= float(minimum):
+                    return False
+            elif not height > float(minimum):
+                return False
+        except (ValueError, TypeError):
+            pass
+
+    if maximum is not None:
+        try:
+            if max_notation == "<":
+                if not height < float(maximum):
+                    return False
+            elif not height <= float(maximum):
+                return False
+        except (ValueError, TypeError):
+            pass
+
+    return True
+
+
+def _filter_response_by_height(
+    response: Dict[str, Any],
+    building_height: float | None,
+) -> Dict[str, Any]:
+    """Оставляет в ответе API только группы работ, подходящие высоте здания.
+
+    API возвращает работы позиции справочника, сгруппированные по высоте
+    здания («до 57», «более 57 до 75 м», «более 75 до 105 м» …), —
+    фильтрацию по высоте выполняет клиент. Без фильтрации в финальный
+    перечень попадают расценки сразу всех диапазонов высоты.
+
+    Группы без диапазона (например, «Уход за бетоном») не зависят от
+    высоты и сохраняются всегда. Если building_height не задана —
+    ответ возвращается без изменений (прежнее поведение).
+
+    Аргументы:
+        response        — разобранный JSON-ответ API подбора работ.
+        building_height — высота здания, м (или None).
+
+    Возвращает:
+        Ответ API, в котором data[].workGroups оставлены только
+        подходящие по высоте группы.
+    """
+    if building_height is None:
+        logger.warning(
+            "Высота здания не задана — группы работ не отфильтрованы "
+            "по высоте (в перечень могут попасть расценки всех диапазонов)"
+        )
+        return response
+
+    try:
+        height = float(building_height)
+    except (ValueError, TypeError):
+        logger.warning(
+            f"Некорректная высота здания ({building_height!r}) — "
+            "группы работ не отфильтрованы по высоте"
+        )
+        return response
+
+    filtered = dict(response)
+    data = response.get("data") or []
+    new_data = []
+    for position in data:
+        if not isinstance(position, dict) or not position.get("workGroups"):
+            new_data.append(position)
+            continue
+        kept_groups = [
+            group for group in position["workGroups"]
+            if not isinstance(group, dict)
+            or _height_in_range(height, group.get("range"))
+        ]
+        if kept_groups:
+            new_position = dict(position)
+            new_position["workGroups"] = kept_groups
+            new_data.append(new_position)
+    filtered["data"] = new_data
+    return filtered
+
+
 def _iter_works(response: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Извлекает список работ из ответа API подбора работ.
 
-    Поддерживает оба формата ответа эндпоинта:
-      * вложенный (актуальный): {"data": [{..., "works": [...]}]} —
+    Поддерживает форматы ответа эндпоинта:
+      * вложенный в workGroups (актуальный):
+        {"data": [{..., "workGroups": [{"works": [...]}]}]} —
+        позиции справочника, работы сгруппированы внутри workGroups;
+      * вложенный (на случай отката): {"data": [{..., "works": [...]}]} —
         позиции справочника с вложенным списком работ;
-      * плоский (на случай отката формата): {"data": [work, ...]} —
-        список работ на верхнем уровне.
+      * плоский: {"data": [work, ...]} — список работ на верхнем уровне.
 
     Аргументы:
         response — разобранный JSON-ответ API.
@@ -195,6 +307,14 @@ def _iter_works(response: Dict[str, Any]) -> List[Dict[str, Any]]:
         nested = item.get("works")
         if isinstance(nested, list):
             works.extend(w for w in nested if isinstance(w, dict))
+        elif item.get("workGroups"):
+            # Актуальный формат: работы вложены в группы позиции
+            for group in item["workGroups"]:
+                if not isinstance(group, dict):
+                    continue
+                group_works = group.get("works")
+                if isinstance(group_works, list):
+                    works.extend(w for w in group_works if isinstance(w, dict))
         elif item.get("code") is not None or item.get("name") is not None:
             # Плоский формат: элемент data сам является работой
             works.append(item)
@@ -203,6 +323,7 @@ def _iter_works(response: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def fetch_works_from_api(
     elements_json: List[Dict[str, Any]],
+    building_height: float | None = None,
 ) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
     """Отправляет элементы в API и собирает ответы.
 
@@ -212,11 +333,14 @@ def fetch_works_from_api(
     Аргументы:
         elements_json — массив групп элементов в формате
             ifc_raw_elements_grouped.json.
+        building_height — высота здания, м; используется для отсечения
+            групп работ, не подходящих по высоте (см.
+            _filter_response_by_height). None — без фильтрации.
 
     Возвращает:
         Список пар (element, api_response), где element — исходная
-        группа запроса, api_response — ответ API для неё
-        ({"data": [...], "paging": {...}}).
+        группа запроса, api_response — отфильтрованный по высоте
+        ответ API для неё ({"data": [...], "paging": {...}}).
     """
     if not elements_json:
         raise RuntimeError("Нет данных для отправки в API подбора работ")
@@ -230,7 +354,7 @@ def fetch_works_from_api(
     for index, element in enumerate(elements_json, 1):
         name = element.get("buildingElementName", "?")
         logger.info(f"API запрос {index}/{total}: {name}")
-        response = _fetch_one(element)
+        response = _filter_response_by_height(_fetch_one(element), building_height)
         positions = response.get("data", []) or []
         works_count = len(_iter_works(response))
         logger.info(

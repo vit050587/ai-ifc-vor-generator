@@ -26,7 +26,7 @@ class PromptManager:
             except Exception as e:
                 logger.error(f"Ошибка загрузки промта {file_path}: {e}")
 
-    def get_prompt(self, name: str):
+    def get_prompt(self, name: str) -> str:
         if name not in self.prompts:
             logger.error(f"Промт '{name}' не найден")
             raise ValueError(f"Промт '{name}' не найден")

@@ -3,7 +3,12 @@ import base64
 from PIL import ImageEnhance, ImageFilter
 import io
 import fitz
-from PIL import Image, ImageDraw
+import numpy as np
+from dataclasses import replace
+from math import atan2, ceil, degrees, floor, hypot
+from PIL import Image, ImageColor, ImageDraw
+from shapely.geometry import Polygon
+from shapely.ops import polylabel
 from utils import image_to_base64
 from pathlib import Path
 from typing import Tuple
@@ -14,6 +19,8 @@ from mask_polygonizer import (
     PdfPolygonizedMask,
     PolygonizedMask,
 )
+from obb_converter import RegionOBB
+from polygon_converter import RegionPolygon
 
 class PdfProcessor:
 
@@ -189,57 +196,78 @@ class PdfProcessor:
             for rectangle in rectangles
         ]
 
-    def image_polygons_to_pdf_polygons(
+    def image_geometry_to_pdf_geometry(
         self,
-        polygonized_mask: PolygonizedMask,
-        dpi: int | None = None,
-    ) -> PdfPolygonizedMask:
-        """Convert global rendered-image polygons to global PDF coordinates."""
-        zoom = dpi / 72 if dpi else None
-        transform = self._get_image_to_pdf_transform(zoom)
-        image_zoom, _ = transform
+        geometry_parts: list[RegionOBB | RegionPolygon],
+        dpi: int,
+    ) -> list[RegionOBB | RegionPolygon]:
+        """Return the same geometry types with their coordinates in PDF points."""
+        if not geometry_parts:
+            return []
 
-        def convert_ring(points):
-            return [
-                self._transform_image_point(x, y, transform)
-                for x, y in points
-            ]
+        coefficient = dpi / 72
+        transform = self._get_image_to_pdf_transform(coefficient)
+        converted_polygons: dict[int, RegionPolygon] = {}
 
-        polygons = [
-            PdfMaskPolygon(
-                channel_id=polygon.channel_id,
-                exterior=convert_ring(polygon.exterior),
-                holes=[convert_ring(hole) for hole in polygon.holes],
-                area=polygon.area / (image_zoom ** 2),
+        def convert_points(points) -> np.ndarray:
+            return np.asarray(
+                [self._transform_image_point(x, y, transform) for x, y in points],
+                dtype=np.float64,
+            ).reshape(-1, 2)
+
+        def convert_polygon(part: RegionPolygon, measure: bool = False) -> RegionPolygon:
+            cached = converted_polygons.get(id(part))
+            if cached is not None:
+                if measure and cached.temp_width is None:
+                    cached.temp_width = part.width / coefficient
+                    cached.temp_area = part.area / coefficient ** 2
+                return cached
+            converted = replace(
+                part,
+                polygon=convert_points(part.polygon),
+                holes=[convert_points(hole) for hole in part.holes],
+                source_polygon=(
+                    convert_polygon(part.source_polygon)
+                    if part.source_polygon is not None else None
+                ),
+                temp_width=part.width / coefficient if measure else None,
+                temp_area=part.area / coefficient ** 2 if measure else None,
             )
-            for polygon in polygonized_mask.polygons
-        ]
+            converted_polygons[id(part)] = converted
+            return converted
 
-        page_corners = convert_ring(
-            [
-                (0, 0),
-                (polygonized_mask.width, 0),
-                (polygonized_mask.width, polygonized_mask.height),
-                (0, polygonized_mask.height),
-            ]
-        )
-        xs = [point[0] for point in page_corners]
-        ys = [point[1] for point in page_corners]
+        converted = []
+        for part in geometry_parts:
+            if isinstance(part, RegionOBB):
+                corners = convert_points(part.polygon)
+                width_axis = corners[1] - corners[0]
+                height_axis = corners[2] - corners[1]
+                converted.append(replace(
+                    part,
+                    source_polygon=convert_polygon(part.source_polygon),
+                    center=tuple(np.mean(corners, axis=0)),
+                    width=hypot(*width_axis),
+                    height=hypot(*height_axis),
+                    angle=degrees(atan2(width_axis[1], width_axis[0])) % 180,
+                ))
+            elif isinstance(part, RegionPolygon):
+                converted.append(convert_polygon(part, measure=True))
+            else:
+                raise TypeError(f"Unsupported geometry part: {type(part).__name__}")
 
-        return PdfPolygonizedMask(
-            width=max(xs) - min(xs),
-            height=max(ys) - min(ys),
-            channel_count=polygonized_mask.channel_count,
-            polygons=polygons,
-        )
+        return converted
 
     def cropped_image_obbs_to_pdf_obbs(
         self,
         crop_bbox: dict,
         rectangles: list[dict],
         zoom: float | None = None,
+        dpi: int | None = None
     ) -> list[dict]:
-        if zoom is not None and zoom != self.zoom:
+        if dpi is not None:
+            self.pdf_to_base64(dpi=dpi)
+            zoom = dpi / 72
+        elif zoom is not None and zoom != self.zoom:
             self.pdf_to_base64(zoom)
         elif self.zoom is None:
             self.pdf_to_base64()
@@ -288,8 +316,12 @@ class PdfProcessor:
 
         return cropped_img_b64, cropped_img
 
-    def crop_pdf_rect(self, rect: dict, crop_size: int = 0, zoom: float = 4.0):
-        self.pdf_to_base64(zoom=zoom)
+    def crop_pdf_rect(self, rect: dict, crop_size: int = 0, zoom: float = 4.0, dpi: int | None = None):
+
+        if dpi:
+            self.pdf_to_base64(dpi=dpi)
+        else:
+            self.pdf_to_base64(zoom=zoom)
 
         image_rect = self.pdf_rect_to_image_rect(rect)
 
@@ -419,6 +451,98 @@ class PdfProcessor:
             image_to_base64(image_with_rectangles),
             image_with_rectangles,
         )
+
+    def render_pdf_polygons(
+        self,
+        polygons_by_color: dict[str, list[dict]],
+        image: Image.Image | None = None,
+        *,
+        fill_opacity: float = 0.0,
+        zoom: float | None = None,
+        width: int = 2,
+        label_key: str | None = None,
+    ) -> Image.Image:
+        """Draw PDF-point polygon exteriors, holes, and optional labels on an image."""
+        fill_opacity = float(fill_opacity)
+        if 1 < fill_opacity <= 100:
+            fill_opacity /= 100
+        if not 0 <= fill_opacity <= 1:
+            raise ValueError("fill_opacity must be from 0 to 1 or from 0 to 100")
+
+        if image is None:
+            _, image = self.pdf_to_base64(zoom=zoom)
+        render_zoom = zoom if zoom is not None else self.zoom
+        if render_zoom is None or render_zoom <= 0:
+            raise ValueError("zoom must be positive when an image is supplied")
+        result = image.copy()
+
+        with fitz.open(self.pdf_path) as document:
+            rotation_matrix = fitz.Matrix(document[0].rotation_matrix)
+
+        def to_image_points(points):
+            result_points = []
+            for x, y in points:
+                point = fitz.Point(float(x), float(y)) * rotation_matrix
+                result_points.append((point.x * render_zoom, point.y * render_zoom))
+            return result_points
+
+        opacity = round(255 * fill_opacity)
+        outlines = []
+        for color, polygons in polygons_by_color.items():
+            for polygon in polygons:
+                if "polygon_pdf" not in polygon:
+                    raise ValueError("Polygon must contain polygon_pdf")
+                exterior = to_image_points(polygon["polygon_pdf"])
+                holes = [to_image_points(hole) for hole in polygon.get("holes_pdf", [])]
+                if opacity and len(exterior) >= 3:
+                    left = max(0, floor(min(x for x, _ in exterior)))
+                    top = max(0, floor(min(y for _, y in exterior)))
+                    right = min(result.width, ceil(max(x for x, _ in exterior)) + 1)
+                    bottom = min(result.height, ceil(max(y for _, y in exterior)) + 1)
+                    if right > left and bottom > top:
+                        fill_layer = Image.new("RGBA", (right - left, bottom - top), (0, 0, 0, 0))
+                        fill_draw = ImageDraw.Draw(fill_layer)
+                        fill_draw.polygon(
+                            [(x - left, y - top) for x, y in exterior],
+                            fill=(*ImageColor.getrgb(color), opacity),
+                        )
+                        for hole in holes:
+                            if len(hole) >= 3:
+                                fill_draw.polygon(
+                                    [(x - left, y - top) for x, y in hole],
+                                    fill=(0, 0, 0, 0),
+                                )
+                        base = result.crop((left, top, right, bottom)).convert("RGBA")
+                        blended = Image.alpha_composite(base, fill_layer)
+                        result.paste(blended.convert("RGB"), (left, top))
+                label = polygon.get(label_key) if label_key else None
+                outlines.append((color, exterior, holes, label))
+
+        draw = ImageDraw.Draw(result)
+        for color, exterior, holes, label in outlines:
+            if len(exterior) >= 2:
+                draw.line(exterior + [exterior[0]], fill=color, width=width)
+            for hole in holes:
+                if len(hole) >= 2:
+                    draw.line(hole + [hole[0]], fill=color, width=width)
+            if label and exterior:
+                center = (
+                    sum(x for x, _ in exterior) / len(exterior),
+                    sum(y for _, y in exterior) / len(exterior),
+                )
+                if len(exterior) >= 3:
+                    shape = Polygon(exterior, [hole for hole in holes if len(hole) >= 3])
+                    if not shape.is_valid:
+                        shape = shape.buffer(0)
+                    if not shape.is_empty:
+                        if shape.geom_type == "MultiPolygon":
+                            shape = max(shape.geoms, key=lambda part: part.area)
+                        center = polylabel(shape, tolerance=1.0).coords[0]
+                text_bbox = draw.textbbox(center, str(label), anchor="mm")
+                draw.rectangle(text_bbox, fill="white")
+                draw.text(center, str(label), fill="black", anchor="mm")
+
+        return result
 
     def draw_obb_labels(
         self,

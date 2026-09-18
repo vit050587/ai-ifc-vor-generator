@@ -29,7 +29,7 @@ from config import settings
 logger = setup_logger(__name__)
 
 class Processor:
-    def __init__(self, pdf_path):
+    def __init__(self, pdf_path, params: dict[str, Any] | None = None):
         Image.MAX_IMAGE_PIXELS = settings.MAX_IMAGE_PIXELS
 
         self.PDF_PATH = pdf_path

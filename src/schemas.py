@@ -41,6 +41,7 @@ class SessionFull(CamelModel):
     progress_message: str = ""
     has_results: bool = False
     is_reference_session: bool = False
+    # Поля для поддержки множественных запусков
     runs: Optional[List[Dict[str, Any]]] = None
     current_run_id: Optional[str] = None
 
@@ -78,7 +79,11 @@ class SelectRowsRequest(CamelModel):
     row_types: Dict[str, str] = {}
     row_materials: Dict[str, str] = {}
     building_height: Optional[float] = None
+    # Высота этажа (АР): передаётся вместе с building_height в режиме АР
+    floor_height: Optional[float] = None
     processing_type: str = "KR"
+    # Константы проекта для подбора работ (АР): {имя константы: значение}
+    global_constants: Optional[Dict[str, str]] = None
 
 
 class FilterHeightRequest(CamelModel):
@@ -107,7 +112,9 @@ class PreviewResponse(CamelModel):
     saved_types: Optional[Dict[str, str]] = None
     is_preview: Optional[bool] = None
     preview_rows: Optional[int] = None
-    building_height: Optional[float] = None  
+    building_height: Optional[float] = None
+    # Высота основного этажа (АР), определённая по модели IFC
+    floor_height: Optional[float] = None
     source_type: Optional[str] = None
     processing_type: str = "KR"
     has_blueprint_image: bool = False
@@ -135,6 +142,8 @@ class RestoreResponse(CamelModel):
     files: List[SessionFile] = []
     construction_types: Dict[str, str] = {}
     building_height: Optional[float] = None
+    # Высота этажа текущего запуска (АР)
+    floor_height: Optional[float] = None
     selected_rows_count: int = 0
     source_type: Optional[str] = None
     processing_type: str = "KR"
@@ -190,6 +199,8 @@ class NewRunRequest(CamelModel):
     building_height: Optional[float] = None
     grouped_data: Optional[Dict[str, Any]] = None
     processing_type: str = "KR"
+    # Константы проекта для подбора работ (АР): {имя константы: значение}
+    global_constants: Optional[Dict[str, str]] = None
 
 
 class NewRunResponse(CamelModel):
@@ -212,6 +223,8 @@ class RunSwitchResponse(CamelModel):
     status: Optional[str] = None
     files: List[SessionFile] = []
     building_height: Optional[float] = None
+    # Высота этажа запуска (АР)
+    floor_height: Optional[float] = None
 
 
 class RunsListResponse(CamelModel):
@@ -239,6 +252,44 @@ class PositionLinksResponse(CamelModel):
     session_id: str
     ready: bool = False
     position_links: Dict[str, List[PositionLinkVariant]] = {}
+
+
+# ========== СХЕМЫ ДЛЯ КОНСТАНТ ПОДБОРА РАБОТ (АР) ==========
+
+class WorkConstantSchema(CamelModel):
+    """Описание одной глобальной константы подбора работ
+    (из data/works_classification.json)."""
+    name: str
+    title: str = ""
+    values: List[str] = []
+    default: Optional[str] = None
+    affects: str = ""
+    source: str = "constant"
+
+
+class WorksConstantsResponse(CamelModel):
+    """Схема констант подбора работ + значения, определённые по модели IFC
+    и из файла ПОС."""
+    session_id: str
+    processing_type: str = "KR"
+    constants: List[WorkConstantSchema] = []
+    # Значения, автоматически определённые из IFC/Excel сессии
+    detected: Dict[str, Any] = {}
+    # Значения констант, найденные в файле ПОС (ПОС_глобальные_константы.json)
+    pos_detected: Dict[str, Any] = {}
+    # Разбор ПОС завершён (файл констант готов)
+    pos_ready: bool = False
+    # Имя загруженного файла ПОС
+    pos_file_name: Optional[str] = None
+    # Статус разбора ПОС: pos_processing / pos_completed / pos_error
+    pos_status: Optional[str] = None
+
+
+class PosUploadResponse(CamelModel):
+    """Ответ на загрузку файла ПОС."""
+    session_id: str
+    status: str
+    message: str
 
 
 # ========== СХЕМЫ ДЛЯ СБОРКИ ФИНАЛЬНОГО JSON ==========
