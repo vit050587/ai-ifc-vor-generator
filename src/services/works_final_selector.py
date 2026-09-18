@@ -13,12 +13,18 @@ works_fetcher (Подобранные_работы.json):
 
     * LLM-запрос строится только по ПЕРВОМУ элементу группы (представителю):
       его таблицы работ становятся источником работ-кандидатов, его описание
-      (тип, материал, технология, этаж) — контекстом запроса;
+      (тип, материал, технология, этаж) и все найденные параметры подбора
+      (Параметры_подбора_элементов.json: геометрия, константы проекта и т.д.)
+      — контекстом запроса;
     * объём работ считается по ВСЕЙ группе: значения объёмов (volume_m3 /
       area_m2) каждого элемента группы суммируются и приводятся к
       нормализованному виду по единице измерения расценки («100 м2» →
       суммарная площадь / 100, «м2» → как есть, «100 м3» → объём / 100 и
-      т.д.).
+      т.д.);
+    * исключение — работы по монтажу/демонтажу опалубки фундаментных плит
+      (ед. изм. «м2»): их объём считается по площади опалубки вертикальных
+      граней = периметр × толщина (по параметрам подбора каждого элемента
+      группы, Параметры_подбора_элементов.json), а не по QTO-площади плиты.
 
   Результаты:
     - run_<NNN>/Финальный_перечень_работ.json — структурированный перечень
@@ -56,6 +62,11 @@ FINAL_WORKS_XLSX_FILENAME = "Финальный_перечень_работ.xlsx
 # листовые группы (МССК → Материал → Наименование) с индексами элементов
 GROUPED_JSON_FILENAME = "filtered_elements_grouped_AR.json"
 
+# Параметры подбора элементов (selection_template_builder, этап 0) — лежат в
+# корне сессии (родителе папки запуска run_<NNN>/); сопоставление с элементами
+# Подобранные_таблицы_работ.json — по global_id.
+ELEMENT_PARAMS_FILENAME = "Параметры_подбора_элементов.json"
+
 # Ограничение числа работ-кандидатов в одном запросе LLM (защита контекста)
 _MAX_CANDIDATE_WORKS = 200
 
@@ -65,9 +76,10 @@ SYSTEM_PROMPT = """Ты - инженер-сметчик ПТО. Твоя зад�
 1. Отвечай строго в формате JSON, без пояснений вне JSON.
 2. Выбирай работы только из приведённого списка работ-кандидатов (поле "pressmark"). Ничего не выдумывай и не добавляй работы с другими шифрами.
 3. Ориентируйся на тип элемента (стена, плита, окно, пол и т.д.), материал, технологию возведения (монолит/сборные), расположение в здании и объёмы работ. Ненужные для этой группы элементы работы отбрасывай.
-4. В поле "reason" кратко (одним предложением) объясни, почему работа нужна для этой группы элементов.
-5. Если подходят все работы-кандидаты - верни их все.
-6. Если ни одна работа не подходит - верни пустой список "selected".
+4. Если приведён раздел «Параметры элемента» — используй его для выбора работ и оценки объёмов: геометрические параметры (толщина, периметр, площадь, объём, глубина) позволяют оценивать объёмы работ (например, площадь опалубки вертикальных граней плиты ≈ периметр × толщина), а технологические параметры и константы проекта (схема бетонирования, класс бетона, класс арматуры, тип крана, период ухода за бетоном и т.п.) — выбирать конкретные расценки. Линейные размеры в параметрах приведены в метрах; при расчётах следи за единицами измерения (м, м2, м3).
+5. В поле "reason" кратко (одним предложением) объясни, почему работа нужна для этой группы элементов.
+6. Если подходят все работы-кандидаты - верни их все.
+7. Если ни одна работа не подходит - верни пустой список "selected".
 
 Формат ответа:
 {
@@ -78,19 +90,123 @@ SYSTEM_PROMPT = """Ты - инженер-сметчик ПТО. Твоя зад�
 """
 
 
+def _load_element_params(run_dir: str) -> Dict[str, Dict[str, Any]]:
+    """Карта «global_id → parameters» из Параметры_подбора_элементов.json.
+
+    Файл строится на этапе 0 (selection_template_builder) и лежит в корне
+    сессии (родителе папки запуска run_<NNN>/). Если файла нет или он
+    повреждён — возвращается пустая карта (LLM-запрос строится без
+    параметров, как раньше).
+    """
+    session_dir = os.path.dirname(os.path.abspath(run_dir))
+    path = os.path.join(session_dir, ELEMENT_PARAMS_FILENAME)
+    if not os.path.isfile(path):
+        logger.warning(
+            f"Файл параметров подбора не найден ({path}) — "
+            "LLM-запрос строится без параметров элементов"
+        )
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except Exception as exc:
+        logger.warning(f"Не удалось прочитать {path}: {exc}")
+        return {}
+
+    params_by_id: Dict[str, Dict[str, Any]] = {}
+    for entry in payload.get("elements", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        global_id = str(entry.get("global_id") or "").strip()
+        if global_id and isinstance(entry.get("parameters"), dict):
+            params_by_id[global_id] = entry["parameters"]
+    logger.info(
+        f"Параметры подбора элементов загружены: {len(params_by_id)} записей "
+        f"({os.path.basename(path)})"
+    )
+    return params_by_id
+
+
+def _format_element_params(params: Optional[Dict[str, Any]]) -> List[str]:
+    """Строки раздела «Параметры элемента» для LLM-промпта.
+
+    Включаются параметры с найденным значением (origin != not_found) в
+    исходном порядке шаблона — с единицами измерения. Неопределённые
+    параметры перечисляются одной строкой в конце (модель видит полный
+    набор доступных параметров и понимает, чего в элементе нет).
+    Линейные размеры в мм нормализуются к м (`_normalize_param_value`).
+    """
+    if not isinstance(params, dict) or not params:
+        return []
+    found_lines: List[str] = []
+    missing: List[str] = []
+    for name, spec in params.items():
+        if not isinstance(spec, dict):
+            continue
+        value = spec.get("value")
+        origin = str(spec.get("origin") or "")
+        if value is None or value == "" or origin == "not_found":
+            missing.append(str(name))
+            continue
+        unit = str(spec.get("unit") or "").strip()
+        value, unit = _normalize_param_value(value, unit)
+        if isinstance(value, float):
+            # Компактный вид без «хвостов» вычислений (145600.0000000028 → 145600)
+            value = f"{value:.6f}".rstrip("0").rstrip(".")
+        unit_text = f" {unit}" if unit else ""
+        found_lines.append(f"- {name}: {value}{unit_text}")
+
+    lines = ["## Параметры элемента (для подбора работ)"]
+    if found_lines:
+        lines.extend(found_lines)
+    else:
+        lines.append("(все параметры не определены)")
+    if missing:
+        lines.append(f"Не определены: {', '.join(missing)}")
+    return lines
+
+
+# Нормализация единиц: мм → м (и производные площади/объёма). Сырой дамп IFC
+# хранит размеры преимущественно в мм, расценки оперируют метрами.
+_UNIT_NORMALIZE = {
+    "мм": ("м", 1e-3),
+    "мм2": ("м2", 1e-6),
+    "мм²": ("м2", 1e-6),
+    "мм3": ("м3", 1e-9),
+    "мм³": ("м3", 1e-9),
+}
+
+
+def _normalize_param_value(value: Any, unit: str):
+    """Переводит числовое значение из мм (мм2/мм3) в м (м2/м3).
+
+    Нечисловые значения и прочие единицы возвращаются без изменений.
+    Возвращает пару (значение, единица).
+    """
+    norm = _UNIT_NORMALIZE.get(str(unit or "").strip())
+    if norm is None:
+        return value, unit
+    target_unit, factor = norm
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return value, unit
+    return value * factor, target_unit
+
+
 def _build_user_prompt(
     element_payload: Dict[str, Any],
     tables: List[Dict[str, str]],
     candidate_works: List[Dict[str, Any]],
     quantity: Optional[Dict[str, Any]] = None,
     group_count: Optional[int] = None,
+    element_params: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Формирует пользовательский запрос LLM по группе элементов и кандидатам.
 
     element_payload — запись ПЕРВОГО элемента группы (представителя): по нему
     LLM понимает тип/материал/технологию работ. quantity — суммарные объёмы
     по всей группе (если None — объёмы представителя), group_count — число
-    элементов в группе.
+    элементов в группе, element_params — параметры подбора представителя
+    (Параметры_подбора_элементов.json: геометрия, константы проекта и т.д.).
     """
     element = element_payload.get("element", {}) or {}
     if quantity is None:
@@ -127,6 +243,11 @@ def _build_user_prompt(
     if quantity:
         qty_text = ", ".join(f"{k}={v}" for k, v in quantity.items())
         lines.append(f"Объёмы: {qty_text}")
+    # Параметры подбора представителя группы (геометрия + константы проекта)
+    param_lines = _format_element_params(element_params)
+    if param_lines:
+        lines.append("")
+        lines.extend(param_lines)
     if tables:
         lines.append("")
         lines.append("## Подобранные таблицы работ")
@@ -251,6 +372,94 @@ def _element_quantity_for_table(
     return {}
 
 
+# ======================================================================
+#  Площадь опалубки вертикальных граней фундаментной плиты
+#  (периметр × толщина — по параметрам подбора элементов)
+# ======================================================================
+
+def _is_foundation_slab(element_payload: Dict[str, Any]) -> bool:
+    """Фундаментная плита: IfcSlab/BASESLAB или «фундаментная плита» в имени/МССК.
+
+    Только для фундаментных плит площадь опалубки вертикальных граней
+    считается как периметр × толщина (у перекрытий опалубка — нижняя
+    площадь, у стен — боковая, поэтому на них правило не распространяется).
+    """
+    element = element_payload.get("element", {}) or {}
+    text = " ".join([
+        str(element.get("name") or ""),
+        str((element_payload.get("mssk_context") or {}).get("name") or ""),
+    ]).lower()
+    if "фундаментн" in text and "плит" in text:
+        return True
+    return (
+        str(element.get("ifc_class") or "") == "IfcSlab"
+        and str(element.get("predefined_type") or "").upper() == "BASESLAB"
+    )
+
+
+def _is_formwork_work(work: Dict[str, Any]) -> bool:
+    """Работа по опалубке с единицей измерения «м2» (монтаж/демонтаж опалубки).
+
+    Прочие работы с опалубкой в наименовании (например, установка арматуры
+    «в опалубку», ед. изм. «1 т») не подпадают — несовпадение единицы.
+    """
+    title = str(work.get("title") or "").lower()
+    unit = str(
+        work.get("unitOfMeasure") or work.get("unit_of_measure") or ""
+    ).lower().replace("²", "2")
+    return "опалубк" in title and "м2" in unit
+
+
+def _param_meters(params: Optional[Dict[str, Any]], name: str) -> Optional[float]:
+    """Числовое значение параметра подбора, приведённое к метрам.
+
+    Значения с единицами мм/мм2/мм3 нормализуются `_normalize_param_value`;
+    нечисловые и ненайденные параметры (not_found) возвращают None.
+    """
+    spec = (params or {}).get(name)
+    if not isinstance(spec, dict):
+        return None
+    if spec.get("origin") == "not_found":
+        return None
+    num = safe_float(spec.get("value"), default=None)
+    if num is None or num <= 0:
+        return None
+    value, _unit = _normalize_param_value(num, spec.get("unit"))
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _formwork_area_m2(params: Optional[Dict[str, Any]]) -> Optional[float]:
+    """Площадь опалубки вертикальных граней плиты: периметр × толщина (м2)."""
+    perimeter = _param_meters(params, "perimeter")
+    thickness = _param_meters(params, "thickness")
+    if perimeter is None or thickness is None:
+        return None
+    return perimeter * thickness
+
+
+def _sum_formwork_area(
+    payloads: List[Dict[str, Any]],
+    params_by_id: Dict[str, Dict[str, Any]],
+) -> Optional[float]:
+    """Суммарная площадь опалубки по всем элементам группы (периметр × толщина).
+
+    Возвращает None, если ни у одного элемента группы параметры периметра и
+    толщины не найдены (объёмы работ остаются по QTO, как раньше).
+    """
+    total = 0.0
+    found = False
+    for payload in payloads:
+        global_id = str((payload.get("element") or {}).get("global_id") or "").strip()
+        area = _formwork_area_m2(params_by_id.get(global_id))
+        if area is None:
+            continue
+        total += area
+        found = True
+    return round(total, 3) if found else None
+
+
 def _build_work_row(
     element_payload: Dict[str, Any],
     table: Dict[str, str],
@@ -258,15 +467,24 @@ def _build_work_row(
     reason: str,
     llm_selected: bool,
     quantity: Optional[Dict[str, Any]] = None,
+    formwork_area: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Строка выбранной работы в итоговом перечне.
 
     quantity — объёмы для расчёта (сумма по группе либо объёмы отдельного
     элемента); если None — берётся quantity таблицы из записи элемента.
+    formwork_area — площадь опалубки фундаментной плиты (периметр × толщина,
+    сумма по группе); для работ по монтажу/демонтажу опалубки (ед. изм. «м2»)
+    подставляется вместо QTO-площади элемента.
     """
     element = element_payload.get("element", {}) or {}
     if quantity is None:
         quantity = _element_quantity_for_table(element_payload, table["code"])
+    formwork_area_m2: Optional[float] = None
+    if formwork_area and _is_formwork_work(work):
+        quantity = dict(quantity or {})
+        quantity["area_m2"] = formwork_area
+        formwork_area_m2 = formwork_area
     return {
         "pressmark": work.get("pressmark"),
         "title": work.get("title"),
@@ -276,6 +494,7 @@ def _build_work_row(
         "direct_costs": work.get("directCosts"),
         "cur_direct_costs": work.get("curDirectCosts"),
         "quantity": quantity,
+        "formwork_area_m2": formwork_area_m2,
         "reason": reason,
         "llm_selected": llm_selected,
     }
@@ -346,6 +565,10 @@ def select_final_works(
     # поодиночно, как раньше.
     leaf_groups = _load_leaf_groups(os.path.join(run_dir, GROUPED_JSON_FILENAME))
 
+    # Параметры подбора элементов (глоб_id → parameters) из корня сессии —
+    # подаются в LLM-запрос по представителю группы (если файл есть)
+    params_by_id = _load_element_params(run_dir)
+
     processing_units: List[Dict[str, Any]] = []
     if leaf_groups:
         covered: set = set()
@@ -380,10 +603,24 @@ def select_final_works(
     for unit in processing_units:
         element_payload = unit["first"]
         group = unit["group"]
+        element = element_payload.get("element", {}) or {}
+        # Параметры подбора представителя группы (геометрия, константы и т.д.)
+        element_params = params_by_id.get(
+            str(element.get("global_id") or "").strip()
+        )
         # Суммарные объёмы по всем элементам группы (для отдельного элемента —
         # объёмы берутся из его записи, как раньше)
         group_quantity = (
             _sum_group_quantities(unit["payloads"]) if group is not None else None
+        )
+
+        # Площадь опалубки фундаментной плиты (периметр × толщина, сумма по
+        # группе): подставляется в работы монтажа/демонтажа опалубки вместо
+        # QTO-площади элемента. Для остальных элементов — None (как раньше).
+        formwork_area = (
+            _sum_formwork_area(unit["payloads"], params_by_id)
+            if _is_foundation_slab(element_payload)
+            else None
         )
 
         # Таблицы группы (уникальные шифры, порядок как в файле) — только по
@@ -410,6 +647,8 @@ def select_final_works(
                 "selected_works": [],
                 "note": "Нет работ-кандидатов в цифровом сборнике",
             }
+            if element_params:
+                entry["element_parameters"] = element_params
             if group is not None:
                 entry["group"] = {
                     "name": group.get("name", ""),
@@ -428,6 +667,7 @@ def select_final_works(
             element_payload, tables, candidate_works,
             quantity=group_quantity,
             group_count=len(unit["payloads"]) if group is not None else None,
+            element_params=element_params,
         )
         selected_works: List[Dict[str, Any]] = []
         note = ""
@@ -455,6 +695,7 @@ def select_final_works(
                             element_payload, table, item["work"],
                             item["reason"], item["llm_selected"],
                             quantity=group_quantity,
+                            formwork_area=formwork_area,
                         )
                     )
             else:
@@ -480,6 +721,7 @@ def select_final_works(
                         _build_work_row(
                             element_payload, table, work, "", False,
                             quantity=group_quantity,
+                            formwork_area=formwork_area,
                         )
                     )
 
@@ -492,6 +734,13 @@ def select_final_works(
             "selected_works": selected_works,
             "note": note,
         }
+        if element_params:
+            # Параметры представителя группы, переданные в LLM-запрос
+            entry["element_parameters"] = element_params
+        if formwork_area is not None:
+            # Площадь опалубки группы фундаментных плит (периметр × толщина),
+            # подставленная в работы монтажа/демонтажа опалубки
+            entry["formwork_area_m2"] = formwork_area
         if group is not None:
             # Метаданные группы: подбор выполнен по первому элементу
             # (представителю), объёмы — сумма по всем элементам группы
