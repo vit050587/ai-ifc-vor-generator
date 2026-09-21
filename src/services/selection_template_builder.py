@@ -30,7 +30,8 @@
   4. ``constant`` — константа проекта: переданные константы (UI/globalConstants)
       → IFC (``IFC_глобальные_константы.json``; для ``floor_height`` — fallback
       на ``height.txt`` в старых сессиях) → ПОС
-      (``ПОС_глобальные_константы.json``).
+      (``ПОС_глобальные_константы.json``) → ПЗ
+      (``ПЗ_глобальные_константы.json``).
 
 Значения из ключей ``QTO_bbox::*_мм`` автоматически переводятся в метры;
 значения QTO берутся как есть (единицы следуют единицам проекта IFC).
@@ -52,6 +53,7 @@ MAPPING_PATH = os.path.join(DATA_DIR, "selection_parameters_mapping.json")
 # Файлы сессии (вход и выход) — корень сессии outputs/<session_id>/.
 RAW_DUMP_JSON_FILENAME = "IFC_исходные_параметры.json"
 POS_CONSTANTS_FILENAME = "ПОС_глобальные_константы.json"
+PZ_CONSTANTS_FILENAME = "ПЗ_глобальные_константы.json"
 IFC_CONSTANTS_FILENAME = "IFC_глобальные_константы.json"
 HEIGHT_FILENAME = "height.txt"
 OUTPUT_FILENAME = "Параметры_подбора_элементов.json"
@@ -131,7 +133,17 @@ def _convert_bbox_mm(value, source_key):
 
 def _load_pos_constants(session_dir):
     """ПОС_глобальные_константы.json → {имя: значение} (пустые отбрасываются)."""
-    path = os.path.join(session_dir, POS_CONSTANTS_FILENAME)
+    return _load_doc_constants(session_dir, POS_CONSTANTS_FILENAME)
+
+
+def _load_pz_constants(session_dir):
+    """ПЗ_глобальные_константы.json → {имя: значение} (пустые отбрасываются)."""
+    return _load_doc_constants(session_dir, PZ_CONSTANTS_FILENAME)
+
+
+def _load_doc_constants(session_dir, filename):
+    """JSON-файл глобальных констант (ПОС/ПЗ) → {имя: значение}."""
+    path = os.path.join(session_dir, filename)
     if not os.path.isfile(path):
         return {}
     try:
@@ -216,13 +228,16 @@ def _resolve_constants(session_dir, project_constants=None):
 
     Приоритет значений: переданные константы (UI/globalConstants) → IFC
     (``IFC_глобальные_константы.json``; для floor_height — fallback на
-    height.txt в старых сессиях) → ПОС (``ПОС_глобальные_константы.json``).
+    height.txt в старых сессиях) → ПОС (``ПОС_глобальные_константы.json``)
+    → ПЗ (``ПЗ_глобальные_константы.json``; пояснительная записка —
+    константы, не найденные в IFC и ПОС).
     """
-    pos_constants = _load_pos_constants(session_dir)
+    # ПЗ — базовый источник (низший приоритет): перекрывается константами
+    # ПОС, затем IFC (документированный порядок: UI → IFC → ПОС → ПЗ).
+    constants = _load_pz_constants(session_dir)
+    constants.update(_load_pos_constants(session_dir))
 
-    # Константы, определённые по модели IFC — приоритет выше ПОС
-    # (документированный порядок: UI → IFC → ПОС).
-    constants = dict(pos_constants)
+    # Константы, определённые по модели IFC — приоритет выше ПОС и ПЗ.
     constants.update(_load_ifc_constants(session_dir))
 
     # Legacy-fallback: height.txt (только высота основного этажа).

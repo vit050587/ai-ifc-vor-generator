@@ -744,6 +744,21 @@
                         <button class="btn btn-sm btn-danger" onclick="resetPosUpload()">✕</button>
                     </div>
                 </div>
+                <!-- Файл пояснительной записки ПЗ (режим АР): из него извлекаются
+                     глобальные константы тем же пайплайном, что и из ПОС -->
+                <div id="pzUploadBlock" style="display:none;margin-top:12px;">
+                    <div class="upload-area" id="pzUploadArea" style="padding:14px 16px;">
+                        <input type="file" id="pzFileInput" accept=".pdf" hidden>
+                        <div class="icon" style="font-size:22px;">📘</div>
+                        <div class="text" style="font-size:14px;">Файл пояснительной записки (PDF) — необязательно</div>
+                        <div class="hint" style="font-size:12px;">Пояснительная записка: из неё будут определены глобальные константы (высоты, этажность и т.д.), не найденные в ПОС</div>
+                    </div>
+                    <div id="pzFileInfo" style="display:none;" class="file-info">
+                        <span>📘</span>
+                        <span class="name" id="pzFileName"></span>
+                        <button class="btn btn-sm btn-danger" onclick="resetPzUpload()">✕</button>
+                    </div>
+                </div>
                 <div class="progress-wrap" id="uploadProgressWrap" style="display:none;">
                     <div class="progress-bar" id="uploadProgressBar"></div>
                 </div>
@@ -1217,6 +1232,7 @@ function onProcessingTypeChange() {
 let worksConstantsSchema = [];
 let worksConstantsDetected = {};
 let worksConstantsPosDetected = {};
+let worksConstantsPzDetected = {};
 let worksConstantsLoaded = false;
 let _posConstantsPollTimer = null;
 
@@ -1237,6 +1253,7 @@ async function loadWorksConstants() {
         worksConstantsSchema = data.constants || [];
         worksConstantsDetected = data.detected || {};
         worksConstantsPosDetected = data.posDetected || {};
+        worksConstantsPzDetected = data.pzDetected || {};
         worksConstantsLoaded = true;
         _lastAutoConstants = {};
         // Автоподстановка высоты здания (АР) из значения, определённого по IFC
@@ -1245,27 +1262,28 @@ async function loadWorksConstants() {
             buildingInput.value = worksConstantsDetected.building_height_m;
         }
         renderArConstantsFields();
-        // Разбор ПОС может завершиться позже загрузки панели (панель рисуется
-        // сразу после обработки IFC) — следим за статусом и по завершении
-        // дозагружаем константы из ПОС.
-        trackPosConstants(data.posStatus);
+        // Разбор ПОС/ПЗ может завершиться позже загрузки панели (панель
+        // рисуется сразу после обработки IFC) — следим за статусом и
+        // по завершении дозагружаем константы из документов.
+        trackPosConstants(data.posStatus, data.pzStatus);
     } catch (e) { console.warn('Не удалось загрузить константы подбора работ:', e); }
 }
 
-// Слежение за фоновым разбором ПОС: панель констант рисуется сразу после
-// обработки IFC, а константы из ПОС (опалубка, краны, ковш, мощность и т.д.)
-// появляются позже. Пока posStatus === 'pos_processing', опрашиваем
-// works_constants; по завершении перезагружаем панель (ручной выбор
-// пользователя сохраняется — см. renderArConstantsFields).
-function trackPosConstants(posStatus) {
+// Слежение за фоновым разбором ПОС/ПЗ: панель констант рисуется сразу после
+// обработки IFC, а константы из документов (опалубка, краны, ковш, мощность
+// и т.д.) появляются позже. Пока posStatus === 'pos_processing' или
+// pzStatus === 'pz_processing', опрашиваем works_constants; по завершении
+// перезагружаем панель (ручной выбор пользователя сохраняется —
+// см. renderArConstantsFields).
+function trackPosConstants(posStatus, pzStatus) {
     if (_posConstantsPollTimer) { clearTimeout(_posConstantsPollTimer); _posConstantsPollTimer = null; }
-    if (posStatus !== 'pos_processing') return;
+    if (posStatus !== 'pos_processing' && pzStatus !== 'pz_processing') return;
     const poll = async () => {
         try {
             const response = await fetch(`${API_BASE}/session/${currentSessionId}/works_constants`);
             if (!response.ok) { _posConstantsPollTimer = setTimeout(poll, 3000); return; }
             const data = await response.json();
-            if (data.posStatus === 'pos_processing') {
+            if (data.posStatus === 'pos_processing' || data.pzStatus === 'pz_processing') {
                 _posConstantsPollTimer = setTimeout(poll, 3000);
                 return;
             }
@@ -1273,14 +1291,20 @@ function trackPosConstants(posStatus) {
             worksConstantsSchema = data.constants || [];
             worksConstantsDetected = data.detected || {};
             worksConstantsPosDetected = data.posDetected || {};
+            worksConstantsPzDetected = data.pzDetected || {};
             renderArConstantsFields();
             if (data.posStatus === 'pos_completed') {
                 showToast(`Разбор ПОС завершён: параметры расценок подставлены из файла ПОС${data.posFileName ? ` (${data.posFileName})` : ''}`, 'success');
             } else if (data.posStatus === 'pos_error') {
                 showToast('Ошибка разбора ПОС: параметры из файла ПОС не подставлены', 'warning');
             }
+            if (data.pzStatus === 'pz_completed') {
+                showToast(`Разбор пояснительной записки завершён: параметры расценок подставлены из файла ПЗ${data.pzFileName ? ` (${data.pzFileName})` : ''}`, 'success');
+            } else if (data.pzStatus === 'pz_error') {
+                showToast('Ошибка разбора пояснительной записки: параметры из файла ПЗ не подставлены', 'warning');
+            }
         } catch (e) {
-            console.warn('Не удалось опросить статус разбора ПОС:', e);
+            console.warn('Не удалось опросить статус разбора ПОС/ПЗ:', e);
             _posConstantsPollTimer = setTimeout(poll, 3000);
         }
     };
@@ -1343,23 +1367,28 @@ function constNum(v) {
     return isNaN(n) ? null : n;
 }
 
-// Автоподстановка значения константы: приоритет IFC → файл ПОС → default.
+// Автоподстановка значения константы: приоритет IFC → файл ПОС → файл ПЗ → default.
 // Для числовых констант (floor_height, crane_capacity, bucket_capacity,
 // equipment_power) найденное число переводится в вариант из списка values.
+// Константы из пояснительной записки (ПЗ) используются, только если константа
+// не найдена в ПОС (ПЗ — источник с низшим приоритетом).
 function autoSelectConstant(c) {
     const posValue = worksConstantsPosDetected[c.name];
+    const pzValue = posValue !== undefined ? undefined : worksConstantsPzDetected[c.name];
+    const docValue = posValue !== undefined ? posValue : pzValue;
+    const docName = posValue !== undefined ? 'ПОС' : 'ПЗ';
     switch (c.name) {
         case 'building_height_m': {
             const ifcH = constNum(worksConstantsDetected.building_height_m);
             if (ifcH) return { value: heightToRange(ifcH), hint: `Определено по IFC: ${ifcH} м. ` };
-            if (posValue) return { value: posValue, hint: 'Определено по файлу ПОС. ' };
+            if (docValue) return { value: docValue, hint: `Определено по файлу ${docName}. ` };
             return { value: c.default || '', hint: '' };
         }
         case 'floor_height': {
             const ifcH = constNum(worksConstantsDetected.floor_height_m);
-            const posH = constNum(posValue);
+            const docH = constNum(docValue);
             if (ifcH) return { value: floorHeightToValue(ifcH), hint: `Определено по IFC: ${ifcH} м. ` };
-            if (posH) return { value: floorHeightToValue(posH), hint: `Определено по файлу ПОС: ${posH} м. ` };
+            if (docH) return { value: floorHeightToValue(docH), hint: `Определено по файлу ${docName}: ${docH} м. ` };
             return { value: c.default || '', hint: '' };
         }
         case 'building_storeys_type': {
@@ -1369,33 +1398,33 @@ function autoSelectConstant(c) {
                 return { value: worksConstantsDetected.building_storeys_type,
                     hint: 'Определено по IFC (колонка «Этаж»: наибольший номер этажа >= 2 → многоэтажное). ' };
             }
-            if (posValue) return { value: posValue, hint: 'Определено по файлу ПОС. ' };
+            if (docValue) return { value: docValue, hint: `Определено по файлу ${docName}. ` };
             return { value: c.default || '', hint: '' };
         }
         case 'crane_type': {
-            if (posValue) return { value: posValue, hint: 'Определено по файлу ПОС. ' };
+            if (docValue) return { value: docValue, hint: `Определено по файлу ${docName}. ` };
             return { value: c.default || '', hint: '' };
         }
         case 'crane_capacity': {
-            const t = constNum(posValue);
-            if (t) return { value: craneCapacityToValue(t), hint: `Определено по файлу ПОС: ${t} т. ` };
+            const t = constNum(docValue);
+            if (t) return { value: craneCapacityToValue(t), hint: `Определено по файлу ${docName}: ${t} т. ` };
             return { value: c.default || '', hint: '' };
         }
         case 'bucket_capacity': {
-            const v = constNum(posValue);
-            if (v) return { value: bucketCapacityToValue(v), hint: `Определено по файлу ПОС: ${v} м3. ` };
+            const v = constNum(docValue);
+            if (v) return { value: bucketCapacityToValue(v), hint: `Определено по файлу ${docName}: ${v} м3. ` };
             return { value: c.default || '', hint: '' };
         }
         case 'equipment_power': {
-            const p = constNum(posValue);
-            if (p) return { value: equipmentPowerToValue(p), hint: `Определено по файлу ПОС: ${p} кВт. ` };
+            const p = constNum(docValue);
+            if (p) return { value: equipmentPowerToValue(p), hint: `Определено по файлу ${docName}: ${p} кВт. ` };
             return { value: c.default || '', hint: '' };
         }
         default:
             if (worksConstantsDetected[c.name] !== undefined) {
                 return { value: worksConstantsDetected[c.name], hint: 'Определено по IFC. ' };
             }
-            if (posValue) return { value: posValue, hint: 'Определено по файлу ПОС. ' };
+            if (docValue) return { value: docValue, hint: `Определено по файлу ${docName}. ` };
             return { value: c.default || '', hint: '' };
     }
 }
@@ -1919,11 +1948,43 @@ function resetPosUpload() {
     posFileInput.value = '';
 }
 
-// Показывает блок загрузки ПОС только в режиме АР
+// ========== Файл пояснительной записки ПЗ (режим АР) ==========
+const pzUploadArea = document.getElementById('pzUploadArea');
+const pzFileInput = document.getElementById('pzFileInput');
+let pzSelectedFile = null;
+
+pzUploadArea.addEventListener('click', () => pzFileInput.click());
+pzUploadArea.addEventListener('dragover', (e) => { e.preventDefault(); pzUploadArea.classList.add('dragover'); });
+pzUploadArea.addEventListener('dragleave', () => pzUploadArea.classList.remove('dragover'));
+pzUploadArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    pzUploadArea.classList.remove('dragover');
+    if (e.dataTransfer.files.length) {
+        const file = e.dataTransfer.files[0];
+        if (file.name.toLowerCase().endsWith('.pdf')) handlePzFileSelect(file);
+        else showToast('Файл пояснительной записки должен быть в формате PDF', 'error');
+    }
+});
+pzFileInput.addEventListener('change', (e) => { if (e.target.files.length) handlePzFileSelect(e.target.files[0]); });
+
+function handlePzFileSelect(file) {
+    pzSelectedFile = file;
+    document.getElementById('pzFileName').textContent = file.name;
+    document.getElementById('pzFileInfo').style.display = 'flex';
+}
+
+function resetPzUpload() {
+    pzSelectedFile = null;
+    document.getElementById('pzFileInfo').style.display = 'none';
+    pzFileInput.value = '';
+}
+
+// Показывает блоки загрузки ПОС и ПЗ только в режиме АР
 function updatePosUploadVisibility() {
     const block = document.getElementById('posUploadBlock');
-    if (!block) return;
-    block.style.display = currentProcessingType === 'AR' ? 'block' : 'none';
+    if (block) block.style.display = currentProcessingType === 'AR' ? 'block' : 'none';
+    const pzBlock = document.getElementById('pzUploadBlock');
+    if (pzBlock) pzBlock.style.display = currentProcessingType === 'AR' ? 'block' : 'none';
 }
 
 function handleFileSelect(file) {
@@ -1955,6 +2016,9 @@ async function uploadFile() {
     formData.append('processingType', currentProcessingType);
     if (currentProcessingType === 'AR' && posSelectedFile) {
         formData.append('posFile', posSelectedFile);
+    }
+    if (currentProcessingType === 'AR' && pzSelectedFile) {
+        formData.append('pzFile', pzSelectedFile);
     }
     try {
         const response = await fetch(`${API_BASE}/upload_ifc`, { method: 'POST', body: formData });

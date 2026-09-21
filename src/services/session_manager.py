@@ -24,6 +24,31 @@ logger = setup_logger(__name__)
 # (сохраняется в корень сессии)
 POS_CONSTANTS_FILENAME = "ПОС_глобальные_константы.json"
 
+# Имя JSON-файла с глобальными константами, найденными в файле
+# пояснительной записки ПЗ (сохраняется в корень сессии)
+PZ_CONSTANTS_FILENAME = "ПЗ_глобальные_константы.json"
+
+# Параметры разбора PDF-документов с глобальными константами (ПОС / ПЗ).
+# Один и тот же пайплайн pd_parser.parse_pos_constants используется и для
+# ПОС, и для пояснительной записки — отличаются только имена файлов и
+# префиксы полей состояния сессии (pos_* / pz_*).
+_DOC_CONSTANTS_CONFIG = {
+    "pos": {
+        "label": "ПОС",
+        "constants_filename": POS_CONSTANTS_FILENAME,
+        "saved_prefix": "pos_",
+        "status_prefix": "pos",
+        "thread_prefix": "POS-Processing",
+    },
+    "pz": {
+        "label": "ПЗ",
+        "constants_filename": PZ_CONSTANTS_FILENAME,
+        "saved_prefix": "pz_",
+        "status_prefix": "pz",
+        "thread_prefix": "PZ-Processing",
+    },
+}
+
 
 class SessionManager:
     """Управление сессиями обработки IFC файлов"""
@@ -901,7 +926,7 @@ class SessionManager:
         return result
 
     # =====================================================================
-    #  ФАЙЛ ПОС: ГЛОБАЛЬНЫЕ КОНСТАНТЫ ПОДБОРА РАБОТ (АР)
+    #  ФАЙЛЫ ПОС / ПЗ: ГЛОБАЛЬНЫЕ КОНСТАНТЫ ПОДБОРА РАБОТ (АР)
     # =====================================================================
 
     def upload_pos(self, session_id: str, file, original_name: str) -> Dict[str, Any]:
@@ -911,31 +936,48 @@ class SessionManager:
         констант (pd_parser.parse_pos_constants). Результат сохраняется в
         ПОС_глобальные_константы.json в корне сессии.
         """
+        return self._upload_doc_constants(session_id, file, original_name, "pos")
+
+    def upload_pz(self, session_id: str, file, original_name: str) -> Dict[str, Any]:
+        """Приём PDF-файла пояснительной записки (ПЗ) для сессии.
+
+        Разбирается тем же пайплайном, что и ПОС (pd_parser.parse_pos_constants,
+        та же LLM): из документа извлекаются глобальные константы подбора работ.
+        Результат сохраняется в ПЗ_глобальные_константы.json в корне сессии.
+        """
+        return self._upload_doc_constants(session_id, file, original_name, "pz")
+
+    def _upload_doc_constants(self, session_id: str, file, original_name: str,
+                              doc: str) -> Dict[str, Any]:
+        """Общий приём PDF-документа (ПОС/ПЗ) с глобальными константами (АР)."""
+        cfg = _DOC_CONSTANTS_CONFIG[doc]
+        label = cfg["label"]
+        prefix = cfg["status_prefix"]
         s = self.get(session_id)
         if not s:
             raise ValueError("Сессия не найдена")
         if s.get("processing_type", "KR").upper() != "AR":
-            raise ValueError("Файл ПОС поддерживается только в режиме АР")
+            raise ValueError(f"Файл {label} поддерживается только в режиме АР")
         if not file or not original_name:
             raise ValueError("Отсутствует файл или имя файла")
         if not str(original_name).lower().endswith(".pdf"):
-            raise ValueError("Файл ПОС должен быть в формате PDF")
+            raise ValueError(f"Файл {label} должен быть в формате PDF")
 
-        safe_name = secure_filename(original_name) or "pos.pdf"
+        safe_name = secure_filename(original_name) or f"{prefix}.pdf"
         session_dir = os.path.join(self.output_folder, session_id)
         os.makedirs(session_dir, exist_ok=True)
-        pos_path = os.path.join(session_dir, f"pos_{safe_name}")
+        doc_path = os.path.join(session_dir, f"{cfg['saved_prefix']}{safe_name}")
 
         try:
-            file.save(pos_path)
-            if not os.path.exists(pos_path) or os.path.getsize(pos_path) == 0:
-                raise ValueError("Ошибка сохранения файла ПОС")
+            file.save(doc_path)
+            if not os.path.exists(doc_path) or os.path.getsize(doc_path) == 0:
+                raise ValueError(f"Ошибка сохранения файла {label}")
         except Exception as e:
-            logger.error(f"Ошибка сохранения файла ПОС: {e}")
+            logger.error(f"Ошибка сохранения файла {label}: {e}")
             raise
 
         # Сбрасываем предыдущий результат разбора
-        old_result = os.path.join(session_dir, POS_CONSTANTS_FILENAME)
+        old_result = os.path.join(session_dir, cfg["constants_filename"])
         if os.path.exists(old_result):
             try:
                 os.remove(old_result)
@@ -944,50 +986,65 @@ class SessionManager:
 
         self._update(
             session_id,
-            pos_file_name=original_name,
-            pos_file_path=pos_path,
-            pos_status="pos_processing",
-            pos_error=None,
-            pos_progress_message="Разбор файла ПОС...",
+            **{
+                f"{prefix}_file_name": original_name,
+                f"{prefix}_file_path": doc_path,
+                f"{prefix}_status": f"{prefix}_processing",
+                f"{prefix}_error": None,
+                f"{prefix}_progress_message": f"Разбор файла {label}...",
+            },
         )
 
         thread = threading.Thread(
-            target=self._process_pos_bg,
-            args=(session_id, pos_path, original_name),
+            target=self._process_doc_constants_bg,
+            args=(session_id, doc_path, original_name, doc),
             daemon=True,
-            name=f"POS-Processing-{session_id[:8]}",
+            name=f"{cfg['thread_prefix']}-{session_id[:8]}",
         )
         thread.start()
 
         return {
             "session_id": session_id,
-            "status": "pos_processing",
-            "message": "Файл ПОС принят, начат разбор глобальных констант",
+            "status": f"{prefix}_processing",
+            "message": f"Файл {label} принят, начат разбор глобальных констант",
         }
 
     def _process_pos_bg(self, session_id: str, pos_path: str, original_name: str) -> None:
         """Фоновый разбор ПОС: извлечение глобальных констант и сохранение JSON."""
+        self._process_doc_constants_bg(session_id, pos_path, original_name, "pos")
+
+    def _process_pz_bg(self, session_id: str, pz_path: str, original_name: str) -> None:
+        """Фоновый разбор ПЗ: извлечение глобальных констант и сохранение JSON."""
+        self._process_doc_constants_bg(session_id, pz_path, original_name, "pz")
+
+    def _process_doc_constants_bg(self, session_id: str, doc_path: str,
+                                  original_name: str, doc: str) -> None:
+        """Фоновый разбор PDF-документа (ПОС/ПЗ): глобальные константы → JSON."""
+        cfg = _DOC_CONSTANTS_CONFIG[doc]
+        label = cfg["label"]
+        prefix = cfg["status_prefix"]
         try:
             from src.core.config import load_config
             from src.services import pd_parser
 
-            cfg = load_config()
+            app_cfg = load_config()
             parser_config = pd_parser.Config(
-                llm_base_url=cfg.ollama_url,
-                llm_model=cfg.model_ollama,
+                llm_base_url=app_cfg.ollama_url,
+                llm_model=app_cfg.model_ollama,
             )
 
             def _progress(message: str) -> None:
-                self._update(session_id, pos_progress_message=message)
+                self._update(session_id, **{f"{prefix}_progress_message": message})
 
             result = pd_parser.parse_pos_constants(
-                pos_path, use_llm=True, config=parser_config, progress=_progress,
+                doc_path, use_llm=True, config=parser_config, progress=_progress,
+                document_label=label,
             )
             result["file_name"] = original_name
             result["generated_at"] = datetime.utcnow().isoformat() + "Z"
 
             session_dir = os.path.join(self.output_folder, session_id)
-            out_path = os.path.join(session_dir, POS_CONSTANTS_FILENAME)
+            out_path = os.path.join(session_dir, cfg["constants_filename"])
             with open(out_path, "w", encoding="utf-8") as f:
                 json.dump(result, f, ensure_ascii=False, indent=2)
 
@@ -996,11 +1053,11 @@ class SessionManager:
                 if session_id in self._sessions:
                     files = [
                         f for f in self._sessions[session_id].get("files", [])
-                        if f.get("filename") != POS_CONSTANTS_FILENAME
+                        if f.get("filename") != cfg["constants_filename"]
                     ]
                     files.append({
                         "path": out_path,
-                        "filename": POS_CONSTANTS_FILENAME,
+                        "filename": cfg["constants_filename"],
                         "size": os.path.getsize(out_path),
                     })
                     self._sessions[session_id]["files"] = files
@@ -1008,8 +1065,8 @@ class SessionManager:
 
             # Перезаполняем шаблоны параметров подбора: в раздел constants
             # Параметры_подбора_элементов.json должны попасть константы,
-            # найденные из ПОС (первоначальный файл строится на этапе 0,
-            # до разбора ПОС).
+            # найденные из документа (первоначальный файл строится на этапе 0,
+            # до разбора документа).
             self._build_selection_parameters_templates(session_id, session_dir)
 
             detected = {
@@ -1020,27 +1077,31 @@ class SessionManager:
             found = len(detected)
             self._update(
                 session_id,
-                pos_status="pos_completed",
-                pos_error=None,
-                pos_constants_detected=detected,
-                pos_progress_message=f"Разбор ПОС завершён: найдено констант - {found}",
+                **{
+                    f"{prefix}_status": f"{prefix}_completed",
+                    f"{prefix}_error": None,
+                    f"{prefix}_constants_detected": detected,
+                    f"{prefix}_progress_message": f"Разбор {label} завершён: найдено констант - {found}",
+                },
             )
             logger.info(
-                f"Разбор ПОС для сессии {session_id} завершён, "
+                f"Разбор {label} для сессии {session_id} завершён, "
                 f"констант найдено: {found} -> {out_path}"
             )
         except Exception as e:
             import traceback
             error_msg = f"{type(e).__name__}: {str(e)}"
             logger.error(
-                f"Ошибка разбора ПОС для сессии {session_id}:\n"
+                f"Ошибка разбора {label} для сессии {session_id}:\n"
                 f"{traceback.format_exc()}"
             )
             self._update(
                 session_id,
-                pos_status="pos_error",
-                pos_error=error_msg,
-                pos_progress_message=f"Ошибка разбора ПОС: {error_msg}",
+                **{
+                    f"{prefix}_status": f"{prefix}_error",
+                    f"{prefix}_error": error_msg,
+                    f"{prefix}_progress_message": f"Ошибка разбора {label}: {error_msg}",
+                },
             )
 
     # =====================================================================

@@ -1991,11 +1991,12 @@ CONSTANT_MAPPERS = {
 def extract_pos_constants(llm: Optional[LLMClient], index: PageIndex,
                           pages: List[Page], config: Config,
                           progress: Progress = None,
-                          schema: Optional[List[dict]] = None) -> dict:
-    """Извлекает глобальные константы подбора работ из страниц ПОС.
+                          schema: Optional[List[dict]] = None,
+                          label: str = "ПОС") -> dict:
+    """Разбор файла ПОС/ПЗ: извлечение глобальных констант подбора работ.
 
-    Для каждой константы из схемы works_classification.json:
-    1) отбираются релевантные страницы (BM25-индекс);
+    Шаги:
+    1) собирается схема констант из works_classification.json (global_constants);
     2) значения собираются regex-шаблонами из реестра (тип pos_global_constants);
     3) при наличии LLM значения дополнительно ищутся моделью;
     4) «сырые» значения нормализуются к допустимым значениям константы.
@@ -2022,7 +2023,7 @@ def extract_pos_constants(llm: Optional[LLMClient], index: PageIndex,
             "title": EXTRA_POS_CONSTANTS.get(name, name),
         }
         field_name = POS_CONSTANT_FIELDS[name]
-        _say(progress, f"ПОС: константа - {const.get('title', name)}")
+        _say(progress, f"{label}: константа - {const.get('title', name)}")
         query = POS_CONSTANT_QUERIES.get(name, name)
         top_pages = index.top_pages(query, config.retrieval_top_k + 2)
 
@@ -2076,8 +2077,10 @@ def extract_pos_constants(llm: Optional[LLMClient], index: PageIndex,
 def parse_pos_constants(pdf_source: Union[str, Path, bytes],
                         use_llm: bool = True,
                         config: Optional[Config] = None,
-                        progress: Progress = None) -> dict:
-    """Разбор файла ПОС: извлечение глобальных констант подбора работ.
+                        progress: Progress = None,
+                        document_label: str = "ПОС") -> dict:
+    """Разбор PDF-документа (ПОС или пояснительной записки ПЗ): извлечение
+    глобальных констант подбора работ.
 
     Возвращает {"document": ..., "constants": {...}, "warnings": [...]}.
     """
@@ -2091,10 +2094,11 @@ def parse_pos_constants(pdf_source: Union[str, Path, bytes],
         "warnings": [],
     }
     if not any(p.text.strip() for p in pages):
-        result["warnings"].append("В файле ПОС нет текстового слоя")
+        result["warnings"].append(f"В файле {document_label} нет текстового слоя")
         return result
     index = PageIndex(pages)
-    result["constants"] = extract_pos_constants(llm, index, pages, config, progress)
+    result["constants"] = extract_pos_constants(
+        llm, index, pages, config, progress, label=document_label)
     return result
 
 

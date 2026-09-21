@@ -11,7 +11,7 @@ from flask import (
     send_file, render_template,
     jsonify, redirect, Response
 )
-from src.services.session_manager import SessionManager, POS_CONSTANTS_FILENAME
+from src.services.session_manager import SessionManager, POS_CONSTANTS_FILENAME, PZ_CONSTANTS_FILENAME
 from src.services.mssk_lookup import get_mssk_code_map
 from src.core.logger import setup_logger
 from src.core.config import load_config
@@ -215,6 +215,13 @@ def upload_ifc():
         required: false
         description: Дополнительный PDF-файл ПОС (только для режима AR) — из него
           извлекаются глобальные константы подбора работ
+      - name: pzFile
+        in: formData
+        type: file
+        required: false
+        description: Дополнительный PDF-файл пояснительной записки (только для
+          режима AR) — разбирается тем же пайплайном, что и ПОС; из него
+          извлекаются глобальные константы, не найденные в IFC и ПОС
     responses:
       200:
         description: Файл принят, сессия создана, обработка запущена
@@ -293,6 +300,16 @@ def upload_ifc():
                 _get_manager().upload_pos(result["session_id"], pos_file, pos_file.filename)
             except ValueError as e:
                 logger.warning(f"Файл ПОС не принят: {e}")
+
+        # Дополнительный файл пояснительной записки ПЗ (режим АР): разбирается
+        # тем же пайплайном, что и ПОС, константы сохраняются в
+        # ПЗ_глобальные_константы.json
+        pz_file = request.files.get("pzFile")
+        if pz_file and pz_file.filename and processing_type == "AR":
+            try:
+                _get_manager().upload_pz(result["session_id"], pz_file, pz_file.filename)
+            except ValueError as e:
+                logger.warning(f"Файл ПЗ не принят: {e}")
 
         return _ok(UploadResponse(**result))
     except ValueError as e:
@@ -1129,6 +1146,28 @@ def get_works_constants(session_id: str):
         except Exception as e:
             logger.warning(f"Не удалось прочитать константы ПОС: {e}")
 
+    # Значения констант из файла пояснительной записки
+    # (ПЗ_глобальные_константы.json в сессии)
+    pz_detected: dict = {}
+    pz_ready = False
+    pz_file_name = None
+    pz_constants_path = os.path.join(
+        _get_manager().output_folder, session_id, PZ_CONSTANTS_FILENAME
+    )
+    if os.path.isfile(pz_constants_path):
+        try:
+            with open(pz_constants_path, "r", encoding="utf-8") as f:
+                pz_data = json.load(f)
+            pz_detected = {
+                k: v.get("value")
+                for k, v in (pz_data.get("constants") or {}).items()
+                if isinstance(v, dict) and v.get("value")
+            }
+            pz_ready = True
+            pz_file_name = pz_data.get("file_name")
+        except Exception as e:
+            logger.warning(f"Не удалось прочитать константы ПЗ: {e}")
+
     return _ok(WorksConstantsResponse(
         session_id=session_id,
         processing_type=s.get("processing_type", "KR"),
@@ -1138,6 +1177,10 @@ def get_works_constants(session_id: str):
         pos_ready=pos_ready,
         pos_file_name=pos_file_name,
         pos_status=s.get("pos_status"),
+        pz_detected=pz_detected,
+        pz_ready=pz_ready,
+        pz_file_name=pz_file_name,
+        pz_status=s.get("pz_status"),
     ))
 
 
@@ -1206,6 +1249,77 @@ def upload_pos(session_id: str):
         return _err(ErrorResponse(detail=str(e)), status)
     except Exception as e:
         logger.error(f"Ошибка загрузки файла ПОС: {e}", exc_info=True)
+        return _err(ErrorResponse(detail=f"Внутренняя ошибка: {str(e)}"), 500)
+
+
+@bp.route("/api/session/<session_id>/upload_pz", methods=["POST"])
+def upload_pz(session_id: str):
+    """
+    Загрузка PDF-файла пояснительной записки (ПЗ) для сессии (АР).
+    Разбирается тем же пайплайном и той же LLM, что и файл ПОС:
+    из документа извлекаются глобальные константы подбора работ
+    → ПЗ_глобальные_константы.json.
+    ---
+    tags:
+      - upload
+    consumes:
+      - multipart/form-data
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+        description: ID сессии
+      - name: file
+        in: formData
+        type: file
+        required: true
+        description: PDF-файл пояснительной записки, максимум 500 МБ
+    responses:
+      200:
+        description: Файл ПЗ принят, фоновый разбор глобальных констант запущен
+        schema:
+          type: object
+          properties:
+            sessionId:
+              type: string
+            status:
+              type: string
+              example: "pz_processing"
+            message:
+              type: string
+      400:
+        description: Ошибка валидации (не PDF, не режим АР и т.п.)
+      404:
+        description: Сессия не найдена
+    """
+    if not session_id:
+        return _err(ErrorResponse(detail="ID сессии не указан"), 400)
+    if "file" not in request.files:
+        return _err(ErrorResponse(detail="Файл не передан"), 400)
+
+    f = request.files["file"]
+    if not f.filename:
+        return _err(ErrorResponse(detail="Пустое имя файла"), 400)
+    if not f.filename.lower().endswith(".pdf"):
+        return _err(ErrorResponse(detail="Файл пояснительной записки должен быть в формате PDF"), 400)
+
+    f.seek(0, 2)
+    size = f.tell()
+    f.seek(0)
+    max_size = 500 * 1024 * 1024
+    if size > max_size:
+        return _err(ErrorResponse(detail=f"Файл слишком большой. Максимум {max_size // (1024*1024)} МБ"), 413)
+
+    try:
+        result = _get_manager().upload_pz(session_id, f, f.filename)
+        logger.info(f"Файл ПЗ принят для сессии {session_id}: {f.filename}")
+        return _ok(PosUploadResponse(**result))
+    except ValueError as e:
+        status = 404 if "не найдена" in str(e).lower() else 400
+        return _err(ErrorResponse(detail=str(e)), status)
+    except Exception as e:
+        logger.error(f"Ошибка загрузки файла ПЗ: {e}", exc_info=True)
         return _err(ErrorResponse(detail=f"Внутренняя ошибка: {str(e)}"), 500)
 
 

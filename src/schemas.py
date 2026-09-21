@@ -283,6 +283,15 @@ class WorksConstantsResponse(CamelModel):
     pos_file_name: Optional[str] = None
     # Статус разбора ПОС: pos_processing / pos_completed / pos_error
     pos_status: Optional[str] = None
+    # Значения констант, найденные в файле пояснительной записки
+    # (ПЗ_глобальные_константы.json)
+    pz_detected: Dict[str, Any] = {}
+    # Разбор ПЗ завершён (файл констант готов)
+    pz_ready: bool = False
+    # Имя загруженного файла пояснительной записки
+    pz_file_name: Optional[str] = None
+    # Статус разбора ПЗ: pz_processing / pz_completed / pz_error
+    pz_status: Optional[str] = None
 
 
 class PosUploadResponse(CamelModel):
