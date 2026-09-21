@@ -269,7 +269,10 @@ def _parse_money(value) -> float:
 
 
 def add_total_row(df):
-    """Добавляет последней строкой 'ИТОГО:' с суммой колонки 'Стоимость'.
+    """Добавляет последней строкой 'ИТОГО:' с суммами денежных колонок.
+
+    Суммируются колонки 'ЗП', 'ЭМ', 'МР' и 'Стоимость' (те, что есть
+    в таблице).
 
     Аргументы:
         df — DataFrame финального перечня работ (денежные колонки уже
@@ -277,12 +280,11 @@ def add_total_row(df):
 
     Возвращает:
         DataFrame с добавленной итоговой строкой (или исходный, если
-        колонки 'Стоимость' нет).
+        ни одной денежной колонки нет).
     """
-    if "Стоимость" not in df.columns:
+    money_columns = [col for col in ("ЗП", "ЭМ", "МР", "Стоимость") if col in df.columns]
+    if not money_columns:
         return df
-
-    total = sum(_parse_money(v) for v in df["Стоимость"])
 
     total_row = {col: "" for col in df.columns}
     label_col = (
@@ -291,6 +293,8 @@ def add_total_row(df):
         else df.columns[0]
     )
     total_row[label_col] = "ИТОГО:"
-    total_row["Стоимость"] = format_money(total)
+    for col in money_columns:
+        total = sum(_parse_money(v) for v in df[col])
+        total_row[col] = format_money(total)
 
     return pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)

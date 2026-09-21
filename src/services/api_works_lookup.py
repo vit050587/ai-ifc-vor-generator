@@ -15,11 +15,14 @@ digital-collection/building-elements/positions.
      Шифр ТСН = works/code, Наименование расценки/ресурса = works/name,
      Ед. изм. = works/unitOfMeasure. Объём работ рассчитывается по
      totalMeasure соответствующей группы элементов.
-  4. Полученные работы отправляются на эндпоинт стоимости
-     works/resources (POST), откуда берётся curAll — стоимость одной
-     измерительной единицы работы (за 100 м², тонну и т. д. в
-     зависимости от okeiValue). Колонка «Стоимость за Ед. Изм.» =
-     curAll, «Стоимость» = Объём работ × Стоимость за Ед. Изм.
+4. Полученные работы отправляются на эндпоинт стоимости
+      works/resources (POST), откуда берутся показатели стоимости
+      одной измерительной единицы работы (за 100 м², тонну и т. д. в
+      зависимости от okeiValue): curSalary — зарплата рабочих (ЗП),
+      curOperationOfMachines — эксплуатация машин (ЭМ),
+      curCostOfMaterialResources — материальные ресурсы (МР).
+      Колонки «ЗП» / «ЭМ» / «МР» = соответствующий показатель ×
+      Объём работ; «Стоимость» = ЗП + ЭМ + МР.
 """
 
 import base64
@@ -414,6 +417,17 @@ def fetch_works_from_api(
 # Максимальное число работ в одном запросе стоимости.
 _COST_BATCH_SIZE = 100
 
+# Показатели стоимости из ответа API (works/resources), извлекаемые
+# для каждой работы:
+#   curSalary                    — зарплата рабочих (ЗП);
+#   curOperationOfMachines       — эксплуатация машин (ЭМ);
+#   curCostOfMaterialResources   — материальные ресурсы (МР).
+_COST_FIELDS = (
+    "curSalary",
+    "curOperationOfMachines",
+    "curCostOfMaterialResources",
+)
+
 
 def _post_resources(payload: Dict[str, Any]) -> Dict[str, Any]:
     """POST-запрос к эндпоинту стоимости работ (works/resources).
@@ -462,13 +476,16 @@ def _post_resources(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def fetch_work_costs(
     works: List[Dict[str, Any]],
-) -> Tuple[Dict[int, float], List[Dict[str, Any]]]:
-    """Запрашивает стоимость единицы измерения для списка работ.
+) -> Tuple[Dict[int, Dict[str, float]], List[Dict[str, Any]]]:
+    """Запрашивает стоимостные показатели для списка работ.
 
     Работы отправляются на эндпоинт works/resources в формате
     {"works": [...], "wrate": false, "coefficient": true}. В ответе для
-    каждой работы возвращается curAll — стоимость одной измерительной
-    единицы (за 100 м², тонну и т. д. в зависимости от okeiValue).
+    каждой работы возвращаются показатели стоимости одной измерительной
+    единицы (за 100 м², тонну и т. д. в зависимости от okeiValue):
+      * curSalary — зарплата рабочих (ЗП);
+      * curOperationOfMachines — эксплуатация машин (ЭМ);
+      * curCostOfMaterialResources — материальные ресурсы (МР).
 
     Аргументы:
         works — список работ в формате ответа API подбора работ
@@ -477,9 +494,11 @@ def fetch_work_costs(
 
     Возвращает:
         Кортеж (costs, raw_responses), где costs — словарь
-        {workId: curAll}, raw_responses — сырые ответы API (для дампа).
+        {workId: {curSalary, curOperationOfMachines,
+        curCostOfMaterialResources}}, raw_responses — сырые ответы API
+        (для дампа).
     """
-    costs: Dict[int, float] = {}
+    costs: Dict[int, Dict[str, float]] = {}
     raw_responses: List[Dict[str, Any]] = []
 
     # Дедупликация работ по id (одна и та же расценка может прийти
@@ -507,10 +526,12 @@ def fetch_work_costs(
 
         for cost_work in response.get("works", []) or []:
             work_id = cost_work.get("workId")
-            cur_all = cost_work.get("curAll")
-            if work_id is None or cur_all is None:
+            if work_id is None:
                 continue
-            costs[work_id] = safe_float(cur_all)
+            costs[work_id] = {
+                field: safe_float(cost_work.get(field))
+                for field in _COST_FIELDS
+            }
 
     logger.info(
         f"Получена стоимость для {len(costs)} из {total} работ"
@@ -606,10 +627,23 @@ def _pick_area_value(total_areas: Dict[str, Any]) -> float:
     return 0.0
 
 
+def _is_formwork_work(work: Dict[str, Any]) -> bool:
+    """Расценка монтажа/демонтажа опалубки с единицей измерения «м2».
+
+    Прочие работы с «опалубкой» в наименовании (например, установка
+    арматуры «в опалубку», ед. изм. «1 т») не подпадают — несовпадение
+    единицы измерения.
+    """
+    name = str(work.get("name", "")).lower()
+    unit = str(work.get("unitOfMeasure", "") or "").lower().replace(" ", "").replace("²", "2")
+    return "опалубк" in name and "м2" in unit
+
+
 def _calculate_work_volume(
     work: Dict[str, Any],
     total_measure: Dict[str, Any],
     total_areas: Dict[str, Any] | None = None,
+    formwork_area: float = 0.0,
 ) -> str:
     """Рассчитывает объём работ для расценки из API.
 
@@ -621,6 +655,11 @@ def _calculate_work_volume(
             ifc_reference_builder), используются если расценка в м²,
             а основной измеритель группы — объём (например, опалубка
             стен считается по боковой площади при totalMeasure типа volume).
+        formwork_area — площадь опалубки вертикальных граней фундаментных
+            плит группы (периметр × толщина, м²). Для расценок монтажа/
+            демонтажа опалубки (м²) подставляется вместо площади из
+            totalAreas: фундаментная плита опалубливается только по
+            боковым граням (периметр × толщина), а не по площади плиты.
 
     Возвращает строку с объёмом (или пустую строку, если посчитать нельзя).
     """
@@ -652,8 +691,16 @@ def _calculate_work_volume(
         return f"{vol:.{decimals}f}"
 
     # Расценка в площади (м²), а основной измеритель группы — объём или прочее.
-    # Для таких работ берём суммарную площадь группы из totalAreas
-    # (например, монтаж/демонтаж опалубки стен считается по боковой площади).
+    # Монтаж/демонтаж опалубки фундаментных плит — по площади опалубки
+    # вертикальных граней (периметр × толщина).
+    if is_area and _is_formwork_work(work) and formwork_area > 0:
+        vol = formwork_area / divisor
+        decimals = 4 if divisor > 1 else 2
+        return f"{vol:.{decimals}f}"
+
+    # Прочие расценки в площади (м²) при измерителе группы «объём»:
+    # берём суммарную площадь группы из totalAreas (например,
+    # монтаж/демонтаж опалубки стен считается по боковой площади).
     if is_area and total_areas:
         area_value = _pick_area_value(total_areas)
         if area_value > 0:
@@ -710,9 +757,12 @@ def build_final_works_from_api(
         Наименование расценки/ресурса = works/name
         Ед. изм.              = works/unitOfMeasure
         Объём работ           = по totalMeasure группы элементов запроса
-        Стоимость за Ед. Изм. = curAll из API стоимости (works/resources);
-                                при недоступности API — цена из price_cost.xlsx
-        Стоимость             = Объём работ × Стоимость за Ед. Изм.
+        ЗП                    = curSalary × Объём работ (зарплата рабочих)
+        ЭМ                    = curOperationOfMachines × Объём работ
+                                (эксплуатация машин)
+        МР                    = curCostOfMaterialResources × Объём работ
+                                (материальные ресурсы)
+        Стоимость             = ЗП + ЭМ + МР
 
     Аргументы:
         api_results   — список пар (element, api_response) из fetch_works_from_api.
@@ -774,6 +824,9 @@ def build_final_works_from_api(
         # элементам группы. Для работ по установке арматуры пересчитывается
         # в тонны (÷ 1000) и подставляется в «Объём работ».
         reinforcement_ratio = element.get("_reinforcementVolumeRatio")
+        # Площадь опалубки вертикальных граней фундаментных плит группы
+        # (периметр × толщина, м²) — для расценок монтажа/демонтажа опалубки.
+        formwork_area = safe_float(element.get("_formworkArea"), 0)
         # Отбираем позиции, точно соответствующие характеристикам группы
         # (без дополнительных характеристик, которых в запросе нет, —
         # например, «Фундаментная плита под оборудование …»).
@@ -788,7 +841,10 @@ def build_final_works_from_api(
             pos_label = position.get("fullName") or position.get("name", "")
 
             for work in _iter_works({"data": [position]}):
-                volume = _calculate_work_volume(work, total_measure, total_areas)
+                volume = _calculate_work_volume(
+                    work, total_measure, total_areas,
+                    formwork_area=formwork_area,
+                )
                 work_name = str(work.get("name", ""))
                 # Работы по установке арматурных изделий/каркасов/сеток/стержней.
                 # API возвращает разные формулировки: «Установка арматурных
@@ -852,9 +908,10 @@ def build_final_works_from_api(
     except Exception as exc:
         logger.error(f"Ошибка при корректировке объёма работ: {exc}")
 
-    # Стоимость за единицу измерения — из API цифрового сборника
-    # (works/resources, поле curAll). При сбое — fallback на price_cost.xlsx.
-    costs: Dict[int, float] = {}
+    # Показатели стоимости из API цифрового сборника
+    # (works/resources, поля curSalary/curOperationOfMachines/
+    # curCostOfMaterialResources). При сбое — fallback на price_cost.xlsx.
+    costs: Dict[int, Dict[str, float]] = {}
     cost_raw: List[Dict[str, Any]] = []
     try:
         works_for_cost = [w for w in all_works if w.get("id") is not None]
@@ -864,41 +921,61 @@ def build_final_works_from_api(
         logger.error(f"Ошибка при получении стоимости из API: {exc}")
 
     if costs:
-        df_works["Стоимость за Ед. Изм."] = df_works["_workId"].map(
+        # ЗП / ЭМ / МР = показатель из API × Объём работ.
+        def _calc_component(row, field: str) -> Any:
+            info = row.get("_costInfo") or {}
+            value = safe_float(info.get(field), default=0.0)
+            volume = safe_float(row.get("Объём работ"), default=0.0)
+            if value > 0 and volume > 0:
+                return round(value * volume, 2)
+            return ""
+
+        df_works["_costInfo"] = df_works["_workId"].map(
             lambda wid: costs.get(wid) if wid is not None else None
         )
-        df_works["Стоимость за Ед. Изм."] = df_works["Стоимость за Ед. Изм."].apply(
-            lambda v: round(v, 2) if safe_float(v) > 0 else ""
+        df_works["ЗП"] = df_works.apply(
+            lambda r: _calc_component(r, "curSalary"), axis=1
         )
+        df_works["ЭМ"] = df_works.apply(
+            lambda r: _calc_component(r, "curOperationOfMachines"), axis=1
+        )
+        df_works["МР"] = df_works.apply(
+            lambda r: _calc_component(r, "curCostOfMaterialResources"), axis=1
+        )
+        df_works = df_works.drop(columns=["_costInfo"])
 
-        # Стоимость = Объём работ × Стоимость за Ед. Изм.
+        # Стоимость = ЗП + ЭМ + МР.
         def _calc_total(row) -> Any:
-            unit_cost = safe_float(row.get("Стоимость за Ед. Изм."), default=0.0)
-            volume = safe_float(row.get("Объём работ"), default=0.0)
-            if unit_cost > 0 and volume > 0:
-                return round(unit_cost * volume, 2)
-            return ""
+            total = sum(
+                safe_float(row.get(col), default=0.0)
+                for col in ("ЗП", "ЭМ", "МР")
+            )
+            return round(total, 2) if total > 0 else ""
 
         df_works["Стоимость"] = df_works.apply(_calc_total, axis=1)
     else:
-        # Fallback: стоимость из price_cost.xlsx (прежнее поведение)
+        # Fallback: стоимость из price_cost.xlsx (прежнее поведение).
+        # Показатели ЗП/ЭМ/МР из API недоступны — колонки остаются пустыми.
         logger.warning(
             "Стоимость из API недоступна — используется price_cost.xlsx"
         )
+        df_works["ЗП"] = ""
+        df_works["ЭМ"] = ""
+        df_works["МР"] = ""
         try:
             df_works = _add_cost_column(df_works)
         except Exception as exc:
             logger.error(f"Ошибка при расчёте стоимости: {exc}")
             df_works["Стоимость"] = ""
+        # Колонка «Стоимость за Ед. Изм.» больше не используется
+        if "Стоимость за Ед. Изм." in df_works.columns:
+            df_works = df_works.drop(columns=["Стоимость за Ед. Изм."])
 
     # Форматирование денежных колонок: разряды через пробел,
     # 2 знака после точки (например, '392 458.21')
-    if "Стоимость за Ед. Изм." in df_works.columns:
-        df_works["Стоимость за Ед. Изм."] = df_works["Стоимость за Ед. Изм."].apply(
-            format_money
-        )
-    if "Стоимость" in df_works.columns:
-        df_works["Стоимость"] = df_works["Стоимость"].apply(format_money)
+    for col in ("ЗП", "ЭМ", "МР", "Стоимость"):
+        if col in df_works.columns:
+            df_works[col] = df_works[col].apply(format_money)
 
     # Теперь добавляем заголовки элементов в обработанный DataFrame
     final_rows = []
@@ -911,7 +988,9 @@ def build_final_works_from_api(
             "Наименование расценки/ресурса": f"{elem_info['header']}",
             "Ед. изм.": "",
             "Объём работ": "",
-            "Стоимость за Ед. Изм.": "",
+            "ЗП": "",
+            "ЭМ": "",
+            "МР": "",
             "Стоимость": "",
             "_is_header": True
         })
@@ -929,7 +1008,9 @@ def build_final_works_from_api(
                 "Наименование расценки/ресурса": "",
                 "Ед. изм.": "",
                 "Объём работ": "",
-                "Стоимость за Ед. Изм.": "",
+                "ЗП": "",
+                "ЭМ": "",
+                "МР": "",
                 "Стоимость": "",
                 "_is_header": False
             })
@@ -940,7 +1021,7 @@ def build_final_works_from_api(
     # Убедимся, что все нужные колонки есть
     required_columns = [
         "Шифр ТСН", "Наименование расценки/ресурса", "Ед. изм.", "Объём работ",
-        "Стоимость за Ед. Изм.", "Стоимость", "_is_header",
+        "ЗП", "ЭМ", "МР", "Стоимость", "_is_header",
     ]
     for col in required_columns:
         if col not in df.columns:
@@ -984,8 +1065,10 @@ def build_final_works_from_api(
         worksheet.column_dimensions['B'].width = 60
         worksheet.column_dimensions['C'].width = 10
         worksheet.column_dimensions['D'].width = 15
-        worksheet.column_dimensions['E'].width = 18
+        worksheet.column_dimensions['E'].width = 15
         worksheet.column_dimensions['F'].width = 15
+        worksheet.column_dimensions['G'].width = 15
+        worksheet.column_dimensions['H'].width = 15
         
         # Добавляем автофильтр для удобства
         worksheet.auto_filter.ref = f"A1:{chr(64 + len(df_for_excel.columns))}{len(df_for_excel) + 1}"

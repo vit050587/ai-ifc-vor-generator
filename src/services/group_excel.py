@@ -495,6 +495,57 @@ def _prioritize_volume_col(volume_cols: List[str], volume_col) -> List[str]:
     return volume_cols
 
 
+# Колонки-источники периметра и толщины (мм) для расчёта площади опалубки
+# фундаментных плит (периметр × толщина). Колонки дублируют одно и то же
+# значение в старом/новом формате имён — берётся первое ненулевое (coalesce).
+_PERIMETER_COLS = [
+    'QTO_Qto_SlabBaseQuantities_Длина_Perimeter_мм',
+    'Длина_Perimeter_мм',
+    'Периметр, мм',
+]
+_DEPTH_COLS = [
+    'QTO_Qto_SlabBaseQuantities_Длина_Depth_мм',
+    'Длина_Depth_мм',
+]
+
+
+def _find_formwork_columns(columns) -> Tuple[List[str], List[str]]:
+    """Возвращает пары (колонки периметра, колонки толщины), доступные в таблице."""
+    cols = list(columns)
+    perim_cols = [c for c in _PERIMETER_COLS if c in cols]
+    depth_cols = [c for c in _DEPTH_COLS if c in cols]
+    return perim_cols, depth_cols
+
+
+def _coalesce_series(group_df, cols):
+    """Серия с первым ненулевым значением по строке среди колонок (coalesce)."""
+    result = None
+    for col in cols:
+        col_series = pd.to_numeric(group_df[col], errors='coerce').fillna(0)
+        if result is None:
+            result = col_series
+        else:
+            result = result.where(result > 0, col_series)
+    return result
+
+
+def _formwork_area_m2(group_df, perim_cols, depth_cols) -> float:
+    """Площадь опалубки вертикальных граней плит группы (м²): Σ периметр × толщина.
+
+    Периметр и толщина в таблице — в миллиметрах, поэтому произведение
+    делится на 1e6 (мм² → м²). У элементов без периметра/толщины
+    (стены, балки и т.п.) вклад равен нулю.
+    """
+    if not perim_cols or not depth_cols:
+        return 0.0
+    perim = _coalesce_series(group_df, perim_cols)
+    depth = _coalesce_series(group_df, depth_cols)
+    if perim is None or depth is None:
+        return 0.0
+    total = float((perim * depth).sum())
+    return round(total / 1e6, 2)
+
+
 def _create_group(name: str, level: int, group_df, rows: List[Dict[str, Any]],
                   volume_col, sum_columns: List[str], children=None) -> Dict[str, Any]:
     """Создаёт узел дерева групп: агрегирует объём/площади по DataFrame строк.
@@ -544,12 +595,19 @@ def _create_group(name: str, level: int, group_df, rows: List[Dict[str, Any]],
         else:
             reinforcement = float(round(float(rein_series.sum()), 2))
 
+    # Площадь опалубки вертикальных граней плит группы (периметр × толщина,
+    # сумма по элементам). Используется в финальном перечне работ для
+    # расценок монтажа/демонтажа опалубки фундаментных плит.
+    perim_cols, depth_cols = _find_formwork_columns(group_df.columns)
+    formwork_area = _formwork_area_m2(group_df, perim_cols, depth_cols)
+
     first_elem = rows[indices[0]] if indices else {}
 
     return {
         'name': name, 'level': level, 'indices': indices,
         'total_volume': volume, 'total_areas': areas,
         'total_reinforcement': reinforcement,
+        'formwork_area': formwork_area,
         'first_element': dict(first_elem), 'count': len(indices),
         'children': children or []
     }
@@ -998,11 +1056,35 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
             ) * get_volume(e)
         reinforcement = float(round(reinforcement, 2))
 
+        # Площадь опалубки вертикальных граней плит группы (периметр ×
+        # толщина, сумма по элементам) — для расценок монтажа/демонтажа
+        # опалубки фундаментных плит в финальном перечне работ.
+        perim_cols, depth_cols = _find_formwork_columns(headers)
+        formwork_area = 0.0
+        if perim_cols and depth_cols:
+            formwork_area = 0.0
+            for e in elems_list:
+                perim = 0.0
+                for col in perim_cols:
+                    val = safe_parse_float(e.row.get(col, 0))
+                    if val > 0:
+                        perim = val
+                        break
+                depth = 0.0
+                for col in depth_cols:
+                    val = safe_parse_float(e.row.get(col, 0))
+                    if val > 0:
+                        depth = val
+                        break
+                formwork_area += perim * depth / 1e6  # мм² → м²
+            formwork_area = float(round(formwork_area, 2))
+
         return {
             'name': name, 'level': level, 'indices': indices,
             # НОВАЯ ВЕРСИЯ: float() — чтобы значения корректно сериализовались в JSON
             'total_volume': float(round(volume, 2)), 'total_areas': areas,
             'total_reinforcement': float(round(reinforcement, 2)),
+            'formwork_area': formwork_area,
             'first_element': dict(elems_list[0].row) if elems_list else {},
             'count': len(elems_list), 'children': []
         }

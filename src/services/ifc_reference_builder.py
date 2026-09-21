@@ -1137,11 +1137,17 @@ def build_reference_output(
             'totalAreas': total_areas_clean,
             'characteristics': characteristics,
             'additionalCharacteristics': additional,
-            # Внутреннее служебное поле: расход арматуры на куб бетона
-            # (ReinforcementVolumeRatio из IFC). Не отправляется в API,
-            # используется только при формировании финального перечня работ.
-            '_reinforcementVolumeRatio': reinforcement_volume_ratio,
-        }
+        # Внутреннее служебное поле: расход арматуры на куб бетона
+        # (ReinforcementVolumeRatio из IFC). Не отправляется в API,
+        # используется только при формировании финального перечня работ.
+        '_reinforcementVolumeRatio': reinforcement_volume_ratio,
+        # Внутреннее служебное поле: площадь опалубки вертикальных граней
+        # плит группы (периметр × толщина, сумма по элементам, м²).
+        # Не отправляется в API — используется при формировании финального
+        # перечня работ для расценок монтажа/демонтажа опалубки (фундаментные
+        # плиты опалубливаются по боковой поверхности: периметр × толщина).
+        '_formworkArea': safe_parse_float(group.get('formwork_area', 0)),
+    }
 
         result.append(obj)
 
