@@ -18,6 +18,9 @@ class Config:
     WORKS_PERIOD_FILTER_URL: str
     # Цифровой сборник (larix): список работ по шифру таблицы за период (режим АР)
     WORKS_WORK_PROCESS_URL: str
+    # Цифровой сборник (larix): детальные параметры позиции (разбивка стоимости
+    # curSalary/curOperationOfMachines/curCostOfMaterialResources; режим АР)
+    WORKS_WORK_PROCESS_DETAIL_URL: str
     WORKS_API_TOKEN: str  # fallback-токен, если Keycloak-клиент не настроен
     # Keycloak для автоматического обновления токена (client_credentials)
     KEYCLOAK_TOKEN_URL: str
@@ -52,6 +55,10 @@ def load_config() -> Config:
         WORKS_WORK_PROCESS_URL=os.getenv(
             "WORKS_WORK_PROCESS_URL",
             "https://normativ.mgexp.org/larix/api/v1/catalog/work-process/list",
+        ),
+        WORKS_WORK_PROCESS_DETAIL_URL=os.getenv(
+            "WORKS_WORK_PROCESS_DETAIL_URL",
+            "https://normativ.mgexp.org/larix/api/v1/catalog/work-process/detail",
         ),
         WORKS_API_TOKEN=os.getenv("WORKS_API_TOKEN", ""),
         KEYCLOAK_TOKEN_URL=os.getenv(

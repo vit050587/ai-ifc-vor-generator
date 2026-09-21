@@ -40,6 +40,7 @@ _cfg = load_config()
 # Эндпоинты цифрового сборника (larix)
 PERIOD_FILTER_URL = _cfg.WORKS_PERIOD_FILTER_URL
 WORK_PROCESS_URL = _cfg.WORKS_WORK_PROCESS_URL
+WORK_PROCESS_DETAIL_URL = _cfg.WORKS_WORK_PROCESS_DETAIL_URL
 API_TOKEN = _cfg.WORKS_API_TOKEN
 
 # Имена выходных файлов
@@ -220,6 +221,51 @@ def _collect_table_codes(tables_payload: Dict[str, Any]) -> List[Dict[str, str]]
                 seen.add(code)
                 tables.append({"code": code, "name": work.get("name") or ""})
     return tables
+
+
+# =====================================================================
+#  ШАГ 3. ДЕТАЛЬНЫЕ ПАРАМЕТРЫ ПОЗИЦИЙ (разбивка стоимости)
+# =====================================================================
+
+def fetch_work_details(
+    work_ids: List[int], period_id: int,
+) -> Dict[int, Dict[str, Any]]:
+    """Детальные параметры позиций (полная разбивка стоимости) из larix.
+
+    GET catalog/work-process/detail?id=<ID>&period=<periodId> — по id каждой
+    работы возвращает показатели, которых нет в списке работ
+    (catalog/work-process/list): curSalary (ЗП), curOperationOfMachines (ЭМ),
+    curCostOfMaterialResources (МР), curDirectCosts и т.д.
+
+    Ошибка отдельной позиции (404 и т.п.) не прерывает обработку — позиция
+    пропускается с предупреждением (стоимость остаётся по данным списка).
+
+    Аргументы:
+        work_ids  — уникальные id работ (поле "id" работ из work-process/list).
+        period_id — id актуального периода ТСН (period.json / period_id
+                    Подобранные_работы.json).
+
+    Возвращает словарь {work_id: детальные_параметры_позиции}.
+    """
+    details: Dict[int, Dict[str, Any]] = {}
+    for wid in work_ids:
+        try:
+            detail = _api_get(
+                WORK_PROCESS_DETAIL_URL,
+                params={"id": int(wid), "period": int(period_id)},
+            )
+        except Exception as exc:
+            logger.warning(
+                f"Не получены детальные параметры позиции id={wid}: {exc}"
+            )
+            continue
+        if isinstance(detail, dict) and detail:
+            details[int(wid)] = detail
+    logger.info(
+        f"Детальные параметры позиций (стоимость): получено "
+        f"{len(details)} из {len(work_ids)}"
+    )
+    return details
 
 
 def fetch_works_for_table(table_code: str, period_title: str) -> List[Dict[str, Any]]:

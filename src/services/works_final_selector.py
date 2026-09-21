@@ -24,16 +24,30 @@ works_fetcher (Подобранные_работы.json):
     * исключение — работы по монтажу/демонтажу опалубки фундаментных плит
       (ед. изм. «м2»): их объём считается по площади опалубки вертикальных
       граней = периметр × толщина (по параметрам подбора каждого элемента
-      группы, Параметры_подбора_элементов.json), а не по QTO-площади плиты.
+      группы, Параметры_подбора_элементов.json), а не по QTO-площади плиты;
+    * исключение — арматурные работы (ед. изм. «1 т»: установка арматурных
+      изделий/каркасов/сеток/отдельных стержней/закладных деталей): объём =
+      суммарный расход арматуры группы (кг) ÷ 1000, где расход = Σ по
+      элементам группы (ReinforcementVolumeRatio, кг/м³ × объём элемента,
+      м³ — из filtered_elements.xlsx), как в режиме КР. Расход подставляется
+      ровно в одну расценку группы (приоритет — «отдельные стержни»),
+      остальные арматурные расценки идут без объёма (иначе задваивается).
 
   Результаты:
     - run_<NNN>/Финальный_перечень_работ.json — структурированный перечень
       выбранных работ по каждой группе элементов;
     - run_<NNN>/Финальный_перечень_работ.xlsx — итоговая таблица в структуре
       режима КР (ОБЩИЙ_Финальный_перечень_работ.xlsx): колонки «Шифр ТСН /
-      Наименование расценки/ресурса / Ед. изм. / Объём работ / Стоимость за
-      Ед. Изм. / Стоимость», строки-заголовки групп элементов, итоговая
-      строка «ИТОГО:».
+      Наименование расценки/ресурса / Ед. изм. / Объём работ / ЗП / ЭМ / МР /
+      Стоимость», строки-заголовки групп элементов, итоговая строка «ИТОГО:».
+      Компоненты стоимости считаются по показателям детальных параметров
+      позиции цифрового сборника (larix, catalog/work-process/detail —
+      запрашиваются по id каждой выбранной работы за период ТСН запуска),
+      умноженным на объём работ:
+         ЗП = curSalary × объём; ЭМ = curOperationOfMachines × объём;
+         МР = curCostOfMaterialResources × объём (fallback — базовые
+         salary / operationOfMachines / costOfMaterialResources);
+      «Стоимость» = ЗП + ЭМ + МР.
 
 При ошибке LLM для группы элементов в перечень попадают все работы-кандидаты
 группы (с пометкой в note) — шаг не должен обнулять результат запуска.
@@ -61,6 +75,10 @@ FINAL_WORKS_XLSX_FILENAME = "Финальный_перечень_работ.xlsx
 # Дерево группировки АР (group_excel.process_ifc_excel_ar) в папке запуска:
 # листовые группы (МССК → Материал → Наименование) с индексами элементов
 GROUPED_JSON_FILENAME = "filtered_elements_grouped_AR.json"
+
+# Отфильтрованные элементы запуска (этап 1) — источник расхода арматуры:
+# колонки ReinforcementVolumeRatio (кг/м³) и «Объём, м3» по каждому элементу
+FILTERED_XLSX_FILENAME = "filtered_elements.xlsx"
 
 # Параметры подбора элементов (selection_template_builder, этап 0) — лежат в
 # корне сессии (родителе папки запуска run_<NNN>/); сопоставление с элементами
@@ -460,6 +478,139 @@ def _sum_formwork_area(
     return round(total, 3) if found else None
 
 
+# ======================================================================
+#  Расход арматуры группы (ReinforcementVolumeRatio × объём, кг → т)
+#  — объём арматурных расценок (ед. изм. «1 т»), как в режиме КР
+# ======================================================================
+
+# Ключевые слова арматурных расценок в наименовании (как в КР):
+# «Установка арматурных изделий, каркасов и сеток», «Установка отдельных
+# стержней», «Установка закладных деталей» и т. п.
+_REBAR_KEYWORDS = ("арматур", "каркас", "стержн", "сетк", "закладн")
+
+# Единица измерения «тонны» («1 т», «т») — с границами слова, чтобы не
+# ловить «т» внутри слов («100 м3 бетона» не матчится)
+_TON_UNIT_RE = re.compile(r"(?:^|\s)(?:\d+(?:[.,]\d+)?\s*)?т(?:\s|$)")
+
+
+def _is_rebar_ton_work(work: Dict[str, Any]) -> bool:
+    """Арматурная расценка с единицей измерения «т» («1 т»).
+
+    Наименование содержит одно из ключевых слов арматурных работ
+    (арматура/каркасы/стержни/сетки/закладные детали), единица измерения —
+    тонны. Прочие работы с «арматурой» в названии (например, «в опалубку»,
+    ед. изм. «100 м3») не подпадают — несовпадение единицы.
+    """
+    title = str(work.get("title") or work.get("name") or "").lower()
+    unit = str(work.get("unit_of_measure") or work.get("unitOfMeasure") or "")
+    has_keyword = any(kw in title for kw in _REBAR_KEYWORDS)
+    return has_keyword and bool(_TON_UNIT_RE.search(unit))
+
+
+def _load_rebar_mass_by_gid(run_dir: str) -> Dict[str, float]:
+    """Расход арматуры (кг) по каждому элементу из filtered_elements.xlsx.
+
+    ReinforcementVolumeRatio — плотность армирования (кг/м³), расход
+    элемента = кг/м³ × объём элемента (м³) — как суммарный расход группы
+    в режиме КР (group_excel). Возвращает карту {global_id: кг}; при
+    отсутствии файла/колонок — пустая карта (объём арматурных работ не
+    заполняется, прежнее поведение).
+    """
+    path = os.path.join(run_dir, FILTERED_XLSX_FILENAME)
+    if not os.path.isfile(path):
+        logger.warning(
+            f"Нет файла {FILTERED_XLSX_FILENAME} — расход арматуры не "
+            "определён, объём арматурных работ не заполняется"
+        )
+        return {}
+    try:
+        df = pd.read_excel(path)
+    except Exception as exc:
+        logger.warning(f"Не удалось прочитать {path}: {exc}")
+        return {}
+
+    if "GlobalId" not in df.columns or "ReinforcementVolumeRatio" not in df.columns:
+        logger.warning(
+            f"В {FILTERED_XLSX_FILENAME} нет колонок GlobalId/"
+            "ReinforcementVolumeRatio — расход арматуры не определён"
+        )
+        return {}
+
+    # Колонка объёма: агрегированная «Объём, м3» (как в group_excel, КР);
+    # fallback — первая колонка «Объём … м3» без QTO-префикса
+    volume_col = "Объём, м3" if "Объём, м3" in df.columns else None
+    if volume_col is None:
+        for col in df.columns:
+            if (
+                str(col).startswith("Объём")
+                and "м3" in str(col)
+                and not str(col).startswith("QTO")
+            ):
+                volume_col = col
+                break
+    if volume_col is None:
+        logger.warning(
+            f"В {FILTERED_XLSX_FILENAME} нет колонки объёма (м3) — "
+            "расход арматуры не определён"
+        )
+        return {}
+
+    masses: Dict[str, float] = {}
+    for _, row in df.iterrows():
+        gid = str(row.get("GlobalId") or "").strip()
+        if not gid:
+            continue
+        ratio = safe_float(row.get("ReinforcementVolumeRatio"), default=0.0)
+        volume = safe_float(row.get(volume_col), default=0.0)
+        if ratio > 0 and volume > 0:
+            masses[gid] = masses.get(gid, 0.0) + ratio * volume
+
+    logger.info(
+        f"Расход арматуры определён для {len(masses)} элементов "
+        f"({FILTERED_XLSX_FILENAME}: ReinforcementVolumeRatio × объём)"
+    )
+    return masses
+
+
+def _assign_rebar_volume(
+    selected_works: List[Dict[str, Any]], rebar_mass_kg: float,
+) -> None:
+    """Назначает объём (т) арматурной расценке группы — расход, кг ÷ 1000.
+
+    Суммарный расход арматуры группы (ReinforcementVolumeRatio × объёмы
+    элементов, кг) уже включает все арматурные работы группы, поэтому
+    подставляется ровно в одну расценку (как в КР — иначе объём задваивается):
+      * приоритет — расценка «Установка … отдельных стержней …»;
+      * если такой нет — первая арматурная расценка с единицей «т»
+        (в АР LLM обычно выбирает одну арматурную работу на группу).
+    Остальные арматурные расценки (каркасы/сетки/закладные детали) остаются
+    без объёма. Объём записывается в quantity["mass_t"] (копия quantity —
+    словарь объёмов группы общий для всех работ группы).
+    """
+    if rebar_mass_kg <= 0 or not selected_works:
+        return
+    rebar_rows = [w for w in selected_works if _is_rebar_ton_work(w)]
+    if not rebar_rows:
+        return
+    target = next(
+        (
+            w for w in rebar_rows
+            if "отдельн" in str(w.get("title") or "").lower()
+            and "стержн" in str(w.get("title") or "").lower()
+        ),
+        rebar_rows[0],
+    )
+    tons = rebar_mass_kg / 1000.0
+    quantity = dict(target.get("quantity") or {})
+    quantity["mass_t"] = round(tons, 4)
+    target["quantity"] = quantity
+    target["rebar_mass_kg"] = round(rebar_mass_kg, 2)
+    logger.info(
+        f"Объём арматурной работы «{target.get('title')}»: "
+        f"{tons:.4f} т (расход арматуры группы {rebar_mass_kg:.2f} кг)"
+    )
+
+
 def _build_work_row(
     element_payload: Dict[str, Any],
     table: Dict[str, str],
@@ -489,15 +640,108 @@ def _build_work_row(
         "pressmark": work.get("pressmark"),
         "title": work.get("title"),
         "unit_of_measure": work.get("unitOfMeasure"),
+        # id работы в цифровом сборнике (larix) — для запроса детальных
+        # параметров позиции (разбивка стоимости ЗП/ЭМ/МР)
+        "work_id": work.get("id"),
         "table_code": table["code"],
         "table_name": table["name"],
         "direct_costs": work.get("directCosts"),
         "cur_direct_costs": work.get("curDirectCosts"),
+        # Компоненты стоимости из ответа цифрового сборника (larix):
+        # ЗП (curSalary), ЭМ (curOperationOfMachines), МР
+        # (curCostOfMaterialResources); fallback — базовые значения
+        "salary": work.get("salary"),
+        "cur_salary": work.get("curSalary"),
+        "operation_of_machines": work.get("operationOfMachines"),
+        "cur_operation_of_machines": work.get("curOperationOfMachines"),
+        "cost_of_material_resources": work.get("costOfMaterialResources"),
+        "cur_cost_of_material_resources": work.get("curCostOfMaterialResources"),
         "quantity": quantity,
         "formwork_area_m2": formwork_area_m2,
         "reason": reason,
         "llm_selected": llm_selected,
     }
+
+
+# Соответствие полей разбивки стоимости: детальные параметры позиции
+# (catalog/work-process/detail) → поля строки работы в итоговом перечне.
+# Список работ (catalog/work-process/list) этих полей не содержит (только МР
+# и итоги), поэтому ЗП/ЭМ берутся из детальных параметров позиции.
+_DETAIL_COST_FIELD_MAP = {
+    "salary": "salary",
+    "curSalary": "cur_salary",
+    "operationOfMachines": "operation_of_machines",
+    "curOperationOfMachines": "cur_operation_of_machines",
+    "costOfMaterialResources": "cost_of_material_resources",
+    "curCostOfMaterialResources": "cur_cost_of_material_resources",
+    "directCosts": "direct_costs",
+    "curDirectCosts": "cur_direct_costs",
+    "totalCost": "total_cost",
+    "curTotalCost": "cur_total_cost",
+}
+
+
+def _enrich_selected_works_with_costs(
+    result_elements: List[Dict[str, Any]],
+    period_id: Any,
+) -> None:
+    """Дополняет выбранные работы показателями стоимости (ЗП/ЭМ/МР).
+
+    Список работ цифрового сборника (catalog/work-process/list) содержит
+    только МР и итоговые затраты — разбивка стоимости (curSalary — ЗП,
+    curOperationOfMachines — ЭМ) отсутствует. Полная разбивка берётся из
+    детальных параметров позиции (catalog/work-process/detail) по id каждой
+    ВЫБРАННОЙ работы (LLM отбирает единицы из десятков кандидатов таблицы —
+    запрашивать детали всех кандидатов не нужно) за период ТСН запуска.
+
+    Обновляет строки selected_works на месте (поля _DETAIL_COST_FIELD_MAP);
+    при недоступности эндпоинта/периода стоимость остаётся по данным списка
+    (как раньше) — шаг не должен обнулять результат запуска.
+    """
+    try:
+        period_num = int(period_id)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Неизвестен период ТСН (period_id) — разбивка стоимости работ "
+            "(ЗП/ЭМ) не заполнена"
+        )
+        return
+
+    work_ids: List[int] = []
+    seen: set = set()
+    for entry in result_elements:
+        for work in entry.get("selected_works") or []:
+            wid = work.get("work_id")
+            if wid is None or wid in seen:
+                continue
+            seen.add(wid)
+            work_ids.append(int(wid))
+    if not work_ids:
+        return
+
+    from src.services.works_fetcher import fetch_work_details
+
+    logger.info(
+        f"Запрос разбивки стоимости (ЗП/ЭМ/МР) для {len(work_ids)} "
+        "выбранных работ (catalog/work-process/detail)"
+    )
+    details = fetch_work_details(work_ids, period_num)
+
+    enriched = 0
+    for entry in result_elements:
+        for work in entry.get("selected_works") or []:
+            detail = details.get(work.get("work_id"))
+            if not detail:
+                continue
+            for src_field, dst_field in _DETAIL_COST_FIELD_MAP.items():
+                value = detail.get(src_field)
+                if value is not None:
+                    work[dst_field] = value
+            enriched += 1
+    logger.info(
+        f"Разбивка стоимости получена для {enriched} из {len(work_ids)} "
+        "выбранных работ"
+    )
 
 
 def select_final_works(
@@ -569,6 +813,10 @@ def select_final_works(
     # подаются в LLM-запрос по представителю группы (если файл есть)
     params_by_id = _load_element_params(run_dir)
 
+    # Расход арматуры (кг) по каждому элементу (ReinforcementVolumeRatio ×
+    # объём, filtered_elements.xlsx) — объём арматурных расценок (ед. «т»)
+    rebar_mass_by_gid = _load_rebar_mass_by_gid(run_dir)
+
     processing_units: List[Dict[str, Any]] = []
     if leaf_groups:
         covered: set = set()
@@ -622,6 +870,15 @@ def select_final_works(
             if _is_foundation_slab(element_payload)
             else None
         )
+
+        # Суммарный расход арматуры группы (кг) — Σ по элементам группы
+        # (ReinforcementVolumeRatio × объём каждого элемента)
+        group_rebar_kg = 0.0
+        if rebar_mass_by_gid:
+            for payload in unit["payloads"]:
+                gid = str((payload.get("element") or {}).get("global_id") or "").strip()
+                group_rebar_kg += rebar_mass_by_gid.get(gid, 0.0)
+            group_rebar_kg = round(group_rebar_kg, 2)
 
         # Таблицы группы (уникальные шифры, порядок как в файле) — только по
         # первому элементу группы (представителю)
@@ -725,6 +982,11 @@ def select_final_works(
                         )
                     )
 
+        # Объём арматурных работ (ед. изм. «т») — суммарный расход арматуры
+        # группы (кг ÷ 1000), назначается ровно одной расценке (как в КР)
+        if group_rebar_kg > 0:
+            _assign_rebar_volume(selected_works, group_rebar_kg)
+
         total_selected_works += len(selected_works)
         entry = {
             "element": element_payload.get("element", {}),
@@ -741,6 +1003,10 @@ def select_final_works(
             # Площадь опалубки группы фундаментных плит (периметр × толщина),
             # подставленная в работы монтажа/демонтажа опалубки
             entry["formwork_area_m2"] = formwork_area
+        if group_rebar_kg > 0:
+            # Суммарный расход арматуры группы (кг) — основа объёма
+            # арматурных расценок (ед. изм. «т») группы
+            entry["rebar_mass_kg"] = group_rebar_kg
         if group is not None:
             # Метаданные группы: подбор выполнен по первому элементу
             # (представителю), объёмы — сумма по всем элементам группы
@@ -752,6 +1018,10 @@ def select_final_works(
             }
             entry["group_quantity"] = group_quantity
         result_elements.append(entry)
+
+    # Разбивка стоимости выбранных работ (ЗП/ЭМ/МР) из детальных параметров
+    # позиций цифрового сборника (catalog/work-process/detail, по period_id)
+    _enrich_selected_works_with_costs(result_elements, works_payload.get("period_id"))
 
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -828,10 +1098,12 @@ def _volume_for_unit(quantity: Dict[str, Any], unit_of_measure: Any) -> str:
     """Объём работ по единице измерения расценки, нормализованный по норме.
 
     Базовое значение выбирается по размерности единицы (м² → площадь, м³ →
-    объём, шт → количество элементов) и делится на множитель нормы из
-    единицы измерения: «100 м2» → площадь / 100, «100 м3» → объём / 100,
-    «1000 шт.» → количество / 1000, «м2»/«м3»/«шт» → как есть. Для прочих
-    единиц (т, м и т.п.) объём не заполняется (нет данных в quantity).
+    объём, шт → количество элементов, т → расход арматуры группы
+    `mass_t`, кг ÷ 1000) и делится на множитель нормы из единицы
+    измерения: «100 м2» → площадь / 100, «100 м3» → объём / 100,
+    «1000 шт.» → количество / 1000, «м2»/«м3»/«шт»/«1 т» → как есть.
+    Для прочих единиц (м и т.п.) объём не заполняется (нет данных
+    в quantity).
     """
     unit = str(unit_of_measure or "").strip().lower().replace("²", "2").replace("³", "3")
 
@@ -852,6 +1124,9 @@ def _volume_for_unit(quantity: Dict[str, Any], unit_of_measure: Any) -> str:
         value = (quantity or {}).get("volume_m3")
     elif "шт" in unit:
         value = (quantity or {}).get("count")
+    elif _TON_UNIT_RE.search(unit):
+        # Арматурные расценки (ед. изм. «1 т»): расход арматуры группы, кг ÷ 1000
+        value = (quantity or {}).get("mass_t")
 
     num = safe_float(value, default=0.0)
     if num > 0:
@@ -871,12 +1146,16 @@ def build_final_works_xlsx(
         Наименование расценки/ресурса = title работы;
         Ед. изм.              = unitOfMeasure;
         Объём работ           = объём группы по ед. изм. (м² → площадь, м³ → объём);
-        Стоимость за Ед. Изм. = curDirectCosts (текущие прямые затраты цифрового
-                                сборника; fallback — directCosts);
-        Стоимость             = Объём работ × Стоимость за Ед. Изм.
+        ЗП                    = curSalary × Объём работ (fallback — salary);
+        ЭМ                    = curOperationOfMachines × Объём работ
+                                (fallback — operationOfMachines);
+        МР                    = curCostOfMaterialResources × Объём работ
+                                (fallback — costOfMaterialResources);
+        Стоимость             = ЗП + ЭМ + МР.
 
     Перед работами каждой группы — строка-заголовок группы (жирный шрифт,
-    серая заливка), между группами — пустая строка, последняя строка — «ИТОГО:».
+    серая заливка), между группами — пустая строка, последняя строка — «ИТОГО:»
+    (суммы по колонкам ЗП, ЭМ, МР, Стоимость).
 
     Аргументы:
         result_elements — список групп (элементы «elements» Финальный_перечень_работ.json).
@@ -886,8 +1165,26 @@ def build_final_works_xlsx(
     """
     columns = [
         "Шифр ТСН", "Наименование расценки/ресурса", "Ед. изм.",
-        "Объём работ", "Стоимость за Ед. Изм.", "Стоимость", "_is_header",
+        "Объём работ", "ЗП", "ЭМ", "МР", "Стоимость",
+        "_is_header",
     ]
+
+    def _component_cost(
+        work: Dict[str, Any], cur_key: str, base_key: str, volume_num: float,
+    ) -> Optional[float]:
+        """Компонент стоимости (ЗП/ЭМ/МР): значение из ответа API × объём.
+
+        Текущее значение (curSalary / curOperationOfMachines /
+        curCostOfMaterialResources); fallback — базовое значение
+        (salary / operationOfMachines / costOfMaterialResources).
+        None — если объём или стоимость за единицу не определены.
+        """
+        unit_value = safe_float(work.get(cur_key), default=0.0)
+        if unit_value <= 0:
+            unit_value = safe_float(work.get(base_key), default=0.0)
+        if unit_value > 0 and volume_num > 0:
+            return round(unit_value * volume_num, 2)
+        return None
 
     def _empty_row(is_header: bool = False) -> Dict[str, Any]:
         return {col: "" for col in columns[:-1]} | {"_is_header": is_header}
@@ -908,22 +1205,28 @@ def build_final_works_xlsx(
             volume_text = _volume_for_unit(
                 work.get("quantity"), work.get("unit_of_measure")
             )
-            # Текущие прямые затраты; fallback — базовые прямые затраты
-            unit_cost = safe_float(work.get("cur_direct_costs"), default=0.0)
-            if unit_cost <= 0:
-                unit_cost = safe_float(work.get("direct_costs"), default=0.0)
             volume_num = safe_float(volume_text, default=0.0)
-            cost = (
-                round(unit_cost * volume_num, 2)
-                if unit_cost > 0 and volume_num > 0
-                else ""
+            # Компоненты стоимости: значение из ответа API × объём работ
+            zp = _component_cost(work, "cur_salary", "salary", volume_num)
+            em = _component_cost(
+                work, "cur_operation_of_machines", "operation_of_machines",
+                volume_num,
             )
+            mr = _component_cost(
+                work, "cur_cost_of_material_resources",
+                "cost_of_material_resources", volume_num,
+            )
+            # «Стоимость» = ЗП + ЭМ + МР (сумма вычисленных компонентов)
+            parts = [v for v in (zp, em, mr) if v is not None]
+            cost = round(sum(parts), 2) if parts else ""
             final_rows.append({
                 "Шифр ТСН": work.get("pressmark") or "",
                 "Наименование расценки/ресурса": work.get("title") or "",
                 "Ед. изм.": work.get("unit_of_measure") or "",
                 "Объём работ": volume_text,
-                "Стоимость за Ед. Изм.": round(unit_cost, 2) if unit_cost > 0 else "",
+                "ЗП": zp if zp is not None else "",
+                "ЭМ": em if em is not None else "",
+                "МР": mr if mr is not None else "",
                 "Стоимость": cost,
                 "_is_header": False,
             })
@@ -940,10 +1243,11 @@ def build_final_works_xlsx(
 
     # Форматирование денежных колонок: разряды через пробел, 2 знака
     # после точки (например, '392 458.21') — как в режиме КР
-    df["Стоимость за Ед. Изм."] = df["Стоимость за Ед. Изм."].apply(format_money)
-    df["Стоимость"] = df["Стоимость"].apply(format_money)
+    for col in ("ЗП", "ЭМ", "МР", "Стоимость"):
+        df[col] = df[col].apply(format_money)
 
-    # Итоговая строка «ИТОГО:» — сумма колонки «Стоимость»
+    # Итоговая строка «ИТОГО:» — суммы колонок ЗП, ЭМ, МР, Стоимость
+    # (works_cost.add_total_row)
     df_for_excel = add_total_row(df.drop(columns=["_is_header"]))
 
     with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
@@ -972,8 +1276,10 @@ def build_final_works_xlsx(
         worksheet.column_dimensions["B"].width = 60
         worksheet.column_dimensions["C"].width = 10
         worksheet.column_dimensions["D"].width = 15
-        worksheet.column_dimensions["E"].width = 18
-        worksheet.column_dimensions["F"].width = 15
+        worksheet.column_dimensions["E"].width = 15  # ЗП
+        worksheet.column_dimensions["F"].width = 15  # ЭМ
+        worksheet.column_dimensions["G"].width = 15  # МР
+        worksheet.column_dimensions["H"].width = 15  # Стоимость
 
         # Автофильтр
         worksheet.auto_filter.ref = (
