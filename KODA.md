@@ -1,4 +1,4 @@
-# [DISABLED] # KODA.md — проект ai-ifc-vor-generator
+# KODA.md — проект ai-ifc-vor-generator
 
 Инструкционный контекст для ИИ-агентов и разработчиков, работающих с репозиторием.
 
