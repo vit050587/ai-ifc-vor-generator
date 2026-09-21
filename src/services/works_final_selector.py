@@ -16,22 +16,33 @@ works_fetcher (Подобранные_работы.json):
       (тип, материал, технология, этаж) и все найденные параметры подбора
       (Параметры_подбора_элементов.json: геометрия, константы проекта и т.д.)
       — контекстом запроса;
-    * объём работ считается по ВСЕЙ группе: значения объёмов (volume_m3 /
-      area_m2) каждого элемента группы суммируются и приводятся к
-      нормализованному виду по единице измерения расценки («100 м2» →
-      суммарная площадь / 100, «м2» → как есть, «100 м3» → объём / 100 и
-      т.д.);
-    * исключение — работы по монтажу/демонтажу опалубки фундаментных плит
-      (ед. изм. «м2»): их объём считается по площади опалубки вертикальных
-      граней = периметр × толщина (по параметрам подбора каждого элемента
-      группы, Параметры_подбора_элементов.json), а не по QTO-площади плиты;
-    * исключение — арматурные работы (ед. изм. «1 т»: установка арматурных
+    * объём работ считается по ВСЕЙ группе: значения величин (volume_m3 /
+      area_m2 / length_m / joint_length_m / count) каждого элемента группы
+      суммируются и приводятся к нормализованному виду по единице измерения
+      расценки («100 м2» → площадь / 100, «м2» → как есть, «100 м3» → объём /
+      100, «100 м» → длина / 100, «100 м шва» → длина шва / 100,
+      «100 сборных конструкций» → количество / 100 и т.д.);
+    * если в quantity элемента нет объёма/площади/длины — значения
+      подтягиваются из полей самого элемента («Объём, м3», «Площадь, м2»,
+      «Длина, мм») через `_enrich_quantity_from_element`;
+    * исключение 1 — работы по монтажу/демонтажу опалубки фундаментных плит
+      (ед. изм. «м2»): объём = периметр × толщина (по параметрам подбора
+      каждого элемента группы), а не QTO-площадь плиты;
+    * исключение 2 — работы по швам/герметизации/заделке (единица измерения
+      содержит «шов»/«шв»/«гермет»/«заделк», например «100 м шва»):
+      объём = длина шва = периметр элемента (сумма по группе);
+    * исключение 3 — арматурные работы (ед. изм. «1 т»: установка арматурных
       изделий/каркасов/сеток/отдельных стержней/закладных деталей): объём =
       суммарный расход арматуры группы (кг) ÷ 1000, где расход = Σ по
       элементам группы (ReinforcementVolumeRatio, кг/м³ × объём элемента,
       м³ — из filtered_elements.xlsx), как в режиме КР. Расход подставляется
       ровно в одну расценку группы (приоритет — «отдельные стержни»),
       остальные арматурные расценки идут без объёма (иначе задваивается).
+
+  Периметр для швов и опалубки берётся так:
+    1) явный параметр «perimeter», если он найден в параметрах подбора;
+    2) fallback: 2 × (Длина + Высота) — периметр панели стены;
+    3) fallback: 2 × (Длина + Ширина) — если высоты нет (плиты, балки).
 
   Результаты:
     - run_<NNN>/Финальный_перечень_работ.json — структурированный перечень
@@ -88,13 +99,56 @@ ELEMENT_PARAMS_FILENAME = "Параметры_подбора_элементов.
 # Ограничение числа работ-кандидатов в одном запросе LLM (защита контекста)
 _MAX_CANDIDATE_WORKS = 200
 
+# Стемы для определения «шовных» работ по ЕДИНИЦЕ ИЗМЕРЕНИЯ.
+#   «шов»  — им./тв. падеж (шов, швом);
+#   «шв»   — все прочие формы (шва, шву, шве, швы, швов, швам, швами…);
+#            ВАЖНО: «100 м шва» содержит «шв», но НЕ содержит «шов» —
+#            одного стема «шов» недостаточно.
+#   «гермет» / «заделк» — синонимичные формулировки единиц.
+_JOINT_UNIT_STEMS = ("шов", "шв", "гермет", "заделк")
+
+# Алиасы ключей параметров подбора (Параметры_подбора_элементов.json).
+# В разных шаблонах встречаются русские/английские имена — перебираем все
+# варианты и берём первый найденный.
+_PARAM_ALIASES: Dict[str, tuple] = {
+    "perimeter": ("perimeter", "Периметр", "Периметр, мм", "Периметр, м"),
+    "thickness": (
+        "thickness", "Толщина", "Толщина, мм", "Толщина, м",
+        "Ширина", "Ширина, мм", "Ширина, м",
+    ),
+    "length":    ("length", "Длина", "Длина, мм", "Длина, м"),
+    "width":     ("width", "Ширина", "Ширина, мм", "Ширина, м"),
+    "height":    ("height", "Высота", "Высота, мм", "Высота, м"),
+}
+
+# Алиасы ключей величин в quantity (Подобранные_таблицы_работ.json).
+# Некоторые экспорты кладут объём/площадь/длину под русскими именами —
+# перебираем их при выборе значения.
+_QUANTITY_KEYS: Dict[str, tuple] = {
+    "volume_m3":      ("volume_m3", "Объём, м3", "Объем, м3", "QTO_bbox::Объём_м3"),
+    "area_m2":        ("area_m2", "Площадь, м2", "QTO_bbox::Площадь_м2"),
+    "length_m":       ("length_m", "Длина, м"),
+    "joint_length_m": ("joint_length_m",),
+    "count":          ("count", "Количество", "шт"),
+}
+
+# Ключевые слова арматурных расценок в наименовании (как в КР):
+# «Установка арматурных изделий, каркасов и сеток», «Установка отдельных
+# стержней», «Установка закладных деталей» и т. п.
+_REBAR_KEYWORDS = ("арматур", "каркас", "стержн", "сетк", "закладн")
+
+# Единица измерения «тонны» («1 т», «т») — с границами слова, чтобы не
+# ловить «т» внутри слов («100 м3 бетона» не матчится)
+_TON_UNIT_RE = re.compile(r"(?:^|\s)(?:\d+(?:[.,]\d+)?\s*)?т(?:\s|$)")
+_PHYSICAL_UNIT_RE = re.compile(r"\b(?:м|м2|м3|мм|мм2|мм3|т|кг|л|г)\b")
+
 SYSTEM_PROMPT = """Ты - инженер-сметчик ПТО. Твоя задача - из списка работ-кандидатов (норм цифрового сборника) выбрать только те, которые действительно нужны для выполнения работ по заданной группе элементов здания.
 
 Правила:
 1. Отвечай строго в формате JSON, без пояснений вне JSON.
 2. Выбирай работы только из приведённого списка работ-кандидатов (поле "pressmark"). Ничего не выдумывай и не добавляй работы с другими шифрами.
 3. Ориентируйся на тип элемента (стена, плита, окно, пол и т.д.), материал, технологию возведения (монолит/сборные), расположение в здании и объёмы работ. Ненужные для этой группы элементы работы отбрасывай.
-4. Если приведён раздел «Параметры элемента» — используй его для выбора работ и оценки объёмов: геометрические параметры (толщина, периметр, площадь, объём, глубина) позволяют оценивать объёмы работ (например, площадь опалубки вертикальных граней плиты ≈ периметр × толщина), а технологические параметры и константы проекта (схема бетонирования, класс бетона, класс арматуры, тип крана, период ухода за бетоном и т.п.) — выбирать конкретные расценки. Линейные размеры в параметрах приведены в метрах; при расчётах следи за единицами измерения (м, м2, м3).
+4. Если приведён раздел «Параметры элемента» — используй его для выбора работ и оценки объёмов: геометрические параметры (толщина, периметр, площадь, объём, глубина) позволяют оценивать объёмы работ (например, площадь опалубки вертикальных граней плиты ≈ периметр × толщина, длина шва ≈ периметр), а технологические параметры и константы проекта (схема бетонирования, класс бетона, класс арматуры, тип крана, период ухода за бетоном и т.п.) — выбирать конкретные расценки. Линейные размеры в параметрах приведены в метрах; при расчётах следи за единицами измерения (м, м2, м3).
 5. В поле "reason" кратко (одним предложением) объясни, почему работа нужна для этой группы элементов.
 6. Если подходят все работы-кандидаты - верни их все.
 7. Если ни одна работа не подходит - верни пустой список "selected".
@@ -106,6 +160,42 @@ SYSTEM_PROMPT = """Ты - инженер-сметчик ПТО. Твоя зад�
   ]
 }
 """
+
+
+# ======================================================================
+#  Утилиты определения «шовных» единиц измерения
+# ======================================================================
+
+def _unit_text(work: Dict[str, Any]) -> str:
+    """Единица измерения работы в нижнем регистре.
+
+    Принимает оба варианта ключа (unitOfMeasure из JSON сборника и
+    unit_of_measure из наших внутренних записей).
+    """
+    return str(
+        work.get("unitOfMeasure") or work.get("unit_of_measure") or ""
+    ).strip().lower()
+
+
+def _is_joint_unit(unit: str) -> bool:
+    """True, если единица измерения относится к работам по швам.
+
+    Проверяем ОБА стема — «шов» и «шв»: одного «шов» недостаточно, он не
+    ловит форму «шва» («100 м шва»). «шв» безопасен, т.к. проверка идёт
+    внутри ветки длины (единица уже содержит «м») и служит для форм
+    родительного/множественного падежей.
+    """
+    u = str(unit or "").lower().replace("²", "2").replace("³", "3")
+    return any(stem in u for stem in _JOINT_UNIT_STEMS)
+
+
+def _is_joint_work(work: Dict[str, Any]) -> bool:
+    """Работа по швам — определяется ТОЛЬКО по единице измерения.
+
+    Название работы не анализируется. Единицы вида «100 м шва»,
+    «м швов», «100 м герметизации», «100 м заделки» → True.
+    """
+    return _is_joint_unit(_unit_text(work))
 
 
 def _load_element_params(run_dir: str) -> Dict[str, Dict[str, Any]]:
@@ -209,6 +299,77 @@ def _normalize_param_value(value: Any, unit: str):
         return value, unit
     return value * factor, target_unit
 
+
+# ======================================================================
+#  Обогащение quantity недостающими величинами
+# ======================================================================
+
+def _pick_quantity(q: Dict[str, Any], canonical: str) -> Optional[float]:
+    """Берёт величину из quantity по каноническому имени или его алиасам.
+
+    Для `joint_length_m` (длина швов) значение ВСЕГДА делится на 1000 —
+    периметр приходит из параметров подбора в миллиметрах, а в объём
+    работ должен идти в метрах.
+    """
+    if not q:
+        return None
+    for key in _QUANTITY_KEYS.get(canonical, (canonical,)):
+        v = safe_float(q.get(key), default=None)
+        if v is None or v <= 0:
+            continue
+        # Длину швов всегда переводим из мм в м
+        if canonical == "joint_length_m":
+            v = v / 1000.0
+        return float(v)
+    return None
+
+
+def _enrich_quantity_from_element(
+    q: Optional[Dict[str, Any]],
+    element: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Дополняет quantity недостающими величинами из полей элемента.
+
+    В разных экспортах объёмы/площади/длины могут лежать не в quantity, а в
+    полях самого элемента (first_element дерева группировки):
+        «Объём, м3», «Площадь, м2», «Длина, мм», «Ширина, мм», «Высота, мм».
+    Если в quantity этих величин нет — берём их из element.
+
+    Длина «Длина, мм» нормализуется в метры (÷1000).
+    """
+    result: Dict[str, Any] = dict(q or {})
+    element = element or {}
+
+    if _pick_quantity(result, "volume_m3") is None:
+        v = safe_float(element.get("Объём, м3"), default=None)
+        if v is None:
+            v = safe_float(element.get("Объем, м3"), default=None)
+        if v is None:
+            v = safe_float(element.get("QTO_bbox::Объём_м3"), default=None)
+        if v is not None and v > 0:
+            result["volume_m3"] = float(v)
+
+    if _pick_quantity(result, "area_m2") is None:
+        a = safe_float(element.get("Площадь, м2"), default=None)
+        if a is None:
+            a = safe_float(element.get("QTO_bbox::Площадь_м2"), default=None)
+        if a is not None and a > 0:
+            result["area_m2"] = float(a)
+
+    if _pick_quantity(result, "length_m") is None:
+        length_mm = safe_float(element.get("Длина, мм"), default=None)
+        if length_mm is not None and length_mm > 0:
+            result["length_m"] = length_mm / 1000.0
+
+    if not result.get("count"):
+        result["count"] = 1
+
+    return result
+
+
+# ======================================================================
+#  Промпт и работа с LLM
+# ======================================================================
 
 def _build_user_prompt(
     element_payload: Dict[str, Any],
@@ -359,24 +520,52 @@ def _load_leaf_groups(grouped_json_path: str) -> List[Dict[str, Any]]:
     return leaves
 
 
-def _sum_group_quantities(payloads: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Суммарные объёмы по всем элементам группы.
+def _extract_quantity_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Берёт quantity первого непустого work из payload.
 
-    У каждого элемента quantity одинаков для всех его таблиц (QTO элемента),
-    поэтому берётся первое непустое quantity записи элемента. Возвращает
-    {volume_m3, area_m2, count} — сумма по группе + число элементов.
+    Дополнительно обогащает её полями самого элемента («Объём, м3»,
+    «Площадь, м2», «Длина, мм») — на случай, если в quantity этих данных
+    нет (такое встречается в разных экспортах).
     """
-    total: Dict[str, Any] = {"volume_m3": 0.0, "area_m2": 0.0, "count": len(payloads)}
-    for payload in payloads:
-        for work in payload.get("works", []) or []:
-            q = work.get("quantity") or {}
-            if not any(q.get(k) for k in ("volume_m3", "area_m2")):
-                continue
-            for key in ("volume_m3", "area_m2"):
-                value = safe_float(q.get(key), default=0.0)
-                if value > 0:
-                    total[key] += value
+    q: Dict[str, Any] = {}
+    for work in payload.get("works", []) or []:
+        wq = work.get("quantity") or {}
+        if any(wq.get(k) for k in (
+            "volume_m3", "area_m2", "length_m", "joint_length_m", "count",
+        )):
+            q = dict(wq)
             break
+    return _enrich_quantity_from_element(q, payload.get("element") or {})
+
+
+def _sum_group_quantities(payloads: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Суммарные величины по всем элементам группы.
+
+    Поддерживаются:
+      * volume_m3       — объём, м³;
+      * area_m2         — площадь, м²;
+      * length_m        — длина (обычная), м;
+      * joint_length_m  — длина швов, м;
+      * count           — количество элементов, шт.
+
+    У каждого элемента quantity может быть неполной — недостающие величины
+    подтягиваются из полей самого элемента (_extract_quantity_from_payload).
+    """
+    total: Dict[str, Any] = {
+        "volume_m3": 0.0,
+        "area_m2": 0.0,
+        "length_m": 0.0,
+        "joint_length_m": 0.0,
+        "count": 0,
+    }
+    for payload in payloads:
+        q = _extract_quantity_from_payload(payload)
+        for key in ("volume_m3", "area_m2", "length_m", "joint_length_m"):
+            v = _pick_quantity(q, key)
+            if v is not None and v > 0:
+                total[key] += v
+        cnt = _pick_quantity(q, "count")
+        total["count"] += int(cnt) if cnt else 1
     return total
 
 
@@ -386,8 +575,13 @@ def _element_quantity_for_table(
     """Объёмы (quantity) группы элементов для конкретной таблицы работ."""
     for work in element_payload.get("works", []) or []:
         if str(work.get("code")) == str(table_code):
-            return dict(work.get("quantity") or {})
-    return {}
+            q = dict(work.get("quantity") or {})
+            return _enrich_quantity_from_element(
+                q, element_payload.get("element") or {},
+            )
+    # Если таблицы с таким кодом нет — вернём обогащённую quantity из первой
+    # попавшейся работы (лучше, чем совсем пусто).
+    return _extract_quantity_from_payload(element_payload)
 
 
 # ======================================================================
@@ -431,28 +625,92 @@ def _is_formwork_work(work: Dict[str, Any]) -> bool:
 def _param_meters(params: Optional[Dict[str, Any]], name: str) -> Optional[float]:
     """Числовое значение параметра подбора, приведённое к метрам.
 
-    Значения с единицами мм/мм2/мм3 нормализуются `_normalize_param_value`;
-    нечисловые и ненайденные параметры (not_found) возвращают None.
+    Ищет параметр по каноническому имени и его алиасам (русские/английские
+    варианты в Параметры_подбора_элементов.json). Значения с единицами
+    мм/мм2/мм3 нормализуются `_normalize_param_value`; нечисловые и
+    ненайденные параметры (not_found) возвращают None.
     """
-    spec = (params or {}).get(name)
-    if not isinstance(spec, dict):
+    if not isinstance(params, dict):
         return None
-    if spec.get("origin") == "not_found":
-        return None
-    num = safe_float(spec.get("value"), default=None)
-    if num is None or num <= 0:
-        return None
-    value, _unit = _normalize_param_value(num, spec.get("unit"))
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    return float(value)
+    aliases = _PARAM_ALIASES.get(name, (name,))
+    for alias in aliases:
+        spec = params.get(alias)
+        if not isinstance(spec, dict):
+            continue
+        if spec.get("origin") == "not_found":
+            continue
+        num = safe_float(spec.get("value"), default=None)
+        if num is None or num <= 0:
+            continue
+        value, _unit = _normalize_param_value(num, spec.get("unit"))
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        return float(value)
+    return None
+
+
+def _joint_length_m(params: Optional[Dict[str, Any]]) -> Optional[float]:
+    """Длина шва = периметр контура элемента (м).
+
+    Приоритет:
+      1. Явный параметр «perimeter» — если найден, берём его.
+      2. Fallback: 2 × Длина + Высота — периметр панели стены
+         в вертикальной плоскости (по габаритам элемента).
+      3. Fallback: 2 × Длина + Ширина — если высоты нет (плиты, балки).
+
+    Все габариты нормализуются в метры через `_param_meters`.
+    """
+    explicit = _param_meters(params, "perimeter")
+    if explicit is not None:
+        return explicit
+
+    length = _param_meters(params, "length")
+    height = _param_meters(params, "height")
+    width = _param_meters(params, "width")
+
+    if length is not None and height is not None:
+        return 2.0 * (length + height)
+    if length is not None and width is not None:
+        return 2.0 * (length + width)
+    return None
+
+
+def _sum_joint_length(
+    payloads: List[Dict[str, Any]],
+    params_by_id: Dict[str, Dict[str, Any]],
+) -> Optional[float]:
+    """Суммарная длина швов по всем элементам группы (м).
+
+    Считается по параметрам подбора: явный perimeter либо периметр из
+    габаритов (2 × (length + height) / 2 × (length + width)).
+    Возвращает None, если ни у одного элемента группы периметр не удалось
+    определить.
+    """
+    total = 0.0
+    found = False
+    for payload in payloads:
+        global_id = str((payload.get("element") or {}).get("global_id") or "").strip()
+        length = _joint_length_m(params_by_id.get(global_id))
+        if length is None:
+            continue
+        total += length
+        found = True
+    return round(total, 3) if found else None
 
 
 def _formwork_area_m2(params: Optional[Dict[str, Any]]) -> Optional[float]:
-    """Площадь опалубки вертикальных граней плиты: периметр × толщина (м2)."""
-    perimeter = _param_meters(params, "perimeter")
+    """Площадь опалубки вертикальных граней плиты: периметр × толщина (м²).
+
+    Толщина = «thickness» или fallback «width» (для стен толщина = ширина).
+    Периметр = `_joint_length_m` (явный или из габаритов).
+    """
     thickness = _param_meters(params, "thickness")
-    if perimeter is None or thickness is None:
+    if thickness is None:
+        thickness = _param_meters(params, "width")
+    if thickness is None:
+        return None
+    perimeter = _joint_length_m(params)
+    if perimeter is None:
         return None
     return perimeter * thickness
 
@@ -463,8 +721,8 @@ def _sum_formwork_area(
 ) -> Optional[float]:
     """Суммарная площадь опалубки по всем элементам группы (периметр × толщина).
 
-    Возвращает None, если ни у одного элемента группы параметры периметра и
-    толщины не найдены (объёмы работ остаются по QTO, как раньше).
+    Возвращает None, если ни у одного элемента группы не удалось определить
+    периметр и толщину (объёмы работ остаются по QTO, как раньше).
     """
     total = 0.0
     found = False
@@ -482,16 +740,6 @@ def _sum_formwork_area(
 #  Расход арматуры группы (ReinforcementVolumeRatio × объём, кг → т)
 #  — объём арматурных расценок (ед. изм. «1 т»), как в режиме КР
 # ======================================================================
-
-# Ключевые слова арматурных расценок в наименовании (как в КР):
-# «Установка арматурных изделий, каркасов и сеток», «Установка отдельных
-# стержней», «Установка закладных деталей» и т. п.
-_REBAR_KEYWORDS = ("арматур", "каркас", "стержн", "сетк", "закладн")
-
-# Единица измерения «тонны» («1 т», «т») — с границами слова, чтобы не
-# ловить «т» внутри слов («100 м3 бетона» не матчится)
-_TON_UNIT_RE = re.compile(r"(?:^|\s)(?:\d+(?:[.,]\d+)?\s*)?т(?:\s|$)")
-
 
 def _is_rebar_ton_work(work: Dict[str, Any]) -> bool:
     """Арматурная расценка с единицей измерения «т» («1 т»).
@@ -619,6 +867,7 @@ def _build_work_row(
     llm_selected: bool,
     quantity: Optional[Dict[str, Any]] = None,
     formwork_area: Optional[float] = None,
+    joint_length: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Строка выбранной работы в итоговом перечне.
 
@@ -627,29 +876,75 @@ def _build_work_row(
     formwork_area — площадь опалубки фундаментной плиты (периметр × толщина,
     сумма по группе); для работ по монтажу/демонтажу опалубки (ед. изм. «м2»)
     подставляется вместо QTO-площади элемента.
+    joint_length — длина швов группы (= сумма периметров); для работ,
+    у которых ЕДИНИЦА ИЗМЕРЕНИЯ относится к швам (содержит «шов»/«шв»/
+    «гермет»/«заделк»), подставляется вместо QTO-длины элемента.
     """
     element = element_payload.get("element", {}) or {}
+
+    # 1. Базовая quantity: из аргумента или из works записи элемента
     if quantity is None:
         quantity = _element_quantity_for_table(element_payload, table["code"])
+    quantity = dict(quantity or {})
+
+    # 2. Обогащение из полей элемента — гарантированно добавляет
+    #    volume_m3 / area_m2 / length_m, если их нет в quantity.
+    #    (функция уже есть в файле — если нет, см. блок «если её нет» ниже)
+    quantity = _enrich_quantity_from_element(quantity, element)
+
+    # 3. Гарантия наличия length_m: если после enrichment его нет —
+    #    ещё раз ищем длину в полях элемента вручную (на случай, если
+    #    _enrich_quantity_from_element не отработал или вернул 0).
+    if not quantity.get("length_m"):
+        length_mm = safe_float(element.get("Длина, мм"), default=None)
+        if length_mm is None:
+            length_mm = safe_float(element.get("Длина_Length_мм"), default=None)
+        if length_mm is None:
+            length_mm = safe_float(
+                element.get("QTO_Qto_WallBaseQuantities_Длина_Length_мм"),
+                default=None,
+            )
+        if length_mm is None:
+            length_mm = safe_float(
+                element.get("QTO_Qto_SlabBaseQuantities_Длина_Length_мм"),
+                default=None,
+            )
+        if length_mm is None:
+            length_mm = safe_float(element.get("QTO_bbox::Длина_мм"), default=None)
+        if length_mm is not None and length_mm > 0:
+            quantity["length_m"] = length_mm / 1000.0
+        else:
+            # Возможно, длина уже в метрах
+            length_m = safe_float(element.get("Длина, м"), default=None)
+            if length_m is not None and length_m > 0:
+                quantity["length_m"] = float(length_m)
+
+    # 4. Опалубка (м²)
     formwork_area_m2: Optional[float] = None
     if formwork_area and _is_formwork_work(work):
-        quantity = dict(quantity or {})
         quantity["area_m2"] = formwork_area
         formwork_area_m2 = formwork_area
+
+    # 5. Швы (м) — если единица измерения шовная
+    joint_length_m: Optional[float] = None
+    if joint_length and _is_joint_work(work):
+        quantity["joint_length_m"] = joint_length
+        joint_length_m = joint_length
+
     return {
         "pressmark": work.get("pressmark"),
         "title": work.get("title"),
-        "unit_of_measure": work.get("unitOfMeasure"),
-        # id работы в цифровом сборнике (larix) — для запроса детальных
-        # параметров позиции (разбивка стоимости ЗП/ЭМ/МР)
+        "unit_of_measure": (
+            work.get("unitOfMeasure")
+            or work.get("unit_of_measure")
+            or work.get("unit")
+            or work.get("measure")
+        ),
         "work_id": work.get("id"),
         "table_code": table["code"],
         "table_name": table["name"],
         "direct_costs": work.get("directCosts"),
         "cur_direct_costs": work.get("curDirectCosts"),
-        # Компоненты стоимости из ответа цифрового сборника (larix):
-        # ЗП (curSalary), ЭМ (curOperationOfMachines), МР
-        # (curCostOfMaterialResources); fallback — базовые значения
         "salary": work.get("salary"),
         "cur_salary": work.get("curSalary"),
         "operation_of_machines": work.get("operationOfMachines"),
@@ -658,6 +953,7 @@ def _build_work_row(
         "cur_cost_of_material_resources": work.get("curCostOfMaterialResources"),
         "quantity": quantity,
         "formwork_area_m2": formwork_area_m2,
+        "joint_length_m": joint_length_m,
         "reason": reason,
         "llm_selected": llm_selected,
     }
@@ -801,16 +1097,10 @@ def select_final_works(
     elements_payload = tables_payload.get("elements", []) or []
 
     # Единицы обработки: листовые группы элементов (МССК → Материал →
-    # Наименование) из filtered_elements_grouped_AR.json. Подбор работ через
-    # LLM выполняется только по ПЕРВОМУ элементу группы (представителю) —
-    # по его таблицам и описанию; объёмы работ считаются по ВСЕЙ группе
-    # (сумма объёмов элементов). Элементы вне групп (файл группировки
-    # отсутствует/повреждён или индексы вне диапазона) обрабатываются
-    # поодиночно, как раньше.
+    # Наименование) из filtered_elements_grouped_AR.json.
     leaf_groups = _load_leaf_groups(os.path.join(run_dir, GROUPED_JSON_FILENAME))
 
-    # Параметры подбора элементов (глоб_id → parameters) из корня сессии —
-    # подаются в LLM-запрос по представителю группы (если файл есть)
+    # Параметры подбора элементов (global_id → parameters) из корня сессии
     params_by_id = _load_element_params(run_dir)
 
     # Расход арматуры (кг) по каждому элементу (ReinforcementVolumeRatio ×
@@ -864,12 +1154,17 @@ def select_final_works(
 
         # Площадь опалубки фундаментной плиты (периметр × толщина, сумма по
         # группе): подставляется в работы монтажа/демонтажа опалубки вместо
-        # QTO-площади элемента. Для остальных элементов — None (как раньше).
+        # QTO-площади элемента.
         formwork_area = (
             _sum_formwork_area(unit["payloads"], params_by_id)
             if _is_foundation_slab(element_payload)
             else None
         )
+
+        # Длина швов группы (= сумма периметров элементов). Подставляется в
+        # работы, единица измерения которых содержит «шов»/«шв»/«гермет»/
+        # «заделк» (например «100 м шва»).
+        joint_length = _sum_joint_length(unit["payloads"], params_by_id)
 
         # Суммарный расход арматуры группы (кг) — Σ по элементам группы
         # (ReinforcementVolumeRatio × объём каждого элемента)
@@ -914,6 +1209,8 @@ def select_final_works(
                     "element_indices": group["indices"],
                 }
                 entry["group_quantity"] = group_quantity
+            if joint_length is not None:
+                entry["joint_length_m"] = joint_length
             result_elements.append(entry)
             continue
 
@@ -953,6 +1250,7 @@ def select_final_works(
                             item["reason"], item["llm_selected"],
                             quantity=group_quantity,
                             formwork_area=formwork_area,
+                            joint_length=joint_length,
                         )
                     )
             else:
@@ -979,6 +1277,7 @@ def select_final_works(
                             element_payload, table, work, "", False,
                             quantity=group_quantity,
                             formwork_area=formwork_area,
+                            joint_length=joint_length,
                         )
                     )
 
@@ -1003,6 +1302,10 @@ def select_final_works(
             # Площадь опалубки группы фундаментных плит (периметр × толщина),
             # подставленная в работы монтажа/демонтажа опалубки
             entry["formwork_area_m2"] = formwork_area
+        if joint_length is not None:
+            # Длина швов группы (= сумма периметров), подставленная в работы
+            # по швам / герметизации / заделке
+            entry["joint_length_m"] = joint_length
         if group_rebar_kg > 0:
             # Суммарный расход арматуры группы (кг) — основа объёма
             # арматурных расценок (ед. изм. «т») группы
@@ -1097,17 +1400,38 @@ _UNIT_MULTIPLIER_RE = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*(.*)$")
 def _volume_for_unit(quantity: Dict[str, Any], unit_of_measure: Any) -> str:
     """Объём работ по единице измерения расценки, нормализованный по норме.
 
-    Базовое значение выбирается по размерности единицы (м² → площадь, м³ →
-    объём, шт → количество элементов, т → расход арматуры группы
-    `mass_t`, кг ÷ 1000) и делится на множитель нормы из единицы
-    измерения: «100 м2» → площадь / 100, «100 м3» → объём / 100,
-    «1000 шт.» → количество / 1000, «м2»/«м3»/«шт»/«1 т» → как есть.
-    Для прочих единиц (м и т.п.) объём не заполняется (нет данных
-    в quantity).
-    """
-    unit = str(unit_of_measure or "").strip().lower().replace("²", "2").replace("³", "3")
+    Выбор величины — ТОЛЬКО по единице измерения (название работы не
+    анализируется):
 
+      * «м2», «м²»                                        → area_m2;
+      * «м3», «м³»                                        → volume_m3;
+      * «шт», «штук», «конструкц», «элемент», «сборн»,
+        «компл», «узл» (напр. «100 сборных конструкций»)  → count;
+      * «т», «1 т» (арматурные расценки)                  → mass_t
+        (расход арматуры группы, кг ÷ 1000);
+      * единица, содержащая «шов»/«шв»/«гермет»/«заделк»
+        (напр. «100 м шва», «м швов», «100 м герметизации»),
+        И содержащая «м»                                  → joint_length_m
+        (с fallback на length_m);
+      * «м», «пог.м», «пм» (без слов про швы)             → length_m;
+      * единица без физической размерности («1 стеклянная
+        стойка», «1 изделие», «1 секция», «1 деталь»)     → count
+        (catch-all: считаем штучной).
+
+    ВАЖНО: проверяем оба стема — «шов» и «шв»: одного «шов» недостаточно,
+    он не ловит форму «шва» в единице «100 м шва».
+
+    Множитель нормы из начала единицы («100 м2» → 100, «1000 шт.» → 1000,
+    «100 сборных конструкций» → 100, «100 м шва» → 100) применяется как
+    делитель. Единицы с физической размерностью, не покрытые основными
+    ветками (кг, л, мм как самостоятельные), остаются без объёма.
+    """
+    unit = str(unit_of_measure or "").strip().lower()
+    unit = unit.replace("²", "2").replace("³", "3")
+
+    # Снимаем множитель нормы: «100 м2» → («100», «м2»)
     divisor = 1.0
+    unit_body = unit
     m = _UNIT_MULTIPLIER_RE.match(unit)
     if m:
         try:
@@ -1116,21 +1440,52 @@ def _volume_for_unit(quantity: Dict[str, Any], unit_of_measure: Any) -> str:
                 divisor = mult
         except ValueError:
             pass
+        unit_body = m.group(2).strip()
 
+    q = quantity or {}
     value = None
-    if "м2" in unit:
-        value = (quantity or {}).get("area_m2")
-    elif "м3" in unit:
-        value = (quantity or {}).get("volume_m3")
-    elif "шт" in unit:
-        value = (quantity or {}).get("count")
-    elif _TON_UNIT_RE.search(unit):
-        # Арматурные расценки (ед. изм. «1 т»): расход арматуры группы, кг ÷ 1000
-        value = (quantity or {}).get("mass_t")
 
-    num = safe_float(value, default=0.0)
+    # 1. Площадь
+    if "м2" in unit_body:
+        value = _pick_quantity(q, "area_m2")
+
+    # 2. Объём
+    elif "м3" in unit_body:
+        value = _pick_quantity(q, "volume_m3")
+
+    # 3. Количество: шт / штук / сборных конструкций / элементов / комплектов
+    elif any(k in unit_body for k in (
+        "шт", "штук", "конструкц", "элемент", "сборн", "компл", "узл",
+    )):
+        value = _pick_quantity(q, "count")
+
+    # 4. Арматура (ед. изм. «1 т», «т») — расход арматуры группы, т
+    elif _TON_UNIT_RE.search(unit):
+        value = safe_float((q or {}).get("mass_t"), default=None)
+        if value is not None and value <= 0:
+            value = None
+
+    # 5. Длина. Приоритет — швы (по единице измерения), иначе обычная длина.
+    elif "м" in unit_body or "пог" in unit_body or "пм" in unit_body:
+        if _is_joint_unit(unit_body):
+            value = (_pick_quantity(q, "joint_length_m")
+                     or _pick_quantity(q, "length_m"))
+        else:
+            value = _pick_quantity(q, "length_m")
+
+    # 6. Нестандартная единица без физической размерности → количество.
+    #    Примеры: «1 стеклянная стойка», «1 изделие», «1 секция», «1 деталь»,
+    #    «1 панель», «1 блок». Единицы с явной физической размерностью
+    #    (кг, л, мм как самостоятельные), не покрытые выше, остаются без
+    #    объёма — не знаем, как их пересчитать.
+    elif unit_body and not _PHYSICAL_UNIT_RE.search(unit_body):
+        value = _pick_quantity(q, "count")
+
+    if value is None:
+        return ""
+
+    num = float(value) / divisor
     if num > 0:
-        num = num / divisor
         return f"{num:.4f}"
     return ""
 
@@ -1145,7 +1500,9 @@ def build_final_works_xlsx(
         Шифр ТСН              = pressmark работы;
         Наименование расценки/ресурса = title работы;
         Ед. изм.              = unitOfMeasure;
-        Объём работ           = объём группы по ед. изм. (м² → площадь, м³ → объём);
+        Объём работ           = объём группы по ед. изм. (м² → площадь, м³ → объём,
+                                м → длина / длина шва, шт → количество,
+                                т → расход арматуры группы);
         ЗП                    = curSalary × Объём работ (fallback — salary);
         ЭМ                    = curOperationOfMachines × Объём работ
                                 (fallback — operationOfMachines);
