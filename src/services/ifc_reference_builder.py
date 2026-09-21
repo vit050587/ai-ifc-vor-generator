@@ -90,22 +90,93 @@ def _extract_geometry_range_from_path(path: List[str], geo_label: str) -> Tuple[
     return '', ''
 
 
+# Специальные типы элементов цифрового сборника (ЦС): позиции ЦС, которым
+# соответствуют свои названия (buildingElementName) и наборы характеристик,
+# отличные от стандартных («Перекрытие», «Стена», «Колонна» и т.д.).
+#
+# Ключ — итоговое buildingElementName (совпадает с name позиции ЦС),
+# значения:
+#   * send_location — отправлять ли характеристику «Расположение»
+#     (у позиции ЦС «Фундаментная плита» её нет — при отправке API
+#     вернёт 0 позиций; у лестничных маршей/площадок — есть);
+#   * send_geometry — отправлять ли геометрическую характеристику
+#     (диапазон «Площадь: более 20» и т.п.; у всех специальных позиций
+#     геометрических характеристик нет).
+_CS_SPECIAL_TYPES = {
+    # ЭЛ 10 10 30 04 — только «Материал»
+    'Фундаментная плита': {'send_location': False, 'send_geometry': False},
+    # Лестничные марши/площадки — «Материал» + «Расположение»
+    'Лестничный марш': {'send_location': True, 'send_geometry': False},
+    'Лестничная площадка': {'send_location': True, 'send_geometry': False},
+}
+
+
+def _detect_cs_special_type(
+    name: str,
+    ifc_type: str,
+    element_data: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Определяет специальный тип позиции ЦС по IFC-классу и имени элемента.
+
+    Возвращает итоговое buildingElementName (ключ _CS_SPECIAL_TYPES)
+    или None, если элемент не относится к специальным типам.
+
+    Правила определения:
+      * «Фундаментная плита» — IfcSlab с PredefinedType=BASESLAB либо
+        «фундамент…» в имени Revit («Фундаментная плита…»,
+        «Фундамент несущей конструкции…»);
+      * «Лестничная площадка» — IfcSlab с PredefinedType=LANDING либо
+        «лестниц…» в имени (в Revit площадки лестниц — IfcSlab);
+      * «Лестничный марш» — IfcStairFlight (в Revit марши лестниц).
+
+    Гидроизоляция («Гидроизоляция_фундамент…» и т.п.) отсекается — она
+    определяется правилами is_hydro_* и проверяется раньше.
+    """
+    name_lower = str(name or '').lower()
+    if 'гидроизол' in name_lower:
+        return None
+
+    ifc = str(ifc_type or '')
+    predefined = str(
+        (element_data or {}).get('PredefinedType', '') or ''
+    ).strip().upper()
+
+    if ifc == 'IfcSlab':
+        if predefined == 'BASESLAB' or 'фундамент' in name_lower:
+            return 'Фундаментная плита'
+        if predefined == 'LANDING' or 'лестниц' in name_lower:
+            return 'Лестничная площадка'
+    elif ifc in ('IfcStairFlight', 'IfcStair'):
+        # Марши лестниц в Revit — IfcStairFlight; IfcStair (сборная
+        # лестница) тоже относится к маршам
+        return 'Лестничный марш'
+    return None
+
+
 def _determine_building_element_name(
     ru_type: str,
     name: str,
     ifc_type: str,
+    element_data: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
-    Определяет итоговое buildingElementName с учётом гидроизоляции.
+    Определяет итоговое buildingElementName с учётом гидроизоляции
+    и специальных типов позиций ЦС.
 
-    Если элемент относится к вертикальной или горизонтальной гидроизоляции
-    (по тем же правилам, что в group_excel.py), возвращает соответствующее
-    название. Иначе — возвращает ru_type (или name, если ru_type пуст).
+    Правила (по приоритету):
+      * вертикальная/горизонтальная гидроизоляция — соответствующее название;
+      * специальный тип ЦС (фундаментная плита, лестничный марш,
+        лестничная площадка) — название позиции ЦС (см. _CS_SPECIAL_TYPES);
+      * иначе — ru_type (или name, если ru_type пуст).
     """
     if is_hydro_vertical(ru_type, name, ifc_type):
         return 'Вертикальная гидроизоляция'
     if is_hydro_horizontal(ru_type, name, ifc_type):
         return 'Горизонтальная гидроизоляция'
+    # Специальные типы позиций ЦС (фундаментные плиты, лестницы)
+    cs_special = _detect_cs_special_type(name, ifc_type, element_data)
+    if cs_special:
+        return cs_special
     # Значение по умолчанию: ru_type, иначе имя элемента
     if ru_type and ru_type != '-':
         return str(ru_type)
@@ -384,6 +455,17 @@ def build_elements_json_output(df: pd.DataFrame) -> List[Dict[str, Any]]:
         # ---- characteristics (нормализованные) ----
         characteristics = []
 
+        # Специальный тип позиции ЦС (фундаментная плита, лестничный марш,
+        # лестничная площадка) — у таких позиций свой набор характеристик
+        # (см. _CS_SPECIAL_TYPES): «Расположение» и геометрию отправляем
+        # только если они есть у позиции ЦС, иначе подбор вернёт 0 позиций.
+        cs_special = _detect_cs_special_type(
+            element_data.get('Имя', ''), ifc_type, element_data
+        )
+        cs_flags = _CS_SPECIAL_TYPES.get(cs_special, {}) if cs_special else {}
+        send_location = cs_flags.get('send_location', True)
+        send_geometry = cs_flags.get('send_geometry', True)
+
         # 1. Материал
         characteristics.append({
             'name': 'Материал',
@@ -393,18 +475,19 @@ def build_elements_json_output(df: pd.DataFrame) -> List[Dict[str, Any]]:
         })
 
         # 2. Расположение (по параметру «Этаж»)
-        characteristics.append({
-            'name': 'Расположение',
-            'values': [
-                {'strValue': _get_location_from_storey_type(
-                    str(element_data.get('Этаж', ''))
-                )}
-            ],
-        })
+        if send_location:
+            characteristics.append({
+                'name': 'Расположение',
+                'values': [
+                    {'strValue': _get_location_from_storey_type(
+                        str(element_data.get('Этаж', ''))
+                    )}
+                ],
+            })
 
         # 3. Геометрическая характеристика (нормализованный диапазон)
         geo_name, geo_range = _get_geometry_range_for_element(element_data, ifc_type)
-        if geo_name and geo_range:
+        if geo_name and geo_range and send_geometry:
             characteristics.append({
                 'name': geo_name,
                 'values': [
@@ -481,9 +564,12 @@ def build_elements_json_output(df: pd.DataFrame) -> List[Dict[str, Any]]:
             })
 
         # ---- Собираем итоговый объект ----
-        # buildingElementName — общее имя группы по IFC-типу с учётом гидроизоляции
+        # buildingElementName — общее имя группы по IFC-типу с учётом
+        # гидроизоляции и фундаментных плит
         ru_type = element_data.get('Тип (RU)', '')
-        group_name = _determine_building_element_name(ru_type, elem_name, ifc_type)
+        group_name = _determine_building_element_name(
+            ru_type, elem_name, ifc_type, element_data
+        )
 
         obj = {
             'buildingElementName': _singularize_ru_name(group_name),
@@ -879,12 +965,25 @@ def build_reference_output(
                 first.get('Имя', ''),
             )
 
-        # Русское название элемента (с учётом гидроизоляции)
+        # Русское название элемента (с учётом гидроизоляции и специальных
+        # типов ЦС: фундаментная плита, лестничный марш/площадка)
+        elem_name = first.get('Имя', '')
         ru_name = _determine_building_element_name(
             first.get('Тип (RU)', 'Неизвестно'),
-            first.get('Имя', ''),
+            elem_name,
             ifc_type,
+            first,
         )
+
+        # Специальный тип позиции ЦС — у таких позиций свой набор
+        # характеристик (см. _CS_SPECIAL_TYPES): «Расположение» и геометрию
+        # отправляем только если они есть у позиции ЦС. API ТСН требует
+        # полного совпадения характеристик — при отправке лишней подбор
+        # вернёт 0 позиций.
+        cs_special = _detect_cs_special_type(elem_name, ifc_type, first)
+        cs_flags = _CS_SPECIAL_TYPES.get(cs_special, {}) if cs_special else {}
+        send_location = cs_flags.get('send_location', True)
+        send_geometry = cs_flags.get('send_geometry', True)
 
         # ---- Формируем totalMeasure ----
         # Значения total_volume/total_areas приходят из JSON-дерева групп
@@ -919,20 +1018,22 @@ def build_reference_output(
             ],
         })
 
-        # 2. Расположение
-        characteristics.append({
-            'name': 'Расположение',
-            'values': [
-                {'strValue': _get_location_name(part_key)}
-            ],
-        })
+        # 2. Расположение — отправляем, если оно есть у позиции ЦС
+        if send_location:
+            characteristics.append({
+                'name': 'Расположение',
+                'values': [
+                    {'strValue': _get_location_name(part_key)}
+                ],
+            })
 
-        # 3. Геометрическая характеристика (нормализованный диапазон)
+        # 3. Геометрическая характеристика (нормализованный диапазон) —
+        #    отправляем, если она есть у позиции ЦС
         geo_label = _get_geometry_label(ifc_type)
         # Ищем геометрический диапазон по всему пути, а не только в имени листовой группы.
         # Листовая группа может называться 'Бетон: В35', а геометрия — в родителе 'Площадь: более 20 м²'.
         geo_name, geo_range = _extract_geometry_range_from_path(path, geo_label)
-        if geo_name and geo_range:
+        if geo_name and geo_range and send_geometry:
             characteristics.append({
                 'name': geo_name,
                 'values': [

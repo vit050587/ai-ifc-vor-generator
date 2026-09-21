@@ -25,6 +25,7 @@ digital-collection/building-elements/positions.
 import base64
 import json
 import os
+import re
 import time
 from typing import Any, Dict, List, Tuple
 
@@ -282,6 +283,46 @@ def _filter_response_by_height(
     return filtered
 
 
+def _select_best_positions(
+    element: Dict[str, Any],
+    positions: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Отбирает позиции, наиболее точно соответствующие группе элементов.
+
+    API подбора возвращает все позиции, у которых есть все характеристики
+    запроса, — включая позиции с ДОПОЛНИТЕЛЬНЫМИ характеристиками, которых
+    в запросе нет. Например, для группы «Фундаментная плита» (в запросе
+    только «Материал») API возвращает также позиции «Фундаментная плита
+    под оборудование объемом до 5 м3» и т.п. с характеристикой «Объем».
+    Работы всех этих позиций не должны попадать в перечень: группа без
+    характеристики «Объем» — обычная фундаментная плита здания.
+
+    Правило: остаются позиции, у которых нет характеристик, отсутствующих
+    в запросе группы (имена характеристик позиции ⊆ имён характеристик
+    группы). Если таких позиций нет — возвращаются все (fallback, прежнее
+    поведение).
+    """
+    if len(positions) <= 1:
+        return positions
+    requested = {
+        str(char.get("name", "")).strip().lower()
+        for char in element.get("characteristics", []) or []
+        if isinstance(char, dict)
+    }
+    if not requested:
+        return positions
+    exact: List[Dict[str, Any]] = []
+    for pos in positions:
+        pos_char_names = [
+            str(char.get("name", "")).strip().lower()
+            for char in pos.get("characteristics", []) or []
+            if isinstance(char, dict)
+        ]
+        if all(name in requested for name in pos_char_names):
+            exact.append(pos)
+    return exact if exact else positions
+
+
 def _iter_works(response: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Извлекает список работ из ответа API подбора работ.
 
@@ -502,10 +543,37 @@ def _divisor(okei_value) -> int:
     return okei if okei and okei > 1 else 1
 
 
+def _work_divisor(work: Dict[str, Any]) -> int:
+    """Делитель объёма работы (100 для «100 м²», 1 для «м²»/«т»/«шт»).
+
+    Приоритет — okeiValue из ответа API. У части работ okeiValue
+    отсутствует (None), а кратность задана только в самой единице
+    измерения («100 м2», «1 т», «100 м3») — в этом случае числовой
+    префикс разбирается из unitOfMeasure. Без этого объём работ
+    в «100 м²» не делился на 100, а стоимость завышалась в 100 раз.
+    """
+    divisor = _divisor(work.get("okeiValue"))
+    if divisor > 1:
+        return divisor
+
+    unit = str(work.get("unitOfMeasure", "") or "").strip()
+    match = re.match(r"^(\d+)\s", unit)
+    if match:
+        try:
+            prefix = int(match.group(1))
+            if prefix > 1:
+                return prefix
+        except ValueError:
+            pass
+    return 1
+
+
 # Приоритет ключей при выборе «рабочей» площади группы из totalAreas.
 # «Площадь, м2» — основная площадь элементов (для стен — боковая/опалубочная,
 # для плит/балок — площадь опирания), уже выбранная на этапе подготовки таблицы.
-_AREA_KEY_PRIORITY = ['Площадь, м2', 'GrossSideArea', 'NetSideArea', 'GrossArea', 'GROSS']
+# «NetArea» — элементы, у которых площадь задана только в Net-количествах
+# (гидроизоляции, утеплитель и т.п.).
+_AREA_KEY_PRIORITY = ['Площадь, м2', 'GrossSideArea', 'NetSideArea', 'GrossArea', 'GROSS', 'NetArea']
 
 
 def _pick_area_value(total_areas: Dict[str, Any]) -> float:
@@ -563,23 +631,24 @@ def _calculate_work_volume(
         return ""
 
     unit = str(work.get("unitOfMeasure", "") or "").lower().replace(" ", "")
-    okei_value = work.get("okeiValue")
 
     is_volume = ("м3" in unit or "m3" in unit or "м[3" in unit or "m[3" in unit)
     is_area = ("м2" in unit or "m2" in unit or "м[2" in unit or "m[2" in unit)
     is_count = "шт" in unit
 
+    divisor = _work_divisor(work)
+
     if is_volume and measure_type == "volume":
-        vol = measure_value / _divisor(okei_value)
-        decimals = 4 if _divisor(okei_value) > 1 else 3
+        vol = measure_value / divisor
+        decimals = 4 if divisor > 1 else 3
         return f"{vol:.{decimals}f}"
     if is_area and measure_type == "area":
-        vol = measure_value / _divisor(okei_value)
-        decimals = 4 if _divisor(okei_value) > 1 else 2
+        vol = measure_value / divisor
+        decimals = 4 if divisor > 1 else 2
         return f"{vol:.{decimals}f}"
     if is_count and measure_type == "count":
-        vol = measure_value / _divisor(okei_value)
-        decimals = 4 if _divisor(okei_value) > 1 else 0
+        vol = measure_value / divisor
+        decimals = 4 if divisor > 1 else 0
         return f"{vol:.{decimals}f}"
 
     # Расценка в площади (м²), а основной измеритель группы — объём или прочее.
@@ -588,32 +657,9 @@ def _calculate_work_volume(
     if is_area and total_areas:
         area_value = _pick_area_value(total_areas)
         if area_value > 0:
-            vol = area_value / _divisor(okei_value)
-            decimals = 4 if _divisor(okei_value) > 1 else 2
+            vol = area_value / divisor
+            decimals = 4 if divisor > 1 else 2
             return f"{vol:.{decimals}f}"
-
-    # Массовые (т) и прочие измерители посчитать из totalMeasure нельзя.
-    return ""
-
-    unit = str(work.get("unitOfMeasure", "") or "").lower().replace(" ", "")
-    okei_value = work.get("okeiValue")
-
-    is_volume = ("м3" in unit or "m3" in unit or "м[3" in unit or "m[3" in unit)
-    is_area = ("м2" in unit or "m2" in unit or "м[2" in unit or "m[2" in unit)
-    is_count = "шт" in unit
-
-    if is_volume and measure_type == "volume":
-        vol = measure_value / _divisor(okei_value)
-        decimals = 4 if _divisor(okei_value) > 1 else 3
-        return f"{vol:.{decimals}f}"
-    if is_area and measure_type == "area":
-        vol = measure_value / _divisor(okei_value)
-        decimals = 4 if _divisor(okei_value) > 1 else 2
-        return f"{vol:.{decimals}f}"
-    if is_count and measure_type == "count":
-        vol = measure_value / _divisor(okei_value)
-        decimals = 4 if _divisor(okei_value) > 1 else 0
-        return f"{vol:.{decimals}f}"
 
     # Массовые (т) и прочие измерители посчитать из totalMeasure нельзя.
     return ""
@@ -622,16 +668,19 @@ def _calculate_work_volume(
 def _resolve_unit_label(work: Dict[str, Any]) -> str:
     """Определяет единицу измерения для колонки «Ед. изм.» финального перечня.
 
-    Обозначение единицы должно соответствовать делителю объёма (okeiValue):
-      * без делителя (okeiValue <= 1) — базовая единица: «м³», «м²», «шт»;
+    Обозначение единицы должно соответствовать делителю объёма:
+      * без делителя — базовая единица: «м³», «м²», «шт»;
       * с делителем (например, 100) — «100 м³», «100 м²», «100 шт»,
         т.е. объём в перечне выражен в сотнях соответствующих единиц.
+
+    Делитель определяется по okeiValue, а при его отсутствии — по числовому
+    префиксу единицы из API («100 м2» → 100, см. _work_divisor).
 
     Для прочих измерителей (т, кг, м и т.п.) возвращается исходное
     обозначение из API.
     """
     unit = str(work.get("unitOfMeasure", "") or "").lower().replace(" ", "")
-    divisor = _divisor(work.get("okeiValue"))
+    divisor = _work_divisor(work)
 
     if "м3" in unit or "m3" in unit or "м[3" in unit or "m[3" in unit:
         base = "м³"
@@ -725,7 +774,12 @@ def build_final_works_from_api(
         # элементам группы. Для работ по установке арматуры пересчитывается
         # в тонны (÷ 1000) и подставляется в «Объём работ».
         reinforcement_ratio = element.get("_reinforcementVolumeRatio")
-        positions = response.get("data", []) or []
+        # Отбираем позиции, точно соответствующие характеристикам группы
+        # (без дополнительных характеристик, которых в запросе нет, —
+        # например, «Фундаментная плита под оборудование …»).
+        positions = _select_best_positions(
+            element, response.get("data", []) or []
+        )
 
         # Сохраняем индекс начала работ этого элемента
         start_index = len(work_rows)
@@ -736,8 +790,15 @@ def build_final_works_from_api(
             for work in _iter_works({"data": [position]}):
                 volume = _calculate_work_volume(work, total_measure, total_areas)
                 work_name = str(work.get("name", ""))
-                # Работы по установке арматурных изделий/каркасов/сеток/стержней
-                is_rebar_work = "арматур" in work_name.lower()
+                # Работы по установке арматурных изделий/каркасов/сеток/стержней.
+                # API возвращает разные формулировки: «Установка арматурных
+                # изделий, каркасов и сеток», «Установка каркасов в опалубку»,
+                # «Установка отдельных стержней» — все это арматура, объём
+                # берётся из суммарного расхода арматуры группы.
+                is_rebar_work = any(
+                    kw in work_name.lower()
+                    for kw in ("арматур", "каркас", "стержн", "сетк")
+                )
                 if is_rebar_work and reinforcement_ratio:
                     # ReinforcementVolumeRatio в IFC задан в килограммах
                     # (на кубический метр), единица расценки — тонны: кг → т

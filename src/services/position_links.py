@@ -122,15 +122,44 @@ def _chars_to_dict(chars: List[Dict[str, Any]]) -> Dict[str, str]:
     return result
 
 
-def _extract_part(characteristics: Dict[str, str]) -> str:
+def _extract_part(
+    characteristics: Dict[str, str],
+    additional: Optional[Dict[str, str]] = None,
+) -> str:
     """Часть здания группы из характеристики «Расположение».
 
-    'Надземная часть здания' → 'Надземная' и т.п. Пусто, если не найдено.
+    'Надземная часть здания' → 'Надземная' и т.п.
+
+    Если «Расположение» не задано (например, у фундаментных плит эта
+    характеристика не отправляется в API — у позиции ЦС её нет), часть
+    здания определяется по «Этажу» из additionalCharacteristics
+    ('-1_подземный этаж_основной' → 'Подземная'), а при его отсутствии —
+    по «Типу этажа» ('Подземный'/'Цокольный'/...). Пусто, если не найдено.
     """
     location = characteristics.get("Расположение", "")
     for part in ("Подземная", "Цоколь", "Надземная"):
         if part.lower() in location.lower():
             return part
+
+    # Fallback 1: «Этаж» из additionalCharacteristics
+    # ('-1_подземный этаж_основной' → 'Подземная', '-1/1_...' → 'Цоколь')
+    storey = (additional or {}).get("Этаж", "")
+    if storey:
+        from src.services.group_excel import _get_part_from_storey_name
+
+        part = _get_part_from_storey_name(storey)
+        if part:
+            return part
+
+    # Fallback 2: «Тип этажа» ('Подземный'/'Цокольный'/...)
+    storey_type = (additional or {}).get("Тип этажа", "")
+    if storey_type:
+        st = storey_type.lower()
+        if "подзем" in st:
+            return "Подземная"
+        if "цоколь" in st:
+            return "Цоколь"
+
     return ""
 
 
@@ -333,7 +362,7 @@ def build_position_links(
 
         characteristics = _chars_to_dict(group.get("characteristics"))
         additional = _chars_to_dict(group.get("additionalCharacteristics"))
-        part = _extract_part(characteristics) or "Надземная"
+        part = _extract_part(characteristics, additional) or "Надземная"
         geo = _extract_geo(characteristics)
 
         try:

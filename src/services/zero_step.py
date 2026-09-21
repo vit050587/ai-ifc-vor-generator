@@ -870,10 +870,13 @@ def parse_name(name: str, ifc_class: str):
         # (?<!\d) вместо \b: символ «_» считается word-символом, поэтому
         # \b не срабатывает перед числом в именах вида «ADSK_Бетон В25_200 мм»,
         # где толщина отделена подчёркиванием от марки бетона.
+        # Аналогично (?!\d) вместо \b после «мм»: в именах вида
+        # «Стена_180мм_ЖБ_B35_W4_F75» за «мм» идёт подчёркивание (word-символ)
+        # и \b не срабатывает — толщина из таких имён не извлекалась.
         patterns = [
-            r'(?:толщина|t)[\s=]*(\d{2,3})\s?мм',  # толщина 100мм или t=100
-            r'(?<!\d)(\d{2,3})\s?мм\b',             # 100мм / В25_200 мм
-            r'(?<!\d)(\d{2,3})mm\b',                # 100mm
+            r'(?:толщина|t)[\s=]*(\d{2,3})\s?мм(?!\d)',  # толщина 100мм или t=100
+            r'(?<!\d)(\d{2,3})\s?мм(?!\d)',             # 100мм / В25_200 мм / Стена_180мм_ЖБ
+            r'(?<!\d)(\d{2,3})mm(?!\d)',                # 100mm
         ]
         for pattern in patterns:
             match = re.search(pattern, name, re.IGNORECASE)
@@ -884,9 +887,9 @@ def parse_name(name: str, ifc_class: str):
     elif ifc_class == "IfcSlab":
         # Ищем толщину перекрытия
         patterns = [
-            r'(?:толщина|t|h)[\s=]*(\d{2,3})\s?мм',
-            r'(?<!\d)(\d{2,3})\s?мм\b',
-            r'(?<!\d)(\d{2,3})mm\b',
+            r'(?:толщина|t|h)[\s=]*(\d{2,3})\s?мм(?!\d)',
+            r'(?<!\d)(\d{2,3})\s?мм(?!\d)',
+            r'(?<!\d)(\d{2,3})mm(?!\d)',
         ]
         for pattern in patterns:
             match = re.search(pattern, name, re.IGNORECASE)
@@ -1683,6 +1686,55 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
     }
     
     # ============================================================================
+    # NET-ПЛОЩАДИ (NetArea/NetSideArea/...): альтернативные имена параметров
+    # ============================================================================
+    # У части элементов (гидроизоляции, утеплитель, приямки и т.п.) площадь
+    # задана ТОЛЬКО в Net-количествах (NetArea), без Gross-аналогов —
+    # такие элементы оставались без «Площадь, м2», и объёмы работ в м²
+    # для них не считались. Добавляем Net-источники в списки ПЛОЩАДЬ
+    # ПОСЛЕ Gross-источников (Gross сохраняет приоритет).
+    _GROSS_TO_NET = [
+        ('GrossFootprintArea', 'NetFootprintArea'),
+        ('GrossSurfaceArea', 'NetSurfaceArea'),
+        ('GrossSideArea', 'NetSideArea'),
+        ('GrossSlabArea', 'NetSlabArea'),
+        ('GrossArea', 'NetArea'),
+        ('GROSS', 'NetArea'),
+    ]
+
+    def _net_area_source(gross_source):
+        for gross_token, net_token in _GROSS_TO_NET:
+            if gross_token in gross_source:
+                return gross_source.replace(gross_token, net_token)
+        return None
+
+    for _type_mapping in geometry_mapping.values():
+        _area_sources = _type_mapping.get('ПЛОЩАДЬ')
+        if _area_sources is None:
+            continue
+        _net_sources = []
+        for _src in _area_sources:
+            _net_src = _net_area_source(_src)
+            if _net_src and _net_src not in _area_sources and _net_src not in _net_sources:
+                _net_sources.append(_net_src)
+        if _net_sources:
+            # Вставляем перед универсальными хвостами ('Площадь_м2', 'Area_м2')
+            _insert_at = len(_area_sources)
+            for _generic in ('Площадь_м2', 'Area_м2'):
+                if _generic in _area_sources:
+                    _insert_at = min(_insert_at, _area_sources.index(_generic))
+            _area_sources[_insert_at:_insert_at] = _net_sources
+
+    # Тип «Изоляция» (IfcCovering в режиме КР: гидроизоляции, утеплитель) —
+    # те же источники, что и для «Покрытие». Ранее тип отсутствовал в
+    # geometry_mapping, и агрегированные «Площадь, м2»/«Объём, м3» для
+    # изоляции не заполнялись вовсе.
+    if 'Изоляция' not in geometry_mapping:
+        geometry_mapping['Изоляция'] = {
+            k: list(v) for k, v in geometry_mapping['Покрытие'].items()
+        }
+
+    # ============================================================================
     # FALLBACK: КОЛИЧЕСТВА, ВЫЧИСЛЕННЫЕ ИЗ ГЕОМЕТРИИ (bbox)
     # ============================================================================
     # Если у элемента нет QTO (IfcElementQuantity), количества вычисляются
@@ -1913,12 +1965,14 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
     
     smetchik_cols = ['Тип (RU)', 'Тип элемента', 'Имя', 'GlobalId', 'Материал', 'Этаж', 'Тип_этажа', 'Уровень_этажа_мм']
 
-    # Приоритетно добавляем QTO колонки (только Gross для площадей)
+    # Приоритетно добавляем QTO колонки (Gross и Net для площадей)
     for col in df.columns:
         if col.startswith('QTO_'):
-            # Для площадей - добавляем только Gross
+            # Для площадей - добавляем Gross и Net: у части элементов
+            # (гидроизоляции, утеплитель и т.п.) площадь задана только
+            # в NetArea, без Gross-аналогов
             if 'Площадь' in col:
-                if 'Gross' in col or 'GROSS' in col:
+                if 'Gross' in col or 'GROSS' in col or 'Net' in col:
                     smetchik_cols.append(col)
             else:
                 smetchik_cols.append(col)
@@ -1930,7 +1984,7 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
                 smetchik_cols.append(col)
             elif 'Объём' in col and ('_м3' in col or '_литры' in col):
                 smetchik_cols.append(col)
-            elif 'Площадь' in col and 'Gross' in col and '_м2' in col:
+            elif 'Площадь' in col and ('Gross' in col or 'Net' in col) and '_м2' in col:
                 smetchik_cols.append(col)
 
     # ДОБАВЛЯЕМ СПЕЦИФИЧЕСКИЕ СВОЙСТВА ИЗ СПИСКА

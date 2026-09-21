@@ -466,6 +466,35 @@ class ElementData:
         self.ifc_type = get_ifc_type(self.type_ru, self.name)
 
 
+def _find_volume_columns(columns) -> List[str]:
+    """Возвращает все колонки-источники объёма (NetVolume / «Объём … м3»).
+
+    Объём элемента может лежать в разных колонках — по IFC-типу элемента
+    (Qto_WallBaseQuantities, Qto_SlabBaseQuantities, Qto_BeamBaseQuantities,
+    Qto_StairFlightBaseQuantities, ...) и в старом/новом формате имён.
+    Раньше для агрегации выбиралась ОДНА колонка (первая по порядку заголовков
+    — стеновая), поэтому объёмы плит/балок/лестниц/покрытий терялись
+    (в стеновой колонке у них «-»).
+    """
+    cols = []
+    for col in columns:
+        col_lower = str(col).lower()
+        if 'netvolume' in col_lower or (
+            ('объём' in col_lower or 'объем' in col_lower) and 'м3' in col_lower
+        ):
+            cols.append(col)
+    return cols
+
+
+def _prioritize_volume_col(volume_cols: List[str], volume_col) -> List[str]:
+    """Ставит volume_col (первый найденный ранее) в начало списка колонок."""
+    if volume_col and volume_col in volume_cols:
+        volume_cols = list(volume_cols)
+        volume_cols.remove(volume_col)
+        volume_cols.insert(0, volume_col)
+    return volume_cols
+
+
 def _create_group(name: str, level: int, group_df, rows: List[Dict[str, Any]],
                   volume_col, sum_columns: List[str], children=None) -> Dict[str, Any]:
     """Создаёт узел дерева групп: агрегирует объём/площади по DataFrame строк.
@@ -475,10 +504,23 @@ def _create_group(name: str, level: int, group_df, rows: List[Dict[str, Any]],
     """
     indices = sorted(group_df.index.tolist())
 
-    if volume_col and volume_col in group_df.columns:
-        vol_series = pd.to_numeric(group_df[volume_col], errors='coerce').fillna(0)
-        # float() — иначе np.int64/np.float64 попадут в JSON как строки
-        volume = float(round(vol_series.sum(), 2))
+    # Объём группы: по каждой строке берём первое ненулевое значение среди
+    # ВСЕХ колонок-источников (coalesce). Колонки дублируют одно и то же
+    # значение в старом/новом формате имён, поэтому суммировать по колонкам
+    # нельзя — берётся первое ненулевое. Приоритет — volume_col, затем
+    # остальные колонки в порядке заголовков.
+    volume_cols = _prioritize_volume_col(
+        _find_volume_columns(group_df.columns), volume_col
+    )
+    vol_series = None
+    if volume_cols:
+        for col in volume_cols:
+            col_series = pd.to_numeric(group_df[col], errors='coerce').fillna(0)
+            if vol_series is None:
+                vol_series = col_series
+            else:
+                vol_series = vol_series.where(vol_series > 0, col_series)
+        volume = float(round(float(vol_series.sum()), 2))
     else:
         volume = 0.0
 
@@ -490,11 +532,17 @@ def _create_group(name: str, level: int, group_df, rows: List[Dict[str, Any]],
             if total > 0:
                 areas[col] = float(round(total, 2))
 
-    # Суммарный расход арматуры (ReinforcementVolumeRatio, кг) по всем элементам группы
+    # Суммарный расход арматуры (кг) по всем элементам группы:
+    # ReinforcementVolumeRatio — плотность армирования (кг/м³), поэтому
+    # общий расход = Σ (кг/м³ × объём элемента, м³). Раньше суммировались
+    # сами плотности, что давало некорректные тонны арматуры.
     reinforcement = 0.0
     if 'ReinforcementVolumeRatio' in group_df.columns:
         rein_series = pd.to_numeric(group_df['ReinforcementVolumeRatio'], errors='coerce').fillna(0)
-        reinforcement = float(round(rein_series.sum(), 2))
+        if vol_series is not None:
+            reinforcement = float(round(float((rein_series * vol_series).sum()), 2))
+        else:
+            reinforcement = float(round(float(rein_series.sum()), 2))
 
     first_elem = rows[indices[0]] if indices else {}
 
@@ -895,10 +943,20 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
     geo_level = 5 + level_offset
     sub_level = 6 + level_offset
 
+    # Колонки-источники объёма: у элементов разных IFC-типов объём лежит
+    # в разных колонках (Qto_Wall/Qto_Slab/Qto_Beam/..._NetVolume) —
+    # берём первое ненулевое значение по строке (coalesce), а не одну
+    # фиксированную колонку.
+    volume_cols = _prioritize_volume_col(
+        _find_volume_columns(headers), volume_col
+    )
+
     def get_volume(elem):
-        if volume_col is None:
-            return 0.0
-        return safe_parse_float(elem.row.get(volume_col, 0))
+        for col in volume_cols:
+            val = safe_parse_float(elem.row.get(col, 0))
+            if val > 0:
+                return val
+        return 0.0
     
     def get_geometry_value(rule, elem):
         if not rule or not rule.get('field'):
@@ -930,10 +988,15 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
             if total > 0:
                 areas[field] = float(round(total, 2))
 
-        # Суммарный расход арматуры (ReinforcementVolumeRatio, кг) по всем элементам группы
+        # Суммарный расход арматуры (кг) по всем элементам группы:
+        # ReinforcementVolumeRatio — плотность армирования (кг/м³),
+        # общий расход = Σ (кг/м³ × объём элемента, м³)
         reinforcement = 0.0
         for e in elems_list:
-            reinforcement += safe_parse_float(e.row.get('ReinforcementVolumeRatio', 0))
+            reinforcement += safe_parse_float(
+                e.row.get('ReinforcementVolumeRatio', 0)
+            ) * get_volume(e)
+        reinforcement = float(round(reinforcement, 2))
 
         return {
             'name': name, 'level': level, 'indices': indices,
