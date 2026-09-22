@@ -41,7 +41,7 @@ from src.core.logger import setup_logger
 from src.services.works_cost import (
     _get_corrected_volume,
     _add_cost_column,
-    add_total_row,
+    _parse_money,
     format_money,
 )
 
@@ -644,6 +644,7 @@ def _calculate_work_volume(
     total_measure: Dict[str, Any],
     total_areas: Dict[str, Any] | None = None,
     formwork_area: float = 0.0,
+    slab_group: bool = False,
 ) -> str:
     """Рассчитывает объём работ для расценки из API.
 
@@ -655,11 +656,14 @@ def _calculate_work_volume(
             ifc_reference_builder), используются если расценка в м²,
             а основной измеритель группы — объём (например, опалубка
             стен считается по боковой площади при totalMeasure типа volume).
-        formwork_area — площадь опалубки вертикальных граней фундаментных
-            плит группы (периметр × толщина, м²). Для расценок монтажа/
-            демонтажа опалубки (м²) подставляется вместо площади из
-            totalAreas: фундаментная плита опалубливается только по
-            боковым граням (периметр × толщина), а не по площади плиты.
+        formwork_area — площадь опалубки плит группы (м²): фундаментные
+            плиты — периметр × толщина, перекрытия — периметр × толщина +
+            площадь плиты. Для расценок монтажа/демонтажа опалубки (м²)
+            подставляется вместо площади из totalAreas.
+        slab_group — группа является плитной (фундаментная плита /
+            перекрытие): опалубку таких групп считаем ТОЛЬКО по
+            formwork_area, fallback на площадь плиты из totalAreas
+            запрещён (иначе объём опалубки завышается в разы).
 
     Возвращает строку с объёмом (или пустую строку, если посчитать нельзя).
     """
@@ -691,8 +695,9 @@ def _calculate_work_volume(
         return f"{vol:.{decimals}f}"
 
     # Расценка в площади (м²), а основной измеритель группы — объём или прочее.
-    # Монтаж/демонтаж опалубки фундаментных плит — по площади опалубки
-    # вертикальных граней (периметр × толщина).
+    # Монтаж/демонтаж опалубки плит — по площади опалубки
+    # (фундаментные плиты — периметр × толщина, перекрытия —
+    # периметр × толщина + площадь плиты).
     if is_area and _is_formwork_work(work) and formwork_area > 0:
         vol = formwork_area / divisor
         decimals = 4 if divisor > 1 else 2
@@ -701,6 +706,12 @@ def _calculate_work_volume(
     # Прочие расценки в площади (м²) при измерителе группы «объём»:
     # берём суммарную площадь группы из totalAreas (например,
     # монтаж/демонтаж опалубки стен считается по боковой площади).
+    # Для ОПАЛУБКИ плитных групп fallback на площадь плиты запрещён:
+    # если formwork_area не рассчитан (нет периметра/толщины), объём
+    # остаётся пустым — площадь плиты не является площадью опалубки.
+    if is_area and slab_group and _is_formwork_work(work):
+        return ""
+
     if is_area and total_areas:
         area_value = _pick_area_value(total_areas)
         if area_value > 0:
@@ -742,6 +753,57 @@ def _resolve_unit_label(work: Dict[str, Any]) -> str:
 
 
 # =====================================================================
+#  ЧАСТИ ЗДАНИЯ В ФИНАЛЬНОМ ПЕРЕЧНЕ РАБОТ
+# =====================================================================
+
+# Порядок частей здания в финальном перечне работ
+BUILDING_PART_ORDER = ['Подземная', 'Цоколь', 'Надземная']
+
+# Заголовки частей здания в финальном перечне работ
+_BUILDING_PART_TITLES = {
+    'Подземная': 'ПОДЗЕМНАЯ ЧАСТЬ',
+    'Цоколь': 'ЦОКОЛЬ',
+    'Надземная': 'НАДЗЕМНАЯ ЧАСТЬ',
+}
+
+# Надписи итоговых строк по частям здания
+_BUILDING_PART_TOTAL_LABELS = {
+    'Подземная': 'ИТОГО по подземной части:',
+    'Цоколь': 'ИТОГО по цокольной части:',
+    'Надземная': 'ИТОГО по надземной части:',
+}
+
+
+def _resolve_building_part(element: Dict[str, Any]) -> str:
+    """Определяет часть здания для группы элементов.
+
+    Приоритет:
+      1. Служебное поле ``_buildingPart`` — заполняется в
+         ``ifc_reference_builder.build_reference_output`` по path[0]
+         группы (у групп без характеристики «Расположение» — например,
+         фундаментные плиты — часть здания известна только из него);
+      2. Характеристика «Расположение» («Подземная часть здания» и т.п.);
+      3. «Надземная» — значение по умолчанию (как в build_reference_output).
+
+    Аргументы:
+        element — группа элементов в формате запроса API ТСН.
+
+    Возвращает:
+        Одно из значений BUILDING_PART_ORDER.
+    """
+    part = str(element.get("_buildingPart") or "").strip()
+    if part in BUILDING_PART_ORDER:
+        return part
+    for char in element.get("characteristics") or []:
+        if char.get("name") == "Расположение" and char.get("values"):
+            location = str(char["values"][0].get("strValue", "")).strip().lower()
+            for known in BUILDING_PART_ORDER:
+                if location.startswith(known.lower()):
+                    return known
+    return "Надземная"
+
+
+# =====================================================================
 #  ФОРМИРОВАНИЕ ФИНАЛЬНОГО ПЕРЕЧНЯ РАБОТ
 # =====================================================================
 
@@ -763,6 +825,12 @@ def build_final_works_from_api(
         МР                    = curCostOfMaterialResources × Объём работ
                                 (материальные ресурсы)
         Стоимость             = ЗП + ЭМ + МР
+
+    Таблица разбивается на части здания (Подземная → Цоколь → Надземная):
+    перед работами каждой части — строка-заголовок части, в конце каждой
+    части — итоговая строка «ИТОГО по … части:» (суммы ЗП/ЭМ/МР/Стоимость
+    по работам части); в конце таблицы — общая строка «ИТОГО:» (сумма по
+    всем работам всех частей).
 
     Аргументы:
         api_results   — список пар (element, api_response) из fetch_works_from_api.
@@ -824,9 +892,16 @@ def build_final_works_from_api(
         # элементам группы. Для работ по установке арматуры пересчитывается
         # в тонны (÷ 1000) и подставляется в «Объём работ».
         reinforcement_ratio = element.get("_reinforcementVolumeRatio")
-        # Площадь опалубки вертикальных граней фундаментных плит группы
-        # (периметр × толщина, м²) — для расценок монтажа/демонтажа опалубки.
+        # Площадь опалубки плит группы (м²) — для расценок монтажа/
+        # демонтажа опалубки (фундаментные плиты — периметр × толщина,
+        # перекрытия — периметр × толщина + площадь плиты).
         formwork_area = safe_float(element.get("_formworkArea"), 0)
+        # Признак плитной группы (фундаментная плита / перекрытие):
+        # опалубка считается только по _formworkArea, fallback на
+        # площадь плиты из totalAreas запрещён.
+        is_slab_group = any(
+            kw in element_name.lower() for kw in ("плит", "перекрыт")
+        )
         # Отбираем позиции, точно соответствующие характеристикам группы
         # (без дополнительных характеристик, которых в запросе нет, —
         # например, «Фундаментная плита под оборудование …»).
@@ -844,6 +919,7 @@ def build_final_works_from_api(
                 volume = _calculate_work_volume(
                     work, total_measure, total_areas,
                     formwork_area=formwork_area,
+                    slab_group=is_slab_group,
                 )
                 work_name = str(work.get("name", ""))
                 # Работы по установке арматурных изделий/каркасов/сеток/стержней.
@@ -884,7 +960,10 @@ def build_final_works_from_api(
             "header": element_full_name,
             "start_index": start_index,
             "end_index": len(work_rows),
-            "is_last": element_idx == len(api_results) - 1
+            "is_last": element_idx == len(api_results) - 1,
+            # Часть здания группы (Подземная / Цоколь / Надземная) —
+            # по ней финальная таблица разбивается на части
+            "part": _resolve_building_part(element),
         })
 
     if not work_rows:
@@ -977,87 +1056,175 @@ def build_final_works_from_api(
         if col in df_works.columns:
             df_works[col] = df_works[col].apply(format_money)
 
-    # Теперь добавляем заголовки элементов в обработанный DataFrame
+    # Теперь формируем строки финального перечня: таблица разбивается
+    # на части здания (Подземная → Цоколь → Надземная). Перед работами
+    # каждой части — строка-заголовок части, в конце каждой части —
+    # итоговая строка по части; в конце таблицы — общий «ИТОГО:».
     final_rows = []
-    current_position = 0
-    
-    for elem_info in element_info:
-        # Добавляем заголовок элемента
-        final_rows.append({
+
+    def _blank_row() -> Dict[str, Any]:
+        return {
             "Шифр ТСН": "",
-            "Наименование расценки/ресурса": f"{elem_info['header']}",
+            "Наименование расценки/ресурса": "",
             "Ед. изм.": "",
             "Объём работ": "",
             "ЗП": "",
             "ЭМ": "",
             "МР": "",
             "Стоимость": "",
-            "_is_header": True
-        })
-        
-        # Добавляем работы этого элемента
-        for idx in range(elem_info['start_index'], elem_info['end_index']):
+            "_is_header": False,
+            "_is_part_header": False,
+            "_is_part_total": False,
+        }
+
+    def _sum_money(rows: List[Dict[str, Any]]) -> Dict[str, str]:
+        """Суммы денежных колонок по строкам работ.
+
+        Значения уже отформатированы format_money — разбираются
+        обратно через _parse_money.
+        """
+        return {
+            col: format_money(sum(_parse_money(r.get(col)) for r in rows))
+            for col in ("ЗП", "ЭМ", "МР", "Стоимость")
+            if col in df_works.columns
+        }
+
+    # Части здания, представленные в перечне (в фиксированном порядке)
+    parts_in_order = [
+        part for part in BUILDING_PART_ORDER
+        if any(info["part"] == part for info in element_info)
+    ]
+
+    all_work_rows: List[Dict[str, Any]] = []
+
+    if not parts_in_order:
+        # Ни одной группы с частью здания (например, полностью пустой
+        # ответ API) — выводим строки работ без разбивки на части.
+        for idx in range(len(df_works)):
             row = df_works.iloc[idx].to_dict()
             row["_is_header"] = False
+            row["_is_part_header"] = False
+            row["_is_part_total"] = False
             final_rows.append(row)
-        
-        # Добавляем пустую строку после каждого элемента (кроме последнего)
-        if not elem_info['is_last']:
-            final_rows.append({
-                "Шифр ТСН": "",
-                "Наименование расценки/ресурса": "",
-                "Ед. изм.": "",
-                "Объём работ": "",
-                "ЗП": "",
-                "ЭМ": "",
-                "МР": "",
-                "Стоимость": "",
-                "_is_header": False
-            })
+            all_work_rows.append(row)
+
+    for part_pos, part in enumerate(parts_in_order):
+        part_elements = [info for info in element_info if info["part"] == part]
+
+        # Заголовок части здания
+        part_header = _blank_row()
+        part_header["Наименование расценки/ресурса"] = (
+            _BUILDING_PART_TITLES.get(part, part)
+        )
+        part_header["_is_part_header"] = True
+        final_rows.append(part_header)
+
+        part_work_rows: List[Dict[str, Any]] = []
+        for elem_pos, elem_info in enumerate(part_elements):
+            # Заголовок группы элементов
+            header_row = _blank_row()
+            header_row["Наименование расценки/ресурса"] = elem_info["header"]
+            header_row["_is_header"] = True
+            final_rows.append(header_row)
+
+            # Работы этой группы
+            for idx in range(elem_info["start_index"], elem_info["end_index"]):
+                row = df_works.iloc[idx].to_dict()
+                row["_is_header"] = False
+                row["_is_part_header"] = False
+                row["_is_part_total"] = False
+                final_rows.append(row)
+                part_work_rows.append(row)
+                all_work_rows.append(row)
+
+            # Пустая строка после каждой группы (кроме последней в части)
+            if elem_pos < len(part_elements) - 1:
+                final_rows.append(_blank_row())
+
+        # Итоговая строка по части здания
+        part_total = _blank_row()
+        part_total["Наименование расценки/ресурса"] = (
+            _BUILDING_PART_TOTAL_LABELS.get(part, f"ИТОГО по части ({part}):")
+        )
+        part_total["_is_part_total"] = True
+        for col, value in _sum_money(part_work_rows).items():
+            part_total[col] = value
+        final_rows.append(part_total)
+
+        # Пустая строка между частями (после последней части — общий итог)
+        if part_pos < len(parts_in_order) - 1:
+            final_rows.append(_blank_row())
+
+    # Общая итоговая строка по всему перечню (сумма работ всех частей —
+    # суммы итоговых строк частей не задваиваются, т.к. суммируются
+    # только строки работ).
+    if any(col in df_works.columns for col in ("ЗП", "ЭМ", "МР", "Стоимость")):
+        total_row = _blank_row()
+        total_row["Наименование расценки/ресурса"] = "ИТОГО:"
+        for col, value in _sum_money(all_work_rows).items():
+            total_row[col] = value
+        final_rows.append(total_row)
 
     # Создаем финальный DataFrame
     df = pd.DataFrame(final_rows)
-    
+
     # Убедимся, что все нужные колонки есть
     required_columns = [
         "Шифр ТСН", "Наименование расценки/ресурса", "Ед. изм.", "Объём работ",
-        "ЗП", "ЭМ", "МР", "Стоимость", "_is_header",
+        "ЗП", "ЭМ", "МР", "Стоимость",
+        "_is_header", "_is_part_header", "_is_part_total",
     ]
     for col in required_columns:
         if col not in df.columns:
             df[col] = ""
-    
+
     df = df[required_columns]
 
-    # Убираем временную колонку для Excel
-    df_for_excel = df.drop(columns=["_is_header"])
-
-    # Итоговая строка: сумма всех значений колонки 'Стоимость'
-    df_for_excel = add_total_row(df_for_excel)
+    # Убираем служебные колонки для Excel
+    df_for_excel = df.drop(columns=[
+        "_is_header", "_is_part_header", "_is_part_total",
+    ])
 
     output_path = os.path.join(output_folder, "ОБЩИЙ_Финальный_перечень_работ.xlsx")
-    
+
     # Создаем Excel с форматированием
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         df_for_excel.to_excel(writer, sheet_name="Данные", index=False)
-        
+
         # Получаем доступ к листу для форматирования
         worksheet = writer.sheets["Данные"]
-        
-        # Форматируем заголовки элементов (жирный шрифт, заливка)
+
+        # Форматируем заголовки частей/элементов и итоги по частям
         from openpyxl.styles import Font, PatternFill, Alignment
-        
+
+        part_header_font = Font(bold=True, size=12)
+        part_header_fill = PatternFill(
+            start_color="A9A9A9", end_color="A9A9A9", fill_type="solid"
+        )
         header_font = Font(bold=True, size=11)
         header_fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
         center_alignment = Alignment(horizontal="center", vertical="center")
-        
-        # Форматируем строки-заголовки
+        bold_font = Font(bold=True, size=11)
+
+        # Форматируем строки-заголовки и итоговые строки
         for row_idx in range(2, len(df) + 2):  # +2 из-за заголовка таблицы
-            if df.iloc[row_idx - 2]["_is_header"]:
+            row_data = df.iloc[row_idx - 2]
+            if row_data["_is_part_header"]:
+                for col_idx in range(1, len(df_for_excel.columns) + 1):
+                    cell = worksheet.cell(row=row_idx, column=col_idx)
+                    cell.font = part_header_font
+                    cell.fill = part_header_fill
+                    cell.alignment = center_alignment
+            elif row_data["_is_header"]:
                 for col_idx in range(1, len(df_for_excel.columns) + 1):
                     cell = worksheet.cell(row=row_idx, column=col_idx)
                     cell.font = header_font
                     cell.fill = header_fill
+                    cell.alignment = center_alignment
+            elif row_data["_is_part_total"]:
+                for col_idx in range(1, len(df_for_excel.columns) + 1):
+                    cell = worksheet.cell(row=row_idx, column=col_idx)
+                    cell.font = bold_font
                     cell.alignment = center_alignment
         
         # Настраиваем ширину колонок

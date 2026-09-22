@@ -496,8 +496,8 @@ def _prioritize_volume_col(volume_cols: List[str], volume_col) -> List[str]:
 
 
 # Колонки-источники периметра и толщины (мм) для расчёта площади опалубки
-# фундаментных плит (периметр × толщина). Колонки дублируют одно и то же
-# значение в старом/новом формате имён — берётся первое ненулевое (coalesce).
+# плит (периметр × толщина). Колонки дублируют одно и то же значение
+# в старом/новом формате имён — берётся первое ненулевое (coalesce).
 _PERIMETER_COLS = [
     'QTO_Qto_SlabBaseQuantities_Длина_Perimeter_мм',
     'Длина_Perimeter_мм',
@@ -507,6 +507,15 @@ _DEPTH_COLS = [
     'QTO_Qto_SlabBaseQuantities_Длина_Depth_мм',
     'Длина_Depth_мм',
 ]
+# Колонки-источники площади плиты (м²) — для опалубки перекрытий
+# (боковые грани + нижняя поверхность).
+_AREA_COLS = [
+    'Площадь, м2',
+    'Площадь_GrossArea_м2',
+    'Площадь_NetArea_м2',
+    'Площадь_GROSS_м2',
+    'Площадь_NET_м2',
+]
 
 
 def _find_formwork_columns(columns) -> Tuple[List[str], List[str]]:
@@ -515,6 +524,53 @@ def _find_formwork_columns(columns) -> Tuple[List[str], List[str]]:
     perim_cols = [c for c in _PERIMETER_COLS if c in cols]
     depth_cols = [c for c in _DEPTH_COLS if c in cols]
     return perim_cols, depth_cols
+
+
+def _first_nonzero(row: Dict[str, Any], cols: List[str]) -> float:
+    """Первое ненулевое числовое значение среди колонок строки (coalesce)."""
+    for col in cols:
+        val = safe_parse_float(row.get(col, 0))
+        if val > 0:
+            return val
+    return 0.0
+
+
+def _element_formwork_area_m2(row: Dict[str, Any], perim_cols: List[str],
+                              depth_cols: List[str],
+                              area_cols: List[str] | None = None) -> float:
+    """Площадь опалубки одного элемента-плиты (м²) по правилам КР:
+
+      * фундаментная плита («фундамент» в имени элемента) — опалубка
+        только боковых граней: периметр × толщина;
+      * перекрытие («перекрыт» в имени) — боковые грани + нижняя
+        поверхность: периметр × толщина + площадь плиты;
+      * прочие плиты (лестницы, приямки и т.п.) — боковые грани:
+        периметр × толщина.
+
+    Периметр и толщина в таблице — в миллиметрах, поэтому произведение
+    делится на 1e6 (мм² → м²). Если у плиты IfcSlab нет QTO-толщины,
+    толщина берётся из имени элемента («Перекрытие_200мм_…»).
+    У элементов без периметра/толщины (стены, балки и т.п.) вклад
+    равен нулю.
+    """
+    if not perim_cols or not depth_cols:
+        return 0.0
+    name_lower = str(row.get('Имя', '')).lower()
+    perim = _first_nonzero(row, perim_cols)
+    depth = _first_nonzero(row, depth_cols)
+    # Fallback толщины для плит IfcSlab без QTO-толщины: толщина часто
+    # закодирована в имени элемента («Перекрытие_200мм_ЖБ_B30_W6_F150»,
+    # «Фундаментная плита_800мм…»). Без неё боковые грани перекрытий
+    # не учитываются, и опалубка занижается.
+    if depth == 0 and str(row.get('Тип элемента', '')).strip() == 'IfcSlab':
+        m = re.search(r'(\d+(?:[.,]\d+)?)\s*мм', str(row.get('Имя', '')))
+        if m:
+            depth = float(m.group(1).replace(',', '.'))
+    side_area = perim * depth / 1e6
+    if 'перекрыт' in name_lower and 'фундамент' not in name_lower:
+        slab_area = _first_nonzero(row, area_cols or _AREA_COLS)
+        return side_area + slab_area
+    return side_area
 
 
 def _coalesce_series(group_df, cols):
@@ -530,20 +586,21 @@ def _coalesce_series(group_df, cols):
 
 
 def _formwork_area_m2(group_df, perim_cols, depth_cols) -> float:
-    """Площадь опалубки вертикальных граней плит группы (м²): Σ периметр × толщина.
+    """Площадь опалубки плит группы (м²), сумма по элементам.
 
-    Периметр и толщина в таблице — в миллиметрах, поэтому произведение
-    делится на 1e6 (мм² → м²). У элементов без периметра/толщины
-    (стены, балки и т.п.) вклад равен нулю.
+    По каждому элементу применяется `_element_formwork_area_m2`:
+      * фундаментная плита — периметр × толщина (боковые грани);
+      * перекрытие — периметр × толщина + площадь плиты
+        (боковые граны + нижняя поверхность);
+      * прочие плиты — периметр × толщина.
     """
     if not perim_cols or not depth_cols:
         return 0.0
-    perim = _coalesce_series(group_df, perim_cols)
-    depth = _coalesce_series(group_df, depth_cols)
-    if perim is None or depth is None:
-        return 0.0
-    total = float((perim * depth).sum())
-    return round(total / 1e6, 2)
+    area_cols = [c for c in _AREA_COLS if c in group_df.columns]
+    total = 0.0
+    for _, row in group_df.iterrows():
+        total += _element_formwork_area_m2(row, perim_cols, depth_cols, area_cols)
+    return float(round(total, 2))
 
 
 def _create_group(name: str, level: int, group_df, rows: List[Dict[str, Any]],
@@ -1049,27 +1106,19 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
             ) * get_volume(e)
         reinforcement = float(round(reinforcement, 2))
 
-        # Площадь опалубки вертикальных граней плит группы (периметр ×
-        # толщина, сумма по элементам) — для расценок монтажа/демонтажа
-        # опалубки фундаментных плит в финальном перечне работ.
+        # Площадь опалубки плит группы (м², сумма по элементам):
+        #   * фундаментные плиты — периметр × толщина (боковые грани);
+        #   * перекрытия — периметр × толщина + площадь плиты
+        #     (боковые грани + нижняя поверхность).
+        # Используется в финальном перечне работ для расценок монтажа/
+        # демонтажа опалубки.
         perim_cols, depth_cols = _find_formwork_columns(headers)
         formwork_area = 0.0
         if perim_cols and depth_cols:
-            formwork_area = 0.0
             for e in elems_list:
-                perim = 0.0
-                for col in perim_cols:
-                    val = safe_parse_float(e.row.get(col, 0))
-                    if val > 0:
-                        perim = val
-                        break
-                depth = 0.0
-                for col in depth_cols:
-                    val = safe_parse_float(e.row.get(col, 0))
-                    if val > 0:
-                        depth = val
-                        break
-                formwork_area += perim * depth / 1e6  # мм² → м²
+                formwork_area += _element_formwork_area_m2(
+                    e.row, perim_cols, depth_cols
+                )
             formwork_area = float(round(formwork_area, 2))
 
         return {
@@ -1077,6 +1126,7 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
             # НОВАЯ ВЕРСИЯ: float() — чтобы значения корректно сериализовались в JSON
             'total_volume': float(round(volume, 2)), 'total_areas': areas,
             'total_reinforcement': float(round(reinforcement, 2)),
+            'formwork_area': formwork_area,
             'first_element': dict(elems_list[0].row) if elems_list else {},
             'count': len(elems_list), 'children': []
         }

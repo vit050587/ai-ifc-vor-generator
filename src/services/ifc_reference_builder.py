@@ -39,6 +39,8 @@ from src.services.group_excel import (
     is_hydro_horizontal,
     _find_volume_columns,
     _get_part_from_storey_name,
+    _find_formwork_columns,
+    _element_formwork_area_m2,
 )
 
 logger = setup_logger(__name__)
@@ -1024,10 +1026,22 @@ def split_leaf_groups_by_part(
             safe_parse_float(r.get('ReinforcementVolumeRatio', 0)) * _row_volume(r)
             for r in sub_rows
         ), 2))
+        # Площадь опалубки плит подгруппы (фундаментные плиты — периметр ×
+        # толщина; перекрытия — периметр × толщина + площадь плиты) —
+        # пересчитывается по элементам своей части здания, чтобы сумма
+        # площадей опалубки подгрупп равнялась площади исходной группы.
+        perim_cols, depth_cols = _find_formwork_columns(headers)
+        formwork_area = 0.0
+        if perim_cols and depth_cols:
+            formwork_area = float(round(sum(
+                _element_formwork_area_m2(r, perim_cols, depth_cols)
+                for r in sub_rows
+            ), 2))
         return {
             'total_volume': volume,
             'total_areas': areas,
             'total_reinforcement': reinforcement,
+            'formwork_area': formwork_area,
         }
 
     result: List[Dict[str, Any]] = []
@@ -1330,12 +1344,18 @@ def build_reference_output(
         # (ReinforcementVolumeRatio из IFC). Не отправляется в API,
         # используется только при формировании финального перечня работ.
         '_reinforcementVolumeRatio': reinforcement_volume_ratio,
-        # Внутреннее служебное поле: площадь опалубки вертикальных граней
-        # плит группы (периметр × толщина, сумма по элементам, м²).
-        # Не отправляется в API — используется при формировании финального
-        # перечня работ для расценок монтажа/демонтажа опалубки (фундаментные
-        # плиты опалубливаются по боковой поверхности: периметр × толщина).
+        # Внутреннее служебное поле: площадь опалубки плит группы (м²,
+        # сумма по элементам). Не отправляется в API — используется при
+        # формировании финального перечня работ для расценок монтажа/
+        # демонтажа опалубки: фундаментные плиты опалубливаются по боковым
+        # граням (периметр × толщина), перекрытия — по боковым граням
+        # и нижней поверхности (периметр × толщина + площадь плиты).
         '_formworkArea': safe_parse_float(group.get('formwork_area', 0)),
+        # Внутреннее служебное поле: часть здания группы (Подземная /
+        # Цоколь / Надземная). Не отправляется в API (префикс '_'),
+        # используется при формировании финального перечня работ —
+        # таблица разбивается на части здания с итогами по каждой части.
+        '_buildingPart': part_key,
     }
 
         result.append(obj)
