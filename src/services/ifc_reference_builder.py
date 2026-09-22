@@ -37,6 +37,8 @@ from src.services.group_excel import (
     process_ifc_excel_ar,
     is_hydro_vertical,
     is_hydro_horizontal,
+    _find_volume_columns,
+    _get_part_from_storey_name,
 )
 
 logger = setup_logger(__name__)
@@ -898,6 +900,193 @@ def group_elements_by_type(
     # в формате справочника.
 
     return leaf_groups, full_groups, grouped_json_path, grouped_excel_path
+
+
+# =====================================================================
+#  РАЗДЕЛЕНИЕ ГРУПП ПО ЧАСТЯМ ЗДАНИЯ (ПЕРЕД ЗАПРОСОМ К API)
+# =====================================================================
+
+# Метки частей здания для path[0] подгрупп, полученных разделением
+# смешанной группы по частям здания (см. split_leaf_groups_by_part).
+# В путь подставляется метка нужной части здания — по ней
+# build_reference_output определяет характеристику «Расположение».
+_PART_PATH_LABELS = {
+    'Подземная': 'Подземная часть здания (до отм. 0,000)',
+    'Цоколь': 'Цокольная часть здания (отм. 0,000)',
+    'Надземная': 'Надземная часть здания (выше отм. 0,000)',
+}
+
+
+def _group_base_part(group: Dict[str, Any]) -> str:
+    """Часть здания листовой группы (для split_leaf_groups_by_part).
+
+    Приоритет — первый элемент пути группировки (Часть здания). Если части
+    здания в пути нет (АР-группировка по кодам МССК) — определяем по
+    «Этажу» первого элемента группы.
+    """
+    path = group.get('path') or []
+    part = str(path[0]) if path else ''
+    for known_part in ('Подземная', 'Цоколь', 'Надземная'):
+        if known_part in part:
+            return known_part
+    # АР-режим: части здания нет в пути — по «Этажу» первого элемента
+    first = group.get('first_element') or {}
+    location = _get_location_from_storey_type(str(first.get('Этаж', '')))
+    for known_part in ('Подземная', 'Цоколь', 'Надземная'):
+        if location.startswith(known_part):
+            return known_part
+    return 'Надземная'
+
+
+def _element_part(row: Dict[str, Any], base_part: str) -> str:
+    """Часть здания отдельного элемента группы.
+
+    Базовая часть — часть группы из дерева группировки (по числовому
+    индикатору «Этажа»). Для элементов надземной части она уточняется по
+    параметру «Тип этажа»: модели размечают 1-й этаж как цокольный
+    («Тип этажа» = «Цокольный»), хотя числовой индикатор «Этажа»
+    («1_этаж_основной») относит его к надземной части. Такие элементы
+    относятся к цокольной части здания.
+
+    Элементы подземной и цокольной ветвей группировки не переквалифицируются:
+    они уже отделены по «Этажу» (отрицательные отметки и «-N/M» — цоколь),
+    и перенос их по «Типу этажа» («Подземный») лишил бы лестничные марши/
+    площадки позиций справочника «Цокольная часть здания».
+    """
+    if base_part != 'Надземная':
+        return base_part
+    # Колонка «Тип_этажа» (подчёркивание) — формат таблиц извлечения IFC;
+    # вариант с пробелом — формат отдельных PDF-таблиц
+    storey_type = str(
+        row.get('Тип_этажа', '') or row.get('Тип этажа', '') or ''
+    ).strip().lower()
+    if storey_type.startswith('подземн'):
+        return 'Подземная'
+    if storey_type.startswith('цоколь'):
+        return 'Цоколь'
+    return base_part
+
+
+def split_leaf_groups_by_part(
+    leaf_groups: List[Dict[str, Any]],
+    elements_rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Разделяет листовые группы по частям здания перед запросом к API ТСН.
+
+    В группе могут быть элементы разных частей здания — например, стены
+    одного типоразмера на 1-м цокольном этаже и на надземных этажах.
+    Параметры в запросе к API берутся по первому элементу группы, поэтому
+    вся группа запрашивалась как одна часть здания: расценки остальных
+    частей не попадали в финальный перечень, а объём группы целиком
+    относился к части первого элемента.
+
+    Смешанная группа делится на подгруппы по частям здания
+    (надземная / подземная / цокольная). Каждая подгруппа отправляется
+    отдельным запросом со СВОИМИ объёмом, площадями и расходом арматуры;
+    сумма показателей подгрупп равна показателям исходной группы.
+
+    Аргументы:
+        leaf_groups   — листовые группы дерева группировки (ключ indices
+            ссылается на позиции строк elements_rows).
+        elements_rows — строки элементов (записи DataFrame отфильтрованных
+            элементов, по которым выполнялась группировка).
+
+    Возвращает:
+        Новый список листовых групп: несмешанные группы — без изменений,
+        смешанные — разбитые на подгруппы по частям здания.
+    """
+    if not leaf_groups or not elements_rows:
+        return list(leaf_groups)
+
+    headers = list(elements_rows[0].keys())
+    volume_cols = _find_volume_columns(headers)
+
+    def _row_volume(row: Dict[str, Any]) -> float:
+        # Первое ненулевое значение среди колонок-источников объёма
+        # (coalesce — та же логика, что в _create_group/group_elements)
+        for col in volume_cols:
+            val = safe_parse_float(row.get(col, 0))
+            if val > 0:
+                return val
+        return 0.0
+
+    def _recompute_aggregates(sub_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Агрегаты подгруппы: объём, площади, расход арматуры (суммы)."""
+        volume = float(round(sum(_row_volume(r) for r in sub_rows), 2))
+        areas: Dict[str, float] = {}
+        for col in headers:
+            if 'площадь' not in str(col).lower():
+                continue
+            total = sum(safe_parse_float(r.get(col, 0)) for r in sub_rows)
+            if total > 0:
+                areas[col] = float(round(total, 2))
+        reinforcement = float(round(sum(
+            safe_parse_float(r.get('ReinforcementVolumeRatio', 0)) * _row_volume(r)
+            for r in sub_rows
+        ), 2))
+        return {
+            'total_volume': volume,
+            'total_areas': areas,
+            'total_reinforcement': reinforcement,
+        }
+
+    result: List[Dict[str, Any]] = []
+
+    for group in leaf_groups:
+        # Раскладываем элементы группы по частям здания
+        rows_by_part: Dict[str, List[int]] = {}
+        parts_order: List[str] = []
+        base_part = _group_base_part(group)
+        for idx in group.get('indices') or []:
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                continue
+            if not 0 <= idx < len(elements_rows):
+                continue
+            part = _element_part(elements_rows[idx], base_part)
+            if part not in rows_by_part:
+                rows_by_part[part] = []
+                parts_order.append(part)
+            rows_by_part[part].append(idx)
+
+        # Несмешанная группа (или элементы не найдены) — без изменений
+        if len(rows_by_part) <= 1:
+            result.append(group)
+            continue
+
+        path = list(group.get('path') or [])
+        logger.info(
+            f"Разделение группы по частям здания: "
+            f"{path[-1] if path else group.get('name', '?')} "
+            f"({group.get('count', len(group.get('indices') or []))} эл.) → "
+            + ", ".join(f"{p}: {len(rows_by_part[p])} эл." for p in parts_order)
+        )
+
+        for part in parts_order:
+            sub_indices = sorted(rows_by_part[part])
+            sub_rows = [elements_rows[i] for i in sub_indices]
+            aggregates = _recompute_aggregates(sub_rows)
+
+            sub_group = dict(group)
+            sub_group['indices'] = sub_indices
+            sub_group['count'] = len(sub_indices)
+            # Первый элемент подгруппы — элемент СВОЕЙ части здания
+            sub_group['first_element'] = dict(elements_rows[sub_indices[0]])
+            sub_group.update(aggregates)
+
+            # В path[0] подставляем метку части подгруппы — по ней
+            # build_reference_output определит «Расположение»
+            sub_path = list(path)
+            if sub_path:
+                sub_path[0] = _PART_PATH_LABELS[part]
+            else:
+                sub_path = [_PART_PATH_LABELS[part]]
+            sub_group['path'] = sub_path
+
+            result.append(sub_group)
+
+    return result
 
 
 # =====================================================================

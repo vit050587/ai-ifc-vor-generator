@@ -1622,7 +1622,10 @@ class SessionManager:
             # финальный перечень работ (этапы 1-4 не выполняются).
             # АР: сохраняется прежний пайплайн LLM (этапы 1-4).
             if processing_type == "KR":
-                from src.services.ifc_reference_builder import build_reference_output
+                from src.services.ifc_reference_builder import (
+                    build_reference_output,
+                    split_leaf_groups_by_part,
+                )
                 from src.services.api_works_lookup import (
                     fetch_works_from_api,
                     build_final_works_from_api,
@@ -1633,8 +1636,19 @@ class SessionManager:
                     f"Запуск {run_number}: Подготовка групп элементов для API подбора работ..."
                 )
 
+                # Разделение смешанных групп по частям здания
+                # (надземная/подземная/цокольная): в группе могут быть
+                # элементы разных частей здания, а параметры запроса к API
+                # берутся по первому элементу группы. Каждая часть
+                # отправляется отдельным запросом со своим объёмом
+                # (сумма объёмов подгрупп = объём исходной группы).
+                elements_rows = pd.read_excel(
+                    filtered_path, sheet_name='Данные'
+                ).to_dict('records')
+                api_leaf_groups = split_leaf_groups_by_part(leaf_groups, elements_rows)
+
                 # Преобразуем листовые группы в формат ifc_raw_elements_grouped.json
-                api_groups = build_reference_output(leaf_groups, groups)
+                api_groups = build_reference_output(api_leaf_groups, groups)
                 if not api_groups:
                     raise RuntimeError(
                         "Не удалось сформировать группы элементов для API подбора работ"
