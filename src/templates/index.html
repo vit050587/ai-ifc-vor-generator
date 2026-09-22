@@ -283,6 +283,9 @@
         }
         .position-link:hover { color: #2c5282; transform: scale(1.2); }
         .position-link svg { display: block; }
+        /* Серая иконка «группа отсутствует в цифровом сборнике» (не кликабельна) */
+        .position-link.missing { color: #a0aec0; cursor: default; }
+        .position-link.missing:hover { color: #a0aec0; transform: none; }
         .pl-more { font-size: 11px; color: #718096; font-weight: 600; }
         .btn {
             padding: 10px 24px;
@@ -1132,13 +1135,23 @@ const POSITION_LINK_SVG =
 // размещается прижатой к правому краю строки группы.
 // На группу отображается ровно одна ссылка (первая позиция варианта),
 // как в режиме КР — даже если в position_links.json сохранено несколько.
+// Если группа (nameKey) известна, но позиций в ЦС не найдено — серая
+// некликабельная иконка «отсутствует в цифровом сборнике».
 function positionLinksHtml(nameKey, part, geo) {
     const positions = pickPositionVariant(nameKey, part, geo);
-    if (!positions || positions.length === 0) return '';
-    const p = positions[0];
-    return `<a class="position-link" href="https://digital-collection.mgexp.org/building-elements/position/${p.id}"` +
-        ` target="_blank" rel="noopener" title="Открыть в цифровом сборнике: ${p.name || 'позиция ' + p.id}"` +
-        ` onclick="event.stopPropagation()">${POSITION_LINK_SVG}</a>`;
+    if (positions && positions.length > 0) {
+        const p = positions[0];
+        return `<a class="position-link" href="https://digital-collection.mgexp.org/building-elements/position/${p.id}"` +
+            ` target="_blank" rel="noopener" title="Открыть в цифровом сборнике: ${p.name || 'позиция ' + p.id}"` +
+            ` onclick="event.stopPropagation()">${POSITION_LINK_SVG}</a>`;
+    }
+    // Группа есть в предпросмотре, но в цифровом сборнике не найдена
+    // (вариант сохранён в position_links.json с пустым списком позиций)
+    if (positionLinks[nameKey]) {
+        return `<span class="position-link missing" title="Группа отсутствует в цифровом сборнике"` +
+            ` onclick="event.stopPropagation()">${POSITION_LINK_SVG}</span>`;
+    }
+    return '';
 }
 
 // Расставляет иконки-ссылки по уже отрисованным заголовкам групп

@@ -2,10 +2,11 @@
 Построение ссылок на позиции цифрового сборника для групп элементов.
 
 Сразу после обработки IFC/PDF (до нажатия «Запустить обработку») читает
-ifc_raw_elements_grouped.json из корня сессии и отправляет каждую группу
-элементов в API справочника ТСН (тот же эндпоинт и тот же формат запроса,
-что используются при подборе работ в режиме КР). Из ответов берутся id
-позиций, и формируется файл position_links.json:
+ifc_elements_output.json из корня сессии (поэлементный справочник в формате
+API) и отправляет каждую группу элементов предпросмотра в API справочника
+ТСН (тот же эндпоинт и тот же формат запроса, что используются при подборе
+работ в режиме КР). Из ответов берутся id позиций, и формируется файл
+position_links.json:
 
     {
         "<Имя элемента без цифрового ID>": [
@@ -26,6 +27,14 @@ ifc_raw_elements_grouped.json из корня сессии и отправляе
 иметь несколько вариантов (разные части здания / геометрия) — фронтенд
 выбирает вариант по контексту своей группы.
 
+ВАЖНО: ключи строятся по каждой строке предпросмотра (по «Имени элемента»
+из ifc_elements_output.json), а не по листовым группам группировки —
+несколько nameKey могут попадать в одну листовую группу (например, стены
+220 и 250 мм внутри геометрической группы «до 300»), и каждому нужен свой
+запрос к API. Вариант (nameKey, part, geo), для которого API не вернул
+позиций, сохраняется с пустым списком positions — фронтенд рисует для него
+серую иконку «отсутствует в цифровом сборнике».
+
 Позиции фильтруются по характеристикам группы:
   * точное совпадение («Расположение», «Материал»);
   * числовые диапазоны («Толщина: более 150 до 200» и т.п.) — по сырому
@@ -35,12 +44,19 @@ ifc_raw_elements_grouped.json из корня сессии и отправляе
 позиция — у группы элементов одна ссылка на карточку цифрового сборника.
 Фронтенд по выбранному варианту рисует кликабельную иконку 📎 со ссылкой
 https://digital-collection.mgexp.org/building-elements/position/<id>.
+
+Варианты, отсутствующие в цифровом сборнике (и варианты с ошибкой запроса),
+дополнительно сохраняются отдельными файлами в корне сессии:
+  * Отсутствующие_в_ЦС_группы.json — полный список с характеристиками;
+  * Отсутствующие_в_ЦС_группы.xlsx — табличный вид для скачивания.
 """
 
 import json
 import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
+
+import pandas as pd
 
 from src.core.logger import setup_logger
 from src.services.api_works_lookup import _fetch_one
@@ -49,6 +65,13 @@ logger = setup_logger(__name__)
 
 # Имя файла со ссылками в корне сессии
 POSITION_LINKS_FILENAME = "position_links.json"
+
+# Поэлементный справочник (источник групп предпросмотра)
+ELEMENTS_JSON_FILENAME = "ifc_elements_output.json"
+
+# Файлы отсутствующих в цифровом сборнике групп (корень сессии)
+MISSING_GROUPS_JSON_FILENAME = "Отсутствующие_в_ЦС_группы.json"
+MISSING_GROUPS_XLSX_FILENAME = "Отсутствующие_в_ЦС_группы.xlsx"
 
 # Базовый URL страницы позиции в цифровом сборнике
 POSITION_URL_TEMPLATE = (
@@ -96,7 +119,8 @@ def _get_name_key(group: Dict[str, Any]) -> str:
     """Определяет ключ группы (имя элемента без цифрового ID).
 
     Приоритет: additionalCharacteristics['Имя элемента'] (имя из Revit,
-    по которому фронтенд группирует строки), иначе buildingElementName.
+    по которому фронтенд группирует строки предпросмотра), иначе —
+    'Без названия' (как getNameKey() во фронтенде для пустых имён).
     """
     for char in group.get("additionalCharacteristics", []) or []:
         if isinstance(char, dict) and char.get("name") == "Имя элемента":
@@ -105,7 +129,7 @@ def _get_name_key(group: Dict[str, Any]) -> str:
                 raw = values[0].get("strValue", "")
                 if raw and raw != "-":
                     return normalize_element_name(raw)
-    return normalize_element_name(group.get("buildingElementName", ""))
+    return "Без названия"
 
 
 def _chars_to_dict(chars: List[Dict[str, Any]]) -> Dict[str, str]:
@@ -315,86 +339,182 @@ def _extract_positions(
     return [{"id": p["id"], "name": p["name"]} for p in filtered[:1]]
 
 
+def _variant_material(characteristics: List[Dict[str, Any]]) -> str:
+    """Материал варианта группы (из characteristics в формате API)."""
+    for char in characteristics or []:
+        if isinstance(char, dict) and char.get("name") == "Материал":
+            values = char.get("values") or []
+            if values and isinstance(values[0], dict):
+                return str(values[0].get("strValue", ""))
+    return ""
+
+
+def _save_missing_groups(
+    missing: List[Dict[str, Any]],
+    session_dir: str,
+) -> None:
+    """Сохраняет отсутствующие в цифровом сборнике группы в JSON и XLSX.
+
+    Аргументы:
+        missing — список записей {nameKey, part, geo, buildingElementName,
+            characteristics, elementCount, reason}.
+        session_dir — корневая директория сессии.
+    """
+    json_path = os.path.join(session_dir, MISSING_GROUPS_JSON_FILENAME)
+    try:
+        with open(json_path, "w", encoding="utf-8") as fh:
+            json.dump(missing, fh, ensure_ascii=False, indent=2, default=str)
+    except Exception as exc:
+        logger.error(f"position_links: не удалось сохранить {json_path}: {exc}")
+
+    # Табличный вид (№ / часть здания / группа / тип позиции ЦС /
+    # материал / геометрия / количество элементов / причина)
+    columns = [
+        "№ п/п", "Часть здания", "Группа элементов", "Тип позиции ЦС",
+        "Материал", "Геометрия", "Кол-во элементов", "Причина",
+    ]
+    rows = []
+    for index, item in enumerate(missing, 1):
+        rows.append({
+            "№ п/п": index,
+            "Часть здания": item.get("part", ""),
+            "Группа элементов": item.get("nameKey", ""),
+            "Тип позиции ЦС": item.get("buildingElementName", ""),
+            "Материал": _variant_material(item.get("characteristics")),
+            "Геометрия": item.get("geo", ""),
+            "Кол-во элементов": item.get("elementCount", 0),
+            "Причина": item.get("reason", ""),
+        })
+
+    xlsx_path = os.path.join(session_dir, MISSING_GROUPS_XLSX_FILENAME)
+    try:
+        pd.DataFrame(rows, columns=columns).to_excel(xlsx_path, index=False)
+    except Exception as exc:
+        logger.error(f"position_links: не удалось сохранить {xlsx_path}: {exc}")
+        return
+
+    logger.info(
+        f"position_links: сохранены отсутствующие в ЦС группы "
+        f"({len(missing)} шт.): {json_path}, {xlsx_path}"
+    )
+
+
 def build_position_links(
     session_dir: str,
     grouped_filename: str = "ifc_raw_elements_grouped.json",
 ) -> Dict[str, List[Dict[str, Any]]]:
-    """Запрашивает id позиций для всех групп и сохраняет position_links.json.
+    """Запрашивает id позиций для всех групп предпросмотра и сохраняет
+    position_links.json (+ файлы отсутствующих групп).
+
+    Группы берутся из ifc_elements_output.json — по каждой строке
+    предпросмотра (nameKey = «Имя элемента» без цифрового ID), а не по
+    листовым группам группировки: несколько nameKey могут попадать в одну
+    листовую группу (например, стены 220 и 250 мм внутри геометрической
+    группы «до 300»), и каждой нужен свой запрос к API.
 
     Аргументы:
         session_dir — корневая директория сессии.
-        grouped_filename — имя JSON с группами элементов в формате API
-            (ifc_raw_elements_grouped.json).
+        grouped_filename — устаревший параметр (совместимость сигнатуры),
+            не используется: источник групп — ifc_elements_output.json.
 
     Возвращает:
         Словарь {имя_элемента: [{"part": ..., "geo": ..., "positions": [...]}, ...]}.
-        При отсутствии групп/ошибках запросов возвращается то, что удалось
-        собрать (возможно, пустой словарь).
+        Варианты, отсутствующие в ЦС, сохраняются с пустым positions.
+        При отсутствии элементов/ошибках запросов возвращается то, что
+        удалось собрать (возможно, пустой словарь).
     """
-    grouped_path = os.path.join(session_dir, grouped_filename)
-    if not os.path.isfile(grouped_path):
+    elements_path = os.path.join(session_dir, ELEMENTS_JSON_FILENAME)
+    if not os.path.isfile(elements_path):
         logger.warning(
-            f"position_links: не найден {grouped_path} — ссылки не построены"
+            f"position_links: не найден {elements_path} — ссылки не построены"
         )
         return {}
 
     try:
-        with open(grouped_path, "r", encoding="utf-8") as fh:
-            groups = json.load(fh)
+        with open(elements_path, "r", encoding="utf-8") as fh:
+            elements = json.load(fh)
     except Exception as exc:
-        logger.error(f"position_links: ошибка чтения {grouped_path}: {exc}")
+        logger.error(f"position_links: ошибка чтения {elements_path}: {exc}")
         return {}
 
-    if not isinstance(groups, list) or not groups:
-        logger.warning("position_links: пустой список групп — ссылки не построены")
+    if not isinstance(elements, list) or not elements:
+        logger.warning("position_links: пустой список элементов — ссылки не построены")
         return {}
 
-    # {nameKey: {(part, geo): {"id": position}}}
-    variants: Dict[str, Dict[Tuple[str, str], Dict[int, Dict[str, Any]]]] = {}
-    errors = 0
-
-    for index, group in enumerate(groups, 1):
-        if not isinstance(group, dict):
+    # Варианты групп предпросмотра: {nameKey: {(part, geo): [элементы]}}
+    variants: Dict[str, Dict[Tuple[str, str], List[Dict[str, Any]]]] = {}
+    for element in elements:
+        if not isinstance(element, dict):
             continue
-        name_key = _get_name_key(group)
+        name_key = _get_name_key(element)
         if not name_key:
             continue
 
-        characteristics = _chars_to_dict(group.get("characteristics"))
-        additional = _chars_to_dict(group.get("additionalCharacteristics"))
+        characteristics = _chars_to_dict(element.get("characteristics"))
+        additional = _chars_to_dict(element.get("additionalCharacteristics"))
         part = _extract_part(characteristics, additional) or "Надземная"
         geo = _extract_geo(characteristics)
 
-        try:
-            response = _fetch_one(group)
-        except Exception as exc:
-            errors += 1
-            logger.warning(
-                f"position_links: запрос {index}/{len(groups)} ({name_key}) "
-                f"не удался: {exc}"
-            )
-            continue
+        variants.setdefault(name_key, {}).setdefault((part, geo), []).append(element)
 
-        positions = _extract_positions(response, characteristics, additional)
-        if not positions:
-            continue
+    total_variants = sum(len(v) for v in variants.values())
+    logger.info(
+        f"position_links: групп предпросмотра={len(variants)}, "
+        f"вариантов (часть/геометрия)={total_variants}"
+    )
 
-        group_variants = variants.setdefault(name_key, {})
-        bucket = group_variants.setdefault((part, geo), {})
-        for pos in positions:
-            bucket.setdefault(pos["id"], pos)
-
-    # Собираем итоговый формат
+    # {nameKey: [(part, geo, positions)]}, отсутствующие в ЦС варианты
     links: Dict[str, List[Dict[str, Any]]] = {}
-    for name_key, group_variants in variants.items():
-        links[name_key] = [
-            {
+    missing: List[Dict[str, Any]] = []
+    errors = 0
+    index = 0
+
+    for name_key in variants:
+        links[name_key] = []
+        for (part, geo), elems in sorted(variants[name_key].items()):
+            index += 1
+            first = elems[0]
+
+            # Запрос к API — первый элемент варианта в формате API
+            # (служебные поля с префиксом '_' в запрос не входят)
+            payload = {
+                key: value for key, value in first.items()
+                if not key.startswith('_')
+            }
+            characteristics = _chars_to_dict(first.get("characteristics"))
+            additional = _chars_to_dict(first.get("additionalCharacteristics"))
+
+            positions: List[Dict[str, Any]] = []
+            reason = ""
+            try:
+                response = _fetch_one(payload)
+                positions = _extract_positions(response, characteristics, additional)
+            except Exception as exc:
+                errors += 1
+                reason = f"Ошибка запроса к API ТСН: {exc}"
+                logger.warning(
+                    f"position_links: запрос {index}/{total_variants} "
+                    f"({name_key}, {part}, {geo}) не удался: {exc}"
+                )
+
+            links[name_key].append({
                 "part": part,
                 "geo": geo,
-                "positions": sorted(bucket.values(), key=lambda p: p["id"]),
-            }
-            for (part, geo), bucket in sorted(group_variants.items())
-        ]
+                "positions": positions,
+            })
+
+            # Вариант отсутствует в цифровом сборнике (или ошибка запроса) —
+            # фиксируем для отдельного файла отсутствующих групп
+            if not positions:
+                missing.append({
+                    "nameKey": name_key,
+                    "part": part,
+                    "geo": geo,
+                    "buildingElementName": first.get("buildingElementName", ""),
+                    "characteristics": first.get("characteristics") or [],
+                    "elementCount": len(elems),
+                    "reason": reason or "Позиции в цифровом сборнике не найдены",
+                })
 
     output_path = os.path.join(session_dir, POSITION_LINKS_FILENAME)
     try:
@@ -404,10 +524,14 @@ def build_position_links(
         logger.error(f"position_links: не удалось сохранить {output_path}: {exc}")
         return links
 
+    # Отдельные файлы отсутствующих в ЦС групп (JSON + XLSX)
+    _save_missing_groups(missing, session_dir)
+
     total = sum(len(v["positions"]) for vs in links.values() for v in vs)
     logger.info(
         f"position_links: сохранён {output_path} "
-        f"(групп={len(links)}, позиций={total}, ошибок={errors})"
+        f"(групп={len(links)}, позиций={total}, "
+        f"отсутствующих в ЦС={len(missing)}, ошибок={errors})"
     )
     return links
 

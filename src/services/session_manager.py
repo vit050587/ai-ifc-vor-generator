@@ -1137,11 +1137,11 @@ class SessionManager:
             if not os.path.isdir(session_dir):
                 return
 
-            grouped_path = os.path.join(session_dir, "ifc_raw_elements_grouped.json")
-            if not os.path.isfile(grouped_path):
+            elements_path = os.path.join(session_dir, "ifc_elements_output.json")
+            if not os.path.isfile(elements_path):
                 logger.info(
                     f"position_links: в сессии {session_id} нет "
-                    f"ifc_raw_elements_grouped.json — построение ссылок пропущено"
+                    f"ifc_elements_output.json — построение ссылок пропущено"
                 )
                 return
 
