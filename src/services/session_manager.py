@@ -1905,6 +1905,19 @@ class SessionManager:
                 }
                 final_files = [f for f in final_files if f['filename'] in ar_final_files]
 
+            # КР: в итоговую выдачу запуска входит только финальный
+            # перечень работ (ОБЩИЙ_Финальный_перечень_работ.xlsx);
+            # остальные артефакты (final_result_KR.json,
+            # selected_elements_grouped.json, ДЛЯ_СМЕТЧИКА_*.xlsx,
+            # Дерево_проекта_*.xlsx, справочные JSON, IFC_исходные_параметры.*)
+            # остаются в run_<NNN>/ и корне сессии на диске (доступны для
+            # отладки), но не отдаются как результаты запуска
+            if processing_type == "KR":
+                kr_final_files = {
+                    'ОБЩИЙ_Финальный_перечень_работ.xlsx',
+                }
+                final_files = [f for f in final_files if f['filename'] in kr_final_files]
+
             # Обновляем run
             with self._state_lock:
                 if session_id in self._sessions:

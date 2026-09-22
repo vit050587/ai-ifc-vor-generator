@@ -660,12 +660,17 @@ def _monolith_base_section_codes(part: str, height: Optional[float]) -> List[str
 
 
 def _select_collection_6(el: dict, constants: Dict[str, Any]) -> List[dict]:
-    """Сб. 6 (монолит): COMPLEX (отдел 1.1) или SEPARATE-пакет (отделы 1.2-1.4)."""
+    """Сб. 6 (монолит): COMPLEX или SEPARATE. Для монолитных элементов
+    в COMPLEX-режиме ДОПОЛНИТЕЛЬНО добавляем SEPARATE-пакет таблиц —
+    это нужно для развёрнутого расчёта (опалубка + армирование +
+    бетонирование + уход отдельными работами)."""
     formwork = (constants.get("formwork_type") or "").lower()
     complex_mode = formwork.startswith("деревянная") or not formwork
 
+    index = _table_index()
+
     if complex_mode:
-        # Отдел 1.1 — комплексная таблица (опалубка+арматура+бетон)
+        # ... существующая логика выбора комплексной таблицы (без изменений) ...
         ifc_class = el.get("ifc_class", "")
         part = constants["building_part"]
         main, additional = None, []
@@ -694,23 +699,30 @@ def _select_collection_6(el: dict, constants: Dict[str, Any]) -> List[dict]:
         else:
             # Неизвестный класс — поиск по ключевым словам в отделе 1.1
             matched = _keyword_tables(el, "Сборник  6. Бетонные, железобетонные конструкции монолитные")
-            return [
-                dict(t, role="main", work_type="COMPLEX")
-                for t in matched[:1]
-            ]
+            works = [dict(t, role="main", work_type="COMPLEX") for t in matched[:1]]
+            return works
 
         works = []
-        index = _table_index()
         if main and main in index:
             works.append(dict(index[main], role="main", work_type="COMPLEX"))
         for code in additional:
             if code in index:
                 works.append(dict(index[code], role="additional", work_type="COMPLEX"))
+
+        # [NEW] Для ж/б монолитных — добавляем SEPARATE-пакет для развёрнутого расчёта
+        if _is_reinforced(el):
+            package_codes = _monolith_package_codes(el, constants)
+            for code in package_codes:
+                if code in index:
+                    works.append(dict(index[code], role="package", work_type="SEPARATE"))
+            curing = _curing_table(constants)
+            if curing in index:
+                works.append(dict(index[curing], role="additional", work_type="SEPARATE"))
+
         return works
 
-    # Отделы 1.2-1.4 — SEPARATE-пакет + уход за бетоном
+    # Отделы 1.2-1.4 — SEPARATE (без изменений)
     codes = _monolith_package_codes(el, constants)
-    index = _table_index()
     works = []
     for code in codes:
         if code in index:
