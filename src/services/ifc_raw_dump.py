@@ -16,9 +16,11 @@
 чтобы избежать бесконечной рекурсии по циклическим ссылкам).
 """
 
+import math
 import os
 
 import ifcopenshell
+import ifcopenshell.geom
 import numpy as np
 import pandas as pd
 
@@ -1126,6 +1128,90 @@ def _compute_bbox_quantities(element):
     except Exception as exc:
         gid = getattr(element, "GlobalId", "?")
         logger.debug(f"Ошибка вычисления bbox-количеств для элемента {gid}: {exc}")
+
+    return result
+
+
+# =====================================================================
+#  BBOX-ФОЛБЭК ПЕРИМЕТРА/ТОЛЩИНЫ ДЛЯ РАСЧЁТА ОПАЛУБКИ (РЕЖИМ КР)
+# =====================================================================
+
+# Классы элементов, для которых выполняется bbox-фолбэк периметра/толщины:
+#   * IfcSlab — плиты, у которых QTO не содержит Perimeter/Depth
+#     (неполная выгрузка Revit: приямки, часть фундаментных плит);
+#   * IfcStairFlight — лестничные марши: Qto_StairFlightBaseQuantities
+#     в принципе не содержит Perimeter/Depth (только Length/Volume).
+_FORMWORK_BBOX_CLASSES = ("IfcSlab", "IfcStairFlight")
+
+
+def _compute_formwork_bbox_quantities(element):
+    """Вычисляет периметр/толщину элемента из геометрии (bbox, режим КР).
+
+    Вызывается для ОТДЕЛЬНЫХ элементов с неполным QTO — когда QTO есть у
+    файла в целом, но у конкретного элемента нет QTO-периметра/толщины,
+    необходимых для расчёта площади опалубки плит (периметр × толщина).
+    Габариты вычисляются в МИРОВЫХ координатах (USE_WORLD_COORDS):
+    вертикальный габарит Z — подъём марша, горизонтальные X/Y — заложение
+    и ширина марша.
+
+    Возвращает словарь с ключами 'perimeter_mm' и 'depth_mm':
+      * IfcSlab — периметр = 2 × (два наибольших габарита bbox),
+        толщина = наименьший габарит (плита горизонтальна);
+      * IfcStairFlight — периметр = 2 × длина по склону (два боковых
+        ребра марша), толщина = ширина марша: произведение
+        периметр × толщина даёт площадь ДВУХ боковых граней марша
+        (опалубка монолитного марша);
+      * прочие классы — пустой словарь.
+
+    Оценка по bbox приближённая (периметр прямоугольного следа). Если
+    геометрия недоступна — пустой словарь.
+    """
+    result = {}
+    try:
+        ifc_class = element.is_a() if hasattr(element, "is_a") else ""
+        if ifc_class not in _FORMWORK_BBOX_CLASSES:
+            return result
+
+        settings = ifcopenshell.geom.settings()
+        settings.set(settings.USE_WORLD_COORDS, True)
+        # CONVERT_BACK_UNITS: значения возвращаются в единицах длины
+        # проекта (обычно мм) — как и в остальном конвейере, где
+        # координаты/габариты IFC считаются в миллиметрах.
+        settings.set(settings.CONVERT_BACK_UNITS, True)
+        shape = ifcopenshell.geom.create_shape(settings, element)
+        verts = shape.geometry.verts
+        if len(verts) < 3:
+            return result
+
+        xs = verts[0::3]
+        ys = verts[1::3]
+        zs = verts[2::3]
+        dx = max(xs) - min(xs)
+        dy = max(ys) - min(ys)
+        dz = max(zs) - min(zs)
+        if min(dx, dy, dz) <= 0:
+            return result
+
+        if ifc_class == "IfcSlab":
+            # Плита горизонтальна: два наибольших габарита — план,
+            # наименьший — толщина. Координаты в IFC — в миллиметрах.
+            dims = sorted((dx, dy, dz), reverse=True)
+            result["perimeter_mm"] = round(float(2.0 * (dims[0] + dims[1])), 1)
+            result["depth_mm"] = round(float(dims[2]), 1)
+        else:
+            # Лестничный марш: Z — подъём (вертикальный габарит),
+            # горизонтальные габариты X/Y — заложение и ширина марша.
+            # Заложение — больший из двух горизонтальных габаритов.
+            run = max(dx, dy)
+            width = min(dx, dy)
+            slope = math.hypot(run, dz)
+            result["perimeter_mm"] = round(float(2.0 * slope), 1)
+            result["depth_mm"] = round(float(width), 1)
+    except Exception as exc:
+        gid = getattr(element, "GlobalId", "?")
+        logger.debug(
+            f"Ошибка bbox-фолбэка периметра/толщины для элемента {gid}: {exc}"
+        )
 
     return result
 

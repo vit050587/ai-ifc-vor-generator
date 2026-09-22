@@ -249,6 +249,50 @@ def _normalize_material(material_str: str) -> str:
     return material_str.capitalize() if material_str else ''
 
 
+def _is_precast_element(element_data: dict, path=None) -> bool:
+    """Определяет, является ли элемент СБОРНЫМ железобетоном.
+
+    В цифровом сборнике (ЦС) содержатся только монолитные конструкции,
+    поэтому для сборных элементов работы из ЦС не подбираются. Признак
+    определяется по «сырым» данным элемента/группы:
+
+      1. Материал элемента (колонка «Материал», в режиме КР заполняется
+         из ExpCheck_*::MGE_Material): «Железобетон сборный» и т.п.;
+      2. Свойство ConstructionMethod (Pset_ConcreteElementGeneral):
+         значение Precast;
+      3. Путь группировки: уровень материала из справочника
+         materials_mssk_nested.json («Железобетон сборный (СТ 00 15 01)»).
+
+    Нормализованное имя материала групп НЕ меняется (в характеристике
+    «Материал» остаётся «Железобетон» — существующие группы не ломаются),
+    признак сборности передаётся отдельным служебным полем ``_isPrecast``.
+
+    Аргументы:
+        element_data — данные первого элемента группы (сырой ряд таблицы);
+        path         — путь группировки листовой группы (или None).
+
+    Возвращает:
+        True, если элемент сборный.
+    """
+    # 1. Сырой материал элемента
+    material = str(element_data.get('Материал', '') or '').lower()
+    if 'сборн' in material:
+        return True
+
+    # 2. ConstructionMethod = Precast (Pset_ConcreteElementGeneral)
+    for key, value in element_data.items():
+        if 'constructionmethod' in str(key).lower():
+            if 'precast' in str(value or '').lower():
+                return True
+
+    # 3. Уровень материала в пути группировки
+    for seg in path or []:
+        if 'сборн' in str(seg or '').lower():
+            return True
+
+    return False
+
+
 def _get_original_geometry(element_data: dict, ifc_type: str) -> Optional[float]:
     """Возвращает оригинальное числовое значение геометрии элемента."""
     if ifc_type == 'IfcWall':
@@ -1351,6 +1395,11 @@ def build_reference_output(
         # граням (периметр × толщина), перекрытия — по боковым граням
         # и нижней поверхности (периметр × толщина + площадь плиты).
         '_formworkArea': safe_parse_float(group.get('formwork_area', 0)),
+        # Внутреннее служебное поле: признак сборного железобетона (см.
+        # _is_precast_element). В ЦС только монолитные конструкции, поэтому
+        # для сборных групп работы из ЦС не подбираются (api_works_lookup).
+        # Не отправляется в API (префикс '_').
+        '_isPrecast': _is_precast_element(first, path),
         # Внутреннее служебное поле: часть здания группы (Подземная /
         # Цоколь / Надземная). Не отправляется в API (префикс '_'),
         # используется при формировании финального перечня работ —

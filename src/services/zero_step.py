@@ -9,7 +9,10 @@ from datetime import datetime
 from pathlib import Path
 
 from src.core.logger import setup_logger
-from src.services.ifc_raw_dump import _compute_bbox_quantities
+from src.services.ifc_raw_dump import (
+    _compute_bbox_quantities,
+    _compute_formwork_bbox_quantities,
+)
 
 logger = setup_logger("zero_step")
 
@@ -706,6 +709,28 @@ def _resolve_expcheck_material(info: dict, ifc_class: str):
     return None
 
 
+def _has_positive_qto_value(info: dict, keys) -> bool:
+    """Проверяет, есть ли в info положительное числовое значение среди ключей.
+
+    Аргументы:
+        info — словарь данных элемента (get_element_info);
+        keys — кортеж имён колонок-источников (обычный/префиксованный QTO).
+
+    Возвращает True, если хотя бы один ключ существует и содержит
+    число больше нуля.
+    """
+    for key in keys:
+        raw = info.get(key)
+        if raw is None or raw == '-':
+            continue
+        try:
+            if float(str(raw).replace(',', '.')) > 0:
+                return True
+        except (ValueError, TypeError):
+            continue
+    return False
+
+
 def get_element_info(element, processing_type: str = "KR"):
     """Собирает всю информацию об элементе
 
@@ -771,6 +796,47 @@ def get_element_info(element, processing_type: str = "KR"):
         except Exception as exc:
             logger.debug(f"Не удалось вычислить bbox-количества для "
                          f"{safe_get_attr(element, 'GlobalId')}: {exc}")
+
+    # По-элементный bbox-фолбэк периметра/толщины для расчёта площади
+    # опалубки (только режим КР). QTO может быть у файла в целом, но у
+    # отдельных элементов — неполным: IfcSlab без Perimeter/Depth
+    # (приямки, часть фундаментных плит) и IfcStairFlight (Qto_StairFlight-
+    # BaseQuantities не содержит Perimeter/Depth вовсе). Периметр и толщина
+    # вычисляются из геометрии (bbox) и попадают в обычные нормализованные
+    # колонки 'Длина_Perimeter_мм'/'Длина_Depth_мм' — по ним group_excel
+    # считает площадь опалубки плит (периметр × толщина; для маршей —
+    # площадь двух боковых граней).
+    if processing_type and str(processing_type).upper() == 'KR':
+        ifc_class = element.is_a()
+        if ifc_class in ('IfcSlab', 'IfcStairFlight'):
+            perim_present = _has_positive_qto_value(
+                info, ('Длина_Perimeter_мм',
+                       'QTO_Qto_SlabBaseQuantities_Длина_Perimeter_мм')
+            )
+            depth_present = _has_positive_qto_value(
+                info, ('Длина_Depth_мм',
+                       'QTO_Qto_SlabBaseQuantities_Длина_Depth_мм')
+            )
+            if not (perim_present and depth_present):
+                try:
+                    bbox_formwork = _compute_formwork_bbox_quantities(element)
+                except Exception as exc:
+                    bbox_formwork = {}
+                    logger.debug(
+                        f"Не удалось вычислить bbox-периметр/толщину для "
+                        f"{safe_get_attr(element, 'GlobalId')}: {exc}"
+                    )
+                if bbox_formwork:
+                    if not perim_present:
+                        info['Длина_Perimeter_мм'] = bbox_formwork['perimeter_mm']
+                    if not depth_present:
+                        info['Длина_Depth_мм'] = bbox_formwork['depth_mm']
+                    logger.debug(
+                        f"bbox-фолбэк опалубки ({ifc_class}) для "
+                        f"'{safe_get_attr(element, 'Name')}': периметр="
+                        f"{bbox_formwork['perimeter_mm']} мм, толщина="
+                        f"{bbox_formwork['depth_mm']} мм"
+                    )
 
     # Все свойства
     info.update(get_all_properties(element))
@@ -1443,6 +1509,9 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
             ],
             'ПЕРИМЕТР': [
                 'Свойство_Qto_StairBaseQuantities_Perimeter',
+                # bbox-фолбэк периметра лестничных маршей (2 × длина по
+                # склону) — заполняется в get_element_info для IfcStairFlight
+                'Длина_Perimeter_мм',
                 'Perimeter_мм', 'Периметр_мм'
             ],
             'ПЛОЩАДЬ': [

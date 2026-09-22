@@ -108,6 +108,37 @@ def _get_token() -> str:
 # Максимальный размер страницы — чтобы получить все позиции за один запрос.
 _PAGE_SIZE = 1000
 
+# Причина пропуска групп сборного железобетона: в цифровом сборнике (ЦС)
+# содержатся только монолитные конструкции, поэтому для сборных элементов
+# запрос к API подбора работ не отправляется. Причина фиксируется в
+# api_works_response.json и в заголовке группы финального перечня.
+PRECAST_SKIP_REASON = (
+    "Сборный железобетон — в цифровом сборнике только монолитные "
+    "конструкции, работы из ЦС не подбираются"
+)
+
+
+def _is_precast_group(element: Dict[str, Any]) -> bool:
+    """Признак сборного железобетона у группы элементов.
+
+    Признак ``_isPrecast`` устанавливается в
+    ifc_reference_builder.build_reference_output по сырому материалу
+    элемента («Железобетон сборный»), ConstructionMethod = Precast и
+    уровню материала в пути группировки. Для страховки (группы из
+    других источников) дублируется по нормализованному материалу
+    характеристики «Материал».
+    """
+    if element.get("_isPrecast"):
+        return True
+    for char in element.get("characteristics") or []:
+        if isinstance(char, dict) and char.get("name") == "Материал":
+            values = char.get("values") or []
+            material = str(
+                (values[0] or {}).get("strValue", "")
+            ).lower() if values else ""
+            return "сборн" in material
+    return False
+
 
 # =====================================================================
 #  POST-ЗАПРОС К API
@@ -397,6 +428,22 @@ def fetch_works_from_api(
 
     for index, element in enumerate(elements_json, 1):
         name = element.get("buildingElementName", "?")
+
+        # Сборный железобетон: в ЦС только монолитные конструкции —
+        # запрос к API не отправляется, работы не подбираются.
+        # Причина фиксируется в ответе (api_works_response.json) и в
+        # заголовке группы финального перечня работ.
+        if _is_precast_group(element):
+            logger.info(
+                f"API запрос {index}/{total}: {name} — ПРОПУЩЕН "
+                f"(сборный железобетон: в ЦС только монолитные конструкции)"
+            )
+            results.append((element, {
+                "data": [],
+                "_skipReason": PRECAST_SKIP_REASON,
+            }))
+            continue
+
         logger.info(f"API запрос {index}/{total}: {name}")
         response = _filter_response_by_height(_fetch_one(element), building_height)
         positions = response.get("data", []) or []
@@ -885,6 +932,12 @@ def build_final_works_from_api(
         element_count = element.get("elementCount", 1)
         if element_count > 1:
             element_full_name += f" Кол-во: {element_count}"
+
+        # Сборный железобетон: работы из ЦС не подбираются — причина
+        # фиксируется в заголовке группы (в ЦС только монолитные
+        # конструкции), чтобы сметчик видел, почему работ нет.
+        if _is_precast_group(element):
+            element_full_name += f" ({PRECAST_SKIP_REASON})"
 
         total_measure = element.get("totalMeasure", {})
         total_areas = element.get("totalAreas", {}) or {}
