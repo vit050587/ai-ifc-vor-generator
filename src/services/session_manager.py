@@ -1108,19 +1108,34 @@ class SessionManager:
     #  ССЫЛКИ НА ПОЗИЦИИ ЦИФРОВОГО СБОРНИКА (position_links.json)
     # =====================================================================
 
-    def _start_position_links_bg(self, session_id: str) -> None:
+    def _start_position_links_bg(self, session_id: str, building_height=None) -> None:
         """Запускает фоновое построение ссылок на позиции сборника.
 
         Ссылки (position_links.json) нужны фронтенду для кликабельных
         иконок 📎 в заголовках групп предпросмотра. Ошибки не влияют
         на статус сессии — только логируются.
+
+        building_height — высота здания, м (None — из записи сессии,
+        затем из файлов сессии); влияет на отбор позиций (позиции без
+        работ для этой высоты не получают ссылку).
         """
+        # Не запускаем параллельную пересборку для той же сессии:
+        # предыдущий поток ещё пишет position_links.json — дождёмся его
+        # (следующее изменение высоты запустит пересборку заново)
+        thread = getattr(self, "_position_links_thread", None)
+        if thread is not None and thread.is_alive():
+            logger.info(
+                f"position_links: пересборка для сессии {session_id} "
+                f"отложена — предыдущая ещё выполняется"
+            )
+            return
         thread = threading.Thread(
             target=self._build_position_links_bg,
-            args=(session_id,),
+            args=(session_id, building_height),
             daemon=True,
             name=f"PositionLinks-{session_id[:8]}",
         )
+        self._position_links_thread = thread
         try:
             thread.start()
         except Exception as exc:
@@ -1129,7 +1144,7 @@ class SessionManager:
                 f"сессии {session_id}: {exc}"
             )
 
-    def _build_position_links_bg(self, session_id: str) -> None:
+    def _build_position_links_bg(self, session_id: str, building_height=None) -> None:
         try:
             from src.services.position_links import build_position_links
 
@@ -1145,7 +1160,13 @@ class SessionManager:
                 )
                 return
 
-            build_position_links(session_dir)
+            # Высота здания: явная → из записи сессии (filter_height) →
+            # из файлов сессии (внутри build_position_links)
+            if building_height is None:
+                s = self.get(session_id) or {}
+                building_height = s.get("building_height")
+
+            build_position_links(session_dir, building_height=building_height)
         except Exception as exc:
             logger.warning(
                 f"Ошибка построения ссылок позиций для сессии {session_id}: {exc}"
@@ -2161,7 +2182,10 @@ class SessionManager:
         if not s:
             raise KeyError("Сессия не найдена")
         
-        if s["status"] not in ("filtering_height", "filtering_type", "processing"):
+        # 'ifc_processed'/'selecting_rows' — пользователь меняет высоту на
+        # этапе предпросмотра (до запуска обработки)
+        if s["status"] not in ("ifc_processed", "selecting_rows", "filtering_height",
+                               "filtering_type", "processing", "completed"):
             raise RuntimeError(f"Неверный статус: {s['status']}")
         
         if not isinstance(building_height, (int, float)) or building_height <= 0:
@@ -2171,6 +2195,20 @@ class SessionManager:
             raise ValueError("Слишком большая высота здания")
         
         self._update(session_id, building_height=building_height)
+        
+        # КР: пересборка ссылок на позиции с новой высотой — позиции без
+        # работ для этой высоты должны потерять иконку в предпросмотре.
+        # Файл удаляется сразу: фронтенд по ready=false дожидается
+        # пересборки и подхватывает обновлённые ссылки.
+        if s.get("processing_type", "KR") == "KR":
+            session_dir = os.path.join(self.output_folder, session_id)
+            links_path = os.path.join(session_dir, "position_links.json")
+            try:
+                if os.path.isfile(links_path):
+                    os.remove(links_path)
+            except OSError as exc:
+                logger.warning(f"position_links: не удался сброс {links_path}: {exc}")
+            self._start_position_links_bg(session_id, building_height)
         
         return {
             "session_id": session_id,

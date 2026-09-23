@@ -1123,6 +1123,19 @@ function pickPositionVariant(nameKey, part, geo) {
     return positions;
 }
 
+// Выбирает вариант группы (part, geo) целиком — для подсказки причины
+// отсутствия позиций (reason: работы не подходят высоте здания и т.п.).
+function pickVariantObject(nameKey, part, geo) {
+    const variants = positionLinks[nameKey];
+    if (!variants || variants.length === 0) return null;
+    const p = part || 'Надземная';
+    const g = geo || '';
+    let list = variants.filter(v => (v.part || 'Надземная') === p && (v.geo || '') === g);
+    if (list.length === 0) list = variants.filter(v => (v.part || 'Надземная') === p);
+    if (list.length === 0 && variants.length === 1) list = variants;
+    return list[0] || null;
+}
+
 // SVG-иконка «внешняя ссылка» (квадратик со стрелочкой)
 const POSITION_LINK_SVG =
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
@@ -1145,10 +1158,15 @@ function positionLinksHtml(nameKey, part, geo) {
             ` target="_blank" rel="noopener" title="Открыть в цифровом сборнике: ${p.name || 'позиция ' + p.id}"` +
             ` onclick="event.stopPropagation()">${POSITION_LINK_SVG}</a>`;
     }
-    // Группа есть в предпросмотре, но в цифровом сборнике не найдена
-    // (вариант сохранён в position_links.json с пустым списком позиций)
+    // Группа есть в предпросмотре, но позиций не найдено: позиций нет в ЦС
+    // или их работы не подходят высоте здания — показываем причину
+    // (reason из position_links.json, если сохранена)
     if (positionLinks[nameKey]) {
-        return `<span class="position-link missing" title="Группа отсутствует в цифровом сборнике"` +
+        const variant = pickVariantObject(nameKey, part, geo);
+        const reason = variant && variant.reason
+            ? variant.reason
+            : 'Группа отсутствует в цифровом сборнике';
+        return `<span class="position-link missing" title="${String(reason).replace(/"/g, '&quot;')}"` +
             ` onclick="event.stopPropagation()">${POSITION_LINK_SVG}</span>`;
     }
     return '';
@@ -1167,7 +1185,9 @@ function applyPositionLinks() {
 // Загружает ссылки позиций для сессии. Файл position_links.json строится
 // в фоне, поэтому если ready=false — опрашиваем эндпоинт ещё несколько раз.
 // Только для КР: в АР цифровой сборник не используется.
-async function loadPositionLinks(sessionId) {
+// force — перезагрузить ссылки принудительно (после пересборки по новой
+// высоте здания), даже если они уже были загружены для этой сессии.
+async function loadPositionLinks(sessionId, force = false) {
     if (!sessionId) return;
     if (currentProcessingType !== 'KR') {
         // АР: ссылки не используются — очищаем, чтобы не остались иконки
@@ -1177,10 +1197,11 @@ async function loadPositionLinks(sessionId) {
         applyPositionLinks();
         return;
     }
-    if (positionLinksLoadedFor === sessionId && Object.keys(positionLinks).length > 0) {
+    if (!force && positionLinksLoadedFor === sessionId && Object.keys(positionLinks).length > 0) {
         applyPositionLinks();
         return;
     }
+    if (force) positionLinksLoadedFor = null;
     if (_positionLinksPollTimer) { clearTimeout(_positionLinksPollTimer); _positionLinksPollTimer = null; }
 
     const maxAttempts = 30;
@@ -1930,6 +1951,41 @@ uploadArea.addEventListener('drop', (e) => {
 });
 fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFileSelect(e.target.files[0]); });
 
+// ========== Изменение высоты здания (КР) ==========
+// Высота влияет на отбор позиций цифрового сборника (работы позиций
+// сгруппированы по диапазонам высоты) — при изменении высоты в превью КР
+// отправляем её на сервер (filter_height): position_links.json пересобирается
+// с новой высотой, и иконки 📎 ведут на карточки позиций, чьи работы попадут
+// в перечень для этой высоты.
+(function () {
+    const heightInput = document.getElementById('buildingHeight');
+    if (!heightInput) return;
+    let heightChangeTimer = null;
+    heightInput.addEventListener('change', () => {
+        if (currentProcessingType !== 'KR' || !currentSessionId) return;
+        const height = parseFloat(heightInput.value);
+        if (!height || height <= 0 || height > 10000) return;
+        if (heightChangeTimer) clearTimeout(heightChangeTimer);
+        // Небольшая задержка: при ручном вводе/стрелках событие приходит
+        // один раз на commit значения
+        heightChangeTimer = setTimeout(async () => {
+            try {
+                const response = await fetch(`${API_BASE}/session/${currentSessionId}/filter_height`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ buildingHeight: height })
+                });
+                if (response.ok) {
+                    showToast('Высота здания обновлена — ссылки на позиции пересобираются', 'info');
+                    // Файл пересобирается в фоне (~десятки секунд):
+                    // опрашиваем до готовности и обновляем иконки
+                    loadPositionLinks(currentSessionId, true);
+                }
+            } catch (e) { console.error('filter_height error:', e); }
+        }, 300);
+    });
+})();
+
 // ========== Файл ПОС (режим АР) ==========
 const posUploadArea = document.getElementById('posUploadArea');
 const posFileInput = document.getElementById('posFileInput');
@@ -2588,6 +2644,24 @@ function renderPreview(data) {
                 if (/^-\d+\s*\/\s*\d+$/.test(s)) { defaultPart = 'Цоколь'; break; }
                 if (/^-\d+$/.test(s)) { defaultPart = 'Подземная'; break; }
                 if (/^\d+$/.test(s)) { defaultPart = 'Надземная'; break; }
+            }
+        }
+        // Уточнение части здания по «Типу этажа» (только КР) — та же логика,
+        // что в бэкенде (ifc_reference_builder._element_part): модели размечают
+        // 1-й этаж как «Цокольный», хотя числовой индикатор «Этажа»
+        // («1_этаж_основной») относит его к надземной части. Такие строки
+        // показываются в цокольной части здания, иначе выбранная в превью
+        // надземная группа попадёт в цокольную часть финального перечня.
+        if (!isAR && (!data.savedTypes || !data.savedTypes[index])) {
+            const stIdx = data.headers.indexOf('Тип_этажа') !== -1
+                ? data.headers.indexOf('Тип_этажа')
+                : data.headers.indexOf('Тип этажа');
+            if (stIdx !== -1 && row[stIdx] && row[stIdx] !== '-') {
+                const st = String(row[stIdx]).trim().toLowerCase();
+                if (defaultPart === 'Надземная') {
+                    if (st.startsWith('подземн')) defaultPart = 'Подземная';
+                    else if (st.startsWith('цоколь')) defaultPart = 'Цоколь';
+                }
             }
         }
         rowParts[index] = defaultPart;

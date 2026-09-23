@@ -396,6 +396,43 @@ def _iter_works(response: Dict[str, Any]) -> List[Dict[str, Any]]:
     return works
 
 
+# Ключевая фраза работ по уходу за бетоном в наименовании расценки
+# («Уход за бетоном при среднесуточной температуре воздуха +5 гр. и выше»
+# и т.п.)
+CURING_WORK_KEYWORD = "уход за бетоном"
+
+
+def _is_curing_work(work: Dict[str, Any]) -> bool:
+    """Расценка «Уход за бетоном …» из ответа API подбора работ."""
+    return CURING_WORK_KEYWORD in str(work.get("name", "")).lower()
+
+
+def _iter_all_works(response: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Все работы ответа API — по всем позициям и их группам работ.
+
+    В отличие от _iter_works (который вызывается для позиций, отобранных
+    _select_best_positions) обходит data целиком — включая позиции,
+    отсечённые отбором по лишним характеристикам (например,
+    «Фундаментная плита под оборудование …»). Используется для
+    гарантированного добавления работ «Уход за бетоном», которые могут
+    прийти в отсечённых позициях.
+    """
+    data = response.get("data", []) or []
+    works: List[Dict[str, Any]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        nested = item.get("works")
+        if isinstance(nested, list):
+            works.extend(w for w in nested if isinstance(w, dict))
+        for group in item.get("workGroups") or []:
+            if isinstance(group, dict):
+                group_works = group.get("works")
+                if isinstance(group_works, list):
+                    works.extend(w for w in group_works if isinstance(w, dict))
+    return works
+
+
 def fetch_works_from_api(
     elements_json: List[Dict[str, Any]],
     building_height: float | None = None,
@@ -964,7 +1001,10 @@ def build_final_works_from_api(
 
         # Сохраняем индекс начала работ этого элемента
         start_index = len(work_rows)
-        
+        # id работ, уже добавленных для этой группы (дедупликация работ
+        # «Уход за бетоном» при их дополнительном добавлении ниже)
+        element_work_ids: set = set()
+
         for position in positions:
             pos_label = position.get("fullName") or position.get("name", "")
 
@@ -999,6 +1039,7 @@ def build_final_works_from_api(
                         # Каркасы/сетки/закладные детали — без объёма
                         volume = ""
                 all_works.append(work)
+                element_work_ids.add(work.get("id"))
                 work_rows.append({
                     "Шифр ТСН": work.get("code", ""),
                     "Наименование расценки/ресурса": work.get("name", ""),
@@ -1007,6 +1048,30 @@ def build_final_works_from_api(
                     # id работы для сопоставления со стоимостью из API
                     "_workId": work.get("id"),
                 })
+
+        # Работы «Уход за бетоном» добавляются всегда, если они есть
+        # в ответе API, — даже если они пришли в позициях, отсечённых
+        # отбором _select_best_positions (например, «Фундаментная плита
+        # под оборудование …»): уход за бетоном обязателен для любой
+        # монолитной конструкции и не зависит от лишних характеристик
+        # позиции, в которой пришёл. Дедупликация — по id работы.
+        for work in _iter_all_works(response):
+            if not _is_curing_work(work) or work.get("id") in element_work_ids:
+                continue
+            volume = _calculate_work_volume(
+                work, total_measure, total_areas,
+                formwork_area=formwork_area,
+                slab_group=is_slab_group,
+            )
+            all_works.append(work)
+            element_work_ids.add(work.get("id"))
+            work_rows.append({
+                "Шифр ТСН": work.get("code", ""),
+                "Наименование расценки/ресурса": work.get("name", ""),
+                "Ед. изм.": _resolve_unit_label(work),
+                "Объём работ": volume,
+                "_workId": work.get("id"),
+            })
         
         # Сохраняем информацию об элементе
         element_info.append({

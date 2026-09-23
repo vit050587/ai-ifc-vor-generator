@@ -14,6 +14,8 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 import pandas as pd
 from difflib import SequenceMatcher
 
+from src.services.api_works_lookup import _is_curing_work
+
 
 # ============================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (ОБЩИЕ)
@@ -956,7 +958,24 @@ class KRBuilder:
         return properties
     
     def _build_positions_from_api(self, group: Dict) -> List[Dict]:
-        """Формирование позиций ТОЛЬКО из works в ответе API."""
+        """Формирование позиций из works в ответе API.
+
+        Работы извлекаются из актуального формата ответа API ТСН:
+        позиции (data[]) → workGroups[] → works[] (поддерживается и
+        устаревший формат data[].works).
+
+        Отбор позиций повторяет логику api_works_lookup:
+        остаются позиции, у которых нет характеристик, отсутствующих
+        в запросе группы (например, «Фундаментная плита под
+        оборудование …» отсекается для обычной плиты). Если точных
+        позиций нет — берутся все (fallback).
+
+        Работы «Уход за бетоном …» добавляются всегда, если они есть
+        в ответе API, — даже если они пришли в позициях, отсечённых
+        отбором: уход за бетоном обязателен для любой монолитной
+        конструкции и не зависит от лишних характеристик позиции,
+        в которой пришёл. Дедупликация — по шифру расценки.
+        """
         positions = []
         
         if not self.data["api_works"]:
@@ -983,7 +1002,66 @@ class KRBuilder:
         
         # Для отслеживания уже добавленных работ
         seen_codes = set()
-        
+
+        def _work_to_position(work: Dict) -> Dict:
+            """Преобразование расценки API в позицию выходного JSON."""
+            work_code = work.get("code", "")
+
+            work_position = {
+                "positionType": "work",
+                "code": work_code,
+                "name": work.get("name", ""),
+                "unit": work.get("unitOfMeasure", ""),
+                "quantity": None,
+                "quantityStatus": "missing_data",
+                "selectionParameters": {},
+                "quantityCalculation": None
+            }
+
+            # Заполняем selectionParameters из characteristics
+            for char in work.get("characteristics", []):
+                work_position["selectionParameters"][char.get("name", "")] = char.get("value", "")
+
+            # Рассчитываем quantity
+            work_unit = work.get("unitOfMeasure", "").lower()
+
+            if "м3" in work_unit or "m3" in work_unit or "m[3" in work_unit:
+                if total_volume > 0:
+                    work_position["quantity"] = round(total_volume, 2)
+                    work_position["quantityStatus"] = "calculated"
+                    work_position["quantityCalculation"] = {
+                        "sourceProperty": "NetVolume",
+                        "sourceValue": total_volume,
+                        "sourceUnit": "м³",
+                        "conversionFactor": 1.0,
+                        "formula": f"{total_volume}"
+                    }
+            elif "м2" in work_unit or "m2" in work_unit:
+                if total_area > 0:
+                    work_position["quantity"] = round(total_area, 2)
+                    work_position["quantityStatus"] = "calculated"
+                    work_position["quantityCalculation"] = {
+                        "sourceProperty": "GrossSideArea",
+                        "sourceValue": total_area,
+                        "sourceUnit": "м²",
+                        "conversionFactor": 1.0,
+                        "formula": f"{total_area}"
+                    }
+            elif "т" in work_unit or "t" in work_unit:
+                if reinforcement > 0:
+                    quantity_tons = reinforcement / 1000.0
+                    work_position["quantity"] = round(quantity_tons, 3)
+                    work_position["quantityStatus"] = "calculated"
+                    work_position["quantityCalculation"] = {
+                        "sourceProperty": "ReinforcementVolumeRatio",
+                        "sourceValue": reinforcement,
+                        "sourceUnit": "кг",
+                        "conversionFactor": 0.001,
+                        "formula": f"{reinforcement} / 1000"
+                    }
+
+            return work_position
+
         for result_item in results:
             # Получаем имя элемента из result
             result_element = result_item.get("element", {})
@@ -1002,73 +1080,79 @@ class KRBuilder:
                 if group_element_name_clean != result_element_name_clean:
                     continue
             
-            # Обрабатываем ТОЛЬКО works из response.data
             response_data = result_item.get("response", {}).get("data", [])
-            
+            if not isinstance(response_data, list):
+                continue
+
+            # Характеристики запроса группы — для отбора позиций
+            requested_chars = {
+                str(char.get("name", "")).strip().lower()
+                for char in group.get("characteristics", []) or []
+                if isinstance(char, dict)
+            }
+
+            def _select_positions(items: List[Dict]) -> List[Dict]:
+                """Отбор позиций без лишних характеристик (⊆ запроса)."""
+                if len(items) <= 1 or not requested_chars:
+                    return items
+                exact = []
+                for pos in items:
+                    pos_chars = [
+                        str(char.get("name", "")).strip().lower()
+                        for char in pos.get("characteristics", []) or []
+                        if isinstance(char, dict)
+                    ]
+                    if all(name in requested_chars for name in pos_chars):
+                        exact.append(pos)
+                return exact if exact else items
+
+            def _iter_position_works(item: Dict) -> List[Dict]:
+                """Работы позиции: data[].works или data[].workGroups[].works."""
+                works = []
+                nested = item.get("works")
+                if isinstance(nested, list):
+                    works.extend(w for w in nested if isinstance(w, dict))
+                for wg in item.get("workGroups") or []:
+                    if isinstance(wg, dict):
+                        wg_works = wg.get("works")
+                        if isinstance(wg_works, list):
+                            works.extend(w for w in wg_works if isinstance(w, dict))
+                return works
+
+            # Все работы ответа — включая позиции, отсечённые отбором
+            # (из них гарантированно добавляется «Уход за бетоном»)
+            all_works: List[Dict] = []
             for data_item in response_data:
-                # Пропускаем основную позицию (data_item) и берём ТОЛЬКО works
-                for work in data_item.get("works", []):
+                if isinstance(data_item, dict):
+                    all_works.extend(_iter_position_works(data_item))
+
+            selected_positions = _select_positions(
+                [d for d in response_data if isinstance(d, dict)]
+            )
+
+            # 1. Работы отобранных позиций
+            for data_item in selected_positions:
+                for work in _iter_position_works(data_item):
                     work_code = work.get("code", "")
-                    
+
                     # Пропускаем дубликаты
                     if work_code in seen_codes:
                         continue
                     seen_codes.add(work_code)
-                    
-                    work_position = {
-                        "positionType": "work",
-                        "code": work_code,
-                        "name": work.get("name", ""),
-                        "unit": work.get("unitOfMeasure", ""),
-                        "quantity": None,
-                        "quantityStatus": "missing_data",
-                        "selectionParameters": {},
-                        "quantityCalculation": None
-                    }
-                    
-                    # Заполняем selectionParameters из characteristics
-                    for char in work.get("characteristics", []):
-                        work_position["selectionParameters"][char.get("name", "")] = char.get("value", "")
-                    
-                    # Рассчитываем quantity
-                    work_unit = work.get("unitOfMeasure", "").lower()
-                    
-                    if "м3" in work_unit or "m3" in work_unit or "m[3" in work_unit:
-                        if total_volume > 0:
-                            work_position["quantity"] = round(total_volume, 2)
-                            work_position["quantityStatus"] = "calculated"
-                            work_position["quantityCalculation"] = {
-                                "sourceProperty": "NetVolume",
-                                "sourceValue": total_volume,
-                                "sourceUnit": "м³",
-                                "conversionFactor": 1.0,
-                                "formula": f"{total_volume}"
-                            }
-                    elif "м2" in work_unit or "m2" in work_unit:
-                        if total_area > 0:
-                            work_position["quantity"] = round(total_area, 2)
-                            work_position["quantityStatus"] = "calculated"
-                            work_position["quantityCalculation"] = {
-                                "sourceProperty": "GrossSideArea",
-                                "sourceValue": total_area,
-                                "sourceUnit": "м²",
-                                "conversionFactor": 1.0,
-                                "formula": f"{total_area}"
-                            }
-                    elif "т" in work_unit or "t" in work_unit:
-                        if reinforcement > 0:
-                            quantity_tons = reinforcement / 1000.0
-                            work_position["quantity"] = round(quantity_tons, 3)
-                            work_position["quantityStatus"] = "calculated"
-                            work_position["quantityCalculation"] = {
-                                "sourceProperty": "ReinforcementVolumeRatio",
-                                "sourceValue": reinforcement,
-                                "sourceUnit": "кг",
-                                "conversionFactor": 0.001,
-                                "formula": f"{reinforcement} / 1000"
-                            }
-                    
-                    positions.append(work_position)
+
+                    positions.append(_work_to_position(work))
+
+            # 2. Работы «Уход за бетоном» добавляются всегда, если они
+            # есть в ответе API, — даже если они пришли в позициях,
+            # отсечённых отбором (см. докстринг).
+            for work in all_works:
+                if not _is_curing_work(work):
+                    continue
+                work_code = work.get("code", "")
+                if work_code in seen_codes:
+                    continue
+                seen_codes.add(work_code)
+                positions.append(_work_to_position(work))
         
         return positions
     

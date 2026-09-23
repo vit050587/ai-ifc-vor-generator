@@ -40,6 +40,25 @@ position_links.json:
   * числовые диапазоны («Толщина: более 150 до 200» и т.п.) — по сырому
     значению геометрии из additionalCharacteristics группы.
 
+Часть здания варианта определяется по «Расположению»/«Этажу» и уточняется
+по «Типу этажа» (1-й этаж «Цокольный» → «Цоколь»; см. _resolve_part) —
+синхронно с разделением смешанных групп при подборе работ
+(ifc_reference_builder._element_part). Если уточнённая часть расходится
+с «Расположением» элемента, в запросе «Расположение» подменяется на часть
+варианта (см. _override_location) — иначе API вернёт позиции чужой части
+здания, и ссылка укажет на карточку другой позиции.
+
+Высота здания учитывается при отборе позиций: работы внутри позиций ЦС
+сгруппированы по диапазонам высоты («до 57», «более 57 до 75 м»,
+«более 75 до 105 м» …), и позиции, у которых для высоты здания нет ни
+одной подходящей группы работ, в перечень не попадают — ссылка на них
+не формируется (вариант сохраняется с пустым positions и пояснением в
+reason). Высота берётся из файлов сессии (IFC_глобальные_константы.json /
+height.txt) или передаётся явно; отбор позиций идёт тем же конвейером,
+что и при подборе работ (api_works_lookup._filter_response_by_height →
+_select_best_positions), поэтому иконка в предпросмотре ведёт на карточку
+именно той позиции, работы которой попадают в финальный перечень.
+
 Для каждого варианта группы сохраняется ровно одна (первая отфильтрованная)
 позиция — у группы элементов одна ссылка на карточку цифрового сборника.
 Фронтенд по выбранному варианту рисует кликабельную иконку 📎 со ссылкой
@@ -51,6 +70,7 @@ https://digital-collection.mgexp.org/building-elements/position/<id>.
   * Отсутствующие_в_ЦС_группы.xlsx — табличный вид для скачивания.
 """
 
+import copy
 import json
 import os
 import re
@@ -59,7 +79,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from src.core.logger import setup_logger
-from src.services.api_works_lookup import _fetch_one
+from src.services.api_works_lookup import (
+    _fetch_one,
+    _filter_response_by_height,
+    _select_best_positions,
+)
 
 logger = setup_logger(__name__)
 
@@ -185,6 +209,62 @@ def _extract_part(
             return "Цоколь"
 
     return ""
+
+
+def _resolve_part(
+    characteristics: Dict[str, str],
+    additional: Optional[Dict[str, str]] = None,
+) -> str:
+    """Часть здания элемента с уточнением по «Типу этажа».
+
+    База — результат _extract_part («Расположение» → «Этаж» → «Тип этажа»).
+    Для элементов, отнесённых к надземной части по числовому индикатору
+    «Этажа» («1_этаж_основной»), часть уточняется по «Типу этажа»:
+    модели размечают 1-й этаж как «Цокольный», хотя индикатор относит
+    его к надземной части. Такие элементы относятся к цокольной части
+    здания — та же логика, что в ifc_reference_builder._element_part
+    (разделение смешанных групп по частям здания при подборе работ).
+    """
+    part = _extract_part(characteristics, additional) or "Надземная"
+    if part == "Надземная":
+        storey_type = (additional or {}).get("Тип этажа", "")
+        if storey_type:
+            st = storey_type.lower()
+            if st.startswith("подземн"):
+                return "Подземная"
+            if st.startswith("цоколь"):
+                return "Цоколь"
+    return part
+
+
+# Названия частей здания для характеристики «Расположение» в запросе к API
+# (значения — как в ifc_reference_builder._get_location_name)
+_LOCATION_NAMES = {
+    "Подземная": "Подземная часть здания",
+    "Цоколь": "Цокольная часть здания",
+    "Надземная": "Надземная часть здания",
+}
+
+
+def _override_location(payload: Dict[str, Any], part: str) -> bool:
+    """Подменяет «Расположение» в характеристиках запроса на часть варианта.
+
+    Часть здания варианта может быть уточнена по «Типу этажа» (1-й этаж →
+    «Цоколь»), а характеристика «Расположение» элемента при этом осталась
+    по числовому индикатору «Этажа» («Надземная часть здания»). Без
+    подмены API вернёт позиции надземной части — ссылка укажет на карточку
+    другой части здания (например, «Стена надземной части…» вместо
+    «Стена цокольной части…»).
+
+    Возвращает True, если характеристика найдена и подменена.
+    """
+    for char in payload.get("characteristics") or []:
+        if isinstance(char, dict) and char.get("name") == "Расположение":
+            values = char.get("values") or []
+            if values and isinstance(values[0], dict):
+                values[0]["strValue"] = _LOCATION_NAMES[part]
+                return True
+    return False
 
 
 def _extract_geo(characteristics: Dict[str, str]) -> str:
@@ -313,30 +393,68 @@ def _filter_positions(
 
 def _extract_positions(
     response: Dict[str, Any],
+    element: Dict[str, Any],
     characteristics: Dict[str, str],
     additional: Dict[str, str],
-) -> List[Dict[str, Any]]:
+    building_height: Optional[float] = None,
+) -> Tuple[List[Dict[str, Any]], str]:
     """Извлекает одну наиболее подходящую позицию (id + название) из ответа API.
 
-    Позиции фильтруются по характеристикам группы, затем берётся первая
-    из отфильтрованных — у группы элементов должна быть ровно одна ссылка
-    на карточку цифрового сборника (как в режиме КР).
+    Порядок отбора — тот же, что при подборе работ в запуске
+    (api_works_lookup.fetch_works_from_api + build_final_works_from_api),
+    чтобы иконка в предпросмотре вела на карточку именно той позиции,
+    работы которой попадают в финальный перечень:
+
+      1. фильтрация по высоте здания (`_filter_response_by_height`):
+         у позиций ЦС работы сгруппированы по диапазонам высоты
+         («до 57», «более 57 до 75 м», «более 75 до 105 м» …) — позиции,
+         у которых для высоты здания нет ни одной подходящей группы
+         работ, в перечень не попадают и не должны получать ссылку;
+      2. отбор позиций без лишних характеристик (`_select_best_positions`):
+         позиции с характеристиками, отсутствующими у группы
+         (например, «Фундаментная плита под оборудование …»), не берутся;
+      3. фильтрация по характеристикам группы (расположение/материал/
+         геометрические диапазоны).
+
+    Затем берётся первая из отобранных — у группы элементов должна быть
+    ровно одна ссылка на карточку цифрового сборника (как в режиме КР).
+
+    Возвращает кортеж (позиции, reason): reason — пояснение, почему
+    позиций нет (работы не подходят высоте здания), пустое при успехе.
     """
-    raw: List[Dict[str, Any]] = []
-    for item in (response.get("data") or []):
-        if not isinstance(item, dict):
-            continue
-        pos_id = item.get("id")
-        if pos_id is None:
-            continue
-        raw.append({
-            "id": int(pos_id),
+    data: List[Dict[str, Any]] = [
+        item for item in (response.get("data") or [])
+        if isinstance(item, dict) and item.get("id") is not None
+    ]
+
+    # 1. Фильтрация по высоте здания (как в fetch_works_from_api)
+    if building_height is not None and data:
+        height_filtered = _filter_response_by_height(
+            {"data": data}, building_height
+        ).get("data") or []
+        if not height_filtered:
+            # Позиции есть, но ни у одной нет работ для высоты здания —
+            # в финальный перечень работы этой группы не попадут
+            return [], (
+                f"Работы позиций не подходят высоте здания "
+                f"({building_height} м) — в перечень работ не попадают"
+            )
+        data = height_filtered
+
+    # 2. Позиции без лишних характеристик (как в build_final_works_from_api)
+    data = _select_best_positions(element, data)
+
+    # 3. Фильтрация по характеристикам группы
+    raw = [
+        {
+            "id": int(item["id"]),
             "name": item.get("fullName") or item.get("name") or "",
             "characteristics": item.get("characteristics") or [],
-        })
-
+        }
+        for item in data
+    ]
     filtered = _filter_positions(raw, characteristics, additional)
-    return [{"id": p["id"], "name": p["name"]} for p in filtered[:1]]
+    return [{"id": p["id"], "name": p["name"]} for p in filtered[:1]], ""
 
 
 def _variant_material(characteristics: List[Dict[str, Any]]) -> str:
@@ -399,9 +517,48 @@ def _save_missing_groups(
     )
 
 
+def detect_building_height(session_dir: str) -> Optional[float]:
+    """Высота здания сессии (м) из файлов сессии.
+
+    Приоритет источников:
+      1. IFC_глобальные_константы.json → constants.building_height_m.value
+         (высота надземной части, определённая по IFC);
+      2. height.txt — legacy-файл с числом.
+
+    Возвращает None, если высоту определить не удалось.
+    """
+    constants_path = os.path.join(session_dir, "IFC_глобальные_константы.json")
+    if os.path.isfile(constants_path):
+        try:
+            with open(constants_path, "r", encoding="utf-8") as fh:
+                constants = json.load(fh)
+            entry = (constants.get("constants") or {}).get("building_height_m") or {}
+            value = entry.get("value")
+            if value is not None:
+                return float(value)
+        except (ValueError, TypeError, OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                f"position_links: не удалось прочитать высоту из "
+                f"{constants_path}: {exc}"
+            )
+
+    height_path = os.path.join(session_dir, "height.txt")
+    if os.path.isfile(height_path):
+        try:
+            with open(height_path, "r", encoding="utf-8") as fh:
+                return float(fh.read().strip())
+        except (ValueError, OSError) as exc:
+            logger.warning(
+                f"position_links: не удалось прочитать высоту из "
+                f"{height_path}: {exc}"
+            )
+    return None
+
+
 def build_position_links(
     session_dir: str,
     grouped_filename: str = "ifc_raw_elements_grouped.json",
+    building_height: Optional[float] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Запрашивает id позиций для всех групп предпросмотра и сохраняет
     position_links.json (+ файлы отсутствующих групп).
@@ -416,13 +573,34 @@ def build_position_links(
         session_dir — корневая директория сессии.
         grouped_filename — устаревший параметр (совместимость сигнатуры),
             не используется: источник групп — ifc_elements_output.json.
+        building_height — высота здания, м; отбрасывает позиции, у
+            которых нет работ для этой высоты (тот же фильтр, что при
+            подборе работ). None — высота определяется автоматически
+            из файлов сессии (IFC_глобальные_константы.json /
+            height.txt); если и там нет — позиции выбираются без
+            фильтрации по высоте.
 
     Возвращает:
-        Словарь {имя_элемента: [{"part": ..., "geo": ..., "positions": [...]}, ...]}.
-        Варианты, отсутствующие в ЦС, сохраняются с пустым positions.
+        Словарь {имя_элемента: [{"part": ..., "geo": ..., "positions": [...],
+        "reason": ...}, ...]}.
+        Варианты, отсутствующие в ЦС или не подходящие высоте здания,
+        сохраняются с пустым positions и пояснением в reason.
         При отсутствии элементов/ошибках запросов возвращается то, что
         удалось собрать (возможно, пустой словарь).
     """
+    if building_height is None:
+        building_height = detect_building_height(session_dir)
+    if building_height is not None:
+        logger.info(
+            f"position_links: высота здания {building_height} м — "
+            f"позиции отбираются с учётом высоты"
+        )
+    else:
+        logger.warning(
+            "position_links: высота здания не определена — "
+            "позиции отбираются без учёта высоты"
+        )
+
     elements_path = os.path.join(session_dir, ELEMENTS_JSON_FILENAME)
     if not os.path.isfile(elements_path):
         logger.warning(
@@ -452,7 +630,7 @@ def build_position_links(
 
         characteristics = _chars_to_dict(element.get("characteristics"))
         additional = _chars_to_dict(element.get("additionalCharacteristics"))
-        part = _extract_part(characteristics, additional) or "Надземная"
+        part = _resolve_part(characteristics, additional)
         geo = _extract_geo(characteristics)
 
         variants.setdefault(name_key, {}).setdefault((part, geo), []).append(element)
@@ -476,19 +654,32 @@ def build_position_links(
             first = elems[0]
 
             # Запрос к API — первый элемент варианта в формате API
-            # (служебные поля с префиксом '_' в запрос не входят)
+            # (служебные поля с префиксом '_' в запрос не входят).
+            # Копия в глубину: «Расположение» может быть подменено на часть
+            # варианта (см. _override_location) — исходный элемент менять нельзя.
             payload = {
-                key: value for key, value in first.items()
+                key: copy.deepcopy(value) for key, value in first.items()
                 if not key.startswith('_')
             }
             characteristics = _chars_to_dict(first.get("characteristics"))
             additional = _chars_to_dict(first.get("additionalCharacteristics"))
 
+            # Уточнённая по «Типу этажа» часть варианта (например, «Цоколь»
+            # для 1-го этажа) может расходиться с «Расположением» элемента
+            # («Надземная часть здания» по индикатору «Этажа») — подменяем,
+            # иначе API вернёт позиции чужой части и ссылка укажет на
+            # карточку другого элемента цифрового сборника.
+            if part != "Надземная":
+                _override_location(payload, part)
+
             positions: List[Dict[str, Any]] = []
             reason = ""
             try:
                 response = _fetch_one(payload)
-                positions = _extract_positions(response, characteristics, additional)
+                positions, reason = _extract_positions(
+                    response, first, characteristics, additional,
+                    building_height=building_height,
+                )
             except Exception as exc:
                 errors += 1
                 reason = f"Ошибка запроса к API ТСН: {exc}"
@@ -501,10 +692,12 @@ def build_position_links(
                 "part": part,
                 "geo": geo,
                 "positions": positions,
+                "reason": reason,
             })
 
-            # Вариант отсутствует в цифровом сборнике (или ошибка запроса) —
-            # фиксируем для отдельного файла отсутствующих групп
+            # Вариант отсутствует в цифровом сборнике (или ошибка запроса,
+            # или работы позиции не подходят высоте здания) — фиксируем
+            # для отдельного файла отсутствующих групп
             if not positions:
                 missing.append({
                     "nameKey": name_key,

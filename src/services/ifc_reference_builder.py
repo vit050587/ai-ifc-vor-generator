@@ -411,6 +411,48 @@ def _collect_all_geometry_params(element_data: dict) -> List[Dict[str, Any]]:
     return result
 
 
+def _geometry_from_name(name: Any, ifc_type: str) -> float:
+    """Геометрический параметр, извлечённый из имени элемента.
+
+    Используется как последний fallback для `_get_geometry_range_for_element`:
+    у части элементов модели нет QTO-количеств (например, у стены
+    «Стена_180мм_ЖБ_B35_W4_F75:1433653» пусты QTO Width и все площади) —
+    толщина в них известна только из имени. Применяется та же логика
+    извлечения, что и в zero_step.parse_name (используется в
+    fill_missing_from_name при заполнении таблиц для сметчика), поэтому
+    характеристики в ifc_elements_output.json совпадают с геометрической
+    группировкой превью.
+
+    Fallback только для стен: у перекрытий/колонн/балок имя может
+    содержать посторонние числа, а правило группировки использует другой
+    параметр (площадь/периметр).
+
+    Аргументы:
+        name     — имя элемента («Базовая стена:Стена_180мм_ЖБ_B35_W4_F75:123»).
+        ifc_type — тип элемента (IfcWall/IfcWallStandardCase).
+
+    Возвращает:
+        Числовое значение толщины (мм) или 0.0, если извлечь не удалось.
+    """
+    name_str = str(name or '').strip()
+    if not name_str or name_str == '-':
+        return 0.0
+    if ifc_type not in ('IfcWall', 'IfcWallStandardCase'):
+        return 0.0
+    try:
+        from src.services.zero_step import parse_name
+        extracted = parse_name(name_str, ifc_type)
+    except Exception:
+        return 0.0
+    if not extracted:
+        return 0.0
+    for key in ('Ширина, мм', 'Периметр, мм'):
+        val = safe_parse_float(extracted.get(key, 0))
+        if val > 0:
+            return val
+    return 0.0
+
+
 def _get_geometry_range_for_element(element_data: dict, ifc_type: str) -> Tuple[str, str]:
     """
     Определяет нормализованный геометрический диапазон для отдельного элемента.
@@ -426,21 +468,30 @@ def _get_geometry_range_for_element(element_data: dict, ifc_type: str) -> Tuple[
     value = 0.0
     if field and field in element_data:
         value = safe_parse_float(element_data[field])
-    elif ifc_type == 'IfcWall':
-        # Для стен — толщина из Длина_Width_мм, затем ширина сечения, глубина выдавливания — не толщина
-        for key in ['Длина_Width_мм', 'Ширина_сечения_мм', 'Глубина_выдавливания_мм']:
-            if key in element_data:
-                val = safe_parse_float(element_data[key])
-                if val > 0:
-                    value = val
-                    break
-    elif ifc_type == 'IfcSlab':
-        for key in ['Площадь_NetArea_м2', 'Площадь_GrossArea_м2']:
-            if key in element_data:
-                val = safe_parse_float(element_data[key])
-                if val > 0:
-                    value = val
-                    break
+
+    # Fallback по «сырым» колонкам, если поле правила отсутствует или пустое
+    if value <= 0:
+        if ifc_type == 'IfcWall':
+            # Для стен — толщина из Длина_Width_мм, затем ширина сечения, глубина выдавливания — не толщина
+            for key in ['Длина_Width_мм', 'Ширина_сечения_мм', 'Глубина_выдавливания_мм']:
+                if key in element_data:
+                    val = safe_parse_float(element_data[key])
+                    if val > 0:
+                        value = val
+                        break
+        elif ifc_type == 'IfcSlab':
+            for key in ['Площадь_NetArea_м2', 'Площадь_GrossArea_м2']:
+                if key in element_data:
+                    val = safe_parse_float(element_data[key])
+                    if val > 0:
+                        value = val
+                        break
+
+    # Геометрии нет и в QTO-колонках — пробуем извлечь толщину из имени
+    # элемента (у части стен модели нет QTO Width, но толщина есть в имени:
+    # «Стена_180мм_ЖБ_B35_W4_F75» → 180 мм)
+    if value <= 0:
+        value = _geometry_from_name(element_data.get('Имя', ''), ifc_type)
 
     # Если значение не найдено — не добавляем геометрическую характеристику
     if value <= 0:

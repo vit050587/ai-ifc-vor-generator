@@ -1,16 +1,15 @@
 """
-Финальный подбор работ через LLM (режим АР). Версия 11.0.
+Финальный подбор работ через LLM (режим АР). Версия 11.6.
 
-Изменения от v10.5:
-  * [FIX-24] Масса арматуры (т) грузится из filtered_elements.xlsx
-    по GlobalId (ratio × volume). Для стен mass_t проставляется
-    ТОЛЬКО работе «Установка арматурных изделий, каркасов и сеток…».
-  * [FIX-25] Площадь опалубки плит/перекрытий/фундаментных плит =
-    периметр × толщина. Периметр и толщина берутся из
-    Параметры_подбора_элементов.json (по GlobalId) с fallback
-    на element["row"].
-  * [FIX-26] «100 м» берёт length_m из параметров/элемента,
-    «100 м шва» берёт joint_length_m (периметр).
+Изменения от v11.5:
+  * [FIX-32] Загружаем полные данные элементов из
+    filtered_elements_grouped_AR.json → {global_id: first_element}.
+    Там есть периметр, depth, объём, площадь — то, чего нет в
+    Подобранные_таблицы_работ.json.
+  * [FIX-32] Периметр и толщина фундаментной плиты берутся из этого
+    файла (приоритет), с fallback на element["row"] и params.
+  * [FIX-33] foundation_slab убран из _NO_USTROYSTVO_FAMILIES —
+    «Устройство фундаментных плит…» это и есть основная работа плиты.
 """
 
 import json
@@ -60,6 +59,11 @@ _THICKNESS_WORK_RE = re.compile(
 _MM_IN_NAME_RE = re.compile(r"(\d+)\s*мм", re.IGNORECASE)
 _SECTION_RE = re.compile(r"(\d+)\s*[хx]\s*(\d+)", re.IGNORECASE)
 
+# [FIX-33] foundation_slab убран — «Устройство фундаментных плит…»
+#          это основная работа плиты, а не дубль.
+_NO_USTROYSTVO_FAMILIES = frozenset({"wall", "foundation_slab", "floor"})
+_USTROYSTVO_PREFIX_RE = re.compile(r"^\s*устройств", re.IGNORECASE)
+
 _REBAR_KEYWORDS = ("арматур", "каркас", "стержн", "сетк", "закладн")
 
 
@@ -68,6 +72,10 @@ def _extract_table_code(raw: Any) -> str:
         return ""
     m = _TABLE_CODE_RE.search(str(raw))
     return m.group(1) if m else ""
+
+
+def _is_ustroystvo_work(work_title: Any) -> bool:
+    return bool(_USTROYSTVO_PREFIX_RE.match(str(work_title or "")))
 
 
 # ======================================================================
@@ -89,52 +97,61 @@ def _lookup(el: Dict[str, Any], *keys: str) -> Optional[float]:
 
 
 _LENGTH_KEYS = (
-    "Длина, мм", "Длина_Length_мм",
-    "QTO_Qto_WallBaseQuantities_Длина_Length_мм",
     "QTO_Qto_SlabBaseQuantities_Длина_Length_мм",
     "QTO_Qto_FootingBaseQuantities_Длина_Length_мм",
+    "QTO_Qto_WallBaseQuantities_Длина_Length_мм",
     "QTO_Qto_BeamBaseQuantities_Длина_Length_мм",
     "QTO_Qto_ColumnBaseQuantities_Длина_Length_мм",
     "QTO_Qto_StairFlightBaseQuantities_Длина_Length_мм",
+    "Длина, мм", "Длина_Length_мм",
 )
 _WIDTH_KEYS = (
-    "Ширина, мм", "Длина_Width_мм",
-    "QTO_Qto_WallBaseQuantities_Длина_Width_мм",
-    "QTO_Qto_FootingBaseQuantities_Длина_Width_мм",
     "QTO_Qto_SlabBaseQuantities_Длина_Width_мм",
+    "QTO_Qto_FootingBaseQuantities_Длина_Width_мм",
+    "QTO_Qto_WallBaseQuantities_Длина_Width_мм",
     "QTO_Qto_ColumnBaseQuantities_Длина_Width_мм",
     "QTO_Qto_BeamBaseQuantities_Длина_Width_мм",
     "QTO_Qto_StairFlightBaseQuantities_Длина_Width_мм",
+    "Ширина, мм", "Длина_Width_мм",
 )
 _HEIGHT_KEYS = (
-    "Высота, мм", "Длина_Height_мм",
     "QTO_Qto_WallBaseQuantities_Длина_Height_мм",
     "QTO_Qto_FootingBaseQuantities_Длина_Height_мм",
     "QTO_Qto_ColumnBaseQuantities_Длина_Height_мм",
     "QTO_Qto_BeamBaseQuantities_Длина_Height_мм",
     "QTO_Qto_WindowBaseQuantities_Длина_Height_мм",
     "QTO_Qto_DoorBaseQuantities_Длина_Height_мм",
+    "Высота, мм", "Длина_Height_мм",
 )
 _DEPTH_KEYS = (
     "QTO_Qto_SlabBaseQuantities_Длина_Depth_мм",
     "QTO_Qto_PlateBaseQuantities_Длина_Depth_мм",
     "QTO_Qto_CoveringBaseQuantities_Длина_Depth_мм",
+    "Длина_Depth_мм",
     "Толщина, мм",
     "Свойство::IfcMaterialLayer::Thickness",
 )
 _VOLUME_KEYS = (
-    "Объём, м3", "Объем, м3",
-    "QTO_Qto_WallBaseQuantities_Объём_NetVolume_м3",
     "QTO_Qto_SlabBaseQuantities_Объём_NetVolume_м3",
+    "QTO_Qto_WallBaseQuantities_Объём_NetVolume_м3",
     "QTO_Qto_BeamBaseQuantities_Объём_NetVolume_м3",
     "QTO_Qto_ColumnBaseQuantities_Объём_NetVolume_м3",
     "QTO_Qto_FootingBaseQuantities_Объём_NetVolume_м3",
     "QTO_Qto_CoveringBaseQuantities_Объём_NetVolume_м3",
     "QTO_Qto_PlateBaseQuantities_Объём_NetVolume_м3",
+    "Объём, м3", "Объем, м3",
 )
 _RATIO_KEYS = (
-    "ReinforcementVolumeRatio",
     "Pset_ConcreteElementGeneral_ReinforcementVolumeRatio",
+    "ReinforcementVolumeRatio",
+)
+
+_SLAB_PERIMETER_KEYS = (
+    "QTO_Qto_SlabBaseQuantities_Длина_Perimeter_мм",
+    "QTO_Qto_FootingBaseQuantities_Длина_Perimeter_мм",
+    "Длина_Perimeter_мм",
+    "Периметр, мм", "Периметр, м", "Периметр",
+    "Perimeter", "perimeter",
 )
 
 
@@ -516,7 +533,7 @@ def _get_building_height(run_dir: str) -> Optional[float]:
 
 def _element_thickness_mm(element_payload: Dict[str, Any]) -> Optional[int]:
     el = element_payload.get("element", {}) or {}
-    v = _lookup(el, *_DEPTH_KEYS, *_WIDTH_KEYS)
+    v = _lookup(el, *_DEPTH_KEYS)
     if v:
         return int(round(v))
     name = str(el.get("name") or "")
@@ -714,13 +731,28 @@ def _filter_works_in_table(
               if _geometry_compatible(_work_full_text(w), family, element_payload)]
 
     if stage5:
-        return stage5, False
-    for prev, name in ((stage4, "geometry"), (stage3, "height"),
-                       (stage2, "part"), (stage1, "family")):
-        if prev:
-            logger.info(f"  таблица: fallback на этап «{name}» ({len(prev)} работ)")
-            return prev, True
-    return works, True
+        result, used_fallback = stage5, False
+    else:
+        result, used_fallback = works, True
+        for prev, name in ((stage4, "geometry"), (stage3, "height"),
+                           (stage2, "part"), (stage1, "family")):
+            if prev:
+                logger.info(f"  таблица: fallback на этап «{name}» ({len(prev)} работ)")
+                result, used_fallback = prev, True
+                break
+
+    # [FIX-33] «Устройство …» убираем только для wall / floor
+    if family in _NO_USTROYSTVO_FAMILIES:
+        before = len(result)
+        result = [w for w in result
+                  if not _is_ustroystvo_work(w.get("title") or w.get("name"))]
+        if len(result) != before:
+            logger.info(
+                f"Убрано «Устройство …» ({family}): "
+                f"{before} → {len(result)} работ"
+            )
+
+    return result, used_fallback
 
 
 # ======================================================================
@@ -892,7 +924,7 @@ def _match_selection(selected, table_to_works):
 
 
 # ======================================================================
-#  Загрузчик параметров подбора (из старого файла)
+#  Параметры подбора
 # ======================================================================
 
 _PARAM_ALIASES: Dict[str, tuple] = {
@@ -969,35 +1001,27 @@ def _param_meters(params: Optional[Dict[str, Any]], name: str) -> Optional[float
 
 
 def _joint_length_m(params: Optional[Dict[str, Any]]) -> Optional[float]:
+    if not isinstance(params, dict):
+        return None
     explicit = _param_meters(params, "perimeter")
     if explicit is not None and 0 < explicit < 1000:
-        return explicit
+        return explicit / 2.0
     length = _param_meters(params, "length")
     height = _param_meters(params, "height")
     width = _param_meters(params, "width")
     if length is not None and height is not None:
-        result = length + height
-    elif length is not None and width is not None:
-        result = length + width
-    else:
-        return None
-    if result > 1000:
-        result = result / 1000.0
-    return result
+        return length + height
+    if length is not None and width is not None:
+        return length + width
+    return None
 
-
-# ======================================================================
-#  [FIX-26] Периметр из element["row"] (fallback)
-# ======================================================================
 
 def _element_perimeter_m(element: Dict[str, Any],
                           params: Optional[Dict[str, Any]] = None) -> Optional[float]:
-    # 1) параметры подбора
     if params:
         p = _joint_length_m(params)
         if p and p > 0:
-            return 2.0 * p  # perimeter = 2·(L+W) или 2·(L+H)
-    # 2) element["row"]
+            return 2.0 * p
     L = _lookup(element, *_LENGTH_KEYS)
     H = _lookup(element, *_HEIGHT_KEYS)
     W = _lookup(element, *_WIDTH_KEYS)
@@ -1007,6 +1031,102 @@ def _element_perimeter_m(element: Dict[str, Any],
         return 2.0 * (L + W) / 1000.0
     if L:
         return L / 1000.0
+    return None
+
+
+# ======================================================================
+#  [FIX-32] Полные данные элементов из filtered_elements_grouped_AR.json
+# ======================================================================
+
+def _load_full_element_data(run_dir: str) -> Dict[str, Dict[str, Any]]:
+    """Собирает {global_id: first_element} по всему дереву
+    filtered_elements_grouped_AR.json."""
+    path = os.path.join(run_dir, GROUPED_JSON_FILENAME)
+    if not os.path.isfile(path):
+        logger.warning(f"Нет {GROUPED_JSON_FILENAME} — геометрия элементов недоступна")
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            tree = json.load(fh)
+    except Exception as exc:
+        logger.warning(f"Не удалось прочитать {path}: {exc}")
+        return {}
+
+    result: Dict[str, Dict[str, Any]] = {}
+
+    def walk(node):
+        if not isinstance(node, dict):
+            return
+        fe = node.get("first_element")
+        if isinstance(fe, dict):
+            gid = str(fe.get("GlobalId") or fe.get("global_id") or "").strip()
+            if gid and gid not in result:
+                result[gid] = fe
+        for ch in node.get("children") or []:
+            walk(ch)
+
+    if isinstance(tree, list):
+        for n in tree:
+            walk(n)
+    logger.info(f"Полные данные элементов загружены: {len(result)} записей")
+    return result
+
+
+def _full_value(full: Optional[Dict[str, Any]], *keys: str) -> Optional[float]:
+    if not isinstance(full, dict):
+        return None
+    for k in keys:
+        v = safe_float(full.get(k), default=None)
+        if v is not None and v > 0:
+            return float(v)
+    return None
+
+
+# ── Периметр фундаментной плиты (полные данные → row → params) ────────
+def _foundation_slab_perimeter_m(
+    element: Dict[str, Any],
+    params: Optional[Dict[str, Any]] = None,
+    full: Optional[Dict[str, Any]] = None,
+) -> Optional[float]:
+    # 1) явный периметр из полных данных элемента (QTO-факт)
+    if full:
+        p = _full_value(full, *_SLAB_PERIMETER_KEYS)
+        if p and p > 0:
+            return p / 1000.0 if p > 500 else p
+
+    # 2) явный периметр из element["row"]
+    p = _lookup(element, *_SLAB_PERIMETER_KEYS)
+    if p and p > 0:
+        return p / 1000.0 if p > 500 else p
+
+    # 3) явный perimeter из params
+    if params:
+        explicit = _param_meters(params, "perimeter")
+        if explicit and 0 < explicit < 1000:
+            return explicit
+
+    # 4) 2*(L+W) из полных данных
+    if full:
+        L_mm = _full_value(full, *_LENGTH_KEYS)
+        W_mm = _full_value(full, *_WIDTH_KEYS)
+        if L_mm and W_mm:
+            return 2.0 * (L_mm + W_mm) / 1000.0
+
+    # 5) 2*(L+W) из params
+    if params:
+        L = _param_meters(params, "length")
+        W = _param_meters(params, "width")
+        if L and W:
+            return 2.0 * (L + W)
+
+    # 6) 2*(L+W) из element["row"]
+    L_mm = _lookup(element, *_LENGTH_KEYS)
+    W_mm = _lookup(element, *_WIDTH_KEYS)
+    if L_mm and W_mm:
+        return 2.0 * (L_mm + W_mm) / 1000.0
+
+    if L_mm:
+        return L_mm / 1000.0
     return None
 
 
@@ -1025,15 +1145,54 @@ def _sum_joint_length(payloads: List[Dict[str, Any]],
 
 
 # ======================================================================
-#  [FIX-25] Площадь опалубки (params → element["row"])
+#  Площадь опалубки
 # ======================================================================
 
-def _formwork_area_m2(element_payload: Dict[str, Any],
-                       params: Optional[Dict[str, Any]] = None) -> Optional[float]:
+def _formwork_area_m2(
+    element_payload: Dict[str, Any],
+    params: Optional[Dict[str, Any]] = None,
+    full: Optional[Dict[str, Any]] = None,
+) -> Optional[float]:
     el = element_payload.get("element", {}) or {}
     family = _classify_family(element_payload)
 
-    # 1) из параметров подбора
+    # ── [FIX-32] Фундаментные плиты: периметр и thickness из full/row/params
+    if family == "foundation_slab":
+        perimeter = _foundation_slab_perimeter_m(el, params, full)
+
+        # Толщина: full → element["row"] → params → имя
+        t: Optional[float] = None
+        if full:
+            depth_mm = _full_value(full, *_DEPTH_KEYS)
+            if depth_mm:
+                t = depth_mm / 1000.0
+        if not t:
+            depth_mm = _lookup(el, *_DEPTH_KEYS)
+            if depth_mm:
+                t = depth_mm / 1000.0
+        if not t and params:
+            t = _param_meters(params, "thickness") or _param_meters(params, "width")
+        if not t:
+            name_s = str(el.get("name") or "")
+            m = _MM_IN_NAME_RE.search(name_s)
+            if m:
+                try:
+                    t = int(m.group(1)) / 1000.0
+                except ValueError:
+                    pass
+
+        logger.info(
+            f"[formwork slab] gid={str(el.get('global_id') or '')[:8]} "
+            f"name={str(el.get('name') or '')[:50]!r} "
+            f"perimeter_m={perimeter} thickness_m={t} "
+            f"area={perimeter * t if perimeter and t else None}"
+        )
+
+        if perimeter and t:
+            return perimeter * t
+        return None
+
+    # ── Остальные семейства — как было
     if params:
         thickness = _param_meters(params, "thickness") \
                     or _param_meters(params, "width")
@@ -1042,7 +1201,7 @@ def _formwork_area_m2(element_payload: Dict[str, Any],
             H = _param_meters(params, "height")
             if L and H:
                 return 2.0 * L * H
-        if family in ("foundation_slab", "floor", "plate"):
+        if family in ("floor", "plate"):
             L = _param_meters(params, "length")
             W = _param_meters(params, "width")
             if L and W and thickness:
@@ -1053,12 +1212,24 @@ def _formwork_area_m2(element_payload: Dict[str, Any],
             H = _param_meters(params, "height")
             if L and W and H:
                 return 2.0 * (L + W) * H
-        # общий fallback
         perimeter = _joint_length_m(params)
         if perimeter and thickness:
             return 2.0 * perimeter * thickness
 
-    # 2) fallback на element["row"]
+    # Из полных данных
+    if full:
+        L_mm = _full_value(full, *_LENGTH_KEYS)
+        W_mm = _full_value(full, *_WIDTH_KEYS)
+        H_mm = _full_value(full, *_HEIGHT_KEYS)
+        t_mm = _full_value(full, *_DEPTH_KEYS)
+        if family in ("floor", "plate") and L_mm and W_mm and t_mm:
+            return 2.0 * ((L_mm + W_mm) / 1000.0) * (t_mm / 1000.0)
+        if family in ("wall", "masonry") and L_mm and H_mm:
+            return 2.0 * (L_mm / 1000.0) * (H_mm / 1000.0)
+        if family == "column" and L_mm and W_mm and H_mm:
+            return 2.0 * ((L_mm + W_mm) / 1000.0) * (H_mm / 1000.0)
+
+    # Из element["row"]
     L_mm = _lookup(el, *_LENGTH_KEYS)
     W_mm = _lookup(el, *_WIDTH_KEYS)
     H_mm = _lookup(el, *_HEIGHT_KEYS)
@@ -1074,7 +1245,7 @@ def _formwork_area_m2(element_payload: Dict[str, Any],
         if W_mm:
             return 2.0 * L * (W_mm / 1000.0)
 
-    if family in ("foundation_slab", "floor", "plate"):
+    if family in ("floor", "plate"):
         if W_mm and t_mm:
             W = W_mm / 1000.0
             t = t_mm / 1000.0
@@ -1093,13 +1264,20 @@ def _formwork_area_m2(element_payload: Dict[str, Any],
     return None
 
 
-def _sum_formwork_area(payloads: List[Dict[str, Any]],
-                        params_by_id: Optional[Dict[str, Dict[str, Any]]] = None) -> Optional[float]:
+def _sum_formwork_area(
+    payloads: List[Dict[str, Any]],
+    params_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+    full_data_by_gid: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Optional[float]:
     total = 0.0
     found = False
     for payload in payloads:
         gid = str((payload.get("element") or {}).get("global_id") or "").strip()
-        a = _formwork_area_m2(payload, (params_by_id or {}).get(gid))
+        a = _formwork_area_m2(
+            payload,
+            (params_by_id or {}).get(gid),
+            (full_data_by_gid or {}).get(gid),
+        )
         if a:
             total += a
             found = True
@@ -1107,7 +1285,7 @@ def _sum_formwork_area(payloads: List[Dict[str, Any]],
 
 
 # ======================================================================
-#  [FIX-24] Масса арматуры из filtered_elements.xlsx
+#  Масса арматуры
 # ======================================================================
 
 def _load_rebar_mass_by_gid(run_dir: str) -> Dict[str, float]:
@@ -1152,8 +1330,6 @@ def _load_rebar_mass_by_gid(run_dir: str) -> Dict[str, float]:
 def _assign_rebar_volume(selected_works: List[Dict[str, Any]],
                           rebar_mass_kg: float,
                           family: Optional[str]) -> None:
-    """Для стен mass_t ставим ТОЛЬКО работе «Установка арматурных изделий…».
-    Для остальных — любой работе с ед. изм. «т»."""
     if rebar_mass_kg <= 0 or not selected_works:
         return
     if family == "wall":
@@ -1180,7 +1356,6 @@ def _assign_rebar_volume(selected_works: List[Dict[str, Any]],
 
 
 def _calc_rebar_mass_t(element_payload: Dict[str, Any]) -> Optional[float]:
-    """Резервный способ — через element["row"] (если xlsx недоступен)."""
     el = element_payload.get("element", {}) or {}
     ratio = _lookup(el, *_RATIO_KEYS)
     volume = _lookup(el, *_VOLUME_KEYS)
@@ -1202,7 +1377,6 @@ def _sum_group_rebar_mass_t(payloads: List[Dict[str, Any]]) -> Optional[float]:
 
 def _sum_group_rebar_kg(payloads: List[Dict[str, Any]],
                           rebar_mass_by_gid: Dict[str, float]) -> float:
-    """Сумма масс по GlobalId (кг)."""
     total = 0.0
     for payload in payloads:
         gid = str((payload.get("element") or {}).get("global_id") or "").strip()
@@ -1218,7 +1392,7 @@ _QUANTITY_KEYS = {
     "volume_m3":      ("volume_m3", "Объём, м3", "Объем, м3"),
     "area_m2":        ("area_m2", "Площадь, м2"),
     "length_m":       ("length_m", "Длина, м"),
-    "joint_length_m": ("joint_length_m",),          # [FIX-26]
+    "joint_length_m": ("joint_length_m",),
     "count":          ("count", "Количество", "шт"),
 }
 
@@ -1234,7 +1408,6 @@ def _pick_quantity(q, canonical):
 
 
 def _enrich_quantity(q, element):
-    """[FIX-26] Помимо volume/area/count заполняем length_m и joint_length_m."""
     result = dict(q or {})
     element = element or {}
 
@@ -1248,13 +1421,11 @@ def _enrich_quantity(q, element):
         if a and a > 0:
             result["area_m2"] = float(a)
 
-    # length_m для «100 м»
     if _pick_quantity(result, "length_m") is None:
         L = _lookup(element, *_LENGTH_KEYS)
         if L and L > 0:
             result["length_m"] = float(L) / 1000.0
 
-    # joint_length_m (периметр) для «100 м шва»
     if _pick_quantity(result, "joint_length_m") is None:
         p = _element_perimeter_m(element)
         if p and p > 0:
@@ -1311,14 +1482,12 @@ def _build_work_row(
     quantity = _enrich_quantity(dict(quantity or {}),
                                  element_payload.get("element") or {})
 
-    # [FIX-25] опалубка — не подставляем площадь элемента
     if _is_formwork_work(work):
         if group_formwork_area is not None:
             quantity["area_m2"] = group_formwork_area
         else:
             quantity.pop("area_m2", None)
 
-    # [FIX-26] «100 м шва»
     if group_joint_length_m is not None and _is_joint_work(work):
         quantity["joint_length_m"] = group_joint_length_m
 
@@ -1556,9 +1725,9 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
     if building_height:
         logger.info(f"Высота здания: {building_height:.2f} м")
 
-    # [FIX-24/25/26] Загружаем параметры подбора и массы арматуры
     params_by_id = _load_element_params(run_dir)
     rebar_mass_by_gid = _load_rebar_mass_by_gid(run_dir)
+    full_data_by_gid = _load_full_element_data(run_dir)
 
     processing_units = []
     if leaf_groups:
@@ -1588,13 +1757,11 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
         element = element_payload.get("element", {}) or {}
         group_quantity = _sum_group_quantities(unit["payloads"]) if group else None
 
-        # [FIX-25] Площадь опалубки: params → element["row"]
-        group_formwork_area = _sum_formwork_area(unit["payloads"], params_by_id)
-        # [FIX-26] Периметр для «100 м шва»
+        group_formwork_area = _sum_formwork_area(
+            unit["payloads"], params_by_id, full_data_by_gid,
+        )
         group_joint_m = _sum_joint_length(unit["payloads"], params_by_id)
-        # [FIX-24] Резервный расчёт массы арматуры через element["row"]
         group_rebar_t_fallback = _sum_group_rebar_mass_t(unit["payloads"])
-        # [FIX-24] Основной — из filtered_elements.xlsx по GlobalId
         group_rebar_kg = _sum_group_rebar_kg(unit["payloads"], rebar_mass_by_gid)
 
         family = _classify_family(element_payload)
@@ -1617,8 +1784,6 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
             group_joint_length_m=group_joint_m,
         )
 
-        # [FIX-24] Проставляем массу арматуры:
-        #   из xlsx по GlobalId, иначе — резервный расчёт из element["row"]
         rebar_kg_for_assign = group_rebar_kg
         if rebar_kg_for_assign <= 0 and group_rebar_t_fallback:
             rebar_kg_for_assign = group_rebar_t_fallback * 1000.0
@@ -1716,47 +1881,142 @@ def _element_header(entry):
     return head
 
 
-def _volume_for_unit(quantity, unit_of_measure):
-    unit = str(unit_of_measure or "").strip().lower().replace("²", "2").replace("³", "3")
-    divisor, unit_body = 1.0, unit
+# ======================================================================
+#  Объём работ
+# ======================================================================
+
+def _work_divisor(work: Dict[str, Any]) -> float:
+    unit = str(work.get("unit_of_measure") or work.get("unitOfMeasure") or "")
+    unit = unit.strip().lower().replace(" ", "")
+    unit = unit.replace("²", "2").replace("³", "3")
     m = _UNIT_MULTIPLIER_RE.match(unit)
-    if m:
-        try:
-            mult = float(m.group(1).replace(",", "."))
-            if mult > 0:
-                divisor = mult
-        except ValueError:
-            pass
-        unit_body = m.group(2).strip()
+    if not m:
+        return 1.0
+    try:
+        v = float(m.group(1).replace(",", "."))
+        return v if v > 0 else 1.0
+    except ValueError:
+        return 1.0
 
+
+def _build_total_measure(quantity: Dict[str, Any]) -> Dict[str, Any]:
     q = quantity or {}
-    value = None
-    if "м2" in unit_body:
-        value = _pick_quantity(q, "area_m2")
-    elif "м3" in unit_body:
-        value = _pick_quantity(q, "volume_m3")
-    elif _TON_UNIT_RE.search(unit):
-        value = safe_float((q or {}).get("mass_t"), default=None)
-        if value is not None and value <= 0:
-            value = None
-    elif any(k in unit_body for k in ("шт", "штук", "конструкц", "элемент",
-                                        "сборн", "компл", "узл")):
-        value = _pick_quantity(q, "count")
-    elif "м" in unit_body or "пог" in unit_body or "пм" in unit_body:
-        # [FIX-26] «100 м шва» — joint_length_m, «100 м» — length_m
-        if _is_joint_unit(unit_body):
-            value = (_pick_quantity(q, "joint_length_m")
-                     or _pick_quantity(q, "length_m"))
-        else:
-            value = _pick_quantity(q, "length_m")
-    elif unit_body and not _PHYSICAL_UNIT_RE.search(unit_body):
-        value = _pick_quantity(q, "count")
+    vol = _pick_quantity(q, "volume_m3")
+    if vol and vol > 0:
+        return {"type": "volume", "value": float(vol), "unit": "м3"}
+    area = _pick_quantity(q, "area_m2")
+    if area and area > 0:
+        return {"type": "area", "value": float(area), "unit": "м2"}
+    length = _pick_quantity(q, "length_m")
+    if length and length > 0:
+        return {"type": "length", "value": float(length), "unit": "м"}
+    joint = _pick_quantity(q, "joint_length_m")
+    if joint and joint > 0:
+        return {"type": "joint", "value": float(joint), "unit": "м"}
+    cnt = _pick_quantity(q, "count")
+    if cnt and cnt > 0:
+        return {"type": "count", "value": float(cnt), "unit": "шт"}
+    return {"type": "", "value": 0.0, "unit": ""}
 
-    if value is None:
+
+def _build_total_areas(quantity: Dict[str, Any]) -> Dict[str, Any]:
+    q = quantity or {}
+    return {"area_m2": _pick_quantity(q, "area_m2") or 0.0}
+
+
+def _pick_area_value(total_areas: Optional[Dict[str, Any]]) -> float:
+    if not total_areas:
+        return 0.0
+    if isinstance(total_areas, (int, float)):
+        return float(total_areas)
+    if not isinstance(total_areas, dict):
+        return 0.0
+    for key in ("area_m2", "side_area", "net_side_area",
+                "area", "value", "total", "Площадь, м2"):
+        v = safe_float(total_areas.get(key), default=None)
+        if v is not None and v > 0:
+            return float(v)
+    return 0.0
+
+
+def _calculate_work_volume(
+    work: Dict[str, Any],
+    total_measure: Dict[str, Any],
+    total_areas: Optional[Dict[str, Any]] = None,
+    formwork_area: float = 0.0,
+) -> str:
+    measure_type = (total_measure or {}).get("type", "")
+    measure_value = safe_float((total_measure or {}).get("value", 0))
+
+    if measure_value <= 0:
         return ""
-    num = float(value) / divisor
-    return f"{num:.4f}" if num > 0 else ""
 
+    unit = str(work.get("unitOfMeasure", "")
+               or work.get("unit_of_measure", "") or "")
+    unit = unit.lower().replace(" ", "").replace("²", "2").replace("³", "3")
+
+    is_volume = ("м3" in unit or "m3" in unit
+                 or "м[3" in unit or "m[3" in unit)
+    is_area = ("м2" in unit or "m2" in unit
+               or "м[2" in unit or "m[2" in unit)
+    is_count = ("шт" in unit or any(
+        k in unit for k in
+        ("штук", "конструкц", "элемент", "сборн", "компл", "узл")
+    ))
+    is_length = "м" in unit and not is_area and not is_volume
+    is_ton = bool(_TON_UNIT_RE.search(unit))
+
+    divisor = _work_divisor(work)
+
+    if is_volume and measure_type == "volume":
+        vol = measure_value / divisor
+        decimals = 4 if divisor > 1 else 3
+        return f"{vol:.{decimals}f}"
+
+    if is_area and measure_type == "area":
+        vol = measure_value / divisor
+        decimals = 4 if divisor > 1 else 2
+        return f"{vol:.{decimals}f}"
+
+    if is_count and measure_type == "count":
+        vol = measure_value / divisor
+        decimals = 4 if divisor > 1 else 0
+        return f"{vol:.{decimals}f}"
+
+    if is_area and _is_formwork_work(work) and formwork_area > 0:
+        vol = formwork_area / divisor
+        decimals = 4 if divisor > 1 else 2
+        return f"{vol:.{decimals}f}"
+
+    if is_area and total_areas:
+        area_value = _pick_area_value(total_areas)
+        if area_value > 0:
+            vol = area_value / divisor
+            decimals = 4 if divisor > 1 else 2
+            return f"{vol:.{decimals}f}"
+
+    if is_length and measure_type == "joint":
+        vol = measure_value / divisor
+        decimals = 4 if divisor > 1 else 2
+        return f"{vol:.{decimals}f}"
+
+    if is_length and measure_type == "length":
+        vol = measure_value / divisor
+        decimals = 4 if divisor > 1 else 2
+        return f"{vol:.{decimals}f}"
+
+    if is_ton:
+        mass = safe_float((work.get("quantity") or {}).get("mass_t"),
+                           default=None)
+        if mass and mass > 0:
+            return f"{mass / divisor:.4f}"
+
+    return ""
+
+
+# ======================================================================
+#  Excel builder
+# ======================================================================
 
 def build_final_works_xlsx(result_elements, xlsx_path):
     columns = ["Шифр ТСН", "Наименование расценки/ресурса", "Ед. изм.",
@@ -1785,12 +2045,24 @@ def build_final_works_xlsx(result_elements, xlsx_path):
             row["Наименование расценки/ресурса"] = "Работы не подобраны"
             final_rows.append(row)
         for work in works:
-            vol_text = _volume_for_unit(work.get("quantity"), work.get("unit_of_measure"))
+            q = work.get("quantity") or {}
+            total_measure = _build_total_measure(q)
+            total_areas = _build_total_areas(q)
+            formwork_area = (
+                safe_float(q.get("area_m2"), default=0.0)
+                if _is_formwork_work(work) else 0.0
+            )
+            vol_text = _calculate_work_volume(
+                work, total_measure,
+                total_areas=total_areas,
+                formwork_area=formwork_area,
+            )
             vol_num = safe_float(vol_text, default=0.0)
             zp = _cost(work, "cur_salary", "salary", vol_num)
-            em = _cost(work, "cur_operation_of_machines", "operation_of_machines", vol_num)
+            em = _cost(work, "cur_operation_of_machines",
+                       "operation_of_machines", vol_num)
             mr = _cost(work, "cur_cost_of_material_resources",
-                        "cost_of_material_resources", vol_num)
+                       "cost_of_material_resources", vol_num)
             parts = [v for v in (zp, em, mr) if v is not None]
             cost = round(sum(parts), 2) if parts else ""
             final_rows.append({
@@ -1844,12 +2116,6 @@ def build_final_works_xlsx(result_elements, xlsx_path):
     logger.info(f"Excel сохранён: {xlsx_path}")
     return xlsx_path
 
-
-# ======================================================================
-#  CLI для отладки:
-#      python -m src.services.works_final_selector <tables.json>
-#      <works.json> <run_dir>
-# ======================================================================
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
