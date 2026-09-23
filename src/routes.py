@@ -1338,7 +1338,13 @@ def get_position_links(session_id: str):
         description: ID сессии
     responses:
       200:
-        description: Карта «имя элемента → список позиций (id, name)»
+        description: >
+          Карта «имя элемента → список вариантов», вариант содержит
+          контекст (part, geo), позиции ({id, name, group}) и reason.
+          group — имя группы работ позиции по высоте здания
+          («до 57», «более 75 до 105 м» …), параметр ?group= ссылки
+          на карточку ЦС; пусто, если работы от высоты не зависят
+          или высота здания не определена.
         schema:
           type: object
           properties:

@@ -1148,13 +1148,20 @@ const POSITION_LINK_SVG =
 // размещается прижатой к правому краю строки группы.
 // На группу отображается ровно одна ссылка (первая позиция варианта),
 // как в режиме КР — даже если в position_links.json сохранено несколько.
+// Если позиция зависит от высоты здания (в position_links.json у позиции
+// есть поле group — имя группы работ по высоте, «до 57» / «более 57 до
+// 75 м» / «более 75 до 105 м» …), к ссылке добавляется параметр
+// ?group=<группа> — карточка такой позиции в ЦС открывается сразу на
+// нужной группе работ; у позиций без group работы от высоты не зависят,
+// ссылка остаётся без параметра.
 // Если группа (nameKey) известна, но позиций в ЦС не найдено — серая
 // некликабельная иконка «отсутствует в цифровом сборнике».
 function positionLinksHtml(nameKey, part, geo) {
     const positions = pickPositionVariant(nameKey, part, geo);
     if (positions && positions.length > 0) {
         const p = positions[0];
-        return `<a class="position-link" href="https://digital-collection.mgexp.org/building-elements/position/${p.id}"` +
+        const groupQuery = p.group ? `?group=${encodeURIComponent(p.group).replace(/%20/g, '+')}` : '';
+        return `<a class="position-link" href="https://digital-collection.mgexp.org/building-elements/position/${p.id}${groupQuery}"` +
             ` target="_blank" rel="noopener" title="Открыть в цифровом сборнике: ${p.name || 'позиция ' + p.id}"` +
             ` onclick="event.stopPropagation()">${POSITION_LINK_SVG}</a>`;
     }

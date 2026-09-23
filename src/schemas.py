@@ -238,6 +238,11 @@ class PositionLinkItem(CamelModel):
     """Позиция цифрового сборника для группы элементов"""
     id: int
     name: str = ""
+    # Группа работ позиции по высоте здания («до 57», «более 57 до 75 м»,
+    # «более 75 до 105 м» …) — параметр ?group= ссылки на карточку ЦС.
+    # Пусто, если работы позиции от высоты не зависят либо высота здания
+    # не определена (ссылка отдаётся без параметра).
+    group: str = ""
 
 
 class PositionLinkVariant(CamelModel):
@@ -245,6 +250,8 @@ class PositionLinkVariant(CamelModel):
     part: str = ""
     geo: str = ""
     positions: List[PositionLinkItem] = []
+    # Пояснение, почему позиций нет (работы не подходят высоте здания и т.п.)
+    reason: str = ""
 
 
 class PositionLinksResponse(CamelModel):
