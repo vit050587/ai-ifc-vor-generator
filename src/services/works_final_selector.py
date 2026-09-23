@@ -1,15 +1,11 @@
 """
-Финальный подбор работ через LLM (режим АР). Версия 11.6.
+Финальный подбор работ через LLM (режим АР). Версия 12.0.
 
-Изменения от v11.5:
-  * [FIX-32] Загружаем полные данные элементов из
-    filtered_elements_grouped_AR.json → {global_id: first_element}.
-    Там есть периметр, depth, объём, площадь — то, чего нет в
-    Подобранные_таблицы_работ.json.
-  * [FIX-32] Периметр и толщина фундаментной плиты берутся из этого
-    файла (приоритет), с fallback на element["row"] и params.
-  * [FIX-33] foundation_slab убран из _NO_USTROYSTVO_FAMILIES —
-    «Устройство фундаментных плит…» это и есть основная работа плиты.
+Изменения от v11.9:
+  * [FIX-43] Части здания определяются по path[0] листовой группы
+    (Подземная → Цокольная → Надземная), а не по applied_constants.
+    Раньше подземная и цокольная склеивались в одну «Цоколь».
+  * [FIX-44] В entry прокидывается group_path, из него берётся часть.
 """
 
 import json
@@ -23,7 +19,11 @@ import pandas as pd
 
 from src.core.config import load_config
 from src.core.logger import setup_logger
-from src.services.works_cost import add_total_row, format_money, safe_float
+from src.services.works_cost import (
+    _parse_money,
+    format_money,
+    safe_float,
+)
 
 logger = setup_logger(__name__)
 
@@ -59,8 +59,6 @@ _THICKNESS_WORK_RE = re.compile(
 _MM_IN_NAME_RE = re.compile(r"(\d+)\s*мм", re.IGNORECASE)
 _SECTION_RE = re.compile(r"(\d+)\s*[хx]\s*(\d+)", re.IGNORECASE)
 
-# [FIX-33] foundation_slab убран — «Устройство фундаментных плит…»
-#          это основная работа плиты, а не дубль.
 _NO_USTROYSTVO_FAMILIES = frozenset({"wall", "foundation_slab", "floor"})
 _USTROYSTVO_PREFIX_RE = re.compile(r"^\s*устройств", re.IGNORECASE)
 
@@ -741,7 +739,6 @@ def _filter_works_in_table(
                 result, used_fallback = prev, True
                 break
 
-    # [FIX-33] «Устройство …» убираем только для wall / floor
     if family in _NO_USTROYSTVO_FAMILIES:
         before = len(result)
         result = [w for w in result
@@ -1035,12 +1032,10 @@ def _element_perimeter_m(element: Dict[str, Any],
 
 
 # ======================================================================
-#  [FIX-32] Полные данные элементов из filtered_elements_grouped_AR.json
+#  Полные данные элементов из filtered_elements_grouped_AR.json
 # ======================================================================
 
 def _load_full_element_data(run_dir: str) -> Dict[str, Dict[str, Any]]:
-    """Собирает {global_id: first_element} по всему дереву
-    filtered_elements_grouped_AR.json."""
     path = os.path.join(run_dir, GROUPED_JSON_FILENAME)
     if not os.path.isfile(path):
         logger.warning(f"Нет {GROUPED_JSON_FILENAME} — геометрия элементов недоступна")
@@ -1082,44 +1077,37 @@ def _full_value(full: Optional[Dict[str, Any]], *keys: str) -> Optional[float]:
     return None
 
 
-# ── Периметр фундаментной плиты (полные данные → row → params) ────────
 def _foundation_slab_perimeter_m(
     element: Dict[str, Any],
     params: Optional[Dict[str, Any]] = None,
     full: Optional[Dict[str, Any]] = None,
 ) -> Optional[float]:
-    # 1) явный периметр из полных данных элемента (QTO-факт)
     if full:
         p = _full_value(full, *_SLAB_PERIMETER_KEYS)
         if p and p > 0:
             return p / 1000.0 if p > 500 else p
 
-    # 2) явный периметр из element["row"]
     p = _lookup(element, *_SLAB_PERIMETER_KEYS)
     if p and p > 0:
         return p / 1000.0 if p > 500 else p
 
-    # 3) явный perimeter из params
     if params:
         explicit = _param_meters(params, "perimeter")
         if explicit and 0 < explicit < 1000:
             return explicit
 
-    # 4) 2*(L+W) из полных данных
     if full:
         L_mm = _full_value(full, *_LENGTH_KEYS)
         W_mm = _full_value(full, *_WIDTH_KEYS)
         if L_mm and W_mm:
             return 2.0 * (L_mm + W_mm) / 1000.0
 
-    # 5) 2*(L+W) из params
     if params:
         L = _param_meters(params, "length")
         W = _param_meters(params, "width")
         if L and W:
             return 2.0 * (L + W)
 
-    # 6) 2*(L+W) из element["row"]
     L_mm = _lookup(element, *_LENGTH_KEYS)
     W_mm = _lookup(element, *_WIDTH_KEYS)
     if L_mm and W_mm:
@@ -1156,11 +1144,9 @@ def _formwork_area_m2(
     el = element_payload.get("element", {}) or {}
     family = _classify_family(element_payload)
 
-    # ── [FIX-32] Фундаментные плиты: периметр и thickness из full/row/params
     if family == "foundation_slab":
         perimeter = _foundation_slab_perimeter_m(el, params, full)
 
-        # Толщина: full → element["row"] → params → имя
         t: Optional[float] = None
         if full:
             depth_mm = _full_value(full, *_DEPTH_KEYS)
@@ -1192,7 +1178,6 @@ def _formwork_area_m2(
             return perimeter * t
         return None
 
-    # ── Остальные семейства — как было
     if params:
         thickness = _param_meters(params, "thickness") \
                     or _param_meters(params, "width")
@@ -1216,7 +1201,6 @@ def _formwork_area_m2(
         if perimeter and thickness:
             return 2.0 * perimeter * thickness
 
-    # Из полных данных
     if full:
         L_mm = _full_value(full, *_LENGTH_KEYS)
         W_mm = _full_value(full, *_WIDTH_KEYS)
@@ -1229,7 +1213,6 @@ def _formwork_area_m2(
         if family == "column" and L_mm and W_mm and H_mm:
             return 2.0 * ((L_mm + W_mm) / 1000.0) * (H_mm / 1000.0)
 
-    # Из element["row"]
     L_mm = _lookup(el, *_LENGTH_KEYS)
     W_mm = _lookup(el, *_WIDTH_KEYS)
     H_mm = _lookup(el, *_HEIGHT_KEYS)
@@ -1804,6 +1787,7 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
         if group:
             entry["group"] = {"name": group.get("name", ""),
                               "element_count": len(unit["payloads"])}
+            entry["group_path"] = list(group.get("path") or [])
             entry["group_quantity"] = group_quantity
             entry["group_formwork_area_m2"] = group_formwork_area
             entry["group_joint_length_m"] = group_joint_m
@@ -1864,20 +1848,13 @@ def _element_header(entry):
     if mssk and mssk.lower() != base.lower():
         parts.append(mssk)
 
-    tail = []
-    part = str(entry.get("part") or "").strip().lower()
-    if part:
-        tail.append(_PART_LABELS.get(part, part))
-    thickness = _element_thickness_mm(entry)
-    if thickness:
-        tail.append(f"толщина {thickness} мм")
-    min_side = _element_min_side_mm(entry)
-    if min_side:
-        tail.append(f"сечение {min_side} мм")
-
     head = f"{base} ({', '.join(parts)})" if parts else base
-    if tail:
-        head += " — " + ", ".join(tail)
+
+    grp = entry.get("group") or {}
+    cnt = grp.get("element_count")
+    if cnt and cnt > 1:
+        head += f" Кол-во: {cnt}"
+
     return head
 
 
@@ -1897,6 +1874,26 @@ def _work_divisor(work: Dict[str, Any]) -> float:
         return v if v > 0 else 1.0
     except ValueError:
         return 1.0
+
+
+def _resolve_unit_label(work: Dict[str, Any]) -> str:
+    unit = str(work.get("unit_of_measure", "")
+               or work.get("unitOfMeasure", "") or "")
+    unit_low = unit.lower().replace(" ", "")
+    divisor = _work_divisor(work)
+
+    if ("м3" in unit_low or "m3" in unit_low
+            or "м[3" in unit_low or "m[3" in unit_low):
+        base = "м³"
+    elif ("м2" in unit_low or "m2" in unit_low
+            or "м[2" in unit_low or "m[2" in unit_low):
+        base = "м²"
+    elif "шт" in unit_low:
+        base = "шт"
+    else:
+        return unit or ""
+
+    return f"{divisor} {base}" if divisor > 1 else base
 
 
 def _build_total_measure(quantity: Dict[str, Any]) -> Dict[str, Any]:
@@ -2015,12 +2012,81 @@ def _calculate_work_volume(
 
 
 # ======================================================================
+#  Части здания — ТРИ разных по path[0]
+# ======================================================================
+
+BUILDING_PART_ORDER = ("Подземная", "Цокольная", "Надземная")
+
+_BUILDING_PART_TITLES = {
+    "Подземная": "ПОДЗЕМНАЯ ЧАСТЬ",
+    "Цокольная": "ЦОКОЛЬНАЯ ЧАСТЬ",
+    "Надземная": "НАДЗЕМНАЯ ЧАСТЬ",
+}
+
+_BUILDING_PART_TOTAL_LABELS = {
+    "Подземная": "ИТОГО по подземной части:",
+    "Цокольная": "ИТОГО по цокольной части:",
+    "Надземная": "ИТОГО по надземной части:",
+}
+
+
+def _resolve_building_part(entry):
+    """Часть здания: Подземная / Цокольная / Надземная.
+
+    Приоритет:
+      1) group_path[0] — первый уровень группировки
+         («Подземная часть здания (до отм. 0,000)» / «Цокольная часть
+         здания (отм. 0,000)» / «Надземная часть здания (выше отм. 0,000)»);
+      2) applied_constants.building_part — если надземная → «Надземная»,
+         иначе «Подземная»;
+      3) имя элемента / МССК.
+    """
+    # 1) path[0]
+    path = entry.get("group_path") or []
+    if path:
+        top = str(path[0]).lower()
+        if "подземн" in top:
+            return "Подземная"
+        if "цокольн" in top:
+            return "Цокольная"
+        if "надземн" in top:
+            return "Надземная"
+
+    # 2) applied_constants.building_part
+    part = str(entry.get("part") or "").lower()
+    if "надземн" in part:
+        return "Надземная"
+    if "подземн" in part or "цокольн" in part:
+        return "Подземная"
+
+    # 3) фолбэк по имени/МССК
+    element = entry.get("element", {}) or {}
+    haystack = (
+        str(element.get("name") or "").lower()
+        + " "
+        + str((entry.get("mssk_context") or {}).get("name") or "").lower()
+    )
+    if "подземн" in haystack:
+        return "Подземная"
+    if "цокольн" in haystack:
+        return "Цокольная"
+    if "надземн" in haystack:
+        return "Надземная"
+
+    return "Надземная"
+
+
+# ======================================================================
 #  Excel builder
 # ======================================================================
 
 def build_final_works_xlsx(result_elements, xlsx_path):
-    columns = ["Шифр ТСН", "Наименование расценки/ресурса", "Ед. изм.",
-               "Объём работ", "ЗП", "ЭМ", "МР", "Стоимость", "_is_header"]
+    columns = [
+        "Шифр ТСН", "Наименование расценки/ресурса", "Ед. изм.",
+        "Объём работ", "ЗП", "ЭМ", "МР", "Стоимость",
+        "_is_part_header", "_is_element_header", "_is_part_total",
+        "_is_grand_total",
+    ]
 
     def _cost(work, cur_key, base_key, vol):
         unit = safe_float(work.get(cur_key), default=0.0)
@@ -2030,21 +2096,27 @@ def build_final_works_xlsx(result_elements, xlsx_path):
             return round(unit * vol, 2)
         return None
 
-    def _empty(is_header=False):
-        return {col: "" for col in columns[:-1]} | {"_is_header": is_header}
+    def _blank():
+        return {col: "" for col in columns[:-4]} | {
+            "_is_part_header": False,
+            "_is_element_header": False,
+            "_is_part_total": False,
+            "_is_grand_total": False,
+        }
 
-    final_rows = []
-    for idx, entry in enumerate(result_elements):
-        hdr = _empty(is_header=True)
-        hdr["Наименование расценки/ресурса"] = _element_header(entry)
-        final_rows.append(hdr)
+    def _sum_money(rows):
+        return {
+            col: format_money(sum(_parse_money(r.get(col)) for r in rows))
+            for col in ("ЗП", "ЭМ", "МР", "Стоимость")
+        }
 
-        works = entry.get("selected_works") or []
-        if not works:
-            row = _empty()
-            row["Наименование расценки/ресурса"] = "Работы не подобраны"
-            final_rows.append(row)
-        for work in works:
+    element_blocks = []
+    for entry in result_elements:
+        part = _resolve_building_part(entry)
+        header = _element_header(entry)
+
+        work_rows: List[Dict[str, Any]] = []
+        for work in entry.get("selected_works") or []:
             q = work.get("quantity") or {}
             total_measure = _build_total_measure(q)
             total_areas = _build_total_areas(q)
@@ -2065,44 +2137,153 @@ def build_final_works_xlsx(result_elements, xlsx_path):
                        "cost_of_material_resources", vol_num)
             parts = [v for v in (zp, em, mr) if v is not None]
             cost = round(sum(parts), 2) if parts else ""
-            final_rows.append({
-                "Шифр ТСН": work.get("pressmark") or "",
-                "Наименование расценки/ресурса": work.get("title") or "",
-                "Ед. изм.": work.get("unit_of_measure") or "",
-                "Объём работ": vol_text,
-                "ЗП": zp if zp is not None else "",
-                "ЭМ": em if em is not None else "",
-                "МР": mr if mr is not None else "",
-                "Стоимость": cost,
-                "_is_header": False,
-            })
-        if idx < len(result_elements) - 1:
-            final_rows.append(_empty())
+
+            row = _blank()
+            row["Шифр ТСН"] = work.get("pressmark") or ""
+            row["Наименование расценки/ресурса"] = work.get("title") or ""
+            row["Ед. изм."] = _resolve_unit_label(work)
+            row["Объём работ"] = vol_text
+            row["ЗП"] = zp if zp is not None else ""
+            row["ЭМ"] = em if em is not None else ""
+            row["МР"] = mr if mr is not None else ""
+            row["Стоимость"] = cost
+            work_rows.append(row)
+
+        element_blocks.append({
+            "part": part,
+            "header": header,
+            "rows": work_rows,
+        })
+
+    from collections import Counter
+    _part_counts = Counter(b["part"] for b in element_blocks)
+    logger.info(
+        "Разбивка по частям здания: "
+        + ", ".join(f"{k}={v}" for k, v in _part_counts.items())
+    )
+
+    for block in element_blocks:
+        for r in block["rows"]:
+            for col in ("ЗП", "ЭМ", "МР", "Стоимость"):
+                r[col] = format_money(r[col])
+
+    final_rows: List[Dict[str, Any]] = []
+    all_work_rows: List[Dict[str, Any]] = []
+
+    parts_in_order = [
+        p for p in BUILDING_PART_ORDER
+        if any(b["part"] == p for b in element_blocks)
+    ]
+
+    if not parts_in_order:
+        for block in element_blocks:
+            hdr = _blank()
+            hdr["_is_element_header"] = True
+            hdr["Наименование расценки/ресурса"] = block["header"]
+            final_rows.append(hdr)
+            final_rows.extend(block["rows"])
+            all_work_rows.extend(block["rows"])
+    else:
+        for part_pos, part in enumerate(parts_in_order):
+            part_hdr = _blank()
+            part_hdr["_is_part_header"] = True
+            part_hdr["Наименование расценки/ресурса"] = (
+                _BUILDING_PART_TITLES.get(part, part)
+            )
+            final_rows.append(part_hdr)
+
+            part_blocks = [b for b in element_blocks if b["part"] == part]
+            part_work_rows: List[Dict[str, Any]] = []
+
+            for block_pos, block in enumerate(part_blocks):
+                hdr = _blank()
+                hdr["_is_element_header"] = True
+                hdr["Наименование расценки/ресурса"] = block["header"]
+                final_rows.append(hdr)
+
+                if block["rows"]:
+                    final_rows.extend(block["rows"])
+                    part_work_rows.extend(block["rows"])
+                    all_work_rows.extend(block["rows"])
+                else:
+                    empty = _blank()
+                    empty["Наименование расценки/ресурса"] = "Работы не подобраны"
+                    final_rows.append(empty)
+
+                if block_pos < len(part_blocks) - 1:
+                    final_rows.append(_blank())
+
+            part_total = _blank()
+            part_total["_is_part_total"] = True
+            part_total["Наименование расценки/ресурса"] = (
+                _BUILDING_PART_TOTAL_LABELS.get(part, f"ИТОГО по части ({part}):")
+            )
+            for col, value in _sum_money(part_work_rows).items():
+                part_total[col] = value
+            final_rows.append(part_total)
+
+            if part_pos < len(parts_in_order) - 1:
+                final_rows.append(_blank())
+
+        if all_work_rows:
+            grand = _blank()
+            grand["_is_grand_total"] = True
+            grand["Наименование расценки/ресурса"] = "ИТОГО:"
+            for col, value in _sum_money(all_work_rows).items():
+                grand[col] = value
+            final_rows.append(grand)
 
     if not final_rows:
-        final_rows.append(_empty())
-        final_rows[0]["Наименование расценки/ресурса"] = "Работы не подобраны"
+        empty = _blank()
+        empty["Наименование расценки/ресурса"] = "Работы не подобраны"
+        final_rows.append(empty)
 
-    df = pd.DataFrame(final_rows, columns=columns)
-    for col in ("ЗП", "ЭМ", "МР", "Стоимость"):
-        df[col] = df[col].apply(format_money)
-    df_for_excel = add_total_row(df.drop(columns=["_is_header"]))
+    df = pd.DataFrame(final_rows)
+    for col in columns:
+        if col not in df.columns:
+            df[col] = ""
+
+    df = df[columns]
+    df_for_excel = df.drop(columns=[
+        "_is_part_header", "_is_element_header",
+        "_is_part_total", "_is_grand_total",
+    ])
 
     with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
         df_for_excel.to_excel(writer, sheet_name="Данные", index=False)
         worksheet = writer.sheets["Данные"]
 
         from openpyxl.styles import Font, PatternFill, Alignment
+
+        part_header_font = Font(bold=True, size=12)
+        part_header_fill = PatternFill(
+            start_color="A9A9A9", end_color="A9A9A9", fill_type="solid"
+        )
         header_font = Font(bold=True, size=11)
-        header_fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+        header_fill = PatternFill(
+            start_color="D3D3D3", end_color="D3D3D3", fill_type="solid"
+        )
         center = Alignment(horizontal="center", vertical="center")
+        bold_font = Font(bold=True, size=11)
 
         for row_idx in range(2, len(df) + 2):
-            if df.iloc[row_idx - 2]["_is_header"]:
+            row_data = df.iloc[row_idx - 2]
+            if row_data["_is_part_header"]:
+                for col_idx in range(1, len(df_for_excel.columns) + 1):
+                    cell = worksheet.cell(row=row_idx, column=col_idx)
+                    cell.font = part_header_font
+                    cell.fill = part_header_fill
+                    cell.alignment = center
+            elif row_data["_is_element_header"]:
                 for col_idx in range(1, len(df_for_excel.columns) + 1):
                     cell = worksheet.cell(row=row_idx, column=col_idx)
                     cell.font = header_font
                     cell.fill = header_fill
+                    cell.alignment = center
+            elif row_data["_is_part_total"] or row_data["_is_grand_total"]:
+                for col_idx in range(1, len(df_for_excel.columns) + 1):
+                    cell = worksheet.cell(row=row_idx, column=col_idx)
+                    cell.font = bold_font
                     cell.alignment = center
 
         worksheet.column_dimensions["A"].width = 15
@@ -2111,7 +2292,9 @@ def build_final_works_xlsx(result_elements, xlsx_path):
         worksheet.column_dimensions["D"].width = 15
         for col in "EFGH":
             worksheet.column_dimensions[col].width = 15
-        worksheet.auto_filter.ref = f"A1:{chr(64 + len(df_for_excel.columns))}{len(df_for_excel) + 1}"
+        worksheet.auto_filter.ref = (
+            f"A1:{chr(64 + len(df_for_excel.columns))}{len(df_for_excel) + 1}"
+        )
 
     logger.info(f"Excel сохранён: {xlsx_path}")
     return xlsx_path

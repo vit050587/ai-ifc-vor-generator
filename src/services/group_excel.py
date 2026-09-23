@@ -1667,7 +1667,13 @@ def process_ifc_excel(input_excel_path: str, output_dir: str = None) -> Dict[str
 
 
 def process_ifc_excel_ar(input_excel_path: str, output_dir: str = None) -> Dict[str, str]:
-    """Process IFC Excel file and create grouped output (для АР). С кешированием на диске."""
+    """Process IFC Excel file and create grouped output (для АР).
+
+    Группировка идентична КР (group_elements_mssk) — чтобы дерево в
+    финальном перечне АР совпадало с КР (деление по IFC-типу, геометрии
+    и бетону, а не только по наименованию элемента). Имя файла остаётся
+    *_AR — контракт с works_final_selector не меняется.
+    """
     input_path = Path(input_excel_path)
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_excel_path}")
@@ -1678,7 +1684,7 @@ def process_ifc_excel_ar(input_excel_path: str, output_dir: str = None) -> Dict[
         input_excel_path=input_excel_path,
         output_dir=output_dir,
         processing_type='AR',
-        group_func=group_elements_ar,
+        group_func=group_elements_mssk,
         suffix='_AR'
     )
 
