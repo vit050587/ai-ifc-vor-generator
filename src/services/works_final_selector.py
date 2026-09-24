@@ -1,5 +1,33 @@
 """
-Финальный подбор работ через LLM (режим АР). Версия 12.0.
+Финальный подбор работ через LLM (режим АР). Версия 13.2.
+
+Изменения от v13.1:
+  * [FIX-47] Сборный железобетон: работы подбираются так же, как для
+    остальных групп — пропуска больше нет, попытка подбора делается
+    для всех групп элементов. Если кандидатов в таблицах нет, группа
+    остаётся без строк работ (note с причиной подбора пуст).
+    Пометка «Сборный железобетон — ...» в заголовке группы убрана.
+
+Изменения от v13.0:
+  * [FIX-46] Часть здания элемента определяется СТРОГО по числовому
+    индикатору «Этажа» («-N/M» → цоколь, «-N» → подземная, «N»/«Крыша» →
+    надземная): переквалификация 1-го этажа по «Тип_этажа» («Цокольный»
+    из-за отметки 0,000) убрана — элементы 1-го этажа больше не попадают
+    в цокольную часть здания.
+
+Изменения от v12.0:
+  * [FIX-45] Группировка и объёмы приведены к правилам КР:
+    - смешанные листовые группы делятся по частям здания
+      (split_leaf_groups_by_part из ifc_reference_builder);
+    - заголовки групп в формате КР: «Тип элемента (Материал, Имя)
+      Кол-во: N»;
+    - части здания и их названия — как в КР (ЦОКОЛЬ, а не «Цокольная
+      часть»);
+    - объёмы работ считаются из агрегатов группы (total_volume,
+      total_areas, formwork_area, total_reinforcement): опалубка — только
+      по площади опалубки плитных групп, арматура — только в расценке
+      «Установка отдельных стержней», объёмы корректируются по
+      koefs.xlsx.
 
 Изменения от v11.9:
   * [FIX-43] Части здания определяются по path[0] листовой группы
@@ -20,9 +48,17 @@ import pandas as pd
 from src.core.config import load_config
 from src.core.logger import setup_logger
 from src.services.works_cost import (
+    _get_corrected_volume,
     _parse_money,
     format_money,
     safe_float,
+)
+from src.services.group_excel import get_ifc_type
+from src.services.ifc_reference_builder import (
+    _determine_building_element_name,
+    _normalize_material,
+    _singularize_ru_name,
+    split_leaf_groups_by_part,
 )
 
 logger = setup_logger(__name__)
@@ -380,6 +416,12 @@ def _is_rebar_ton_work(work: Dict[str, Any]) -> bool:
     unit = str(work.get("unit_of_measure") or work.get("unitOfMeasure") or "")
     has_kw = any(kw in title for kw in _REBAR_KEYWORDS)
     return has_kw and bool(_TON_UNIT_RE.search(unit))
+
+
+def _is_rebar_work_title(work_title: str) -> bool:
+    """Расценка монтажа арматуры (по ключевым словам — правила КР)."""
+    title = _norm_text(work_title)
+    return any(kw in title for kw in _REBAR_KEYWORDS)
 
 
 # ======================================================================
@@ -1544,6 +1586,14 @@ def _enrich_selected_works_with_costs(result_elements, period_id):
 # ======================================================================
 
 def _load_leaf_groups(path):
+    """Загружает листовые группы дерева группировки АР.
+
+    Помимо name/path/indices сохраняет агрегаты группы (total_volume,
+    total_areas, total_reinforcement, formwork_area, count) и первого
+    элемента (first_element) — они нужны для расчёта объёмов работ
+    по правилам КР (totalMeasure/totalAreas/опалубка/арматура) и для
+    заголовков групп в формате КР.
+    """
     if not os.path.isfile(path):
         return []
     try:
@@ -1564,8 +1614,14 @@ def _load_leaf_groups(path):
                            if isinstance(i, (int, str))
                            and str(i).strip().lstrip("-").isdigit()]
                 if indices:
-                    leaves.append({"name": str(node.get("name", "")),
-                                   "path": cur, "indices": sorted(indices)})
+                    leaf = {"name": str(node.get("name", "")),
+                            "path": cur, "indices": sorted(indices)}
+                    for key in ("total_volume", "total_areas",
+                                "total_reinforcement", "formwork_area",
+                                "count", "first_element"):
+                        if node.get(key) is not None:
+                            leaf[key] = node.get(key)
+                    leaves.append(leaf)
 
     if isinstance(tree, list):
         walk(tree, [])
@@ -1712,6 +1768,27 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
     rebar_mass_by_gid = _load_rebar_mass_by_gid(run_dir)
     full_data_by_gid = _load_full_element_data(run_dir)
 
+    # Разделение смешанных листовых групп по частям здания — по правилам КР
+    # (ifc_reference_builder.split_leaf_groups_by_part): часть элемента
+    # определяется СТРОГО по числовому индикатору «Этажа» («-N/M» → цоколь,
+    # «-N» → подземная, «N»/«Крыша» → надземная). Смешанные группы делятся
+    # на подгруппы со своими агрегатами (объём/площади/арматура/опалубка).
+    # Без этого финальный перечень АР не совпадает с КР по группировке
+    # элементов и объёмам.
+    elements_rows = []
+    filtered_xlsx_path = os.path.join(run_dir, FILTERED_XLSX_FILENAME)
+    if os.path.isfile(filtered_xlsx_path):
+        try:
+            elements_rows = pd.read_excel(
+                filtered_xlsx_path, sheet_name="Данные"
+            ).to_dict("records")
+        except Exception as exc:
+            logger.warning(f"Не удалось прочитать {FILTERED_XLSX_FILENAME}: {exc}")
+    if elements_rows:
+        leaf_groups = split_leaf_groups_by_part(leaf_groups, elements_rows)
+        logger.info(f"Листовых групп после разделения по частям здания: "
+                    f"{len(leaf_groups)}")
+
     processing_units = []
     if leaf_groups:
         covered = set()
@@ -1738,40 +1815,77 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
         element_payload = unit["first"]
         group = unit["group"]
         element = element_payload.get("element", {}) or {}
-        group_quantity = _sum_group_quantities(unit["payloads"]) if group else None
+        group_quantity_fallback = _sum_group_quantities(unit["payloads"]) if group else None
 
-        group_formwork_area = _sum_formwork_area(
-            unit["payloads"], params_by_id, full_data_by_gid,
-        )
+        # Агрегаты группы из дерева группировки (правила КР): объём,
+        # площади, площадь опалубки, расход арматуры. Для разделённых
+        # по частям здания подгрупп агрегаты пересчитаны в split_leaf_
+        # groups_by_part — сумма подгрупп равна агрегатам исходной группы.
+        if group:
+            group_quantity = _group_quantity_from_aggregates(
+                group, group_quantity_fallback
+            )
+            group_formwork_area = safe_float(group.get("formwork_area"), default=0.0)
+            # Расход арматуры группы — только из агрегата дерева
+            # группировки (total_reinforcement), как в КР.
+            group_rebar_kg = safe_float(group.get("total_reinforcement"),
+                                        default=0.0)
+        else:
+            group_quantity = None
+            group_formwork_area = _sum_formwork_area(
+                unit["payloads"], params_by_id, full_data_by_gid,
+            )
+            group_rebar_kg = _sum_group_rebar_kg(unit["payloads"],
+                                                 rebar_mass_by_gid)
         group_joint_m = _sum_joint_length(unit["payloads"], params_by_id)
-        group_rebar_t_fallback = _sum_group_rebar_mass_t(unit["payloads"])
-        group_rebar_kg = _sum_group_rebar_kg(unit["payloads"], rebar_mass_by_gid)
 
         family = _classify_family(element_payload)
         applied = element_payload.get("applied_constants", {}) or {}
-        element_part = str(applied.get("building_part") or "").lower()
+
+        # Часть здания группы — по правилам КР: path[0] листовой группы
+        # (после разделения по частям здания). Для фильтра совместимости
+        # работ (_part_compatible) переводится в термины АР.
+        if group:
+            part_key = _group_building_part(group.get("path"))
+            element_part = _GROUP_PART_TO_WORK_PART.get(part_key, "надземная")
+        else:
+            part_key = "Надземная"
+            element_part = str(applied.get("building_part") or "").lower()
+
+        # Заголовок группы в формате КР (по первому элементу группы)
+        group_count = None
+        group_base_name = None
+        if group:
+            try:
+                group_count = int(group.get("count")
+                                  or len(unit["payloads"]))
+            except (TypeError, ValueError):
+                group_count = len(unit["payloads"])
+            header, group_base_name = _group_header(
+                group.get("first_element") or element.get("row") or {},
+                group.get("path"),
+                group_count,
+            )
 
         logger.info(f"«{element.get('name')}»: family={family}, "
-                    f"part={element_part or 'unknown'}, "
+                    f"part={part_key}, "
                     f"tables={len(element_payload.get('works', []) or [])}, "
                     f"formwork_m2={group_formwork_area}, "
                     f"rebar_kg={group_rebar_kg}, "
                     f"joint_m={group_joint_m}")
 
+        # Сборный железобетон подбирается на общих основаниях: попытка
+        # подбора делается для всех групп элементов (FIX-47). Если
+        # кандидатов нет, _select_works_for_element вернёт пустой список
+        # с note — группа выведется без строк работ.
         selected_works, note = _select_works_for_element(
             element_payload, works_by_table, family, element_part,
             building_height, llm,
-            group_count=len(unit["payloads"]) if group else None,
+            group_count=group_count,
             group_quantity=group_quantity,
             group_formwork_area=group_formwork_area,
             group_joint_length_m=group_joint_m,
         )
-
-        rebar_kg_for_assign = group_rebar_kg
-        if rebar_kg_for_assign <= 0 and group_rebar_t_fallback:
-            rebar_kg_for_assign = group_rebar_t_fallback * 1000.0
-        if rebar_kg_for_assign > 0 and selected_works:
-            _assign_rebar_volume(selected_works, rebar_kg_for_assign, family)
 
         total_selected += len(selected_works)
         entry = {
@@ -1781,18 +1895,19 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
             "selected_works": selected_works,
             "note": note,
             "family": family,
-            "part": element_part,
+            "part": part_key,
             "work_type": element_payload.get("work_type", ""),
         }
         if group:
             entry["group"] = {"name": group.get("name", ""),
-                              "element_count": len(unit["payloads"])}
+                              "element_count": group_count}
             entry["group_path"] = list(group.get("path") or [])
             entry["group_quantity"] = group_quantity
             entry["group_formwork_area_m2"] = group_formwork_area
             entry["group_joint_length_m"] = group_joint_m
-            if rebar_kg_for_assign > 0:
-                entry["group_rebar_mass_kg"] = rebar_kg_for_assign
+            entry["group_header"] = header
+            entry["group_base_name"] = group_base_name
+            entry["group_rebar_mass_kg"] = group_rebar_kg
         result_elements.append(entry)
 
     _enrich_selected_works_with_costs(result_elements, works_payload.get("period_id"))
@@ -1821,24 +1936,134 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
 #  Excel
 # ======================================================================
 
-def _clean_header(name):
+def _clean_revit_name(name: str) -> str:
+    """Имя элемента Revit без цифрового ID в конце (как в КР)."""
     text = str(name or "").strip()
     if ":" in text:
         parts = text.split(":")
         if parts[-1].strip().isdigit():
             text = ":".join(parts[:-1])
-    return text
+    return text.strip()
 
 
-_PART_LABELS = {
-    "подземная/цокольная": "подземная/цокольная",
-    "надземная": "надземная",
+def _group_building_part(group_path) -> str:
+    """Ключ части здания листовой группы по path[0] (правила КР).
+
+    path[0] — метка части здания в пути группировки
+    («Подземная часть здания (до отм. 0,000)» и т.п.). Возвращает ключ
+    из BUILDING_PART_ORDER: Подземная / Цоколь / Надземная.
+    """
+    top = str(group_path[0]).lower() if group_path else ""
+    if "подземн" in top:
+        return "Подземная"
+    if "цокольн" in top:
+        return "Цоколь"
+    return "Надземная"
+
+
+# Часть здания группы для фильтра _part_compatible (правила АР):
+# работы «подземной/цокольной» и «надземной» частей здания.
+_GROUP_PART_TO_WORK_PART = {
+    "Подземная": "подземная/цокольная",
+    "Цоколь": "подземная/цокольная",
+    "Надземная": "надземная",
 }
+
+# Приоритет ключей при выборе «рабочей» площади группы из totalAreas —
+# как в КР (api_works_lookup._AREA_KEY_PRIORITY).
+_AREA_KEY_PRIORITY = (
+    "Площадь, м2", "GrossSideArea", "NetSideArea",
+    "GrossArea", "GROSS", "NetArea",
+)
+
+
+def _pick_group_area_m2(total_areas: Optional[Dict[str, Any]]) -> float:
+    """Выбирает «рабочую» площадь группы из totalAreas (правила КР)."""
+    if not isinstance(total_areas, dict):
+        return 0.0
+    for priority in _AREA_KEY_PRIORITY:
+        for key, value in total_areas.items():
+            if (priority.lower() in str(key).lower()
+                    and "footprint" not in str(key).lower()):
+                area_value = safe_float(value)
+                if area_value > 0:
+                    return float(area_value)
+    for value in total_areas.values():
+        area_value = safe_float(value)
+        if area_value > 0:
+            return float(area_value)
+    return 0.0
+
+
+def _group_header(first_element: Dict[str, Any], group_path,
+                  count: int) -> Tuple[str, str]:
+    """Заголовок группы и её базовое название в формате КР.
+
+    Формат (как в ОБЩИЙ_Финальный_перечень_работ.xlsx КР):
+        «{Тип элемента} ({Материал}, {Имя элемента}) Кол-во: N».
+    Сборный железобетон подбирается на общих основаниях (FIX-47) —
+    пометка о неполноте цифрового сборника в заголовок не добавляется.
+
+    Возвращает (заголовок, базовое название группы — buildingElementName).
+    """
+    first = first_element or {}
+    ru_type = str(first.get("Тип (RU)", "") or "")
+    name = str(first.get("Имя", "") or "")
+    ifc_type = str(first.get("Тип элемента", "") or "")
+    if not ifc_type or ifc_type == "-":
+        ifc_type = get_ifc_type(ru_type, name)
+
+    base = _singularize_ru_name(
+        _determine_building_element_name(ru_type, name, ifc_type, first)
+    )
+
+    parts = []
+    material = _normalize_material(str(first.get("Материал", "") or ""))
+    if material:
+        parts.append(material)
+    revit_name = _clean_revit_name(name)
+    if revit_name:
+        parts.append(revit_name)
+
+    head = f"{base} ({', '.join(parts)})" if parts else base
+    if count and count > 1:
+        head += f" Кол-во: {count}"
+    return head, base
+
+
+def _group_quantity_from_aggregates(group: Dict[str, Any],
+                                    fallback: Optional[Dict[str, Any]],
+                                    ) -> Dict[str, Any]:
+    """Измерители группы по её агрегатам (правила КР).
+
+    Приоритет КР: totalMeasure = объём → площадь → количество.
+    Агрегаты (total_volume/total_areas/count) берутся из дерева
+    группировки (и пересчитаны split_leaf_groups_by_part для
+    разделённых групп). Длина/длина швов сохраняются из per-element
+    расчёта (fallback) — нужны для расценок в единицах длины.
+    """
+    quantity = dict(fallback or {})
+    if not group:
+        return quantity
+    volume = safe_float(group.get("total_volume"))
+    if volume > 0:
+        quantity["volume_m3"] = float(round(volume, 2))
+    area = _pick_group_area_m2(group.get("total_areas"))
+    if area > 0:
+        quantity["area_m2"] = area
+    if group.get("count"):
+        try:
+            quantity["count"] = int(group.get("count"))
+        except (TypeError, ValueError):
+            pass
+    return quantity
 
 
 def _element_header(entry):
+    """Фолбэк-заголовок (без группы группировки) — формат прежний."""
     element = entry.get("element", {}) or {}
-    base = _clean_header(element.get("name")) or str(element.get("ifc_class") or "Элемент")
+    base = (_clean_revit_name(element.get("name"))
+            or str(element.get("ifc_class") or "Элемент"))
 
     parts = []
     material = str(element.get("material") or "").strip()
@@ -1941,7 +2166,15 @@ def _calculate_work_volume(
     total_measure: Dict[str, Any],
     total_areas: Optional[Dict[str, Any]] = None,
     formwork_area: float = 0.0,
+    slab_group: bool = False,
 ) -> str:
+    """Рассчитывает объём работ для расценки (правила КР).
+
+    slab_group — группа является плитной (фундаментная плита /
+    перекрытие): опалубку таких групп считаем ТОЛЬКО по formwork_area,
+    fallback на площадь плиты из totalAreas запрещён (иначе объём
+    опалубки завышается в разы) — как в КР (_calculate_work_volume).
+    """
     measure_type = (total_measure or {}).get("type", "")
     measure_value = safe_float((total_measure or {}).get("value", 0))
 
@@ -1985,6 +2218,11 @@ def _calculate_work_volume(
         decimals = 4 if divisor > 1 else 2
         return f"{vol:.{decimals}f}"
 
+    # Опалубка плитных групп: если formwork_area не рассчитана — объём
+    # остаётся пустым (площадь плиты не является площадью опалубки).
+    if is_area and slab_group and _is_formwork_work(work):
+        return ""
+
     if is_area and total_areas:
         area_value = _pick_area_value(total_areas)
         if area_value > 0:
@@ -2012,54 +2250,55 @@ def _calculate_work_volume(
 
 
 # ======================================================================
-#  Части здания — ТРИ разных по path[0]
+#  Части здания — как в КР (Подземная / Цоколь / Надземная)
 # ======================================================================
 
-BUILDING_PART_ORDER = ("Подземная", "Цокольная", "Надземная")
+BUILDING_PART_ORDER = ("Подземная", "Цоколь", "Надземная")
 
 _BUILDING_PART_TITLES = {
     "Подземная": "ПОДЗЕМНАЯ ЧАСТЬ",
-    "Цокольная": "ЦОКОЛЬНАЯ ЧАСТЬ",
+    "Цоколь": "ЦОКОЛЬ",
     "Надземная": "НАДЗЕМНАЯ ЧАСТЬ",
 }
 
 _BUILDING_PART_TOTAL_LABELS = {
     "Подземная": "ИТОГО по подземной части:",
-    "Цокольная": "ИТОГО по цокольной части:",
+    "Цоколь": "ИТОГО по цокольной части:",
     "Надземная": "ИТОГО по надземной части:",
 }
 
 
 def _resolve_building_part(entry):
-    """Часть здания: Подземная / Цокольная / Надземная.
+    """Часть здания: Подземная / Цоколь / Надземная (правила КР).
 
     Приоритет:
-      1) group_path[0] — первый уровень группировки
+      1) entry["part"] — ключ, вычисленный при обработке по path[0]
+         листовой группы (после разделения групп по частям здания);
+      2) group_path[0] — первый уровень группировки
          («Подземная часть здания (до отм. 0,000)» / «Цокольная часть
          здания (отм. 0,000)» / «Надземная часть здания (выше отм. 0,000)»);
-      2) applied_constants.building_part — если надземная → «Надземная»,
+      3) applied_constants.building_part — если надземная → «Надземная»,
          иначе «Подземная»;
-      3) имя элемента / МССК.
+      4) имя элемента / МССК.
     """
-    # 1) path[0]
+    # 1) ключ части, вычисленный по группе (правила КР)
+    part = str(entry.get("part") or "")
+    if part in BUILDING_PART_ORDER:
+        return part
+
+    # 2) path[0]
     path = entry.get("group_path") or []
     if path:
-        top = str(path[0]).lower()
-        if "подземн" in top:
-            return "Подземная"
-        if "цокольн" in top:
-            return "Цокольная"
-        if "надземн" in top:
-            return "Надземная"
+        return _group_building_part(path)
 
-    # 2) applied_constants.building_part
-    part = str(entry.get("part") or "").lower()
+    # 3) applied_constants.building_part
+    part = part.lower()
     if "надземн" in part:
         return "Надземная"
     if "подземн" in part or "цокольн" in part:
         return "Подземная"
 
-    # 3) фолбэк по имени/МССК
+    # 4) фолбэк по имени/МССК
     element = entry.get("element", {}) or {}
     haystack = (
         str(element.get("name") or "").lower()
@@ -2069,7 +2308,7 @@ def _resolve_building_part(entry):
     if "подземн" in haystack:
         return "Подземная"
     if "цокольн" in haystack:
-        return "Цокольная"
+        return "Цоколь"
     if "надземн" in haystack:
         return "Надземная"
 
@@ -2113,40 +2352,61 @@ def build_final_works_xlsx(result_elements, xlsx_path):
     element_blocks = []
     for entry in result_elements:
         part = _resolve_building_part(entry)
-        header = _element_header(entry)
+        header = entry.get("group_header") or _element_header(entry)
+
+        # Плоская группа является плитной (фундаментная плита /
+        # перекрытие) — опалубка только по площади опалубки (правила КР).
+        base_name = str(entry.get("group_base_name") or "")
+        slab_group = any(kw in base_name.lower()
+                         for kw in ("плит", "перекрыт"))
+
+        # Агрегаты группы (правила КР): площадь опалубки и расход арматуры.
+        group_formwork_area = safe_float(
+            entry.get("group_formwork_area_m2"), default=0.0)
+        group_rebar_kg = safe_float(entry.get("group_rebar_mass_kg"),
+                                    default=0.0)
 
         work_rows: List[Dict[str, Any]] = []
         for work in entry.get("selected_works") or []:
             q = work.get("quantity") or {}
             total_measure = _build_total_measure(q)
-            total_areas = _build_total_areas(q)
+            # total_areas группы — как в КР: суммарные площади группы
+            # (totalAreas), а не площадь опалубки из quantity работы
+            # (у опалубочных работ quantity.area_m2 = площадь опалубки).
+            group_area_m2 = _pick_quantity(
+                entry.get("group_quantity") or {}, "area_m2"
+            )
+            if group_area_m2:
+                total_areas = {"Площадь, м2": float(group_area_m2)}
+            else:
+                total_areas = _build_total_areas(q)
             formwork_area = (
-                safe_float(q.get("area_m2"), default=0.0)
+                group_formwork_area
                 if _is_formwork_work(work) else 0.0
             )
             vol_text = _calculate_work_volume(
                 work, total_measure,
                 total_areas=total_areas,
                 formwork_area=formwork_area,
+                slab_group=slab_group,
             )
-            vol_num = safe_float(vol_text, default=0.0)
-            zp = _cost(work, "cur_salary", "salary", vol_num)
-            em = _cost(work, "cur_operation_of_machines",
-                       "operation_of_machines", vol_num)
-            mr = _cost(work, "cur_cost_of_material_resources",
-                       "cost_of_material_resources", vol_num)
-            parts = [v for v in (zp, em, mr) if v is not None]
-            cost = round(sum(parts), 2) if parts else ""
+
+            # Арматура — правила КР: расход арматуры группы подставляется
+            # ТОЛЬКО в расценку «Установка отдельных стержней...» (т),
+            # прочие арматурные расценки остаются без объёма.
+            work_title_low = str(work.get("title") or "").lower()
+            if group_rebar_kg > 0 and _is_rebar_work_title(work_title_low):
+                if "отдельн" in work_title_low and "стержн" in work_title_low:
+                    vol_text = f"{group_rebar_kg / 1000.0:.4f}"
+                else:
+                    vol_text = ""
 
             row = _blank()
             row["Шифр ТСН"] = work.get("pressmark") or ""
             row["Наименование расценки/ресурса"] = work.get("title") or ""
             row["Ед. изм."] = _resolve_unit_label(work)
             row["Объём работ"] = vol_text
-            row["ЗП"] = zp if zp is not None else ""
-            row["ЭМ"] = em if em is not None else ""
-            row["МР"] = mr if mr is not None else ""
-            row["Стоимость"] = cost
+            row["_work"] = work  # для расчёта стоимости после корректировки
             work_rows.append(row)
 
         element_blocks.append({
@@ -2154,6 +2414,53 @@ def build_final_works_xlsx(result_elements, xlsx_path):
             "header": header,
             "rows": work_rows,
         })
+
+    # Корректировка объёмов по нормам расхода (koefs.xlsx) — как в КР
+    # (works_cost._get_corrected_volume): применяется к плоской таблице
+    # работ в порядке групп, стоимость считается по скорректированным
+    # объёмам.
+    flat_records = []
+    for block in element_blocks:
+        for r in block["rows"]:
+            flat_records.append({
+                "Шифр ТСН": r["Шифр ТСН"],
+                "Наименование расценки/ресурса": r["Наименование расценки/ресурса"],
+                "Объём работ": r["Объём работ"],
+            })
+    if flat_records:
+        try:
+            df_corrected = _get_corrected_volume(pd.DataFrame(flat_records))
+            corrected_volumes = [
+                ("" if v is None or (isinstance(v, float) and v != v)
+                 else str(v))
+                for v in df_corrected["Объём работ"].tolist()
+            ]
+            idx = 0
+            for block in element_blocks:
+                for r in block["rows"]:
+                    if idx < len(corrected_volumes):
+                        r["Объём работ"] = corrected_volumes[idx]
+                    idx += 1
+        except Exception as exc:
+            logger.warning(f"Корректировка объёмов по koefs.xlsx не "
+                           f"применена: {exc}")
+
+    # Стоимость — по (скорректированным) объёмам.
+    for block in element_blocks:
+        for r in block["rows"]:
+            vol_num = safe_float(r["Объём работ"], default=0.0)
+            work = r.get("_work") or {}
+            zp = _cost(work, "cur_salary", "salary", vol_num)
+            em = _cost(work, "cur_operation_of_machines",
+                       "operation_of_machines", vol_num)
+            mr = _cost(work, "cur_cost_of_material_resources",
+                       "cost_of_material_resources", vol_num)
+            parts = [v for v in (zp, em, mr) if v is not None]
+            cost = round(sum(parts), 2) if parts else ""
+            r["ЗП"] = zp if zp is not None else ""
+            r["ЭМ"] = em if em is not None else ""
+            r["МР"] = mr if mr is not None else ""
+            r["Стоимость"] = cost
 
     from collections import Counter
     _part_counts = Counter(b["part"] for b in element_blocks)
@@ -2201,14 +2508,12 @@ def build_final_works_xlsx(result_elements, xlsx_path):
                 hdr["Наименование расценки/ресурса"] = block["header"]
                 final_rows.append(hdr)
 
+                # Пустые группы (работы-кандидаты не найдены или LLM
+                # ничего не выбрала) выводятся без строк работ — как в КР.
                 if block["rows"]:
                     final_rows.extend(block["rows"])
                     part_work_rows.extend(block["rows"])
                     all_work_rows.extend(block["rows"])
-                else:
-                    empty = _blank()
-                    empty["Наименование расценки/ресурса"] = "Работы не подобраны"
-                    final_rows.append(empty)
 
                 if block_pos < len(part_blocks) - 1:
                     final_rows.append(_blank())

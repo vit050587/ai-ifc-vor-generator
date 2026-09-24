@@ -2653,24 +2653,11 @@ function renderPreview(data) {
                 if (/^\d+$/.test(s)) { defaultPart = 'Надземная'; break; }
             }
         }
-        // Уточнение части здания по «Типу этажа» (только КР) — та же логика,
-        // что в бэкенде (ifc_reference_builder._element_part): модели размечают
-        // 1-й этаж как «Цокольный», хотя числовой индикатор «Этажа»
-        // («1_этаж_основной») относит его к надземной части. Такие строки
-        // показываются в цокольной части здания, иначе выбранная в превью
-        // надземная группа попадёт в цокольную часть финального перечня.
-        if (!isAR && (!data.savedTypes || !data.savedTypes[index])) {
-            const stIdx = data.headers.indexOf('Тип_этажа') !== -1
-                ? data.headers.indexOf('Тип_этажа')
-                : data.headers.indexOf('Тип этажа');
-            if (stIdx !== -1 && row[stIdx] && row[stIdx] !== '-') {
-                const st = String(row[stIdx]).trim().toLowerCase();
-                if (defaultPart === 'Надземная') {
-                    if (st.startsWith('подземн')) defaultPart = 'Подземная';
-                    else if (st.startsWith('цоколь')) defaultPart = 'Цоколь';
-                }
-            }
-        }
+        // Часть здания — строго по числовому индикатору параметра «Этаж»
+        // (та же логика, что в бэкенде: ifc_reference_builder._element_part).
+        // Переквалификация по «Типу этажа» не выполняется: отметка 1-го этажа
+        // (0,000) ошибочно размечала его как цокольный, и элементы 1-го этажа
+        // попадали в цокольную часть здания.
         rowParts[index] = defaultPart;
         let defaultMaterial = '-';
         if (materialIdx !== -1 && row[materialIdx] && row[materialIdx] !== '-') defaultMaterial = row[materialIdx].trim();

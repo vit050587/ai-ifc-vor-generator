@@ -253,13 +253,16 @@ ELEMENT_TYPES_KR = [
 
 # Дополнительные классы только для режима АР (архитектурные решения).
 # Сюда перенесены архитектурно-отделочные элементы (ранее ошибочно
-# присутствовавшие в списке КР): окна, двери, витражи, покрытия, кровля,
+# присутствовавшие в списке КР): окна, двери, витражи, кровля,
 # перила, мебель, прокси-элементы — у них есть код МССК в отдельных
 # колонках Property Sets (ExpCheck_Covering::MGE_ElementCode,
 # ExpCheck_Door::MGE_ElementCode, ...), но они НЕ являются ж/б конструкциями.
+#
+# IfcCovering здесь помечен как «Изоляция» — так же, как в списке КР:
+# парсинг обоих режимов должен быть идентичен (одинаковое «Тип (RU)»
+# влияет на заголовки групп финального перечня работ).
 _ARCH_TYPES = [
     ('IfcBuildingElementProxy', 'Прочие_элементы'),
-    ('IfcCovering', 'Покрытие'),
     ('IfcWindow', 'Окна'),
     ('IfcDoor', 'Двери'),
     ('IfcCurtainWall', 'Стены'),
@@ -274,10 +277,9 @@ _ARCH_TYPES = [
 ]
 
 # Список IFC-классов для режима АР: конструктивные (КР) + архитектурные.
-# Дедупликация по IFC-классу: IfcCovering присутствует и в КР («Изоляция»),
-# и в архитектурном списке («Покрытие»), но один и тот же элемент не должен
-# попадать в таблицу АР дважды. При совпадении класса приоритет у
-# архитектурной метки (_ARCH_TYPES), сохраняя прежнее поведение АР-режима.
+# Дедупликация по IFC-классу: IfcCovering присутствует и в КР, и в
+# архитектурном списке с ОДИНАКОВОЙ меткой «Изоляция» — парсинг обоих
+# режимов идентичен; элемент не попадает в таблицу АР дважды.
 _ar_types_by_class = {}
 for _ifc_type, _ru_name in ELEMENT_TYPES_KR:
     _ar_types_by_class.setdefault(_ifc_type, (_ifc_type, _ru_name))
@@ -312,13 +314,33 @@ def safe_get_attr(obj, attr, default='-'):
 
 
 def classify_storey_type(storey_name, elevation_mm):
-    """Классифицирует тип этажа по имени и высоте"""
+    """Классифицирует тип этажа по имени и высоте
+
+    Строгое правило — числовой индикатор в значении «Этаж»
+    (разбивка по «_» и пробелам, текстовые префиксы К01_/С01_ игнорируются):
+      '-1/1' / '-1/1_подземный этаж'  → Цокольный (индикатор вида «-N/M»)
+      '-1_подземный этаж_основной'    → Подземный  (индикатор — «-N»)
+      '1_этаж_основной'               → Надземный  (индикатор — «N»)
+      '2_этаж_основной', '26_технический чердак', 'Крыша' → Надземный
+    Индикатор проверяется ПЕРВЫМ: «-1/1_подземный этаж» — цоколь, несмотря
+    на слово «подземный»; «1_этаж_основной» — надземный даже при отметке 0,000.
+    """
     storey_name_lower = str(storey_name).lower()
-    
-    
-    if any(word in storey_name_lower for word in ['подвал', 'basement', '-1', 'подзем']):
+
+    # 1. Числовой индикатор в значении «Этаж» — строгое правило
+    for segment in re.split(r'[_\s]+', storey_name_lower):
+        seg = segment.strip()
+        if re.match(r'^-\d+\s*/\s*\d+$', seg):
+            return 'Цокольный'
+        if re.match(r'^-\d+$', seg):
+            return 'Подземный'
+        if re.match(r'^\d+$', seg):
+            return 'Надземный'
+
+    # 2. Текстовые признаки (только для имён без числового индикатора)
+    if any(word in storey_name_lower for word in ['подвал', 'basement', 'подзем']):
         return 'Подземный'
-    elif any(word in storey_name_lower for word in ['цоколь', 'ground', '0 этаж', 'нулевой']):
+    elif any(word in storey_name_lower for word in ['цоколь', 'ground', 'нулевой']):
         return 'Цокольный'
     elif any(word in storey_name_lower for word in ['техническ', 'technical']):
         return 'Технический'
@@ -327,15 +349,13 @@ def classify_storey_type(storey_name, elevation_mm):
     elif any(word in storey_name_lower for word in ['крыш', 'roof', 'кровл']):
         return 'Кровля'
 
+    # 3. Отметка этажа — только по знаку: отрицательная отметка — подземная,
+    #    нулевая и положительная — надземная (1-й этаж на отм. 0,000 — надземный)
     if elevation_mm != '-':
         try:
-            elev_m = float(elevation_mm) / 1000
-            if elev_m < 0:
+            if float(elevation_mm) < 0:
                 return 'Подземный'
-            elif elev_m < 0.5:
-                return 'Цокольный'
-            else:
-                return 'Надземный'
+            return 'Надземный'
         except Exception as e:
             print(f'Ошибка: {e}')
 
@@ -343,8 +363,14 @@ def classify_storey_type(storey_name, elevation_mm):
 
 
 def _classify_storey_type_ar(storey_name):
-    """Классифицирует тип этажа в режиме АР строго по числовому индикатору
+    """Классифицирует тип этажа строго по числовому индикатору
     в значении «Этаж» (без анализа слов и отметок этажа).
+
+    .. deprecated::
+        Больше НЕ используется в пайплайне АР: get_element_storey
+        классифицирует тип этажа одинаково для КР и АР через
+        classify_storey_type (парсинг режимов идентичен). Функция
+        сохранена для обратной совместимости внешнего кода.
 
     Правила (числовой индикатор ищется в сегментах значения, разделённых
     «_» и пробелами; текстовые префиксы К01_, С01_ и т.п. игнорируются):
@@ -352,10 +378,6 @@ def _classify_storey_type_ar(storey_name):
       'К01_-1_подземный этаж_основной' → Подземный (индикатор — отрицательное число)
       'К01_1_этаж_основной'       → Надземный (индикатор — положительное число)
       'К01_Крыша'                 → Надземный (нет числового индикатора)
-
-    Классификация выполняется ТОЛЬКО по наличию определяющих числовых
-    значений — не по словам («цоколь», «подвал» и т.п.) и не по отметке
-    этажа (в отличие от classify_storey_type, используемой в режиме КР).
     """
     if storey_name is None:
         return 'Надземный'
@@ -425,10 +447,10 @@ def get_element_storey(element, processing_type: str = "KR"):
     """Извлекает информацию об этаже, на котором находится элемент
 
     processing_type: режим обработки — "KR" (по умолчанию) или "AR".
-        В режиме АР тип этажа классифицируется строго по числовому
-        индикатору в значении «Этаж» (_classify_storey_type_ar),
-        в режиме КР — по-прежнему через classify_storey_type
-        (слова + отметка этажа; поведение КР не меняется).
+        Тип этажа классифицируется одинаково для обоих режимов — через
+        classify_storey_type (слова + отметка этажа), чтобы парсинг
+        IFC в режиме АР был идентичен режиму КР (одинаковые колонки
+        «Тип_этажа», одинаковая разбивка по частям здания).
     """
     storey_info = {
         'Этаж': '-',
@@ -453,13 +475,9 @@ def get_element_storey(element, processing_type: str = "KR"):
                                     elev_val = elev_val / 1000
                                 storey_info['Уровень_этажа_мм'] = round(elev_val * 1000, 2)
                         
-                        storey_info['Тип_этажа'] = (
-                            _classify_storey_type_ar(storey_info['Этаж'])
-                            if str(processing_type).upper() == 'AR'
-                            else classify_storey_type(
-                                storey_info['Этаж'],
-                                storey_info['Уровень_этажа_мм']
-                            )
+                        storey_info['Тип_этажа'] = classify_storey_type(
+                            storey_info['Этаж'],
+                            storey_info['Уровень_этажа_мм']
                         )
                         break
     except Exception as e:
@@ -798,45 +816,44 @@ def get_element_info(element, processing_type: str = "KR"):
                          f"{safe_get_attr(element, 'GlobalId')}: {exc}")
 
     # По-элементный bbox-фолбэк периметра/толщины для расчёта площади
-    # опалубки (только режим КР). QTO может быть у файла в целом, но у
-    # отдельных элементов — неполным: IfcSlab без Perimeter/Depth
-    # (приямки, часть фундаментных плит) и IfcStairFlight (Qto_StairFlight-
-    # BaseQuantities не содержит Perimeter/Depth вовсе). Периметр и толщина
-    # вычисляются из геометрии (bbox) и попадают в обычные нормализованные
-    # колонки 'Длина_Perimeter_мм'/'Длина_Depth_мм' — по ним group_excel
-    # считает площадь опалубки плит (периметр × толщина; для маршей —
-    # площадь двух боковых граней).
-    if processing_type and str(processing_type).upper() == 'KR':
-        ifc_class = element.is_a()
-        if ifc_class in ('IfcSlab', 'IfcStairFlight'):
-            perim_present = _has_positive_qto_value(
-                info, ('Длина_Perimeter_мм',
-                       'QTO_Qto_SlabBaseQuantities_Длина_Perimeter_мм')
-            )
-            depth_present = _has_positive_qto_value(
-                info, ('Длина_Depth_мм',
-                       'QTO_Qto_SlabBaseQuantities_Длина_Depth_мм')
-            )
-            if not (perim_present and depth_present):
-                try:
-                    bbox_formwork = _compute_formwork_bbox_quantities(element)
-                except Exception as exc:
-                    bbox_formwork = {}
-                    logger.debug(
-                        f"Не удалось вычислить bbox-периметр/толщину для "
-                        f"{safe_get_attr(element, 'GlobalId')}: {exc}"
-                    )
-                if bbox_formwork:
-                    if not perim_present:
-                        info['Длина_Perimeter_мм'] = bbox_formwork['perimeter_mm']
-                    if not depth_present:
-                        info['Длина_Depth_мм'] = bbox_formwork['depth_mm']
-                    logger.debug(
-                        f"bbox-фолбэк опалубки ({ifc_class}) для "
-                        f"'{safe_get_attr(element, 'Name')}': периметр="
-                        f"{bbox_formwork['perimeter_mm']} мм, толщина="
-                        f"{bbox_formwork['depth_mm']} мм"
-                    )
+    # опалубки (оба режима — КР и АР; парсинг идентичен). QTO может быть
+    # у файла в целом, но у отдельных элементов — неполным: IfcSlab без
+    # Perimeter/Depth (приямки, часть фундаментных плит) и IfcStairFlight
+    # (Qto_StairFlightBaseQuantities не содержит Perimeter/Depth вовсе).
+    # Периметр и толщина вычисляются из геометрии (bbox) и попадают в
+    # обычные нормализованные колонки 'Длина_Perimeter_мм'/'Длина_Depth_мм'
+    # — по ним group_excel считает площадь опалубки плит (периметр ×
+    # толщина; для маршей — площадь двух боковых граней).
+    ifc_class = element.is_a()
+    if ifc_class in ('IfcSlab', 'IfcStairFlight'):
+        perim_present = _has_positive_qto_value(
+            info, ('Длина_Perimeter_мм',
+                   'QTO_Qto_SlabBaseQuantities_Длина_Perimeter_мм')
+        )
+        depth_present = _has_positive_qto_value(
+            info, ('Длина_Depth_мм',
+                   'QTO_Qto_SlabBaseQuantities_Длина_Depth_мм')
+        )
+        if not (perim_present and depth_present):
+            try:
+                bbox_formwork = _compute_formwork_bbox_quantities(element)
+            except Exception as exc:
+                bbox_formwork = {}
+                logger.debug(
+                    f"Не удалось вычислить bbox-периметр/толщину для "
+                    f"{safe_get_attr(element, 'GlobalId')}: {exc}"
+                )
+            if bbox_formwork:
+                if not perim_present:
+                    info['Длина_Perimeter_мм'] = bbox_formwork['perimeter_mm']
+                if not depth_present:
+                    info['Длина_Depth_мм'] = bbox_formwork['depth_mm']
+                logger.debug(
+                    f"bbox-фолбэк опалубки ({ifc_class}) для "
+                    f"'{safe_get_attr(element, 'Name')}': периметр="
+                    f"{bbox_formwork['perimeter_mm']} мм, толщина="
+                    f"{bbox_formwork['depth_mm']} мм"
+                )
 
     # Все свойства
     info.update(get_all_properties(element))
@@ -844,14 +861,14 @@ def get_element_info(element, processing_type: str = "KR"):
     # СПЕЦИФИЧЕСКИЕ СВОЙСТВА ДЛЯ СМЕТЧИКА
     info.update(get_specific_properties(element))
 
-    # В режиме КР материал элемента берётся из Pset «ExpCheck_<Класс>::MGE_Material»
+    # Материал элемента берётся из Pset «ExpCheck_<Класс>::MGE_Material»
     # (колонки вида «Свойство::ExpCheck_Beam::MGE_Material», «Свойство::ExpCheck_Slab::MGE_Material»
     # и т.д.), а не из ассоциаций материала IFC, где часто стоит заглушка
-    # «По умолчанию» или внутреннее имя Revit.
-    if processing_type and str(processing_type).upper() == 'KR':
-        mge_material = _resolve_expcheck_material(info, info.get('Тип элемента', ''))
-        if mge_material:
-            info['Материал'] = mge_material
+    # «По умолчанию» или внутреннее имя Revit. Применяется в обоих режимах
+    # (КР и АР) — парсинг идентичен.
+    mge_material = _resolve_expcheck_material(info, info.get('Тип элемента', ''))
+    if mge_material:
+        info['Материал'] = mge_material
 
     return info
 
@@ -1142,7 +1159,10 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
             elev_mm = round(elev * 1000, 2)
             storey_type = classify_storey_type(name, elev_mm)
             
-            if storey_type in ['Цокольный', 'Надземный', 'Технический', 'Мансардный']:
+            # Цокольные этажи с отрицательной отметкой (например «-1/1») не
+            # относятся к надземной части — надземная часть выше отм. 0,000
+            if (storey_type in ['Цокольный', 'Надземный', 'Технический', 'Мансардный']
+                    and elev >= 0):
                 ground_elevations.append(elev)
 
     if ground_elevations:

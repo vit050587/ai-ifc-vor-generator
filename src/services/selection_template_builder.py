@@ -381,12 +381,30 @@ def _format_constants(constants, schema):
 # =====================================================================
 
 def _compute_building_part(element):
-    """Часть здания по этажу элемента: Подземная / Цокольная / Надземная."""
-    storey = str(element.get("Этаж") or "").lower()
-    if any(word in storey for word in ("подвал", "подзем", "basement")):
-        return "Подземная"
-    if "цоколь" in storey:
-        return "Цокольная"
+    """Часть здания по «Этажу» элемента: Подземная / Цокольная / Надземная.
+
+    Строгое правило — числовой индикатор значения «Этаж» (разбивка по «_»
+    и пробелам): '-N/M' → Цокольная, '-N' → Подземная, 'N' → Надземная.
+    Слово «подземный» в составе «-1/1_подземный этаж» не перекрывает
+    индикатор «-1/1» — такой этаж цокольный.
+    """
+    import re
+
+    storey = str(element.get("Этаж") or "").strip()
+    if storey and storey not in ("-", "nan"):
+        for segment in re.split(r"[_\s]+", storey.lower()):
+            seg = segment.strip()
+            if re.match(r"^-\d+\s*/\s*\d+$", seg):
+                return "Цокольная"
+            if re.match(r"^-\d+$", seg):
+                return "Подземная"
+            if re.match(r"^\d+$", seg):
+                return "Надземная"
+        s = storey.lower()
+        if any(word in s for word in ("подвал", "подзем", "basement")):
+            return "Подземная"
+        if "цоколь" in s:
+            return "Цокольная"
     return "Надземная"
 
 

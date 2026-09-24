@@ -517,13 +517,27 @@ def _resolve_constants(el: dict, constants: Dict[str, Any]) -> Dict[str, Any]:
     # building_part: только из элемента (этаж/тип этажа). Константой проекта
     # этот параметр больше не задаётся — в перспективе берётся из параметров
     # элемента IFC-модели. Fallback — «надземная».
-    storey_all = f"{el.get('storey', '')} {el.get('storey_type', '')}".lower()
-    if any(w in storey_all for w in ("подзем", "подвал", "цоколь")):
-        part = "подземная/цокольная"
-    elif any(w in storey_all for w in ("надзем", "мансард", "технич", "крыш")):
-        part = "надземная"
-    else:
-        part = "надземная"
+    storey = str(el.get("storey", "") or "")
+    storey_type = str(el.get("storey_type", "") or "")
+    # Строгое правило — числовой индикатор значения «Этаж» (как в группировке
+    # элементов): '-N/M' и '-N' → подземная/цокольная, 'N' → надземная.
+    # Проверяется первым: «-1/1_подземный этаж» — цоколь, «1_этаж_основной» —
+    # надземная (даже если «Тип_этажа» ошибочно размечен как цокольный).
+    part = None
+    for segment in re.split(r"[_\s]+", storey.strip().lower()):
+        seg = segment.strip()
+        if re.match(r"^-\d+\s*/\s*\d+$", seg) or re.match(r"^-\d+$", seg):
+            part = "подземная/цокольная"
+            break
+        if re.match(r"^\d+$", seg):
+            part = "надземная"
+            break
+    if part is None:
+        storey_all = f"{storey} {storey_type}".lower()
+        if any(w in storey_all for w in ("подзем", "подвал", "цоколь")):
+            part = "подземная/цокольная"
+        else:
+            part = "надземная"
     resolved["building_part"] = part
 
     # wall_location: только из элемента (Pset_WallCommon::IsExternal). Константой
