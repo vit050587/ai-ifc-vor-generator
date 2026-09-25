@@ -39,7 +39,7 @@
 
 - **Два режима обработки**:
   - **KR** — конструктивные решения (ж/б конструкции: стены, колонны, перекрытия, балки и т. д.). Подбор работ выполняется через **внешний API цифрового справочника ТСН** (не через LLM).
-  - **AR** — архитектурные решения (окна, двери, покрытия, кровля, отделка и т. д.). Подбор работ выполняется **локальной LLM** (YandexGPT через Ollama) в четыре этапа.
+  - **AR** — архитектурные решения (окна, двери, покрытия, кровля, отделка и т. д.). Подбор таблиц работ — **детерминированный алгоритм** (`works_table_selector`, `data/algorithm.md`); сами работы — цифровой сборник (larix); финальный выбор работ по группам — **локальная LLM** (`works_final_selector`); разбор ПОС/ПЗ — LLM (`pd_parser`).
 - **Асинхронная обработка**: после загрузки файла сервис сразу возвращает `sessionId`, тяжёлая обработка выполняется в фоновых потоках (`threading.Thread`), пользователь опрашивает статус через API.
 - **Два источника данных**: IFC (через `ifcopenshell`) или PDF-чертёж (через пайплайн машинного зрения `ai-blueprint-to-ifc`).
 - **Хранилище без СУБД**: состояние сессий — JSON-файл `outputs/sessions.json` (потокобезопасный, атомарная запись); файлы результатов — файловая система `outputs/<session_id>/`.
@@ -79,33 +79,45 @@ ai-ifc-vor-generator/
 ├── src/                       # Основной сервис (Flask)
 │   ├── __init__.py            # create_app(): конфиг, LoginManager, blueprint, Swagger
 │   ├── wsgi.py                # Точка входа gunicorn (app = create_app())
-│   ├── routes.py              # Все HTTP-эндпоинты (REST API, ~1700 строк)
+│   ├── routes.py              # Все HTTP-эндпоинты (REST API, ~2400 строк)
 │   ├── schemas.py             # Pydantic-схемы запросов/ответов (CamelModel)
 │   ├── templates/
 │   │   └── index.html         # Веб-интерфейс (SPA на JS)
 │   ├── core/
 │   │   ├── config.py          # load_config() — настройки из env (Dataclass Config)
 │   │   ├── logger.py          # setup_logger() — консоль + файловый лог
-│   │   ├── prompt_manager.py  # Загрузка .txt промптов из prompts/
+│   │   ├── prompt_manager.py  # Загрузка .txt промптов из prompts/ (works_comparison)
 │   │   └── keycloak.py        # Провайдер Bearer-токена Keycloak (client_credentials)
 │   └── services/              # Бизнес-логика и пайплайн
-│       ├── session_manager.py # SessionManager: сессии, runs, фоновые потоки, sessions.json
+│       ├── session_manager.py # SessionManager: сессии, runs, фоновые потоки, sessions.json,
+│       │                      #   справочные сессии (reference_only), пересборка final JSON,
+│       │                      #   разбор ПОС/ПЗ, position_links, 3D-GLB
 │       ├── zero_step.py       # Извлечение элементов из IFC (КР/АР), нормализация, XLSX
 │       ├── ifc_raw_dump.py    # «Сырой» дамп свойств/QTO/материалов + расчёт по bbox
 │       ├── selection_template_builder.py # АР: заполнение шаблона параметров подбора (data/selection_parameters.json + карта соответствия) по каждому элементу → Параметры_подбора_элементов.json
-│       ├── ifc_reference_builder.py # JSON-справочники (все элементы / группы)
+│       ├── ifc_reference_builder.py # JSON-справочники (все элементы / группы); split_leaf_groups_by_part
 │       ├── works_table_selector.py  # АР: детерминированный подбор таблиц работ (8 шагов data/algorithm.md)
-│       ├── works_fetcher.py        # АР: работы из цифрового сборника (larix): период ТСН → period.json, работы таблиц → Подобранные_работы.json
+│       ├── works_fetcher.py        # АР: работы из цифрового сборника (larix): период ТСН → period.json, работы таблиц → Подобранные_работы.json, детальные параметры позиций
+│       ├── works_final_selector.py # АР: финальный подбор работ через LLM (v13.2: по каждой таблице — ровно одна работа; предфильтрация/ранжирование, fallback — ближайшая) → Финальный_перечень_работ.json/.xlsx
 │       ├── ifc_json_builder.py      # Сборка финального JSON (final_result_AR.json / final_result_KR.json)
 │       ├── position_links.py  # Ссылки на позиции цифрового сборника (position_links.json, КР)
-│       ├── pd_parser.py       # Разбор PDF ПОС через LLM → ПОС_глобальные_константы.json
-│       ├── works_cost.py      # Расчёт/форматирование стоимости работ финального перечня (КР)
-│       ├── group_excel.py     # Группировка элементов (КР и АР), правила группировки
+│       ├── pd_parser.py       # Разбор PDF ПОС/ПЗ через LLM → ПОС/ПЗ_глобальные_константы.json (+ LLMClient для works_final_selector)
+│       ├── works_cost.py      # Расчёт/форматирование стоимости работ финального перечня (КР и АР)
+│       ├── group_excel.py     # Группировка элементов (КР: Часть здания→МССК→Материал→Тип→Геометрия; АР: Часть здания→МССК→Материал→Наименование)
 │       ├── api_works_lookup.py# Подбор работ через API ТСН (КР)
 │       ├── materials_lookup.py# Карта МССК-кодов материалов (АР)
 │       ├── mssk_lookup.py     # Карта МССК-кодов элементов
 │       ├── pdf_processor.py   # Обёртка пайплайна обработки PDF
-│       └── serializer.py      # Экспорт IFC → GLB (3D-модель по запросу)
+│       ├── serializer.py      # Экспорт IFC → GLB (3D-модель по запросу)
+│       └── works_comparison/  # Автономный пакет сравнения позиций смет проекта (заказчика) с позициями IFC
+│           │                  #   (сравнение объёмов + LLM-валидация через Ollama, промпты prompts/);
+│           │                  #   в основной конвейер НЕ подключён (запускается вручную, processor.Processor)
+│           ├── processor.py        # Оркестратор сравнения: позиции смет ↔ позиции IFC
+│           ├── positions_extractor.py / ifc_positions_extractor.py # Извлечение позиций
+│           ├── compare_positions_groups.py # Сравнение групп по нормализованным ключам
+│           ├── work_group_validator.py    # LLM-валидация групп (validate_material/validate_work)
+│           ├── validation_result_former.py# Формирование результата → debug/ifc_comparison
+│           ├── ollama_service.py / config.py / utils.py и др.
 │
 ├── ai-blueprint-to-ifc/       # Пайплайн машинного зрения для PDF-чертежей
 │   ├── config.py              # Settings (Pydantic BaseSettings), профили YOLO, пороги
@@ -129,12 +141,15 @@ ai-ifc-vor-generator/
 │   ├── prompts/               # Промпты VLM для чертежей (get_scale.txt, get_text_from_image.txt)
 │   └── logger.py, utils.py, run.py, debug_manager.py  # Вспомогательные модули
 │
-├── prompts/                   # Промпты пайплайна (src; сейчас пусто — промпты встроены в модули)
+├── prompts/                   # Промпты LLM: element_analyze.txt, validate_material.txt,
+│                              #   validate_work.txt — используются пакетом works_comparison/
+│                              #   (через src/core/prompt_manager.py); промпты основного
+│                              #   пайплайна (pd_parser, works_final_selector) встроены в модули
 │
 ├── data/                      # Справочники (только чтение!)
 │   ├── algorithm.md                          # Спецификация 8-шагового алгоритма подбора работ (АР)
 │   ├── perechen_kr.xlsx, perechen_kr_1.xlsx  # Перечни работ (КР)
-│   ├── koefs.xlsx                            # Нормы расхода (корректировка объёма, КР)
+│   ├── koefs.xlsx                            # Нормы расхода (корректировка объёма, КР и АР)
 │   ├── price_cost.xlsx                       # Стоимость расценок (Шифр → прямые затраты, КР)
 │   ├── ifc_to_collections.json               # Правила IfcClass (+PredefinedType) → сборники (АР)
 │   ├── msck_elements_compact.json            # Дерево МССК-элементов (АР, шаг 3 подбора)
@@ -231,13 +246,15 @@ make clean     # остановить и удалить volumes (внимани�
 
 ### 5.4. Подбор работ
 
-- **КР**: фильтр выбранных строк по типам/материалам → группировка (`group_excel.process_ifc_excel`) → конвертация в `ifc_raw_elements_grouped.json` → POST-запросы в API ТСН (`digital-collection/building-elements/positions`) → формирование `ОБЩИЙ_Финальный_перечень_работ.xlsx` (объём корректируется по `koefs.xlsx`, стоимость — по `price_cost.xlsx`).
-- **АР**: детерминированный алгоритм (без LLM и внешнего API) по `data/algorithm.md`:
+- **КР**: применение материалов → группировка `group_excel.process_ifc_excel_mssk` (**Часть здания → МССК → Материал → IFC-тип → Геометрия → Материал/Бетон**) → разделение смешанных групп по частям здания (`split_leaf_groups_by_part`) → `ifc_reference_builder.build_reference_output` → `selected_elements_grouped.json` → POST-запросы в API ТСН (`digital-collection/building-elements/positions`; группы сборного ж/б пропускаются) → фильтрация по высоте здания, отбор позиций → формирование `ОБЩИЙ_Финальный_перечень_работ.xlsx` (объём корректируется по `koefs.xlsx`, стоимость — API `works/resources`, fallback `price_cost.xlsx`).
+- **АР**: детерминированный алгоритм по `data/algorithm.md` + финальный LLM-подбор:
   1. применение материалов пользователя → `materials.json`, фильтрация выбранных строк → `filtered_elements.xlsx`;
-  2. группировка `group_excel.process_ifc_excel_ar` (МССК → Материал → Наименование) → `Дерево_проекта_выбранные_элементы.xlsx`, `filtered_elements_grouped_AR.json`, `Дерево_проекта.xlsx` (всё здание), `ДЛЯ_СМЕТЧИКА_сгруппированный.xlsx`, `building_parts.json`;
-  3. `works_table_selector.build_works_tables_json` — 8 шагов алгоритма (нормализация элемента, сборники-кандидаты по `ifc_to_collections.json`, уточнение по МССК, переключатель технологии, выбор таблиц по ключевым словам, правила по сборникам COMPLEX/SEPARATE, 7 констант проекта, объёмы QTO) → `Подобранные_таблицы_работ.json`;
+  2. группировка `group_excel.process_ifc_excel_ar` (**Часть здания → МССК → Материал → Наименование**; часть — строго по числовому индикатору «Этажа») → `Дерево_проекта_выбранные_элементы.xlsx`, `filtered_elements_grouped_AR.json`, `Дерево_проекта.xlsx` (всё здание), `ДЛЯ_СМЕТЧИКА_сгруппированный.xlsx`, `building_parts.json`;
+  3. `works_table_selector.build_works_tables_json` — 8 шагов алгоритма (нормализация элемента, сборники-кандидаты по `ifc_to_collections.json`, уточнение по МССК, переключатель технологии, выбор таблиц по ключевым словам, правила по сборникам COMPLEX/SEPARATE, 7 констант проекта, объёмы QTO; для ж/б монолита в COMPLEX-режиме дополнительно SEPARATE-пакет отдела 1.2) → `Подобранные_таблицы_работ.json`;
   4. `works_fetcher.fetch_and_save_works` — работы из цифрового сборника (larix): актуальный период ТСН (`baseTypeCode=TSN`, «индекс» в `title`, максимальный `dateStart`) → `period.json` (корень сессии); работы по шифрам подобранных таблиц (`catalog/work-process/list`) → `Подобранные_работы.json` (в `run_<NNN>/`; ошибка API не прерывает запуск);
-  5. `ifc_json_builder.build_final_json` → `final_result_AR.json`.
+  5. `works_final_selector.select_final_works` (v13.2) — финальный подбор через LLM: листовые группы (разделённые по частям здания `split_leaf_groups_by_part`, строго по числовому индикатору «Этажа»); работы каждой таблицы элемента-представителя предфильтруются (анти-слова, «семейные» фильтры, часть здания, высота, геометрия) и ранжируются; LLM выбирает **ровно одну работу в каждой таблице**, fallback — ближайшая по толщине; объёмы — по правилам КР из агрегатов группы (объём/площади/длина швов/опалубка/арматура, корректировка `koefs.xlsx`); разбивка стоимости (ЗП/ЭМ/МР) — детальные параметры позиций larix → `Финальный_перечень_работ.json` + `.xlsx` (структура КР);
+  6. `ifc_json_builder.build_final_json` → `final_result_AR.json`.
+- **Итоговая выдача запуска** (файлы для скачивания) — в **обоих режимах только финальная таблица работ**: КР — `ОБЩИЙ_Финальный_перечень_работ.xlsx`, АР — `Финальный_перечень_работ.xlsx`; остальные артефакты (`selected_elements_grouped.json`, `final_result_*.json`, справочные JSON, промежуточные файлы) остаются на диске (`run_<NNN>/`, корень сессии).
 - Опционально: разбор PDF ПОС (`pd_parser.py` через LLM по `data/params_registry.json`) → `ПОС_глобальные_константы.json` — константы (5 из схемы `works_classification.json` + доп. `floor_height`, `soil_group`, `movement_distance`, `crane_capacity`, `bucket_capacity`, `equipment_power`) подставляются в подбор работ и в шаблоны параметров.
 - На этапе 0 (после `zero_step`) заполняется универсальный шаблон параметров подбора: `selection_template_builder.py` по каждому элементу сырого дампа (`data/selection_parameters.json` + карта `data/selection_parameters_mapping.json`) → `Параметры_подбора_элементов.json` в корне сессии.
 - Все артефакты (XLSX, JSON, дампы) сохраняются в `run_<NNN>/` каждого запуска.
@@ -254,7 +271,7 @@ make clean     # остановить и удалить volumes (внимани�
 | `outputs/<session_id>/` | Файлы результатов сессии (`original/`, `run_<NNN>/`, справочники) |
 | `uploads/<session_id>/` | Загруженные пользователем файлы |
 | `data/` | Статические справочники (только чтение): `algorithm.md`, `ifc_to_collections.json`, `msck_elements_compact.json`, `tree_work_compact.json`, `works_classification.json`, `params_registry.json`, МССК-справочники `elements_mssk*`/`materials_mssk*`, перечни `perechen_kr*.xlsx`, `koefs.xlsx`, `price_cost.xlsx` |
-| **Ollama** | Локальная LLM (Qwen3-VL-8B — чертежи, YandexGPT-5-Lite-8B — этапы АР) |
+| **Ollama** | Локальная LLM (Qwen3-VL-8B — чертежи, YandexGPT-5-Lite-8B — разбор ПОС/ПЗ (`pd_parser`) и финальный подбор работ АР (`works_final_selector`)) |
 | **API ТСН** (`normativ.mgexp.org/...`) | Подбор работ в режиме КР |
 | **Keycloak** (`normativ-idm.mgexp.org/...`) | Выдача/обновление Bearer-токена (client_credentials) |
 
@@ -268,10 +285,14 @@ make clean     # остановить и удалить volumes (внимани�
 
 - Здоровье: `GET /api/health`
 - Авторизация: `GET/POST /login`, `GET /logout`
-- Загрузка: `POST /api/upload_ifc` (file + processingType), `POST /api/reference`
-- Сессии: `GET /api/sessions`, `GET /api/session/<id>`, `GET /api/session/<id>/status`, `DELETE /api/session/<id>`
+- Загрузка: `POST /api/upload_ifc` (file + processingType, для АР — `posFile`/`pzFile`), `POST /api/reference` (справочная сессия `reference_only`)
+- Справочные сессии: `GET /api/session/<id>/reference` (результат построения JSON-справочников; 202 — ещё строится)
+- Сессии: `GET /api/sessions`, `GET /api/session/<id>`, `GET /api/session/<id>/status`, `POST /api/session/<id>/restore` (восстановление интерфейса), `DELETE /api/session/<id>`
 - Обработка: `POST /api/session/<id>/select_rows`, `POST /api/session/<id>/new_run`, `GET /api/session/<id>/runs`, `POST /api/session/<id>/switch_run/<run_id>`, `POST /api/session/<id>/filter_height`
+- ПОС/ПЗ (только АР): `POST /api/session/<id>/upload_pos`, `POST /api/session/<id>/upload_pz`, `GET /api/session/<id>/works_constants` (схема констант + автоподстановка)
+- Ссылки на позиции ЦС (только КР): `GET /api/session/<id>/position_links`
 - Файлы: `GET /api/session/<id>/preview`, `preview_result/<filename>`, `blueprint_image`, `materials_md`, `download/<filename>`, `download_all`
+- Финальный JSON запуска: `POST /api/session/<id>/run/<N>/build_final_json` (пересборка), `GET .../final_json/status`, `GET .../final_json/result`
 - 3D: `POST /api/session/<id>/3d_model`, `GET /api/session/<id>/3d_model/status`
 
 Форматы: ответы — JSON в **camelCase** (Pydantic `CamelModel`); ошибки — `{"detail": "..."}` (400/401/404/409/413/422/500); загрузка — multipart/form-data; выбор строк/запуски — JSON-тело.
@@ -295,9 +316,11 @@ make clean     # остановить и удалить volumes (внимани�
    - этап 1: `works_table_selector.py` (ключевой модуль подбора — 8 шагов
      `data/algorithm.md`), `works_fetcher.py` (работы из цифрового сборника
      larix: период ТСН → `period.json`, работы таблиц →
-     `Подобранные_работы.json`), `group_excel.py` (`process_ifc_excel_ar` /
-     `group_elements_ar`), `materials_lookup.py`, `mssk_lookup.py`,
-     `ifc_json_builder.py`;
+     `Подобранные_работы.json`, детальные параметры позиций
+     `catalog/work-process/detail`), `works_final_selector.py` (финальный
+     LLM-подбор работ по группам, v13.2), `group_excel.py`
+     (`process_ifc_excel_ar` / `group_elements_ar`), `materials_lookup.py`,
+     `mssk_lookup.py`, `ifc_json_builder.py`;
    - опционально: `pd_parser.py` (разбор PDF ПОС через LLM);
    - оркестрация: `session_manager.py` (АР-ветки `_run_processing_pipeline_in_run`),
      `routes.py` (АР-эндпоинты: `upload_pos`, `works_constants` и т. д.),
@@ -313,20 +336,26 @@ make clean     # остановить и удалить volumes (внимани�
    `routes.py`) поведение режима КР должно оставаться **побайтово
    неизменным** на уровне результатов.
 4. **Справочники АР в `data/`** (только чтение): `algorithm.md` (спецификация
-   8-шагового алгоритма — «источник истины» для `works_table_selector`),
-   `ifc_to_collections.json`, `msck_elements_compact.json`,
-   `tree_work_compact.json`, `works_classification.json` (включая схему 7
-   глобальных констант), `params_registry.json`, `elements_mssk_nested.json`,
-   `materials_mssk_nested.json`. Файлы `koefs.xlsx`, `price_cost.xlsx`
-   в текущем АР-конвейере не используются (только КР).
+    8-шагового алгоритма — «источник истины» для `works_table_selector`),
+    `ifc_to_collections.json`, `msck_elements_compact.json`,
+    `tree_work_compact.json`, `works_classification.json` (включая схему
+    глобальных констант), `params_registry.json`,
+    `selection_parameters.json`, `selection_parameters_mapping.json`,
+    `elements_mssk_nested.json`, `materials_mssk_nested.json`. Файл
+    `koefs.xlsx` используется АР (корректировка объёмов финального перечня в
+    `works_final_selector` — те же правила, что в КР); `price_cost.xlsx` —
+    только КР.
 5. **Артефакты АР**: новые/изменённые файлы результатов — только в
-   `outputs/<session_id>/` и `outputs/<session_id>/run_<NNN>/`
-   (`materials.json`, `filtered_elements.xlsx`, `Дерево_проекта*.xlsx`,
-   `filtered_elements_grouped_AR.json`, `ДЛЯ_СМЕТЧИКА_сгруппированный.xlsx`,
+    `outputs/<session_id>/` и `outputs/<session_id>/run_<NNN>/`
+    (`materials.json`, `filtered_elements.xlsx`, `Дерево_проекта*.xlsx`,
+    `filtered_elements_grouped_AR.json`, `ДЛЯ_СМЕТЧИКА_сгруппированный.xlsx`,
     `building_parts.json`, `Подобранные_таблицы_работ.json`,
-    `Подобранные_работы.json` (larix, в `run_<NNN>/`), `period.json`
-    (корень сессии), `final_result_AR.json`, `ПОС_глобальные_константы.json`). Имена файлов —
-   на русском, как в существующем конвейере.
+    `Подобранные_работы.json` (larix, в `run_<NNN>/`),
+    `Финальный_перечень_работ.json/.xlsx` (итоговая выдача — только xlsx),
+    `period.json` (корень сессии), `final_result_AR.json`,
+    `ПОС_глобальные_константы.json`, `ПЗ_глобальные_константы.json`,
+    `Параметры_подбора_элементов.json`). Имена файлов —
+    на русском, как в существующем конвейере.
 
 ### 8.2. Актуализация документации АР (действует при метке `АР`)
 
@@ -426,11 +455,19 @@ make clean     # остановить и удалить volumes (внимани�
 5. **Логирование** — `from src.core.logger import setup_logger`. В `ai-blueprint-to-ifc` — собственный `logger.py` (аналогичная функция).
 6. **Фоновые задачи** — `threading.Thread(daemon=True)` через `SessionManager`; прогресс обновляется через `_update_progress` (0–100).
 7. **Справочники в `data/`** — только чтение; новые/изменённые файлы результатов — в `outputs/<session_id>/run_<NNN>/`.
-8. **Промпты** — текстовые `.txt` в `prompts/` (для src) и `ai-blueprint-to-ifc/prompts/` (для чертежей); редактировать только с разрешения.
-9. **Секреты** — `.env`, токены Keycloak, `WORKS_API_TOKEN` не выводятся в логи и в ответы.
-10. **Тестирование** — тестовая инфраструктура не сформирована; при добавлении новых фич сопровождать код тестами.
-11. **Git** — только просмотр статуса/логов; коммит/push — по явному разрешению.
-12. **Не запускать** `docker`, `make`, `ollama` без явного запроса пользователя.
+8. **Промпты** — текстовые `.txt`: `prompts/` (используются автономным пакетом
+   `src/services/works_comparison/` через `src/core/prompt_manager.py`) и
+   `ai-blueprint-to-ifc/prompts/` (для чертежей); редактировать только с
+   разрешения. Промпты основного пайплайна (`pd_parser`, `works_final_selector`)
+   встроены в модули.
+9. **`src/services/works_comparison/`** — автономный пакет сравнения позиций
+   смет заказчика с позициями IFC (LLM-валидация через Ollama, результат —
+   `debug/ifc_comparison/comparison_results/result.json`). В конвейеры КР/АР
+   **не подключён**; менять только по явному запросу пользователя.
+10. **Секреты** — `.env`, токены Keycloak, `WORKS_API_TOKEN` не выводятся в логи и в ответы.
+11. **Тестирование** — тестовая инфраструктура не сформирована; при добавлении новых фич сопровождать код тестами.
+12. **Git** — только просмотр статуса/логов; коммит/push — по явному разрешению.
+13. **Не запускать** `docker`, `make`, `ollama` без явного запроса пользователя.
 
 ---
 
