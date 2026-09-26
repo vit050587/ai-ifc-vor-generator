@@ -4,6 +4,10 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
+# Коды режимов обработки: публичные CS (ЦС — цифровой сборник) и
+# AI (ИИ — искусственный интеллект); легаси-коды KR/AR принимаются
+# на входе и приводятся к CS/AI (см. src/core/modes.py).
+
 
 class CamelModel(BaseModel):
     model_config = ConfigDict(
@@ -28,7 +32,7 @@ class SessionFull(CamelModel):
     created_at: str
     status: str
     source_type: Optional[str] = None
-    processing_type: str = "KR"
+    processing_type: str = "CS"
     ifc_file_name: Optional[str] = None
     pdf_file_name: Optional[str] = None
     excel_file_name: Optional[str] = None
@@ -55,7 +59,7 @@ class UploadResponse(CamelModel):
     session_id: str
     status: str
     source_type: str
-    processing_type: str = "KR"
+    processing_type: str = "CS"
     message: str
 
 
@@ -81,7 +85,7 @@ class SelectRowsRequest(CamelModel):
     building_height: Optional[float] = None
     # Высота этажа (АР): передаётся вместе с building_height в режиме АР
     floor_height: Optional[float] = None
-    processing_type: str = "KR"
+    processing_type: str = "CS"
     # Константы проекта для подбора работ (АР): {имя константы: значение}
     global_constants: Optional[Dict[str, str]] = None
 
@@ -116,7 +120,7 @@ class PreviewResponse(CamelModel):
     # Высота основного этажа (АР), определённая по модели IFC
     floor_height: Optional[float] = None
     source_type: Optional[str] = None
-    processing_type: str = "KR"
+    processing_type: str = "CS"
     has_blueprint_image: bool = False
     has_materials_md: bool = False
     has_ifc_elements_json: bool = False
@@ -146,7 +150,7 @@ class RestoreResponse(CamelModel):
     floor_height: Optional[float] = None
     selected_rows_count: int = 0
     source_type: Optional[str] = None
-    processing_type: str = "KR"
+    processing_type: str = "CS"
     runs: Optional[List[Dict[str, Any]]] = None
     current_run_id: Optional[str] = None
 
@@ -155,7 +159,7 @@ class SelectRowsResponse(CamelModel):
     session_id: str
     status: str
     selected_rows: int
-    processing_type: str = "KR"
+    processing_type: str = "CS"
     message: str
 
 
@@ -178,7 +182,7 @@ class RunInfo(CamelModel):
     run_id: str
     run_number: int
     status: str
-    processing_type: str = "KR"
+    processing_type: str = "CS"
     selected_rows: Optional[List[int]] = None
     construction_types: Dict[str, str] = {}
     construction_materials: Dict[str, str] = {}
@@ -198,7 +202,7 @@ class NewRunRequest(CamelModel):
     row_materials: Dict[str, str] = {}
     building_height: Optional[float] = None
     grouped_data: Optional[Dict[str, Any]] = None
-    processing_type: str = "KR"
+    processing_type: str = "CS"
     # Константы проекта для подбора работ (АР): {имя константы: значение}
     global_constants: Optional[Dict[str, str]] = None
 
@@ -209,7 +213,7 @@ class NewRunResponse(CamelModel):
     run_id: str
     run_number: int
     status: str
-    processing_type: str = "KR"
+    processing_type: str = "CS"
     selected_rows: int
     message: str
 
@@ -219,7 +223,7 @@ class RunSwitchResponse(CamelModel):
     session_id: str
     run_id: str
     run_number: Optional[int] = None
-    processing_type: str = "KR"
+    processing_type: str = "CS"
     status: Optional[str] = None
     files: List[SessionFile] = []
     building_height: Optional[float] = None
@@ -278,7 +282,7 @@ class WorksConstantsResponse(CamelModel):
     """Схема констант подбора работ + значения, определённые по модели IFC
     и из файла ПОС."""
     session_id: str
-    processing_type: str = "KR"
+    processing_type: str = "CS"
     constants: List[WorkConstantSchema] = []
     # Значения, автоматически определённые из IFC/Excel сессии
     detected: Dict[str, Any] = {}
@@ -318,7 +322,7 @@ class FinalJsonBuildResponse(CamelModel):
     run_id: Optional[str] = None
     run_number: Optional[int] = None
     status: str
-    processing_type: str = "KR"
+    processing_type: str = "CS"
     message: str
 
 
@@ -328,7 +332,7 @@ class FinalJsonStatusResponse(CamelModel):
     run_id: Optional[str] = None
     run_number: Optional[int] = None
     status: str
-    processing_type: str = "KR"
+    processing_type: str = "CS"
     error: Optional[str] = None
 
 
@@ -338,6 +342,6 @@ class FinalJsonResultResponse(CamelModel):
     run_id: Optional[str] = None
     run_number: Optional[int] = None
     status: str
-    processing_type: str = "KR"
+    processing_type: str = "CS"
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None

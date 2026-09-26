@@ -704,21 +704,21 @@
                 <div class="step-title">
                     <span class="step-number" id="step0Number">1</span>
                     Загрузка файла с элементами
-                    <span class="pt-info-badge" id="ptBadgeStep0">КР</span>
+                    <span class="pt-info-badge" id="ptBadgeStep0">ЦС</span>
                 </div>
                 
                 <div class="processing-type-selector">
-                    <label class="processing-type-label active" id="ptLabelKR">
-                        <input type="radio" name="processingType" value="KR" checked onchange="onProcessingTypeChange()">
+                    <label class="processing-type-label active" id="ptLabelCS">
+                        <input type="radio" name="processingType" value="CS" checked onchange="onProcessingTypeChange()">
                         <span class="pt-icon">🏗️</span>
-                        <span class="pt-text">КР</span>
-                        <span class="pt-badge">Конструктивные решения</span>
+                        <span class="pt-text">ЦС</span>
+                        <span class="pt-badge">Цифровой сборник</span>
                     </label>
-                    <label class="processing-type-label" id="ptLabelAR">
-                        <input type="radio" name="processingType" value="AR" onchange="onProcessingTypeChange()">
+                    <label class="processing-type-label" id="ptLabelAI">
+                        <input type="radio" name="processingType" value="AI" onchange="onProcessingTypeChange()">
                         <span class="pt-icon">🏛️</span>
-                        <span class="pt-text">АР</span>
-                        <span class="pt-badge">Архитектурные решения</span>
+                        <span class="pt-text">ИИ</span>
+                        <span class="pt-badge">Искусственный интеллект</span>
                     </label>
                 </div>
                 
@@ -733,7 +733,7 @@
                     <span class="name" id="fileName"></span>
                     <button class="btn btn-sm btn-danger" onclick="resetUpload()">✕</button>
                 </div>
-                <!-- Файл ПОС (режим АР): из него извлекаются глобальные константы -->
+                <!-- Файл ПОС (режим ИИ): из него извлекаются глобальные константы -->
                 <div id="posUploadBlock" style="display:none;margin-top:12px;">
                     <div class="upload-area" id="posUploadArea" style="padding:14px 16px;">
                         <input type="file" id="posFileInput" accept=".pdf" hidden>
@@ -747,7 +747,7 @@
                         <button class="btn btn-sm btn-danger" onclick="resetPosUpload()">✕</button>
                     </div>
                 </div>
-                <!-- Файл пояснительной записки ПЗ (режим АР): из него извлекаются
+                <!-- Файл пояснительной записки ПЗ (режим ИИ): из него извлекаются
                      глобальные константы тем же пайплайном, что и из ПОС -->
                 <div id="pzUploadBlock" style="display:none;margin-top:12px;">
                     <div class="upload-area" id="pzUploadArea" style="padding:14px 16px;">
@@ -775,7 +775,7 @@
                 <div class="step-title">
                     <span class="step-number" id="step1Number">2</span>
                     Выбор строк и параметров обработки
-                    <span class="pt-info-badge" id="ptBadgeStep1">КР</span>
+                    <span class="pt-info-badge" id="ptBadgeStep1">ЦС</span>
                 </div>
                 <div class="flex-between mb-12">
                     <span id="previewInfo">Загружено: 0 строк</span>
@@ -837,7 +837,7 @@
                 <div class="step-title">
                     <span class="step-number done">✓</span>
                     Результаты обработки
-                    <span class="pt-info-badge" id="ptBadgeResults">КР</span>
+                    <span class="pt-info-badge" id="ptBadgeResults">ЦС</span>
                 </div>
                 
                 <div class="run-selector" id="runSelector" style="display:none;">
@@ -879,17 +879,17 @@
                     Тестирование JSON-справочников
                 </div>
                 <div class="processing-type-selector" id="referenceTypeSelector">
-                    <label class="processing-type-label active" id="refPtLabelKR">
-                        <input type="radio" name="referenceProcessingType" value="KR" checked>
+                    <label class="processing-type-label active" id="refPtLabelCS">
+                        <input type="radio" name="referenceProcessingType" value="CS" checked>
                         <span class="pt-icon">🏗️</span>
-                        <span class="pt-text">КР</span>
-                        <span class="pt-badge">Конструктивные решения</span>
+                        <span class="pt-text">ЦС</span>
+                        <span class="pt-badge">Цифровой сборник</span>
                     </label>
-                    <label class="processing-type-label" id="refPtLabelAR">
-                        <input type="radio" name="referenceProcessingType" value="AR">
+                    <label class="processing-type-label" id="refPtLabelAI">
+                        <input type="radio" name="referenceProcessingType" value="AI">
                         <span class="pt-icon">🏛️</span>
-                        <span class="pt-text">АР</span>
-                        <span class="pt-badge">Архитектурные решения</span>
+                        <span class="pt-text">ИИ</span>
+                        <span class="pt-badge">Искусственный интеллект</span>
                     </label>
                 </div>
                 <div class="upload-area" id="referenceUploadArea">
@@ -1080,7 +1080,7 @@ let viewer3d = null;
 let pollingGeneration = 0;
 let isNewRunMode = false;
 let autoGroupEnabled = true;
-let currentProcessingType = 'KR';
+let currentProcessingType = 'CS';
 let currentViewFilename = null;
 let _previewLoadInFlight = false;
 
@@ -1147,7 +1147,7 @@ const POSITION_LINK_SVG =
 // Иконка — квадратик со стрелочкой (переход на другую вкладку),
 // размещается прижатой к правому краю строки группы.
 // На группу отображается ровно одна ссылка (первая позиция варианта),
-// как в режиме КР — даже если в position_links.json сохранено несколько.
+// как в режиме ЦС — даже если в position_links.json сохранено несколько.
 // Если позиция зависит от высоты здания (в position_links.json у позиции
 // есть поле group — имя группы работ по высоте, «до 57» / «более 57 до
 // 75 м» / «более 75 до 105 м» …), к ссылке добавляется параметр
@@ -1191,14 +1191,14 @@ function applyPositionLinks() {
 
 // Загружает ссылки позиций для сессии. Файл position_links.json строится
 // в фоне, поэтому если ready=false — опрашиваем эндпоинт ещё несколько раз.
-// Только для КР: в АР цифровой сборник не используется.
+// Только для режима ЦС: в ИИ цифровой сборник не используется.
 // force — перезагрузить ссылки принудительно (после пересборки по новой
 // высоте здания), даже если они уже были загружены для этой сессии.
 async function loadPositionLinks(sessionId, force = false) {
     if (!sessionId) return;
-    if (currentProcessingType !== 'KR') {
-        // АР: ссылки не используются — очищаем, чтобы не остались иконки
-        // от предыдущей КР-сессии
+    if (!isCSMode(currentProcessingType)) {
+        // ИИ: ссылки не используются — очищаем, чтобы не остались иконки
+        // от предыдущей ЦС-сессии
         positionLinks = {};
         positionLinksLoadedFor = null;
         applyPositionLinks();
@@ -1244,7 +1244,21 @@ const PERF = {
 
 const API_BASE = '/ifc-vor/api';
 
-// ========== Переключатель КР / АР ==========
+// ========== Режимы обработки: ЦС (цифровой сборник) / ИИ (искусственный интеллект) ==========
+// Режимы переименованы: бывший КР («Конструктивные решения») → ЦС (код CS),
+// бывший АР («Архитектурные решения») → ИИ (код AI). Легаси-коды KR/AR
+// по-прежнему могут приходить от сервера (старые сессии) — нормализуем их.
+const MODE_NAMES = { CS: 'Цифровой сборник (ЦС)', AI: 'Искусственный интеллект (ИИ)' };
+function normalizeProcessingType(value) {
+    if (!value) return 'CS';
+    const v = String(value).trim().toUpperCase();
+    if (v === 'AI' || v === 'AR' || v === 'АР') return 'AI';
+    return 'CS';
+}
+function isAIMode(value) { return normalizeProcessingType(value) === 'AI'; }
+function isCSMode(value) { return normalizeProcessingType(value) === 'CS'; }
+
+// ========== Переключатель ЦС / ИИ ==========
 function onProcessingTypeChange() {
     const selected = document.querySelector('input[name="processingType"]:checked');
     if (!selected) return;
@@ -1263,13 +1277,12 @@ function onProcessingTypeChange() {
         }
     }
     
-    const typeName = currentProcessingType === 'KR' ? 'Конструктивные решения' : 'Архитектурные решения';
-    showToast(`Режим: ${typeName}`, 'info');
+    showToast(`Режим: ${MODE_NAMES[currentProcessingType] || currentProcessingType}`, 'info');
     updateArConstantsPanel();
     updatePosUploadVisibility();
 }
 
-// ========== Параметры влияющие на расценки (АР) ==========
+// ========== Параметры влияющие на расценки (режим ИИ) ==========
 let worksConstantsSchema = [];
 let worksConstantsDetected = {};
 let worksConstantsPosDetected = {};
@@ -1280,9 +1293,9 @@ let _posConstantsPollTimer = null;
 function updateArConstantsPanel() {
     const panel = document.getElementById('arConstantsPanel');
     if (!panel) return;
-    const isAR = currentProcessingType === 'AR';
-    panel.style.display = isAR ? 'block' : 'none';
-    if (isAR) loadWorksConstants();
+    const isAI = isAIMode(currentProcessingType);
+    panel.style.display = isAI ? 'block' : 'none';
+    if (isAI) loadWorksConstants();
 }
 
 async function loadWorksConstants() {
@@ -1297,7 +1310,7 @@ async function loadWorksConstants() {
         worksConstantsPzDetected = data.pzDetected || {};
         worksConstantsLoaded = true;
         _lastAutoConstants = {};
-        // Автоподстановка высоты здания (АР) из значения, определённого по IFC
+        // Автоподстановка высоты здания (ИИ) из значения, определённого по IFC
         const buildingInput = document.getElementById('buildingHeightAR');
         if (buildingInput && worksConstantsDetected.building_height_m !== undefined) {
             buildingInput.value = worksConstantsDetected.building_height_m;
@@ -1536,26 +1549,26 @@ function updateProcessingTypeBadges() {
         const badge = document.getElementById(id);
         if (badge) badge.textContent = badgeText;
     });
-    // В режиме АР показываем высоту этажа + высоту здания, в КР — только высоту здания.
-    const isAR = currentProcessingType === 'AR';
+    // В режиме ИИ показываем высоту этажа + высоту здания, в ЦС — только высоту здания.
+    const isAI = isAIMode(currentProcessingType);
     const label = document.getElementById('buildingHeightLabel');
-    if (label) label.textContent = isAR ? 'Высота этажа (м):' : 'Высота здания (м):';
+    if (label) label.textContent = isAI ? 'Высота этажа (м):' : 'Высота здания (м):';
     const hint = document.getElementById('buildingHeightHint');
-    if (hint) hint.textContent = isAR ? 'Высота этажа, от 1 до 10000 м' : 'Высота здания, от 1 до 10000 м';
+    if (hint) hint.textContent = isAI ? 'Высота этажа, от 1 до 10000 м' : 'Высота здания, от 1 до 10000 м';
     const arWrap = document.getElementById('buildingHeightARWrap');
-    if (arWrap) arWrap.style.display = isAR ? 'block' : 'none';
-    // АР: материал задаётся автоматически по МССК — селектор массового
-    // назначения материала скрыт (в КР доступен).
+    if (arWrap) arWrap.style.display = isAI ? 'block' : 'none';
+    // ИИ: материал задаётся автоматически по МССК — селектор массового
+    // назначения материала скрыт (в ЦС доступен).
     const globalMatSelect = document.getElementById('globalMaterialSelect');
-    if (globalMatSelect) globalMatSelect.style.display = isAR ? 'none' : '';
+    if (globalMatSelect) globalMatSelect.style.display = isAI ? 'none' : '';
 }
 
 // Подстановка высот в поля интерфейса с учётом режима:
-// КР — единственное поле «Высота здания»; АР — «Высота этажа» + «Высота здания».
+// ЦС — единственное поле «Высота здания»; ИИ — «Высота этажа» + «Высота здания».
 function applyHeightsToInputs(buildingHeight, floorHeight) {
     const floorInput = document.getElementById('buildingHeight');
     const buildingInput = document.getElementById('buildingHeightAR');
-    if (currentProcessingType === 'AR') {
+    if (isAIMode(currentProcessingType)) {
         if (buildingInput && buildingHeight) buildingInput.value = buildingHeight;
         if (floorHeight && floorInput) floorInput.value = floorHeight;
     } else if (buildingHeight && floorInput) {
@@ -1570,7 +1583,7 @@ const blueprintZoom = {
     dragging: false, lastX: 0, lastY: 0, inited: false
 };
 
-// ========== Правила геометрической группировки (КР) ==========
+// ========== Правила геометрической группировки (режим ЦС) ==========
 const GEOMETRY_GROUP_RULES = {
     'IfcWall': { field: 'Ширина, мм', label: 'Толщина', unit: 'мм', ranges: [
         { max: 100, label: 'до 100 мм' }, { max: 150, label: 'до 150 мм' },
@@ -1719,7 +1732,7 @@ document.querySelectorAll('input[name="referenceProcessingType"]').forEach(radio
 
 function getReferenceProcessingType() {
     const selected = document.querySelector('input[name="referenceProcessingType"]:checked');
-    return selected ? selected.value : 'KR';
+    return selected ? selected.value : 'CS';
 }
 
 function isSupportedReferenceFile(file) {
@@ -1958,7 +1971,7 @@ uploadArea.addEventListener('drop', (e) => {
 });
 fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFileSelect(e.target.files[0]); });
 
-// ========== Изменение высоты здания (КР) ==========
+// ========== Изменение высоты здания (режим ЦС) ==========
 // Высота влияет на отбор позиций цифрового сборника (работы позиций
 // сгруппированы по диапазонам высоты) — при изменении высоты в превью КР
 // отправляем её на сервер (filter_height): position_links.json пересобирается
@@ -1969,7 +1982,7 @@ fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleF
     if (!heightInput) return;
     let heightChangeTimer = null;
     heightInput.addEventListener('change', () => {
-        if (currentProcessingType !== 'KR' || !currentSessionId) return;
+        if (!isCSMode(currentProcessingType) || !currentSessionId) return;
         const height = parseFloat(heightInput.value);
         if (!height || height <= 0 || height > 10000) return;
         if (heightChangeTimer) clearTimeout(heightChangeTimer);
@@ -1993,7 +2006,7 @@ fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleF
     });
 })();
 
-// ========== Файл ПОС (режим АР) ==========
+// ========== Файл ПОС (режим ИИ) ==========
 const posUploadArea = document.getElementById('posUploadArea');
 const posFileInput = document.getElementById('posFileInput');
 let posSelectedFile = null;
@@ -2024,7 +2037,7 @@ function resetPosUpload() {
     posFileInput.value = '';
 }
 
-// ========== Файл пояснительной записки ПЗ (режим АР) ==========
+// ========== Файл пояснительной записки ПЗ (режим ИИ) ==========
 const pzUploadArea = document.getElementById('pzUploadArea');
 const pzFileInput = document.getElementById('pzFileInput');
 let pzSelectedFile = null;
@@ -2055,12 +2068,12 @@ function resetPzUpload() {
     pzFileInput.value = '';
 }
 
-// Показывает блоки загрузки ПОС и ПЗ только в режиме АР
+// Показывает блоки загрузки ПОС и ПЗ только в режиме ИИ
 function updatePosUploadVisibility() {
     const block = document.getElementById('posUploadBlock');
-    if (block) block.style.display = currentProcessingType === 'AR' ? 'block' : 'none';
+    if (block) block.style.display = isAIMode(currentProcessingType) ? 'block' : 'none';
     const pzBlock = document.getElementById('pzUploadBlock');
-    if (pzBlock) pzBlock.style.display = currentProcessingType === 'AR' ? 'block' : 'none';
+    if (pzBlock) pzBlock.style.display = isAIMode(currentProcessingType) ? 'block' : 'none';
 }
 
 function handleFileSelect(file) {
@@ -2090,10 +2103,10 @@ async function uploadFile() {
     const formData = new FormData();
     formData.append('file', selectedFile);
     formData.append('processingType', currentProcessingType);
-    if (currentProcessingType === 'AR' && posSelectedFile) {
+    if (isAIMode(currentProcessingType) && posSelectedFile) {
         formData.append('posFile', posSelectedFile);
     }
-    if (currentProcessingType === 'AR' && pzSelectedFile) {
+    if (isAIMode(currentProcessingType) && pzSelectedFile) {
         formData.append('pzFile', pzSelectedFile);
     }
     try {
@@ -2178,7 +2191,7 @@ async function onIfcProcessed(sessionId) {
         // устаревшие данные из window._previewData и показывает лишние toast-сообщения
         // «Режим: …» / «Сгруппировано: …». Группировка будет выполнена один раз в renderPreview.
         if (preview_data.processingType) {
-            currentProcessingType = preview_data.processingType;
+            currentProcessingType = normalizeProcessingType(preview_data.processingType);
             const radio = document.querySelector(`input[name="processingType"][value="${currentProcessingType}"]`);
             if (radio) { radio.checked = true; updateProcessingTypeBadges(); }
         }
@@ -2254,11 +2267,11 @@ async function startNewRun() {
 
 async function confirmRowSelection() {
     if (selectedRows.size === 0) { showToast('Выберите хотя бы одну строку', 'warning'); return; }
-    const isAR = currentProcessingType === 'AR';
+    const isAI = isAIMode(currentProcessingType);
     let height = null;
     let floorHeight = null;
-    if (isAR) {
-        // АР: «Высота этажа (м)» — основной входной параметр, рядом «Высота здания (м)».
+    if (isAI) {
+        // ИИ: «Высота этажа (м)» — основной входной параметр, рядом «Высота здания (м)».
         floorHeight = parseFloat(document.getElementById('buildingHeight').value);
         height = parseFloat(document.getElementById('buildingHeightAR').value);
         if (!floorHeight || floorHeight <= 0 || floorHeight > 10000) { showToast('Некорректная высота этажа (допустимо: 1-10000 м)', 'warning'); return; }
@@ -2312,7 +2325,7 @@ async function confirmRowSelection() {
         buildingHeight: height,
         groupedData: null,
         processingType: currentProcessingType,
-        globalConstants: currentProcessingType === 'AR' ? collectArConstants() : {}
+        globalConstants: isAIMode(currentProcessingType) ? collectArConstants() : {}
     };
     if (floorHeight !== null) payload.floorHeight = floorHeight;
     
@@ -2423,8 +2436,8 @@ async function loadRuns() {
                 const status = run.status || 'unknown';
                 const statusIcon = status === 'completed' ? '✅' : status === 'processing' ? '⏳' : status === 'error' ? '❌' : '📋';
                 const runNumber = run.runNumber || run.run_number || run.number || '?';
-                const ptLabel = run.processingType || run.processing_type || 'KR';
-                const ptIcon = ptLabel === 'AR' ? '🏛️' : '🏗️';
+                const ptLabel = normalizeProcessingType(run.processingType || run.processing_type);
+                const ptIcon = ptLabel === 'AI' ? '🏛️' : '🏗️';
                 const runId = run.runId || run.run_id || run.id;
                 const isSelected = (runId === currentRunId);
                 return `<option value="${runId}" ${isSelected ? 'selected' : ''}>${statusIcon} ${ptIcon} Запуск ${runNumber} — ${dateStr} (${status})</option>`;
@@ -2434,7 +2447,7 @@ async function loadRuns() {
                 if (currentRun) {
                     currentRunBadge.style.display = 'inline-block';
                     const rn = currentRun.runNumber || currentRun.run_number || '?';
-                    const ptLabel = currentRun.processingType || currentRun.processing_type || 'KR';
+                    const ptLabel = normalizeProcessingType(currentRun.processingType || currentRun.processing_type);
                     currentRunBadge.textContent = `Текущий: ${ptLabel} Запуск ${rn}`;
                 } else currentRunBadge.style.display = 'none';
             }
@@ -2600,11 +2613,11 @@ function renderPreview(data) {
     const head = document.getElementById('previewHead');
     const body = document.getElementById('previewBody');
     if (!head || !body) return;
-    // В режиме АР «Часть здания» и «Материал» — только отображаемые значения
-    // (как «Тип элемента»), пользователь их не редактирует. В КР поведение прежнее.
-    const isAR = data.processingType === 'AR';
+    // В режиме ИИ «Часть здания» и «Материал» — только отображаемые значения
+    // (как «Тип элемента»), пользователь их не редактирует. В ЦС поведение прежнее.
+    const isAI = isAIMode(data.processingType);
     const globalMatSelect = document.getElementById('globalMaterialSelect');
-    if (globalMatSelect) globalMatSelect.style.display = isAR ? 'none' : '';
+    if (globalMatSelect) globalMatSelect.style.display = isAI ? 'none' : '';
     const typeFloorIdx = data.headers.indexOf('Этаж');
     const materialIdx = data.headers.indexOf('Материал');
     const requiredColumns = ['№ п/п', 'Имя', 'Тип элемента', 'Толщина, мм', 'Объём, м3', 'Площадь, м2'];
@@ -2661,12 +2674,12 @@ function renderPreview(data) {
         rowParts[index] = defaultPart;
         let defaultMaterial = '-';
         if (materialIdx !== -1 && row[materialIdx] && row[materialIdx] !== '-') defaultMaterial = row[materialIdx].trim();
-        // АР: по умолчанию показываем материал по коду МССК — ту же группу
+        // ИИ: по умолчанию показываем материал по коду МССК — ту же группу
         // материала из data/materials_mssk_nested.json, по которой группируются
         // элементы (GlobalId → {name, order, code} в data.materialsGroupMap).
         // Если МССК-кода нет («Прочее»/«Многослойные») — оставляем исходное
         // значение колонки «Материал».
-        if (data.processingType === 'AR' && data.materialsGroupMap) {
+        if (isAIMode(data.processingType) && data.materialsGroupMap) {
             const gidIdx = data.headers.indexOf('GlobalId');
             if (gidIdx !== -1) {
                 const gid = row[gidIdx] ? String(row[gidIdx]).trim() : '';
@@ -2685,10 +2698,10 @@ function renderPreview(data) {
         if (!standardOptions.includes(defaultMaterial) && defaultMaterial !== '-') materialOptions.push(defaultMaterial);
         const partLabels = { 'Подземная': 'Подземная часть', 'Цоколь': 'Цокольная часть', 'Надземная': 'Надземная часть' };
         const partLabel = partLabels[defaultPart] || defaultPart;
-        // АР: значения «Часть здания» и «Материал» выводятся как обычный текст.
-        // КР: прежние элементы выбора (часть — заблокированный select, материал — редактируемый).
+        // ИИ: значения «Часть здания» и «Материал» выводятся как обычный текст.
+        // ЦС: прежние элементы выбора (часть — заблокированный select, материал — редактируемый).
         let partCell, materialCell;
-        if (isAR) {
+        if (isAI) {
             partCell = `<td title="${partLabel}">${partLabel}</td>`;
             materialCell = `<td title="${defaultMaterial}">${defaultMaterial}</td>`;
         } else {
@@ -2975,8 +2988,8 @@ function updateSelectionUI() {
     if (previewInfo && window._previewData) previewInfo.textContent = `Загружено: ${window._previewData.totalRows} строк`;
 }
 
-// ========== Общая группировка превью (КР и АР) ==========
-// КР-режим (IFC), иерархия:
+// ========== Общая группировка превью (режимы ЦС и ИИ) ==========
+// ЦС-режим (IFC), иерархия:
 //   L1 — Часть здания
 //   L2 — Код МССК
 //   L3 — Материал (код МССК материала: «Железобетон сборный (СТ 00 15 01)»,
@@ -2984,10 +2997,10 @@ function updateSelectionUI() {
 //   L4 — IFC-тип (только если в группе материала несколько типов)
 //   L5 — Геометрические параметры (толщина, площадь, периметр+сечение и т.д.)
 //   L6 — Наименование элемента (листовая группа со строками)
-// КР-режим (PDF-чертёж), иерархия (часть здания по чертежу не определяется):
+// ЦС-режим (PDF-чертёж), иерархия (часть здания по чертежу не определяется):
 //   L1 — Имя элемента (например «Стена»)
 //   L2 — Материал из таблицы (колонка «Материал», листовая группа со строками)
-    // АР-режим, иерархия:
+    // ИИ-режим, иерархия:
     //   L1 — Часть здания
     //   L2 — Код МССК
     //   L3 — Главный материал (из «Свойство::IfcMaterialLayer::Name»)
@@ -3088,8 +3101,8 @@ function groupRowsCommon(mode) {
         const index = parseInt(tr.dataset.rowIndex);
         if (isNaN(index)) return;
         
-        // Часть здания берём из rowParts: в АР ячейка — обычный текст (select нет),
-        // в КР select заблокирован и его значение совпадает с rowParts[index].
+        // Часть здания берём из rowParts: в ИИ ячейка — обычный текст (select нет),
+        // в ЦС select заблокирован и его значение совпадает с rowParts[index].
         const part = rowParts[index] || 'Надземная';
         const typeRu = typeRuIdx !== -1 ? (data.rows[index]?.[typeRuIdx] || 'Неизвестно') : 'Неизвестно';
         const name = nameIdx !== -1 ? (data.rows[index]?.[nameIdx] || '') : '';
@@ -3179,7 +3192,7 @@ function groupRowsCommon(mode) {
         });
     };
 
-    // Группировка для АР: после кода МССК (L1) элементы группируются
+    // Группировка для ИИ: после кода МССК (L1) элементы группируются
     // по главному материалу (L2), затем по наименованию (L3).
     // Материал берётся из data.materialsGroupMap (GlobalId → {name, order, code}):
     //   код материала не найден / нет поля → «Прочее»
@@ -3260,7 +3273,7 @@ function groupRowsCommon(mode) {
             matCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(matId, this.checked); });
 
             // Внутри группы материала — группы по наименованию элемента (L3).
-            // Геометрии в иерархии АР нет — контекст только по части здания.
+            // Геометрии в иерархии ИИ нет — контекст только по части здания.
             addNameGroups(matId, matRows, basePadding + 30, 3,
                 matRows[0] ? matRows[0].part : '', '');
         });
@@ -3467,7 +3480,7 @@ function groupRowsCommon(mode) {
     };
     
     // ============================================================
-    // Группировка по материалу (КР): Код МССК (L2) → Материал (L3) →
+    // Группировка по материалу (ЦС): Код МССК (L2) → Материал (L3) →
     // IFC → Геометрия → Наименование.
     // Материал берётся из data.materialsGroupMap (GlobalId → {name, order, code}),
     // где name — имя группы из data/materials_mssk_nested.json
@@ -3556,10 +3569,10 @@ function groupRowsCommon(mode) {
     };
     
     // ============================================================
-    // Группировка АР: Код МССК (L1) → Материал (L2) → Наименование (L3).
-    // Часть здания (уровень) в АР не используется.
+    // Группировка ИИ: Код МССК (L1) → Материал (L2) → Наименование (L3).
+    // Часть здания (уровень) в ИИ не используется.
     // ============================================================
-    if (mode === 'АР') {
+    if (mode === 'ИИ') {
         const msskGroups = {};
         rowData.forEach(rd => {
             const key = rd.mssk.code ? `${rd.mssk.code}__${rd.mssk.name}` : '__OTHER__';
@@ -3633,12 +3646,12 @@ function groupRowsCommon(mode) {
     }
 
     // ============================================================
-    // Группировка для сессий из PDF-чертежей (КР): часть здания по чертежу
+    // Группировка для сессий из PDF-чертежей (ЦС): часть здания по чертежу
     // определить нельзя, поэтому иерархия упрощена:
     //   L1 — Имя элемента (например «Стена»)
     //   L2 — Материал из таблицы (колонка «Материал», листовая группа со строками)
     // ============================================================
-    if (isPdfSource && mode === 'КР') {
+    if (isPdfSource && mode === 'ЦС') {
         // L1: группировка по имени элемента
         const pdfNameGroups = {};
         rowData.forEach(rd => {
@@ -3765,7 +3778,7 @@ function groupRowsCommon(mode) {
     }
 
     // ============================================================
-    // Группировка КР: Часть здания (L1) → Код МССК (L2) →
+    // Группировка ЦС: Часть здания (L1) → Код МССК (L2) →
     // Материал (L3) → IFC → Геометрия → Наименование.
     // ============================================================
     partOrder.forEach(part => {
@@ -3880,7 +3893,7 @@ function groupRowsCommon(mode) {
             const l2Cb = l2Tr.querySelector('.group-checkbox');
             l2Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l2Id, this.checked); });
             
-            // Для КР: Материал (L3) → IFC → Геометрия → Имя
+            // Для ЦС: Материал (L3) → IFC → Геометрия → Имя
             addMaterialGroupsKR(l2Id, groupRows, 60);
         });
     });
@@ -3891,15 +3904,15 @@ function groupRowsCommon(mode) {
     showToast(`Сгруппировано (${mode}): ${Object.keys(groupIndexMap).length} групп`, 'info');
 }
 
-// ========== Группировка для КР ==========
+// ========== Группировка для режима ЦС ==========
 function autoGroupRows() {
-    if (currentProcessingType === 'AR') { autoGroupRowsAR(); return; }
-    groupRowsCommon('КР');
+    if (isAIMode(currentProcessingType)) { autoGroupRowsAR(); return; }
+    groupRowsCommon('ЦС');
 }
 
-// ========== Группировка для АР ==========
+// ========== Группировка для режима ИИ ==========
 function autoGroupRowsAR() {
-    groupRowsCommon('АР');
+    groupRowsCommon('ИИ');
 }
 
 // ========== Предпросмотр файлов ==========
@@ -4307,8 +4320,8 @@ async function loadHistory() {
         container.innerHTML = data.sessions.map(s => {
             const cls = {ifc_processing:'status-processing',ifc_processed:'status-waiting',selecting_rows:'status-waiting',processing:'status-processing',completed:'status-completed',error:'status-error',reference_processing:'status-processing'}[s.status]||'status-waiting';
             const txt = {ifc_processing:'Обработка IFC...',ifc_processed:'IFC обработан',selecting_rows:'Выбор строк',processing:'Обработка...',completed:'✅ Завершена',error:'❌ Ошибка',reference_processing:'JSON-справочники...'}[s.status]||s.status;
-            const ptLabel = s.processingType || s.processing_type || 'KR';
-            const ptIcon = ptLabel === 'AR' ? '🏛️' : '🏗️';
+            const ptLabel = normalizeProcessingType(s.processingType || s.processing_type);
+            const ptIcon = ptLabel === 'AI' ? '🏛️' : '🏗️';
             const isReference = s.isReferenceSession;
             const primaryAction = isReference
                 ? `<button class="btn btn-sm btn-primary" onclick="openReferenceSession('${s.sessionId}')">Открыть JSON</button>`
@@ -4328,7 +4341,7 @@ async function restoreSession(sessionId) {
         currentSessionId = sessionId;
         currentRunId = data.current_run_id || null;
         if (data.processingType || data.processing_type) {
-            currentProcessingType = data.processingType || data.processing_type;
+            currentProcessingType = normalizeProcessingType(data.processingType || data.processing_type);
             const radio = document.querySelector(`input[name="processingType"][value="${currentProcessingType}"]`);
             if (radio) { radio.checked = true; updateProcessingTypeBadges(); }
         }

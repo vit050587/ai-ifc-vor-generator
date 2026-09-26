@@ -15,6 +15,10 @@ from src.services.session_manager import SessionManager, POS_CONSTANTS_FILENAME,
 from src.services.mssk_lookup import get_mssk_code_map
 from src.core.logger import setup_logger
 from src.core.config import load_config
+from src.core.modes import (
+    to_pipeline_type, to_public_type,
+    public_runs, public_session, mode_name,
+)
 from src.schemas import (
     ErrorResponse, SessionFull, SessionListResponse,
     UploadResponse, StatusResponse, DeleteResponse,
@@ -207,20 +211,22 @@ def upload_ifc():
         in: formData
         type: string
         required: false
-        default: "KR"
-        description: Тип обработки — KR (конструктивные решения) или AR (архитектурные решения)
+        default: "CS"
+        description: Режим обработки — CS (ЦС, цифровой сборник; подбор через API ТСН)
+          или AI (ИИ, искусственный интеллект; подбор через LLM). Легаси-коды
+          KR/AR также принимаются и эквивалентны CS/AI
       - name: posFile
         in: formData
         type: file
         required: false
-        description: Дополнительный PDF-файл ПОС (только для режима AR) — из него
+        description: Дополнительный PDF-файл ПОС (только для режима AI/ИИ) — из него
           извлекаются глобальные константы подбора работ
       - name: pzFile
         in: formData
         type: file
         required: false
         description: Дополнительный PDF-файл пояснительной записки (только для
-          режима AR) — разбирается тем же пайплайном, что и ПОС; из него
+          режима AI/ИИ) — разбирается тем же пайплайном, что и ПОС; из него
           извлекаются глобальные константы, не найденные в IFC и ПОС
     responses:
       200:
@@ -277,12 +283,14 @@ def upload_ifc():
     if size > max_size:
         return _err(ErrorResponse(detail=f"Файл слишком большой. Максимум {max_size // (1024*1024)} МБ"), 413)
 
-    # Получаем тип обработки (КР или АР)
-    processing_type = request.form.get("processingType", "KR").upper()
-    if processing_type not in ("KR", "AR"):
-        processing_type = "KR"
-    
-    logger.info(f"Загрузка файла {f.filename}, тип обработки: {processing_type}")
+    # Получаем режим обработки (ЦС или ИИ; легаси-коды KR/AR принимаются
+    # как синонимы и приводятся к внутренним кодам пайплайна)
+    processing_type = to_pipeline_type(request.form.get("processingType"))
+
+    logger.info(
+        f"Загрузка файла {f.filename}, режим обработки: "
+        f"{mode_name(processing_type)} ({to_public_type(processing_type)})"
+    )
 
     try:
         if is_ifc:
@@ -292,7 +300,7 @@ def upload_ifc():
             result = _get_manager().process_pdf(f, f.filename, processing_type)
             result["source_type"] = "pdf"
 
-        # Дополнительный файл ПОС (режим АР): разбирается в фоне,
+        # Дополнительный файл ПОС (режим ИИ): разбирается в фоне,
         # константы сохраняются в ПОС_глобальные_константы.json
         pos_file = request.files.get("posFile")
         if pos_file and pos_file.filename and processing_type == "AR":
@@ -301,7 +309,7 @@ def upload_ifc():
             except ValueError as e:
                 logger.warning(f"Файл ПОС не принят: {e}")
 
-        # Дополнительный файл пояснительной записки ПЗ (режим АР): разбирается
+        # Дополнительный файл пояснительной записки ПЗ (режим ИИ): разбирается
         # тем же пайплайном, что и ПОС, константы сохраняются в
         # ПЗ_глобальные_константы.json
         pz_file = request.files.get("pzFile")
@@ -311,6 +319,9 @@ def upload_ifc():
             except ValueError as e:
                 logger.warning(f"Файл ПЗ не принят: {e}")
 
+        # В ответе клиенту отдаём публичный код режима (CS/AI)
+        if "processing_type" in result:
+            result["processing_type"] = to_public_type(result["processing_type"])
         return _ok(UploadResponse(**result))
     except ValueError as e:
         return _err(ErrorResponse(detail=str(e)), 400)
@@ -338,8 +349,9 @@ def build_reference():
         in: formData
         type: string
         required: false
-        default: "KR"
-        description: Тип обработки — KR (конструктивные решения) или AR (архитектурные решения)
+        default: "CS"
+        description: Режим обработки — CS (ЦС, цифровой сборник) или AI (ИИ,
+          искусственный интеллект); легаси-коды KR/AR также принимаются
     responses:
       202:
         description: Файл принят, построение запущено
@@ -387,12 +399,14 @@ def build_reference():
             413,
         )
 
-    # Получаем тип обработки для справочников
-    processing_type = request.form.get("processingType", "KR").upper()
-    if processing_type not in ("KR", "AR"):
-        processing_type = "KR"
-    
-    logger.info(f"Запуск построения справочников: {uploaded_file.filename}, тип: {processing_type}")
+    # Получаем режим обработки для справочников (легаси-коды KR/AR
+    # принимаются как синонимы CS/AI)
+    processing_type = to_pipeline_type(request.form.get("processingType"))
+
+    logger.info(
+        f"Запуск построения справочников: {uploaded_file.filename}, режим: "
+        f"{mode_name(processing_type)} ({to_public_type(processing_type)})"
+    )
 
     try:
         result = _get_manager().build_reference(
@@ -556,7 +570,8 @@ def list_sessions():
     """
     try:
         raw = _get_manager().list_sessions()
-        sessions = [SessionFull(**s) for s in raw]
+        # processing_type сессий и запусков приводим к публичным кодам CS/AI
+        sessions = [SessionFull(**public_session(s)) for s in raw]
         return _ok(SessionListResponse(sessions=sessions, total=len(sessions)))
     except Exception as e:
         logger.error(f"Ошибка списка сессий: {e}", exc_info=True)
@@ -663,7 +678,8 @@ def get_session(session_id: str):
     if not s:
         return _err(ErrorResponse(detail="Сессия не найдена"), 404)
 
-    return _ok(SessionFull(**s))
+    # processing_type сессии и запусков — в публичных кодах CS/AI
+    return _ok(SessionFull(**public_session(s)))
 
 
 @bp.route("/api/session/<session_id>", methods=["DELETE"])
@@ -741,7 +757,7 @@ def restore_session(session_id: str):
                 $ref: '#/definitions/SessionFile'
             processingType:
               type: string
-              example: "KR"
+              example: "CS"
       400:
         description: Некорректный ID
       404:
@@ -781,9 +797,9 @@ def restore_session(session_id: str):
         floor_height=current_run_floor_height,
         selected_rows_count=len(s.get("selected_rows", []) or []),
         source_type=s.get("source_type"),
-        runs=s.get("runs", []),
+        runs=public_runs(s.get("runs", [])),
         current_run_id=s.get("current_run_id"),
-        processing_type=s.get("processing_type", "KR"),
+        processing_type=to_public_type(s.get("processing_type")),
     ))
 
 
@@ -886,7 +902,7 @@ def preview_excel(session_id: str):
             has_materials_md = True
 
     # JSON/XLSX-справочники лежат в корне директории сессии.
-    # Показываем их наличие только для КР: в АР цифровой сборник не
+    # Показываем их наличие только для режима ЦС: в ИИ цифровой сборник не
     # используется, справочники не строятся и кнопки не отображаются.
     if os.path.exists(session_dir) and s.get("processing_type", "KR") == "KR":
         has_ifc_elements_json = os.path.exists(os.path.join(session_dir, "ifc_elements_output.json"))
@@ -943,7 +959,7 @@ def preview_excel(session_id: str):
     except Exception as e:
         logger.warning(f"Не удалось прочитать высоту: {e}")
 
-    # Высота основного этажа (АР) — строка «Высота основного этажа» листа высот
+    # Высота основного этажа (режим ИИ) — строка «Высота основного этажа» листа высот
     if height_sheet:
         try:
             df_floor = pd.read_excel(excel_path, sheet_name=height_sheet)
@@ -996,7 +1012,7 @@ def preview_excel(session_id: str):
         has_materials_md=has_materials_md,
         has_ifc_elements_json=has_ifc_elements_json,
         has_ifc_grouped_json=has_ifc_grouped_json,
-        processing_type=s.get("processing_type", "KR"),
+        processing_type=to_public_type(s.get("processing_type")),
         mssk_code_map=get_mssk_code_map(),
         materials_group_map=materials_group_map,
     ))
@@ -1005,7 +1021,8 @@ def preview_excel(session_id: str):
 @bp.route("/api/session/<session_id>/works_constants", methods=["GET"])
 def get_works_constants(session_id: str):
     """
-    Схема констант подбора работ (АР) + значения, определённые по модели IFC.
+    Схема констант подбора работ (режим ИИ (AI), ранее АР) + значения,
+    определённые по модели IFC.
     ---
     tags:
       - processing
@@ -1170,7 +1187,7 @@ def get_works_constants(session_id: str):
 
     return _ok(WorksConstantsResponse(
         session_id=session_id,
-        processing_type=s.get("processing_type", "KR"),
+        processing_type=to_public_type(s.get("processing_type")),
         constants=get_constants_schema(),
         detected=detected,
         pos_detected=pos_detected,
@@ -1187,7 +1204,8 @@ def get_works_constants(session_id: str):
 @bp.route("/api/session/<session_id>/upload_pos", methods=["POST"])
 def upload_pos(session_id: str):
     """
-    Загрузка PDF-файла ПОС (проект организации строительства) для сессии (АР).
+    Загрузка PDF-файла ПОС (проект организации строительства) для сессии
+    (режим ИИ (AI), ранее АР).
     ---
     tags:
       - upload
@@ -1218,7 +1236,7 @@ def upload_pos(session_id: str):
             message:
               type: string
       400:
-        description: Ошибка валидации (не PDF, не режим АР и т.п.)
+        description: Ошибка валидации (не PDF, не режим ИИ (AI) и т.п.)
       404:
         description: Сессия не найдена
     """
@@ -1255,7 +1273,8 @@ def upload_pos(session_id: str):
 @bp.route("/api/session/<session_id>/upload_pz", methods=["POST"])
 def upload_pz(session_id: str):
     """
-    Загрузка PDF-файла пояснительной записки (ПЗ) для сессии (АР).
+    Загрузка PDF-файла пояснительной записки (ПЗ) для сессии
+    (режим ИИ (AI), ранее АР).
     Разбирается тем же пайплайном и той же LLM, что и файл ПОС:
     из документа извлекаются глобальные константы подбора работ
     → ПЗ_глобальные_константы.json.
@@ -1289,7 +1308,7 @@ def upload_pz(session_id: str):
             message:
               type: string
       400:
-        description: Ошибка валидации (не PDF, не режим АР и т.п.)
+        description: Ошибка валидации (не PDF, не режим ИИ (AI) и т.п.)
       404:
         description: Сессия не найдена
     """
@@ -1754,13 +1773,14 @@ def select_rows(session_id: str):
               description: Высота здания в метрах (1-10000)
             floorHeight:
               type: number
-              description: Высота этажа в метрах (1-10000, режим АР)
+              description: Высота этажа в метрах (1-10000, режим ИИ (AI))
             groupedData:
               type: object
             processingType:
               type: string
-              enum: ["KR", "AR"]
-              default: "KR"
+              enum: ["CS", "AI"]
+              default: "CS"
+              description: Режим обработки (легаси-коды KR/AR также принимаются)
     responses:
       200:
         description: Обработка запущена
@@ -1785,14 +1805,10 @@ def select_rows(session_id: str):
     building_height = data.get("buildingHeight", data.get("building_height"))
     floor_height = data.get("floorHeight", data.get("floor_height"))
     grouped_data = data.get("groupedData", data.get("grouped_data", {}))
-    processing_type = data.get("processingType", "KR").upper()
+    processing_type = to_pipeline_type(data.get("processingType"))
     global_constants = data.get("globalConstants", data.get("global_constants", {})) or {}
 
-    # Валидация processing_type
-    if processing_type not in ("KR", "AR"):
-        processing_type = "KR"
-
-    # Валидация констант проекта (АР): словарь {имя константы: значение}
+    # Валидация констант проекта (ИИ): словарь {имя константы: значение}
     if not isinstance(global_constants, dict):
         return _err(ErrorResponse(detail="globalConstants должен быть объектом {имя: значение}"), 400)
     global_constants = {
@@ -1814,7 +1830,7 @@ def select_rows(session_id: str):
         except (ValueError, TypeError):
             return _err(ErrorResponse(detail="Некорректное значение высоты"), 400)
 
-    # Высота этажа (АР) — необязательный параметр
+    # Высота этажа (режим ИИ) — необязательный параметр
     if floor_height is not None:
         try:
             floor_height = float(floor_height)
@@ -1867,6 +1883,9 @@ def select_rows(session_id: str):
             global_constants,
             floor_height
         )
+        # В ответе клиенту отдаём публичный код режима (CS/AI)
+        if "processing_type" in result:
+            result["processing_type"] = to_public_type(result["processing_type"])
         return _ok(SelectRowsResponse(**result))
     except KeyError:
         return _err(ErrorResponse(detail="Сессия не найдена"), 404)
@@ -1913,13 +1932,14 @@ def new_run(session_id: str):
               type: number
             floorHeight:
               type: number
-              description: Высота этажа в метрах (1-10000, режим АР)
+              description: Высота этажа в метрах (1-10000, режим ИИ (AI))
             groupedData:
               type: object
             processingType:
               type: string
-              enum: ["KR", "AR"]
-              default: "KR"
+              enum: ["CS", "AI"]
+              default: "CS"
+              description: Режим обработки (легаси-коды KR/AR также принимаются)
     responses:
       200:
         description: Новый запуск создан
@@ -1941,12 +1961,8 @@ def new_run(session_id: str):
     building_height = data.get("buildingHeight", data.get("building_height"))
     floor_height = data.get("floorHeight", data.get("floor_height"))
     grouped_data = data.get("groupedData", data.get("grouped_data", {}))
-    processing_type = data.get("processingType", "KR").upper()
+    processing_type = to_pipeline_type(data.get("processingType"))
     global_constants = data.get("globalConstants", data.get("global_constants", {})) or {}
-
-    # Валидация processing_type
-    if processing_type not in ("KR", "AR"):
-        processing_type = "KR"
 
     if not isinstance(global_constants, dict):
         return _err(ErrorResponse(detail="globalConstants должен быть объектом {имя: значение}"), 400)
@@ -1969,7 +1985,7 @@ def new_run(session_id: str):
         except (ValueError, TypeError):
             return _err(ErrorResponse(detail="Некорректное значение высоты"), 400)
 
-    # Высота этажа (АР) — необязательный параметр
+    # Высота этажа (режим ИИ) — необязательный параметр
     if floor_height is not None:
         try:
             floor_height = float(floor_height)
@@ -1994,6 +2010,9 @@ def new_run(session_id: str):
             global_constants,
             floor_height
         )
+        # В ответе клиенту отдаём публичный код режима (CS/AI)
+        if "processing_type" in result:
+            result["processing_type"] = to_public_type(result["processing_type"])
         return _ok(NewRunResponse(**result))
     except KeyError:
         return _err(ErrorResponse(detail="Сессия не найдена"), 404)
@@ -2035,9 +2054,10 @@ def list_runs(session_id: str):
     logger.info(f"  всего={len(runs)}, current_run_id={current_run_id}")
     for run in runs:
         logger.info(f"  Run: {json.dumps(run, ensure_ascii=False, default=str)[:200]}")
-    
+
+    # processing_type запусков — в публичных кодах CS/AI
     return _ok(RunsListResponse(
-        runs=runs,
+        runs=public_runs(runs),
         current_run_id=current_run_id,
         total=len(runs)
     ))
@@ -2070,6 +2090,9 @@ def switch_run(session_id: str, run_id: str):
 
     try:
         result = _get_manager().switch_run(session_id, run_id)
+        # В ответе клиенту отдаём публичный код режима (CS/AI)
+        if "processing_type" in result:
+            result["processing_type"] = to_public_type(result["processing_type"])
         return _ok(RunSwitchResponse(**result))
     except KeyError:
         return _err(ErrorResponse(detail="Сессия не найдена"), 404)
@@ -2232,7 +2255,7 @@ def get_3d_model_status(session_id: str):
 @bp.route("/api/session/<session_id>/run/<int:run_number>/build_final_json", methods=["POST"])
 def build_final_json_by_number(session_id: str, run_number: int):
     """
-    Запуск сборки финального JSON (АР/КР) по номеру запуска.
+    Запуск сборки финального JSON (режимы ИИ/ЦС) по номеру запуска.
     ---
     tags:
       - processing
@@ -2255,9 +2278,9 @@ def build_final_json_by_number(session_id: str, run_number: int):
           properties:
             processingType:
               type: string
-              enum: ["KR", "AR"]
-              default: "KR"
-              description: Тип обработки
+              enum: ["CS", "AI"]
+              default: "CS"
+              description: Режим обработки (легаси-коды KR/AR также принимаются)
     responses:
       200:
         description: Сборка запущена
@@ -2274,15 +2297,18 @@ def build_final_json_by_number(session_id: str, run_number: int):
         return _err(ErrorResponse(detail="ID сессии и номер запуска обязательны"), 400)
     
     data = request.get_json() or {}
-    processing_type = data.get("processingType", "KR").upper()
-    
-    if processing_type not in ("KR", "AR"):
-        processing_type = "KR"
-    
-    logger.info(f"build_final_json: session={session_id}, run_number={run_number}, type={processing_type}")
-    
+    processing_type = to_pipeline_type(data.get("processingType"))
+
+    logger.info(
+        f"build_final_json: session={session_id}, run_number={run_number}, "
+        f"режим: {mode_name(processing_type)} ({to_public_type(processing_type)})"
+    )
+
     try:
         result = _get_manager().build_final_json_by_number(session_id, run_number, processing_type)
+        # В ответе клиенту отдаём публичный код режима (CS/AI)
+        if "processing_type" in result:
+            result["processing_type"] = to_public_type(result["processing_type"])
         return _ok(FinalJsonBuildResponse(**result))
     except KeyError:
         return _err(ErrorResponse(detail="Сессия не найдена"), 404)
@@ -2323,6 +2349,9 @@ def get_final_json_status_by_number(session_id: str, run_number: int):
     
     try:
         result = _get_manager().get_final_json_status_by_number(session_id, run_number)
+        # В ответе клиенту отдаём публичный код режима (CS/AI)
+        if "processing_type" in result:
+            result["processing_type"] = to_public_type(result["processing_type"])
         return _ok(FinalJsonStatusResponse(**result))
     except KeyError:
         return _err(ErrorResponse(detail="Сессия не найдена"), 404)
@@ -2388,7 +2417,7 @@ def get_final_json_result_by_number(session_id: str, run_number: int):
                     session_id=session_id,
                     run_id=str(run_number),
                     status=status_result['status'] or 'building',
-                    processing_type=status_result.get('processing_type', 'KR'),
+                    processing_type=to_public_type(status_result.get('processing_type')),
                     result=None
                 ),
                 status=202
@@ -2400,7 +2429,11 @@ def get_final_json_result_by_number(session_id: str, run_number: int):
             session_id=session_id,
             run_id=str(run_number),
             status="completed",
-            processing_type=result.get('discipline', status_result.get('processing_type', 'KR')),
+            # discipline финального JSON («КР»/«АР») и код запуска приводим
+            # к публичным кодам режимов CS/AI
+            processing_type=to_public_type(
+                result.get('discipline') or status_result.get('processing_type')
+            ),
             result=result
         ))
         
