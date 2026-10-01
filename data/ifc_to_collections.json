@@ -1,0 +1,130 @@
+{
+  "mappings": [
+    {
+      "ifc_class": "IfcCovering",
+      "predefined_type": "FLOORING",
+      "collections": ["Сборник 11. Полы"]
+    },
+    {
+      "ifc_class": "IfcCovering",
+      "predefined_type": "CEILING",
+      "collections": ["Сборник 15. Отделочные работы"]
+    },
+    {
+      "ifc_class": "IfcCovering",
+      "predefined_type": "ROOFING",
+      "collections": ["Сборник 12. Кровли"]
+    },
+    {
+      "ifc_class": "IfcCovering",
+      "predefined_type": "CLADDING",
+      "collections": ["Сборник 15. Отделочные работы"]
+    },
+    {
+      "ifc_class": "IfcWall",
+      "predefined_type": null,
+      "collections": [
+        "Сборник  6. Бетонные, железобетонные конструкции монолитные",
+        "Сборник  7. Бетонные и железобетонные конструкции сборные",
+        "Сборник  8. Конструкции из кирпича и блоков"
+      ]
+    },
+    {
+      "ifc_class": "IfcSlab",
+      "predefined_type": "FLOOR",
+      "collections": [
+        "Сборник  6. Бетонные, железобетонные конструкции монолитные",
+        "Сборник  7. Бетонные и железобетонные конструкции сборные"
+      ]
+    },
+    {
+      "ifc_class": "IfcSlab",
+      "predefined_type": "ROOF",
+      "collections": [
+        "Сборник  6. Бетонные, железобетонные конструкции монолитные",
+        "Сборник  7. Бетонные и железобетонные конструкции сборные"
+      ]
+    },
+    {
+      "ifc_class": "IfcSlab",
+      "predefined_type": "BASESLAB",
+      "collections": ["Сборник  6. Бетонные, железобетонные конструкции монолитные"]
+    },
+    {
+      "ifc_class": "IfcRoof",
+      "predefined_type": null,
+      "collections": ["Сборник 12. Кровли"]
+    },
+    {
+      "ifc_class": "IfcColumn",
+      "predefined_type": null,
+      "collections": [
+        "Сборник  6. Бетонные, железобетонные конструкции монолитные",
+        "Сборник  7. Бетонные и железобетонные конструкции сборные",
+        "Сборник  9. Металлические конструкции"
+      ]
+    },
+    {
+      "ifc_class": "IfcBeam",
+      "predefined_type": null,
+      "collections": [
+        "Сборник  6. Бетонные, железобетонные конструкции монолитные",
+        "Сборник  7. Бетонные и железобетонные конструкции сборные",
+        "Сборник  9. Металлические конструкции"
+      ]
+    },
+    {
+      "ifc_class": "IfcFooting",
+      "predefined_type": null,
+      "collections": [
+        "Сборник  1. Земляные работы",
+        "Сборник  6. Бетонные, железобетонные конструкции монолитные",
+        "Сборник  7. Бетонные и железобетонные конструкции сборные"
+      ]
+    },
+    {
+      "ifc_class": "IfcPile",
+      "predefined_type": null,
+      "collections": ["Сборник  5. Свайные работы, закрепление грунтов"]
+    },
+    {
+      "ifc_class": "IfcDoor",
+      "predefined_type": null,
+      "collections": ["Сборник 10. Элементы и конструкции из дерева и пластмасс"]
+    },
+    {
+      "ifc_class": "IfcWindow",
+      "predefined_type": null,
+      "collections": ["Сборник 10. Элементы и конструкции из дерева и пластмасс"]
+    },
+    {
+      "ifc_class": "IfcStair",
+      "predefined_type": null,
+      "collections": [
+        "Сборник  7. Бетонные и железобетонные конструкции сборные",
+        "Сборник  8. Конструкции из кирпича и блоков",
+        "Сборник  9. Металлические конструкции"
+      ]
+    },
+    {
+      "ifc_class": "IfcRailing",
+      "predefined_type": null,
+      "collections": ["Сборник  9. Металлические конструкции"]
+    },
+    {
+      "ifc_class": "IfcCurtainWall",
+      "predefined_type": null,
+      "collections": ["Сборник 15. Отделочные работы"]
+    },
+    {
+      "ifc_class": "IfcPlate",
+      "predefined_type": null,
+      "collections": ["Сборник  9. Металлические конструкции"]
+    },
+    {
+      "ifc_class": "IfcMember",
+      "predefined_type": null,
+      "collections": ["Сборник  9. Металлические конструкции"]
+    }
+  ]
+}

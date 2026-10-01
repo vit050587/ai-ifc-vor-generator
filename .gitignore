@@ -7,7 +7,7 @@
 *.JPG
 *.ifc
 *.IFC
-*.json
+#*.json
 *.pt
 *.png
 .DS_Store
@@ -28,3 +28,10 @@ run_local.sh
 .env.example
 outputs/
 outputs/sessions.json
+
+!uploads/tsn/
+!uploads/tsn/**
+
+data/*
+!data/
+!data/**

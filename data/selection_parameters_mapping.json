@@ -1,0 +1,498 @@
+{
+  "_description": "Карта соответствия: параметр универсального шаблона подбора работ (data/selection_parameters.json) → источники значения. Файл РАСШИРЯЕМЫЙ: при появлении в IFC-моделях новых имён свойств/QTO дописывайте их в raw_keys (проверяются по порядку, берётся первое непустое) или в keywords (fallback-поиск подстроки в ключе сырого дампа). source: element — значение из сырого дампа элемента (IFC_исходные_параметры.json); constant — константа проекта (ПОС_глобальные_константы.json / переданные globalConstants / height.txt); computed — вычисляется из других параметров элемента.",
+  "template": "data/selection_parameters.json",
+  "raw_dump": "IFC_исходные_параметры.json",
+  "_resolution": "Приоритет заполнения параметра: 1) raw_keys по порядку (первое непустое значение); 2) keywords — первое непустое значение по ключу сырого дампа, содержащему подстроку (служебные ключи OwnerHistory/ObjectPlacement/Representation игнорируются; exclude_keywords отсекают ложные совпадения); 3) computed — вычисление (building_part, wall_location, layers_count, min_section_side); 4) constant — константа проекта: constant_names по порядку (ПОС → globalConstants UI → height.txt для floor_height).",
+  "_units": "Значения QTO берутся как есть — их единицы следуют единицам проекта IFC. Значения из ключей QTO_bbox::*_мм автоматически переводятся в метры (мм → м). min_section_side всегда в мм (как в расценках «до 300/500 мм»).",
+  "parameters": {
+    "element_height": {
+      "title": "Высота элемента (колонны, стены, уступа, насыпи)",
+      "source": "element",
+      "unit": "м",
+      "raw_keys": [
+        "QTO::Qto_WallBaseQuantities::Height",
+        "QTO::Qto_ColumnBaseQuantities::Length",
+        "QTO::Qto_FootingBaseQuantities::Height",
+        "QTO::Qto_CurtainWallQuantities::Height",
+        "QTO::Qto_WindowBaseQuantities::Height",
+        "QTO::Qto_DoorBaseQuantities::Height",
+        "QTO_bbox::Высота_мм"
+      ],
+      "keywords": [
+        "height",
+        "высот"
+      ]
+    },
+    "floor_height": {
+      "title": "Высота этажа",
+      "source": "constant",
+      "unit": "м",
+      "constant_names": [
+        "floor_height",
+        "floor_height_m",
+        "высота этажа",
+        "высота типового этажа"
+      ],
+      "ifc_source": "height.txt (высота основного этажа, считается zero_step по отметкам этажей IFC); ПОС — поле «Высота этажа, м» (pd_parser)",
+      "note": "Константа проекта: приоритет UI (floorHeight при select_rows) → IFC (height.txt) → ПОС."
+    },
+    "building_height": {
+      "title": "Высота здания",
+      "source": "constant",
+      "unit": "м",
+      "constant_names": [
+        "building_height_m",
+        "building_height",
+        "высота здания"
+      ],
+      "ifc_source": "лист «Высота_здания» Excel сессии / параметр buildingHeight при select_rows; ПОС — константа building_height_m",
+      "note": "Совпадает с константой building_height_m из works_classification.json (диапазоны до 30 / 30-40 / … / 150-250 м)."
+    },
+    "length": {
+      "title": "Длина элемента (панели, плиты, рельса)",
+      "source": "element",
+      "unit": "м",
+      "raw_keys": [
+        "QTO::Qto_BeamBaseQuantities::Length",
+        "QTO::Qto_WallBaseQuantities::Length",
+        "QTO::Qto_SlabBaseQuantities::Length",
+        "QTO::Qto_MemberBaseQuantities::Length",
+        "QTO::Qto_RailingBaseQuantities::Length",
+        "QTO::Qto_StairFlightBaseQuantities::Length",
+        "QTO_bbox::Длина_мм"
+      ],
+      "keywords": [
+        "length",
+        "длин"
+      ],
+      "exclude_keywords": [
+        "ownerhistory"
+      ]
+    },
+    "width": {
+      "title": "Ширина (траншеи, котлована, полотна, переезда)",
+      "source": "element",
+      "unit": "м",
+      "raw_keys": [
+        "QTO::Qto_WallBaseQuantities::Width",
+        "QTO::Qto_SlabBaseQuantities::Width",
+        "QTO::Qto_FootingBaseQuantities::Width",
+        "QTO::Qto_CurtainWallQuantities::Width",
+        "QTO::Qto_WindowBaseQuantities::Width",
+        "QTO::Qto_DoorBaseQuantities::Width",
+        "QTO_bbox::Ширина_мм"
+      ],
+      "keywords": [
+        "width",
+        "ширин"
+      ]
+    },
+    "thickness": {
+      "title": "Толщина (стены, плиты, слоя, металла)",
+      "source": "element",
+      "unit": "мм",
+      "raw_keys": [
+        "QTO::Qto_SlabBaseQuantities::Depth",
+        "QTO::Qto_WallBaseQuantities::Width",
+        "QTO::Qto_PlateBaseQuantities::Width",
+        "Свойство::IfcMaterialLayer::Thickness"
+      ],
+      "keywords": [
+        "thickness",
+        "толщин"
+      ],
+      "note": "Для плиты толщина = Depth QTO; для стены — Width QTO (толщина стены). Единицы — как в проекте IFC (обычно мм)."
+    },
+    "diameter": {
+      "title": "Диаметр (свай, труб, скважин, стволов, кома)",
+      "source": "element",
+      "unit": "мм",
+      "raw_keys": [],
+      "keywords": [
+        "диаметр",
+        "diameter"
+      ],
+      "note": "Явных ключей в базовых QTO нет — ищется по ключевому слову в свойствах (Pset_PileCommon и т.п.)."
+    },
+    "perimeter": {
+      "title": "Периметр сечения (колонн, патрубков)",
+      "source": "element",
+      "unit": "мм",
+      "raw_keys": [
+        "QTO::Qto_SlabBaseQuantities::Perimeter",
+        "QTO::Qto_WindowBaseQuantities::Perimeter"
+      ],
+      "keywords": [
+        "perimeter",
+        "периметр"
+      ]
+    },
+    "min_section_side": {
+      "title": "Наименьшая сторона поперечного сечения",
+      "source": "computed",
+      "unit": "мм",
+      "computed": "min_section_side",
+      "note": "Вычисляется: минимум из габаритов QTO_bbox (Длина/Ширина/Высота, мм); fallback — минимум из ширины/толщины QTO."
+    },
+    "section_shape": {
+      "title": "Форма сечения",
+      "source": "element",
+      "raw_keys": [
+        "Свойство::ExpCheck_RampFlight::MGE_Section",
+        "Свойство::ExpCheck_Stair::MGE_Section",
+        "Свойство::ExpCheck_StairFlight::MGE_Section"
+      ],
+      "keywords": [
+        "section",
+        "сечени",
+        "профиль",
+        "форма"
+      ],
+      "exclude_keywords": [
+        "area",
+        "площад",
+        "периметр",
+        "perimeter"
+      ]
+    },
+    "area": {
+      "title": "Площадь (перекрытия, поверхности, деталей)",
+      "source": "element",
+      "unit": "м2",
+      "raw_keys": [
+        "QTO::Qto_SlabBaseQuantities::GrossArea",
+        "QTO::Qto_SlabBaseQuantities::NetArea",
+        "QTO::Qto_CoveringBaseQuantities::GrossArea",
+        "QTO::Qto_CoveringBaseQuantities::NetArea",
+        "QTO::Qto_PlateBaseQuantities::GrossArea",
+        "QTO::Qto_PlateBaseQuantities::NetArea",
+        "QTO::Qto_RampFlightBaseQuantities::GrossArea",
+        "QTO::Qto_RampFlightBaseQuantities::NetArea",
+        "QTO::Qto_DoorBaseQuantities::Area",
+        "QTO::Qto_WindowBaseQuantities::Area",
+        "QTO_bbox::Площадь_поверхности_м2"
+      ],
+      "keywords": [
+        "area",
+        "площад"
+      ],
+      "exclude_keywords": [
+        "crosssection",
+        "side",
+        "footprint",
+        "projection"
+      ]
+    },
+    "area_one_side": {
+      "title": "Площадь по одной стороне (наружной) — для стен",
+      "source": "element",
+      "unit": "м2",
+      "raw_keys": [
+        "QTO::Qto_WallBaseQuantities::GrossSideArea",
+        "QTO::Qto_WallBaseQuantities::NetSideArea",
+        "QTO::Qto_CurtainWallQuantities::GrossSideArea",
+        "QTO::Qto_CurtainWallQuantities::NetSideArea"
+      ],
+      "keywords": [
+        "sidearea",
+        "площадь сторон"
+      ]
+    },
+    "horizontal_projection_area": {
+      "title": "Площадь горизонтальной проекции (кессоны)",
+      "source": "element",
+      "unit": "м2",
+      "raw_keys": [],
+      "keywords": [
+        "проекц",
+        "projection"
+      ]
+    },
+    "opening_area": {
+      "title": "Площадь проема",
+      "source": "element",
+      "unit": "м2",
+      "raw_keys": [],
+      "keywords": [
+        "проем",
+        "проём",
+        "opening"
+      ]
+    },
+    "span": {
+      "title": "Пролет (балок, ферм, строений)",
+      "source": "element",
+      "unit": "м",
+      "raw_keys": [],
+      "keywords": [
+        "пролет",
+        "пролёт",
+        "span"
+      ]
+    },
+    "depth": {
+      "title": "Глубина (траншеи, котлована, заделки, заложения)",
+      "source": "element",
+      "unit": "мм",
+      "raw_keys": [
+        "QTO::Qto_SlabBaseQuantities::Depth"
+      ],
+      "keywords": [
+        "глубин",
+        "depth",
+        "заложен"
+      ],
+      "note": "QTO Depth хранится в мм; единица «мм» — при подаче в LLM значения нормализуются к метрам (works_final_selector._normalize_param_value)."
+    },
+    "volume": {
+      "title": "Объем конструкции",
+      "source": "element",
+      "unit": "м3",
+      "raw_keys": [
+        "QTO::Qto_WallBaseQuantities::GrossVolume",
+        "QTO::Qto_WallBaseQuantities::NetVolume",
+        "QTO::Qto_SlabBaseQuantities::GrossVolume",
+        "QTO::Qto_SlabBaseQuantities::NetVolume",
+        "QTO::Qto_BeamBaseQuantities::GrossVolume",
+        "QTO::Qto_BeamBaseQuantities::NetVolume",
+        "QTO::Qto_ColumnBaseQuantities::GrossVolume",
+        "QTO::Qto_ColumnBaseQuantities::NetVolume",
+        "QTO::Qto_FootingBaseQuantities::GrossVolume",
+        "QTO::Qto_FootingBaseQuantities::NetVolume",
+        "QTO::Qto_MemberBaseQuantities::GrossVolume",
+        "QTO::Qto_MemberBaseQuantities::NetVolume",
+        "QTO::Qto_RampFlightBaseQuantities::GrossVolume",
+        "QTO::Qto_RampFlightBaseQuantities::NetVolume",
+        "QTO::Qto_StairFlightBaseQuantities::GrossVolume",
+        "QTO::Qto_StairFlightBaseQuantities::NetVolume",
+        "QTO_bbox::Объём_м3"
+      ],
+      "keywords": [
+        "volume",
+        "объём",
+        "объем"
+      ]
+    },
+    "mass": {
+      "title": "Масса/вес элемента или монтажного элемента",
+      "source": "element",
+      "unit": "т",
+      "raw_keys": [],
+      "keywords": [
+        "масс",
+        "вес ",
+        "weight",
+        "mass"
+      ],
+      "exclude_keywords": [
+        "ownerhistory"
+      ]
+    },
+    "radius": {
+      "title": "Радиус (криволинейности, кривых)",
+      "source": "element",
+      "unit": "м",
+      "raw_keys": [],
+      "keywords": [
+        "радиус",
+        "radius"
+      ]
+    },
+    "slope": {
+      "title": "Уклон (откосов)",
+      "source": "element",
+      "raw_keys": [],
+      "keywords": [
+        "уклон",
+        "slope"
+      ]
+    },
+    "core_volume_ratio": {
+      "title": "Отношение объема сердечника (жесткой арматуры) к объему колонны",
+      "source": "element",
+      "raw_keys": [
+        "Свойство::Pset_ConcreteElementGeneral::ReinforcementVolumeRatio"
+      ],
+      "keywords": [
+        "сердечник",
+        "core"
+      ]
+    },
+    "support_type": {
+      "title": "Схема опирания (число сторон опирания плит)",
+      "source": "element",
+      "raw_keys": [],
+      "keywords": [
+        "опирани",
+        "support"
+      ]
+    },
+    "surface_curvature": {
+      "title": "Криволинейность поверхности",
+      "source": "element",
+      "raw_keys": [],
+      "keywords": [
+        "криволин",
+        "curvatur"
+      ]
+    },
+    "building_part": {
+      "title": "Часть здания (подземная/цокольная/надземная)",
+      "source": "computed",
+      "computed": "building_part",
+      "note": "Вычисляется из этажа элемента («Этаж» сырого дампа): подвал/подземн → Подземная, цоколь → Цокольная, иначе Надземная."
+    },
+    "wall_location": {
+      "title": "Расположение стены (наружная/внутренняя)",
+      "source": "computed",
+      "computed": "wall_location",
+      "note": "Вычисляется из Свойство::Pset_WallCommon::IsExternal: true → наружная, false → внутренняя."
+    },
+    "floor_number": {
+      "title": "Этаж (номер/тип)",
+      "source": "element",
+      "raw_keys": [
+        "Этаж"
+      ]
+    },
+    "concrete_placement_scheme": {
+      "title": "Схема бетонирования",
+      "source": "constant",
+      "constant_names": [
+        "concrete_placement_scheme",
+        "схема бетонирования"
+      ],
+      "note": "Константа проекта из works_classification.json (кран-бадья / бетононасос); ищется в ПОС и globalConstants UI."
+    },
+    "curing_temperature": {
+      "title": "Среднесуточная температура (уход за бетоном)",
+      "source": "constant",
+      "constant_names": [
+        "concrete_curing_season",
+        "curing_temperature",
+        "сезон ухода за бетоном"
+      ],
+      "note": "Константа проекта из works_classification.json (concrete_curing_season); ищется в ПОС и globalConstants UI."
+    },
+    "concrete_class": {
+      "title": "Класс/марка бетона",
+      "source": "element",
+      "raw_keys": [
+        "Свойство::ExpCheck_MaterialConcrete::MGE_ConcreteGrade"
+      ],
+      "keywords": [
+        "concretegrade",
+        "класс бетона",
+        "марка бетона"
+      ]
+    },
+    "rebar_type": {
+      "title": "Тип армирования",
+      "source": "element",
+      "raw_keys": [
+        "Свойство::Pset_ConcreteElementGeneral::MGE_ReinforceStrengthClass",
+        "Свойство::ExpCheck_Beam::MGE_ReinforceStrengthClass",
+        "Свойство::ExpCheck_WallReinforcement::MGE_ReinforceStrengthClass",
+        "Свойство::ExpCheck_SlabReinforcement::MGE_ReinforceStrengthClass",
+        "Свойство::ExpCheck_FootingReinforcement::MGE_ReinforceStrengthClass"
+      ],
+      "keywords": [
+        "арматур",
+        "reinforc"
+      ],
+      "exclude_keywords": [
+        "ratio",
+        "volume"
+      ]
+    },
+    "layers_count": {
+      "title": "Число слоев (обшивки, изоляции, покрытия)",
+      "source": "computed",
+      "computed": "layers_count",
+      "note": "Вычисляется: число материалов в «Свойство::IfcMaterialLayer::Name» (запятая-разделитель), fallback — колонка «Материал»."
+    },
+    "tiles_per_m2": {
+      "title": "Число плит в 1 м2 (облицовка)",
+      "source": "element",
+      "raw_keys": [],
+      "keywords": [
+        "плит в 1",
+        "tilesper",
+        "плит/м"
+      ]
+    },
+    "complexity_category": {
+      "title": "Категория сложности (реставрация, резьба)",
+      "source": "element",
+      "raw_keys": [],
+      "keywords": [
+        "сложност",
+        "complexity"
+      ]
+    },
+    "soil_group": {
+      "title": "Группа грунтов",
+      "source": "constant",
+      "constant_names": [
+        "soil_group",
+        "группа грунтов"
+      ],
+      "note": "Константа проекта из ПОС (поле «Группа грунтов», pd_parser); в IFC не представлена."
+    },
+    "movement_distance": {
+      "title": "Расстояние перемещения/перевозки",
+      "source": "constant",
+      "unit": "м/км",
+      "constant_names": [
+        "movement_distance",
+        "расстояние перемещения",
+        "дальность перевозки"
+      ],
+      "note": "Константа проекта из ПОС (поле «Расстояние перемещения грунта», pd_parser); в IFC не представлена."
+    },
+    "crane_type": {
+      "title": "Тип крана (параметр следующего этапа)",
+      "source": "constant",
+      "stage": "next_stage",
+      "constant_names": [
+        "crane_type",
+        "тип монтажного крана"
+      ],
+      "note": "Константа проекта из works_classification.json; ищется в ПОС и globalConstants UI. На выбор таблицы работ не влияет."
+    },
+    "crane_capacity": {
+      "title": "Грузоподъемность крана/транспорта",
+      "source": "constant",
+      "unit": "т",
+      "stage": "next_stage",
+      "constant_names": [
+        "crane_capacity",
+        "грузоподъемность крана",
+        "грузоподъёмность крана"
+      ],
+      "note": "Константа проекта из ПОС (поле «Грузоподъемность крана», pd_parser). Параметр следующего этапа — на выбор таблицы не влияет."
+    },
+    "bucket_capacity": {
+      "title": "Вместимость ковша экскаватора/скрепера/бадьи",
+      "source": "constant",
+      "unit": "м3",
+      "stage": "next_stage",
+      "constant_names": [
+        "bucket_capacity",
+        "вместимость ковша"
+      ],
+      "note": "Константа проекта из ПОС (поле «Вместимость ковша», pd_parser). Параметр следующего этапа."
+    },
+    "equipment_power": {
+      "title": "Мощность оборудования",
+      "source": "constant",
+      "unit": "кВт",
+      "stage": "next_stage",
+      "constant_names": [
+        "equipment_power",
+        "мощность оборудования"
+      ],
+      "note": "Константа проекта из ПОС (поле «Мощность оборудования», pd_parser). Параметр следующего этапа."
+    }
+  }
+}

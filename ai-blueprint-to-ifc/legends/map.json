@@ -1,0 +1,12 @@
+{
+    "fallback": {
+        "aerated_concrete_1": "ячеистый бетон",
+        "ceramic_brick_1": "керамический кирпич",
+        "mineral_insulation_1": "минераловатный утеплитель",
+        "mineral_insulation_2": "пенополистерол экструдированный",
+        "monolit_jb_1": "монолитные ж/б конструкции",
+        "partition_stone_1": "перегородка камень ПОЛИГРАН",
+        "sound_supressing_1": "звукопоглащающая плита"
+    },
+    "default": {"wrong_wall_type": "wrong_wall_type"}
+}

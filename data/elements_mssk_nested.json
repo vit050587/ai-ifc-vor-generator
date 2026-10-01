@@ -1,0 +1,4816 @@
+[
+  {
+    "category": "Земляные сооружения, фундаменты",
+    "code_category": "ЭЛ 10",
+    "purposes": [
+      {
+        "purpose": "Фундаменты",
+        "code_purpose": "ЭЛ 10 10",
+        "classes": [
+          {
+            "class_RU": "Свая",
+            "code_class": "ЭЛ 10 10 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 10 10 10 01",
+                "subclass_RU": "Свая забивная железобетонная",
+                "ifc_class": "IfcPile"
+              },
+              {
+                "code": "ЭЛ 10 10 10 02",
+                "subclass_RU": "Свая вдавливаемая железобетонная",
+                "ifc_class": "IfcPile"
+              },
+              {
+                "code": "ЭЛ 10 10 10 03",
+                "subclass_RU": "Свая бетонная набивная",
+                "ifc_class": "IfcPile"
+              },
+              {
+                "code": "ЭЛ 10 10 10 04",
+                "subclass_RU": "Свая железобетонная набивная",
+                "ifc_class": "IfcPile"
+              },
+              {
+                "code": "ЭЛ 10 10 10 05",
+                "subclass_RU": "Свая-оболчка железобетонная",
+                "ifc_class": "IfcPile"
+              },
+              {
+                "code": "ЭЛ 10 10 10 06",
+                "subclass_RU": "Свая буровая железобетонная",
+                "ifc_class": "IfcPile"
+              }
+            ]
+          },
+          {
+            "class_RU": "Ростверк",
+            "code_class": "ЭЛ 10 10 12",
+            "subclasses": [
+              {
+                "code": "ЭЛ 10 10 12 01",
+                "subclass_RU": "Ростверк ленточный",
+                "ifc_class": "IfcFooting"
+              },
+              {
+                "code": "ЭЛ 10 10 12 02",
+                "subclass_RU": "Ростверк столбчатый",
+                "ifc_class": "IfcFooting"
+              },
+              {
+                "code": "ЭЛ 10 10 12 03",
+                "subclass_RU": "Балка ростверка",
+                "ifc_class": "IfcFooting"
+              },
+              {
+                "code": "ЭЛ 10 10 12 04",
+                "subclass_RU": "Ростверк плитный",
+                "ifc_class": "IfcSlab"
+              }
+            ]
+          },
+          {
+            "class_RU": "Фундамент общего назначения",
+            "code_class": "ЭЛ 10 10 30",
+            "subclasses": [
+              {
+                "code": "ЭЛ 10 10 30 01",
+                "subclass_RU": "Фундамент ленточный",
+                "ifc_class": "IfcFooting"
+              },
+              {
+                "code": "ЭЛ 10 10 30 02",
+                "subclass_RU": "Фундамент столбчатый",
+                "ifc_class": "IfcFooting"
+              },
+              {
+                "code": "ЭЛ 10 10 30 03",
+                "subclass_RU": "Фундаментная балка",
+                "ifc_class": "IfcFooting"
+              },
+              {
+                "code": "ЭЛ 10 10 30 04",
+                "subclass_RU": "Фундаментная плита",
+                "ifc_class": "IfcSlab"
+              }
+            ]
+          },
+          {
+            "class_RU": "Фундаментный блок",
+            "code_class": "ЭЛ 10 10 40",
+            "subclasses": [
+              {
+                "code": "ЭЛ 10 10 40 01",
+                "subclass_RU": "Фундаментный блок сплошной",
+                "ifc_class": "IfcFooting"
+              },
+              {
+                "code": "ЭЛ 10 10 40 02",
+                "subclass_RU": "Фундаментный блок с вырезом",
+                "ifc_class": "IfcFooting"
+              },
+              {
+                "code": "ЭЛ 10 10 40 03",
+                "subclass_RU": "Фундаментный блок пустотный",
+                "ifc_class": "IfcFooting"
+              }
+            ]
+          },
+          {
+            "class_RU": "Подливка фундамента",
+            "code_class": "ЭЛ 10 10 45",
+            "ifc_class": "IfcSlab"
+          },
+          {
+            "class_RU": "Подколонник",
+            "code_class": "ЭЛ 10 10 50",
+            "ifc_class": "IfcFooting"
+          },
+          {
+            "class_RU": "Бетонная подготовка",
+            "code_class": "ЭЛ 10 10 65",
+            "ifc_class": "IfcSlab"
+          },
+          {
+            "class_RU": "Кесонный фундамент",
+            "code_class": "ЭЛ 10 10 70",
+            "ifc_class": "IfcFooting"
+          }
+        ]
+      },
+      {
+        "purpose": "Подпорные стены",
+        "code_purpose": "ЭЛ 10 20",
+        "classes": [
+          {
+            "class_RU": "Несущая стена в грунте",
+            "code_class": "ЭЛ 10 20 10",
+            "ifc_class": "IfcWall"
+          },
+          {
+            "class_RU": "Шпунт Ларсена",
+            "code_class": "ЭЛ 10 20 20",
+            "ifc_class": "IfcPile"
+          },
+          {
+            "class_RU": "Шпунт",
+            "code_class": "ЭЛ 10 20 30",
+            "ifc_class": "IfcPile"
+          },
+          {
+            "class_RU": "Подпорная стена",
+            "code_class": "ЭЛ 10 20 40",
+            "ifc_class": "IfcWall"
+          },
+          {
+            "class_RU": "Габион",
+            "code_class": "ЭЛ 10 20 50",
+            "ifc_class": "IfcWall"
+          }
+        ]
+      },
+      {
+        "purpose": "Основание",
+        "code_purpose": "ЭЛ 10 25",
+        "classes": [
+          {
+            "class_RU": "Уплотненный трамбованием грунт",
+            "code_class": "ЭЛ 10 25 10",
+            "ifc_class": "IfcReinforcedSoil"
+          },
+          {
+            "class_RU": "Укрепленный инъецированием грунт",
+            "code_class": "ЭЛ 10 25 20",
+            "ifc_class": "IfcReinforcedSoil"
+          },
+          {
+            "class_RU": "Грунтовая подушка",
+            "code_class": "ЭЛ 10 25 30",
+            "ifc_class": "IfcReinforcedSoil"
+          },
+          {
+            "class_RU": "Уплотненный укаткой грунт",
+            "code_class": "ЭЛ 10 25 40",
+            "ifc_class": "IfcReinforcedSoil"
+          },
+          {
+            "class_RU": "Предварительно обжатый грунт",
+            "code_class": "ЭЛ 10 25 50",
+            "ifc_class": "IfcReinforcedSoil"
+          },
+          {
+            "class_RU": "Дренирующий грунт",
+            "code_class": "ЭЛ 10 25 60",
+            "ifc_class": "IfcReinforcedSoil"
+          }
+        ]
+      },
+      {
+        "purpose": "Компоненты для защиты фундаментов",
+        "code_purpose": "ЭЛ 10 30",
+        "classes": [
+          {
+            "class_RU": "Изоляция",
+            "code_class": "ЭЛ 10 30 10",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Пароизоляция",
+            "code_class": "ЭЛ 10 30 20",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Гидроизоляция",
+            "code_class": "ЭЛ 10 30 30",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Отмостка",
+            "code_class": "ЭЛ 10 30 40",
+            "ifc_class": "IfcSlab"
+          }
+        ]
+      },
+      {
+        "purpose": "Земляные сооружения",
+        "code_purpose": "ЭЛ 10 40",
+        "classes": [
+          {
+            "class_RU": "Банкет",
+            "code_class": "ЭЛ 10 40 10",
+            "ifc_class": "IfcGeographicElement"
+          },
+          {
+            "class_RU": "Берма",
+            "code_class": "ЭЛ 10 40 20",
+            "ifc_class": "IfcGeographicElement"
+          },
+          {
+            "class_RU": "Вал",
+            "code_class": "ЭЛ 10 40 30",
+            "ifc_class": "IfcGeographicElement"
+          },
+          {
+            "class_RU": "Выемка",
+            "code_class": "ЭЛ 10 40 40",
+            "ifc_class": "IfcGeographicElement"
+          },
+          {
+            "class_RU": "Канава",
+            "code_class": "ЭЛ 10 40 50",
+            "ifc_class": "IfcGeographicElement"
+          },
+          {
+            "class_RU": "Котлован",
+            "code_class": "ЭЛ 10 40 60",
+            "ifc_class": "IfcGeographicElement"
+          },
+          {
+            "class_RU": "Кювет",
+            "code_class": "ЭЛ 10 40 70",
+            "ifc_class": "IfcGeographicElement"
+          },
+          {
+            "class_RU": "Насыпь",
+            "code_class": "ЭЛ 10 40 80",
+            "ifc_class": "IfcGeographicElement"
+          },
+          {
+            "class_RU": "Траншея",
+            "code_class": "ЭЛ 10 40 90",
+            "ifc_class": "IfcGeographicElement"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "category": "Крыша",
+    "code_category": "ЭЛ 20",
+    "purposes": [
+      {
+        "purpose": "Элементы конструкции крыши",
+        "code_purpose": "ЭЛ 20 20",
+        "classes": [
+          {
+            "class_RU": "Кровля",
+            "code_class": "ЭЛ 20 20 04",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Брандмауэр",
+            "code_class": "ЭЛ 20 20 05",
+            "ifc_class": "IfcWall"
+          },
+          {
+            "class_RU": "Парапет кровли",
+            "code_class": "ЭЛ 20 20 06",
+            "ifc_class": "IfcWall"
+          },
+          {
+            "class_RU": "Защитный фартук",
+            "code_class": "ЭЛ 20 20 07",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Контробрешетка",
+            "code_class": "ЭЛ 20 20 10",
+            "ifc_class": "IfcMember"
+          },
+          {
+            "class_RU": "Карнизная доска",
+            "code_class": "ЭЛ 20 20 15",
+            "ifc_class": "IfcMember"
+          },
+          {
+            "class_RU": "Мауэрлат",
+            "code_class": "ЭЛ 20 20 20",
+            "ifc_class": "IfcMember"
+          },
+          {
+            "class_RU": "Деревянный брус",
+            "code_class": "ЭЛ 20 20 25",
+            "ifc_class": "IfcMember"
+          },
+          {
+            "class_RU": "Обрешетка",
+            "code_class": "ЭЛ 20 20 30",
+            "ifc_class": "IfcMember"
+          },
+          {
+            "class_RU": "Стропильная балка",
+            "code_class": "ЭЛ 20 20 35",
+            "ifc_class": "IfcMember"
+          },
+          {
+            "class_RU": "Стропильная ферма",
+            "code_class": "ЭЛ 20 20 36",
+            "ifc_class": "IfcElementAssembly"
+          },
+          {
+            "class_RU": "Подстропильная балка",
+            "code_class": "ЭЛ 20 20 37",
+            "ifc_class": "ifcBeam"
+          },
+          {
+            "class_RU": "Подстропильная ферма",
+            "code_class": "ЭЛ 20 20 38",
+            "ifc_class": "IfcElementAssembly"
+          },
+          {
+            "class_RU": "Конек",
+            "code_class": "ЭЛ 20 20 39",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Коньковый брусок",
+            "code_class": "ЭЛ 20 20 40",
+            "ifc_class": "IfcMember"
+          },
+          {
+            "class_RU": "Коньковый прогон",
+            "code_class": "ЭЛ 20 20 45",
+            "ifc_class": "IfcMember"
+          },
+          {
+            "class_RU": "Лага",
+            "code_class": "ЭЛ 20 20 46",
+            "ifc_class": "IfcBeam"
+          },
+          {
+            "class_RU": "Ребро",
+            "code_class": "ЭЛ 20 20 47",
+            "ifc_class": "IfcMember"
+          },
+          {
+            "class_RU": "Ригель кровельный",
+            "code_class": "ЭЛ 20 20 50",
+            "ifc_class": "IfcMember"
+          },
+          {
+            "class_RU": "Сплошной настил",
+            "code_class": "ЭЛ 20 20 55",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Ограждение кровли",
+            "code_class": "ЭЛ 20 20 60",
+            "ifc_class": "IfcRailing"
+          }
+        ]
+      },
+      {
+        "purpose": "Компоненты для устройства кровли",
+        "code_purpose": "ЭЛ 20 30",
+        "classes": [
+          {
+            "class_RU": "Ветрозащитный слой",
+            "code_class": "ЭЛ 20 30 10",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Водоизоляционный ковер",
+            "code_class": "ЭЛ 20 30 12",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Гидроизоляционный слой",
+            "code_class": "ЭЛ 20 30 16",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Ендова",
+            "code_class": "ЭЛ 20 30 17",
+            "ifc_class": "ifcCovering"
+          },
+          {
+            "class_RU": "Капельник",
+            "code_class": "ЭЛ 20 30 18",
+            "ifc_class": "IfcMember"
+          },
+          {
+            "class_RU": "Крепление желоба",
+            "code_class": "ЭЛ 20 30 20",
+            "ifc_class": "IfcMechanicalFastener"
+          },
+          {
+            "class_RU": "Кровельный аэратор",
+            "code_class": "ЭЛ 20 30 22",
+            "ifc_class": "IfcStackTerminal"
+          },
+          {
+            "class_RU": "Мансардное окно",
+            "code_class": "ЭЛ 20 30 24",
+            "ifc_class": "IfcWindow"
+          },
+          {
+            "class_RU": "Пароизоляционный слой",
+            "code_class": "ЭЛ 20 30 26",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Подкладочный ковер",
+            "code_class": "ЭЛ 20 30 28",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Подшивка карниза",
+            "code_class": "ЭЛ 20 30 30"
+          },
+          {
+            "class_RU": "Предохранительный слой",
+            "code_class": "ЭЛ 20 30 32",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Пригруз",
+            "code_class": "ЭЛ 20 30 34"
+          },
+          {
+            "class_RU": "Примыкание",
+            "code_class": "ЭЛ 20 30 35"
+          },
+          {
+            "class_RU": "Противокорневой слой",
+            "code_class": "ЭЛ 20 30 36",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Разделительный слой",
+            "code_class": "ЭЛ 20 30 38",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Растительный слой",
+            "code_class": "ЭЛ 20 30 40",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Свес",
+            "code_class": "ЭЛ 20 30 41"
+          },
+          {
+            "class_RU": "Слой усиления водоизоляционного ковра",
+            "code_class": "ЭЛ 20 30 42",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Снегозадержание",
+            "code_class": "ЭЛ 20 30 44"
+          },
+          {
+            "class_RU": "Стяжка кровли",
+            "code_class": "ЭЛ 20 30 46",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Теплоизоляционный слой",
+            "code_class": "ЭЛ 20 30 48",
+            "ifc_class": "IfcCovering"
+          }
+        ]
+      },
+      {
+        "purpose": "Армирование ЖБ элементов кровли",
+        "code_purpose": "ЭЛ 20 90",
+        "ifc_class": "IfcReinforcingElement"
+      }
+    ]
+  },
+  {
+    "category": "Архитектурные и конструктивные элементы",
+    "code_category": "ЭЛ 30",
+    "purposes": [
+      {
+        "purpose": "Ограждающие конструкции",
+        "code_purpose": "ЭЛ 30 10",
+        "classes": [
+          {
+            "class_RU": "Витраж",
+            "code_class": "ЭЛ 30 10 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 30 10 10 10",
+                "subclass_RU": "Панель витражной системы",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 10 10 20",
+                "subclass_RU": "Импост витражной системы",
+                "ifc_class": "IfcMember"
+              }
+            ]
+          },
+          {
+            "class_RU": "Стена",
+            "code_class": "ЭЛ 30 10 15",
+            "ifc_class": "IfcWall"
+          },
+          {
+            "class_RU": "Перегородка",
+            "code_class": "ЭЛ 30 10 20",
+            "ifc_class": "IfcWall"
+          },
+          {
+            "class_RU": "Настил",
+            "code_class": "ЭЛ 30 10 25",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Навес затеняющий",
+            "code_class": "ЭЛ 30 10 30",
+            "ifc_class": "IfcShadingDevice"
+          },
+          {
+            "class_RU": "Панель навесная",
+            "code_class": "ЭЛ 30 10 35",
+            "ifc_class": "IfcCurtainWall"
+          },
+          {
+            "class_RU": "Парапет",
+            "code_class": "ЭЛ 30 10 36",
+            "ifc_class": "IfcWall"
+          },
+          {
+            "class_RU": "Перекрытие",
+            "code_class": "ЭЛ 30 10 40",
+            "ifc_class": "IfcSlab"
+          },
+          {
+            "class_RU": "Потолок",
+            "code_class": "ЭЛ 30 10 45",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Потолок подвесной",
+            "code_class": "ЭЛ 30 10 46",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Плита балкона",
+            "code_class": "ЭЛ 30 10 56",
+            "ifc_class": "IfcSlab"
+          },
+          {
+            "class_RU": "Плита лоджии",
+            "code_class": "ЭЛ 30 10 57",
+            "ifc_class": "IfcSlab"
+          },
+          {
+            "class_RU": "Плита козырька здания",
+            "code_class": "ЭЛ 30 10 58",
+            "ifc_class": "IfcSlab"
+          },
+          {
+            "class_RU": "Фасад",
+            "code_class": "ЭЛ 30 10 60",
+            "ifc_class": "IfcCurtainWall"
+          },
+          {
+            "class_RU": "Навесная фасадная система",
+            "code_class": "ЭЛ 30 10 61",
+            "subclasses": [
+              {
+                "code": "ЭЛ 30 10 61 01",
+                "subclass_RU": "Панель навесного фасада",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 10 61 02",
+                "subclass_RU": "Импост навесного фасада",
+                "ifc_class": "IfcMember"
+              }
+            ]
+          },
+          {
+            "class_RU": "Обойма трубопровода",
+            "code_class": "ЭЛ 30 10 65",
+            "ifc_class": "IfcPipeSegment"
+          },
+          {
+            "class_RU": "Деформационный шов",
+            "code_class": "ЭЛ 30 10 69",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Шов стыка конструкций",
+            "code_class": "ЭЛ 30 10 70"
+          },
+          {
+            "class_RU": "Термовкладыш",
+            "code_class": "ЭЛ 30 10 71",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Прослойка из раствора",
+            "code_class": "ЭЛ 30 10 72"
+          },
+          {
+            "class_RU": "Днище",
+            "code_class": "ЭЛ 30 10 73"
+          },
+          {
+            "class_RU": "Днище бункера",
+            "code_class": "ЭЛ 30 10 74"
+          },
+          {
+            "class_RU": "Панель стеновая наружная рядовая",
+            "code_class": "ЭЛ 30 10 75",
+            "ifc_class": "IfcWall"
+          },
+          {
+            "class_RU": "Панель стеновая наружная простеночная",
+            "code_class": "ЭЛ 30 10 76",
+            "ifc_class": "IfcWall"
+          },
+          {
+            "class_RU": "Панель стеновая наружная карнизная",
+            "code_class": "ЭЛ 30 10 77",
+            "ifc_class": "IfcWall"
+          },
+          {
+            "class_RU": "Панель стеновая перегородка",
+            "code_class": "ЭЛ 30 10 78",
+            "ifc_class": "IfcWall"
+          },
+          {
+            "class_RU": "Блок угловой стеновых панелей",
+            "code_class": "ЭЛ 30 10 79",
+            "ifc_class": "IfcWall"
+          },
+          {
+            "class_RU": "Плита перекрытия",
+            "code_class": "ЭЛ 30 10 80",
+            "ifc_class": "IfcSlab"
+          }
+        ]
+      },
+      {
+        "purpose": "Ограждения",
+        "code_purpose": "ЭЛ 30 12",
+        "classes": [
+          {
+            "class_RU": "Поручень",
+            "code_class": "ЭЛ 30 12 10",
+            "ifc_class": "IfcRailing"
+          },
+          {
+            "class_RU": "Перила",
+            "code_class": "ЭЛ 30 12 20",
+            "ifc_class": "IfcRailing"
+          },
+          {
+            "class_RU": "Отбойник",
+            "code_class": "ЭЛ 30 12 40",
+            "ifc_class": "IfcRailing"
+          },
+          {
+            "class_RU": "Стойка ограждения",
+            "code_class": "ЭЛ 30 12 50",
+            "ifc_class": "IfcMember"
+          },
+          {
+            "class_RU": "Экран ограждения",
+            "code_class": "ЭЛ 30 12 55",
+            "ifc_class": "IfcRailing"
+          },
+          {
+            "class_RU": "Балюстрада",
+            "code_class": "ЭЛ 30 12 60",
+            "ifc_class": "IfcRailing"
+          }
+        ]
+      },
+      {
+        "purpose": "Проемы, ниши",
+        "code_purpose": "ЭЛ 30 14",
+        "classes": [
+          {
+            "class_RU": "Проем",
+            "code_class": "ЭЛ 30 14 10",
+            "ifc_class": "IfcOpeningElement"
+          },
+          {
+            "class_RU": "Отверстие",
+            "code_class": "ЭЛ 30 14 20",
+            "ifc_class": "IfcOpeningElement"
+          },
+          {
+            "class_RU": "Ниша",
+            "code_class": "ЭЛ 30 14 30",
+            "ifc_class": "IfcOpeningElement"
+          }
+        ]
+      },
+      {
+        "purpose": "Элементы конструкций",
+        "code_purpose": "ЭЛ 30 16",
+        "classes": [
+          {
+            "class_RU": "Арка",
+            "code_class": "ЭЛ 30 16 10",
+            "ifc_class": "IfcElementAssembly"
+          },
+          {
+            "class_RU": "База колонны",
+            "code_class": "ЭЛ 30 16 15",
+            "ifc_class": "IfcColumn"
+          },
+          {
+            "class_RU": "Балка",
+            "code_class": "ЭЛ 30 16 20",
+            "ifc_class": "IfcBeam"
+          },
+          {
+            "class_RU": "Балка подкрановая",
+            "code_class": "ЭЛ 30 16 21",
+            "ifc_class": "IfcBeam"
+          },
+          {
+            "class_RU": "Крановая эстакада",
+            "code_class": "ЭЛ 30 16 22",
+            "ifc_class": "IfcElementAssembly"
+          },
+          {
+            "class_RU": "Капитель",
+            "code_class": "ЭЛ 30 16 25",
+            "ifc_class": "IfcColumn/IfcSlab"
+          },
+          {
+            "class_RU": "Каркас",
+            "code_class": "ЭЛ 30 16 30",
+            "ifc_class": "IfcElementAssembly"
+          },
+          {
+            "class_RU": "Карниз",
+            "code_class": "ЭЛ 30 16 35",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Кессон потолочный прямоугольный",
+            "code_class": "ЭЛ 30 16 36",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Кессон потолочный многогранный",
+            "code_class": "ЭЛ 30 16 37",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Косоур",
+            "code_class": "ЭЛ 30 16 38",
+            "ifc_class": "IfcBeam"
+          },
+          {
+            "class_RU": "Колонна",
+            "code_class": "ЭЛ 30 16 40",
+            "ifc_class": "IfcColumn"
+          },
+          {
+            "class_RU": "Колонна двухветвевая",
+            "code_class": "ЭЛ 30 16 41",
+            "ifc_class": "IfcColumn"
+          },
+          {
+            "class_RU": "Фахверк",
+            "code_class": "ЭЛ 30 16 42",
+            "ifc_class": "IfcColumn"
+          },
+          {
+            "class_RU": "Перемычка",
+            "code_class": "ЭЛ 30 16 45",
+            "ifc_class": "IfcBeam"
+          },
+          {
+            "class_RU": "Пилон",
+            "code_class": "ЭЛ 30 16 50",
+            "ifc_class": "IfcColumn"
+          },
+          {
+            "class_RU": "Пилястра",
+            "code_class": "ЭЛ 30 16 51",
+            "ifc_class": "IfcColumn"
+          },
+          {
+            "class_RU": "Пояс",
+            "code_class": "ЭЛ 30 16 52",
+            "ifc_class": "IfcBeam"
+          },
+          {
+            "class_RU": "Рама",
+            "code_class": "ЭЛ 30 16 55",
+            "ifc_class": "IfcElementAssembly"
+          },
+          {
+            "class_RU": "Подкрановый рельс",
+            "code_class": "ЭЛ 30 16 56",
+            "ifc_class": "IfcBeam"
+          },
+          {
+            "class_RU": "Рельс",
+            "code_class": "ЭЛ 30 16 61",
+            "ifc_class": "IfcBeam"
+          },
+          {
+            "class_RU": "Монорельс",
+            "code_class": "ЭЛ 30 16 62",
+            "ifc_class": "IfcBeam"
+          },
+          {
+            "class_RU": "Отдельные элементы конструкции мостов",
+            "code_class": "ЭЛ 30 16 63",
+            "subclasses": [
+              {
+                "code": "ЭЛ 30 16 63 01",
+                "subclass_RU": "Устой",
+                "ifc_class": "IfcFooting"
+              },
+              {
+                "code": "ЭЛ 30 16 63 05",
+                "subclass_RU": "Тело опоры",
+                "ifc_class": "IfcMember"
+              },
+              {
+                "code": "ЭЛ 30 16 63 10",
+                "subclass_RU": "Ростверк",
+                "ifc_class": "IfcFooting"
+              },
+              {
+                "code": "ЭЛ 30 16 63 15",
+                "subclass_RU": "Оголовок опоры",
+                "ifc_class": "IfcBeam"
+              },
+              {
+                "code": "ЭЛ 30 16 63 20",
+                "subclass_RU": "Подферменник",
+                "ifc_class": "IfcBeam"
+              },
+              {
+                "code": "ЭЛ 30 16 63 25",
+                "subclass_RU": "Стенка шкафная",
+                "ifc_class": "IfcWall"
+              },
+              {
+                "code": "ЭЛ 30 16 63 30",
+                "subclass_RU": "Открылок",
+                "ifc_class": "IfcWall"
+              },
+              {
+                "code": "ЭЛ 30 16 63 35",
+                "subclass_RU": "Ортотропная плита",
+                "ifc_class": "IfcElementAssembly"
+              },
+              {
+                "code": "ЭЛ 30 16 63 40",
+                "subclass_RU": "Сталежелезобетонное пролетное строение",
+                "ifc_class": "IfcElementAssembly"
+              },
+              {
+                "code": "ЭЛ 30 16 63 45",
+                "subclass_RU": "Поперечные связи",
+                "ifc_class": "IfcMember"
+              },
+              {
+                "code": "ЭЛ 30 16 63 50",
+                "subclass_RU": "Смотровой ход",
+                "ifc_class": "IfcElementAssembly"
+              }
+            ]
+          },
+          {
+            "class_RU": "Ригель",
+            "code_class": "ЭЛ 30 16 65",
+            "ifc_class": "IfcBeam"
+          },
+          {
+            "class_RU": "Стакан опорный оборудования",
+            "code_class": "ЭЛ 30 16 75",
+            "ifc_class": "IfcFooting"
+          },
+          {
+            "class_RU": "Тяга фасадная",
+            "code_class": "ЭЛ 30 16 76",
+            "ifc_class": "IfcMember"
+          },
+          {
+            "class_RU": "Блок угловой",
+            "code_class": "ЭЛ 30 16 77",
+            "ifc_class": "IfcWall"
+          },
+          {
+            "class_RU": "Блок вентиляционный",
+            "code_class": "ЭЛ 30 16 78",
+            "ifc_class": "IfcWall"
+          },
+          {
+            "class_RU": "Блок инженерных коммуникаций",
+            "code_class": "ЭЛ 30 16 79",
+            "ifc_class": "IfcElementQuantity"
+          },
+          {
+            "class_RU": "Связь",
+            "code_class": "ЭЛ 30 16 80",
+            "ifc_class": "IfcMember"
+          },
+          {
+            "class_RU": "Ферма",
+            "code_class": "ЭЛ 30 16 81",
+            "ifc_class": "IfcElementAssembly\nIfcBeam"
+          },
+          {
+            "class_RU": "Отдельные элементы решетчатых конструкций",
+            "code_class": "ЭЛ 30 16 82",
+            "subclasses": [
+              {
+                "code": "ЭЛ 30 16 82 01",
+                "subclass_RU": "Верхний пояс фермы",
+                "ifc_class": "IfcMember"
+              },
+              {
+                "code": "ЭЛ 30 16 82 02",
+                "subclass_RU": "Нижний пояс фермы",
+                "ifc_class": "IfcMember"
+              },
+              {
+                "code": "ЭЛ 30 16 82 03",
+                "subclass_RU": "Раскос",
+                "ifc_class": "IfcMember"
+              },
+              {
+                "code": "ЭЛ 30 16 82 04",
+                "subclass_RU": "Опора",
+                "ifc_class": "IfcMember"
+              },
+              {
+                "code": "ЭЛ 30 16 82 05",
+                "subclass_RU": "Стойка",
+                "ifc_class": "IfcMember"
+              }
+            ]
+          },
+          {
+            "class_RU": "Детали конструкций",
+            "code_class": "ЭЛ 30 16 83",
+            "subclasses": [
+              {
+                "code": "ЭЛ 30 16 83 01",
+                "subclass_RU": "Пластина",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 16 83 02",
+                "subclass_RU": "Пластина соединительная",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 16 83 03",
+                "subclass_RU": "Планка соединительная",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 16 83 04",
+                "subclass_RU": "Плита опорная",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 16 83 05",
+                "subclass_RU": "Столик опорный",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 16 83 06",
+                "subclass_RU": "Ребро жесткости",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 16 83 07",
+                "subclass_RU": "Фланец",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 16 83 08",
+                "subclass_RU": "Фасонка",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 16 83 09",
+                "subclass_RU": "Фигурная деталь \"Рыбка\"",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 16 83 10",
+                "subclass_RU": "Поясной лист",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 16 83 11",
+                "subclass_RU": "Полка",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 16 83 12",
+                "subclass_RU": "Стенка",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 16 83 13",
+                "subclass_RU": "Металлоизоляция",
+                "ifc_class": "IfcPlate"
+              },
+              {
+                "code": "ЭЛ 30 16 83 14",
+                "subclass_RU": "Прокладка",
+                "ifc_class": "IfcPlate"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Окна, двери и ворота",
+        "code_purpose": "ЭЛ 30 18",
+        "classes": [
+          {
+            "class_RU": "Балконный блок",
+            "code_class": "ЭЛ 30 18 09",
+            "ifc_class": "IfcWindow"
+          },
+          {
+            "class_RU": "Ворота",
+            "code_class": "ЭЛ 30 18 20",
+            "subclasses": [
+              {
+                "code": "ЭЛ 30 18 20 01",
+                "subclass_RU": "Ворота с ручным механизмом открывания",
+                "ifc_class": "IfcDoor"
+              },
+              {
+                "code": "ЭЛ 30 18 20 02",
+                "subclass_RU": "Ворота с автоматическим механизмом открывания",
+                "ifc_class": "IfcDoor"
+              }
+            ]
+          },
+          {
+            "class_RU": "Дверь",
+            "code_class": "ЭЛ 30 18 30",
+            "subclasses": [
+              {
+                "code": "ЭЛ 30 18 30 10",
+                "subclass_RU": "Дверь герметическая",
+                "ifc_class": "IfcDoor"
+              },
+              {
+                "code": "ЭЛ 30 18 30 20",
+                "subclass_RU": "Дверь межкомнатная",
+                "ifc_class": "IfcDoor"
+              },
+              {
+                "code": "ЭЛ 30 18 30 30",
+                "subclass_RU": "Дверь входная",
+                "ifc_class": "IfcDoor"
+              },
+              {
+                "code": "ЭЛ 30 18 30 31",
+                "subclass_RU": "Балконная дверь",
+                "ifc_class": "IfcDoor"
+              }
+            ]
+          },
+          {
+            "class_RU": "Окно",
+            "code_class": "ЭЛ 30 18 40",
+            "ifc_class": "IfcWindow"
+          },
+          {
+            "class_RU": "Люк",
+            "code_class": "ЭЛ 30 18 50",
+            "subclasses": [
+              {
+                "code": "ЭЛ 30 18 50 10",
+                "subclass_RU": "Люк герметический",
+                "ifc_class": "IfcDoor"
+              },
+              {
+                "code": "ЭЛ 30 18 50 20",
+                "subclass_RU": "Ревизия, лючок",
+                "ifc_class": "IfcDoor"
+              }
+            ]
+          },
+          {
+            "class_RU": "Фонарь зенитный",
+            "code_class": "ЭЛ 30 18 52",
+            "subclasses": [
+              {
+                "code": "ЭЛ 30 18 52 10",
+                "subclass_RU": "Панель оконная фонарная",
+                "ifc_class": "IfcWindow"
+              },
+              {
+                "code": "ЭЛ 30 18 52 20",
+                "subclass_RU": "Фонарь световой",
+                "ifc_class": "IfcWindow"
+              },
+              {
+                "code": "ЭЛ 30 18 52 30",
+                "subclass_RU": "Фонарь свето-аэрационный",
+                "ifc_class": "IfcWindow"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Доборные элементы",
+        "code_purpose": "ЭЛ 30 19",
+        "classes": [
+          {
+            "class_RU": "Наличник",
+            "code_class": "ЭЛ 30 19 10",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Нащельник",
+            "code_class": "ЭЛ 30 19 15",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Порожек",
+            "code_class": "ЭЛ 30 19 26",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Откос",
+            "code_class": "ЭЛ 30 19 30",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Отлив",
+            "code_class": "ЭЛ 30 19 40",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Уголок",
+            "code_class": "ЭЛ 30 19 50",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Фаска",
+            "code_class": "ЭЛ 30 19 60",
+            "ifc_class": "IfcVoidingFeature"
+          },
+          {
+            "class_RU": "Соединительная планка",
+            "code_class": "ЭЛ 30 19 70",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Подоконник",
+            "code_class": "ЭЛ 30 19 80",
+            "ifc_class": "IfcCovering"
+          }
+        ]
+      },
+      {
+        "purpose": "Мусороудаление",
+        "code_purpose": "ЭЛ 30 20",
+        "classes": [
+          {
+            "class_RU": "Ствол мусоропровода ",
+            "code_class": "ЭЛ 30 20 10",
+            "ifc_class": "IfcChimney"
+          },
+          {
+            "class_RU": "Загрузочный клапан мусоропровода",
+            "code_class": "ЭЛ 30 20 20",
+            "ifc_class": "IfcDoor"
+          },
+          {
+            "class_RU": "Камера очистки ствола мусоропровода",
+            "code_class": "ЭЛ 30 20 30",
+            "ifc_class": "IfcSanitaryTerminal"
+          }
+        ]
+      },
+      {
+        "purpose": "Лестницы и пандусы",
+        "code_purpose": "ЭЛ 30 24",
+        "classes": [
+          {
+            "class_RU": "Лестничный марш",
+            "code_class": "ЭЛ 30 24 10",
+            "ifc_class": "IfcStairFlight"
+          },
+          {
+            "class_RU": "Лестничная площадка",
+            "code_class": "ЭЛ 30 24 20",
+            "ifc_class": "IfcSlab"
+          },
+          {
+            "class_RU": "Лестница",
+            "code_class": "ЭЛ 30 24 30",
+            "ifc_class": "IfcStair"
+          },
+          {
+            "class_RU": "Лестница-трап",
+            "code_class": "ЭЛ 30 24 35",
+            "ifc_class": "IfcStair"
+          },
+          {
+            "class_RU": "Пандус",
+            "code_class": "ЭЛ 30 24 40",
+            "ifc_class": "IfcRamp"
+          },
+          {
+            "class_RU": "Подъем пандуса",
+            "code_class": "ЭЛ 30 24 41",
+            "ifc_class": "IfcRampFlight"
+          },
+          {
+            "class_RU": "Подъем рампы",
+            "code_class": "ЭЛ 30 24 42",
+            "ifc_class": "IfcRampFlight"
+          },
+          {
+            "class_RU": "Горизонтальная площадка пандуса",
+            "code_class": "ЭЛ 30 24 50",
+            "ifc_class": "IfcSlab"
+          },
+          {
+            "class_RU": "Горизонтальная площадка рампы",
+            "code_class": "ЭЛ 30 24 51",
+            "ifc_class": "IfcSlab"
+          },
+          {
+            "class_RU": "Рампа",
+            "code_class": "ЭЛ 30 24 60",
+            "ifc_class": "IfcRamp"
+          }
+        ]
+      },
+      {
+        "purpose": "Печи, камины, очаги",
+        "code_purpose": "ЭЛ 30 25",
+        "classes": [
+          {
+            "class_RU": "Камин",
+            "code_class": "ЭЛ 30 25 10"
+          },
+          {
+            "class_RU": "Печь",
+            "code_class": "ЭЛ 30 25 20"
+          },
+          {
+            "class_RU": "Очаг отопительный",
+            "code_class": "ЭЛ 30 25 30"
+          },
+          {
+            "class_RU": "Очаг пищеварочный",
+            "code_class": "ЭЛ 30 25 40"
+          },
+          {
+            "class_RU": "Дымоход",
+            "code_class": "ЭЛ 30 25 50",
+            "ifc_class": "IfcChimney"
+          }
+        ]
+      },
+      {
+        "purpose": "Отделка стен",
+        "code_purpose": "ЭЛ 30 26",
+        "classes": [
+          {
+            "class_RU": "Чистовая отделка стен",
+            "code_class": "ЭЛ 30 26 10",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Черновая отделка стен",
+            "code_class": "ЭЛ 30 26 20",
+            "ifc_class": "IfcCovering"
+          }
+        ]
+      },
+      {
+        "purpose": "Отделка потолка",
+        "code_purpose": "ЭЛ 30 28",
+        "classes": [
+          {
+            "class_RU": "Чистовая отделка потолка",
+            "code_class": "ЭЛ 30 28 10",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Черновая отделка потолка",
+            "code_class": "ЭЛ 30 28 20",
+            "ifc_class": "IfcCovering"
+          }
+        ]
+      },
+      {
+        "purpose": "Детали декоративные",
+        "code_purpose": "ЭЛ 30 29",
+        "classes": [
+          {
+            "class_RU": "Балясина",
+            "code_class": "ЭЛ 30 29 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 30 29 10 10",
+                "subclass_RU": "Балясина рядовая",
+                "ifc_class": "IfcRailing"
+              },
+              {
+                "code": "ЭЛ 30 29 10 20",
+                "subclass_RU": "Балясина угловая",
+                "ifc_class": "IfcRailing"
+              }
+            ]
+          },
+          {
+            "class_RU": "Ваза декоративная",
+            "code_class": "ЭЛ 30 29 15"
+          },
+          {
+            "class_RU": "Герб",
+            "code_class": "ЭЛ 30 29 20",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Деталь декоративная",
+            "code_class": "ЭЛ 30 29 25",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Деталь декоративная погонная",
+            "code_class": "ЭЛ 30 29 30",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Розетка кессонная",
+            "code_class": "ЭЛ 30 29 35",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Капитель декоративная",
+            "code_class": "ЭЛ 30 29 40",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Фриз",
+            "code_class": "ЭЛ 30 29 50",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Плинтус",
+            "code_class": "ЭЛ 30 29 55",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Сухарь",
+            "code_class": "ЭЛ 30 29 60",
+            "subclasses": [
+              {
+                "code": "ЭЛ 30 29 60 10",
+                "subclass_RU": "Сухарь гладкий"
+              },
+              {
+                "code": "ЭЛ 30 29 60 20",
+                "subclass_RU": "Сухарь орнаментированный"
+              }
+            ]
+          },
+          {
+            "class_RU": "Шишка",
+            "code_class": "ЭЛ 30 29 65",
+            "subclasses": [
+              {
+                "code": "ЭЛ 30 29 65 10",
+                "subclass_RU": "Шишка гладкая"
+              },
+              {
+                "code": "ЭЛ 30 29 65 20",
+                "subclass_RU": "Шишка орнаментированная"
+              }
+            ]
+          },
+          {
+            "class_RU": "Кронштейн цементный",
+            "code_class": "ЭЛ 30 29 70"
+          },
+          {
+            "class_RU": "Модульон",
+            "code_class": "ЭЛ 30 29 75"
+          }
+        ]
+      },
+      {
+        "purpose": "Вспомогательные 3D-тела и формы",
+        "code_purpose": "ЭЛ 30 30",
+        "classes": [
+          {
+            "class_RU": "Объем подземной части",
+            "code_class": "ЭЛ 30 30 10",
+            "ifc_class": "IfcSpace"
+          },
+          {
+            "class_RU": "Объем надземной части",
+            "code_class": "ЭЛ 30 30 20",
+            "ifc_class": "IfcSpace"
+          }
+        ]
+      },
+      {
+        "purpose": "Отделка (состав) пола",
+        "code_purpose": "ЭЛ 30 32",
+        "classes": [
+          {
+            "class_RU": "Пол",
+            "code_class": "ЭЛ 30 32 10",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Гидроизоляция пола",
+            "code_class": "ЭЛ 30 32 15",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Теплоизоляция пола",
+            "code_class": "ЭЛ 30 32 20",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Звукоизоляция пола",
+            "code_class": "ЭЛ 30 32 25",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Стяжка пола",
+            "code_class": "ЭЛ 30 32 30",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Напольное покрытие",
+            "code_class": "ЭЛ 30 32 35",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Крепеж напольного покрытия (раствор, клей и т.п.)",
+            "code_class": "ЭЛ 30 32 40",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Основа пола, лаги",
+            "code_class": "ЭЛ 30 32 45",
+            "ifc_class": "IfcBeam"
+          }
+        ]
+      },
+      {
+        "purpose": "Закладные детали",
+        "code_purpose": "ЭЛ 30 80",
+        "classes": [
+          {
+            "class_RU": "Закладная деталь",
+            "code_class": "ЭЛ 30 80 10",
+            "ifc_class": "IfcDiscreteAccessory"
+          }
+        ]
+      },
+      {
+        "purpose": "Армирование ж/б элементов",
+        "code_purpose": "ЭЛ 30 90",
+        "classes": [
+          {
+            "class_RU": "Арматурный стержень",
+            "code_class": "ЭЛ 30 90 10",
+            "ifc_class": "IfcReinforcingBar"
+          },
+          {
+            "class_RU": "Арматурная сетка",
+            "code_class": "ЭЛ 30 90 20",
+            "ifc_class": "IfcReinforcingMesh"
+          },
+          {
+            "class_RU": "Преднапряженная арматура",
+            "code_class": "ЭЛ 30 90 30",
+            "ifc_class": "IfcTendon"
+          },
+          {
+            "class_RU": "Арматурный канат",
+            "code_class": "ЭЛ 30 90 40",
+            "ifc_class": "IfcTendon"
+          },
+          {
+            "class_RU": "Анкер преднапряженной арматуры/арматурного каната",
+            "code_class": "ЭЛ 30 90 50",
+            "ifc_class": "IfcTendonAnchor"
+          },
+          {
+            "class_RU": "Арматурный каркас плоский",
+            "code_class": "ЭЛ 30 90 60",
+            "ifc_class": "IfcReinforcingMesh"
+          },
+          {
+            "class_RU": "Арматурный каркас пространственный",
+            "code_class": "ЭЛ 30 90 70",
+            "ifc_class": "IfcReinforcingMesh"
+          },
+          {
+            "class_RU": "С-образный фиксатор",
+            "code_class": "ЭЛ 30 90 80",
+            "ifc_class": "IfcReinforcingBar"
+          },
+          {
+            "class_RU": "Спиральная арматура",
+            "code_class": "ЭЛ 30 90 81",
+            "ifc_class": "IfcReinforcingBar"
+          },
+          {
+            "class_RU": "Фиксатор \"лягушка\"",
+            "code_class": "ЭЛ 30 90 82",
+            "ifc_class": "IfcReinforcingBar"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "category": "Контроль прохода и управления доступом",
+    "code_category": "ЭЛ 35",
+    "purposes": [
+      {
+        "purpose": "Контроль прохода, доступа",
+        "code_purpose": "ЭЛ 35 01",
+        "classes": [
+          {
+            "class_RU": "Турникет",
+            "code_class": "ЭЛ 35 01 01",
+            "ifc_class": "IfcDoor"
+          },
+          {
+            "class_RU": "Шлагбаум",
+            "code_class": "ЭЛ 35 01 02",
+            "ifc_class": "IfcDoor"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "category": "Инженерное оснащение",
+    "code_category": "ЭЛ 40",
+    "purposes": [
+      {
+        "purpose": "Подъемные и конвейерные механизмы",
+        "code_purpose": "ЭЛ 40 10",
+        "classes": [
+          {
+            "class_RU": "Подъемный механизм",
+            "code_class": "ЭЛ 40 10 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 10 10 10",
+                "subclass_RU": "Движущийся пандус",
+                "ifc_class": "IfcTransportElement"
+              },
+              {
+                "code": "ЭЛ 40 10 10 20",
+                "subclass_RU": "Лифт",
+                "ifc_class": "IfcTransportElement"
+              },
+              {
+                "code": "ЭЛ 40 10 10 30",
+                "subclass_RU": "Подъемник",
+                "ifc_class": "IfcTransportElement"
+              },
+              {
+                "code": "ЭЛ 40 10 10 40",
+                "subclass_RU": "Подъемная платформа",
+                "ifc_class": "IfcTransportElement"
+              },
+              {
+                "code": "ЭЛ 40 10 10 50",
+                "subclass_RU": "Эскалатор",
+                "ifc_class": "IfcTransportElement"
+              },
+              {
+                "code": "ЭЛ 40 10 10 60",
+                "subclass_RU": "Элеватор",
+                "ifc_class": "IfcTransportElement"
+              }
+            ]
+          },
+          {
+            "class_RU": "Горизонтальный конвейерный механизм",
+            "code_class": "ЭЛ 40 10 20",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 10 20 10",
+                "subclass_RU": "Конвейер",
+                "ifc_class": "IfcTransportElement"
+              },
+              {
+                "code": "ЭЛ 40 10 20 20",
+                "subclass_RU": "Движущаяся лента",
+                "ifc_class": "IfcTransportElement"
+              },
+              {
+                "code": "ЭЛ 40 10 20 30",
+                "subclass_RU": "Траволатор",
+                "ifc_class": "IfcTransportElement"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Водоснабжение, водоотведение, отопление, холодоснабжение, газоснабжение",
+        "code_purpose": "ЭЛ 40 15",
+        "classes": [
+          {
+            "class_RU": "Труба",
+            "code_class": "ЭЛ 40 15 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 15 10 10",
+                "subclass_RU": "Труба",
+                "ifc_class": "IfcPipeSegment"
+              },
+              {
+                "code": "ЭЛ 40 15 10 20",
+                "subclass_RU": "Гибкая труба",
+                "ifc_class": "IfcPipeSegment"
+              }
+            ]
+          },
+          {
+            "class_RU": "Трубопроводные фитинги",
+            "code_class": "ЭЛ 40 15 20",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 15 20 10",
+                "subclass_RU": "Врезка",
+                "ifc_class": "IfcPipeFitting"
+              },
+              {
+                "code": "ЭЛ 40 15 20 15",
+                "subclass_RU": "Грязевик",
+                "ifc_class": "IfcPipeFitting"
+              },
+              {
+                "code": "ЭЛ 40 15 20 20",
+                "subclass_RU": "Заглушка",
+                "ifc_class": "IfcPipeFitting"
+              },
+              {
+                "code": "ЭЛ 40 15 20 25",
+                "subclass_RU": "Крестовина",
+                "ifc_class": "IfcPipeFitting"
+              },
+              {
+                "code": "ЭЛ 40 15 20 30",
+                "subclass_RU": "Муфта",
+                "ifc_class": "IfcPipeFitting"
+              },
+              {
+                "code": "ЭЛ 40 15 20 35",
+                "subclass_RU": "Отвод",
+                "ifc_class": "IfcPipeFitting"
+              },
+              {
+                "code": "ЭЛ 40 15 20 40",
+                "subclass_RU": "Переход",
+                "ifc_class": "IfcPipeFitting"
+              },
+              {
+                "code": "ЭЛ 40 15 20 45",
+                "subclass_RU": "Прокладка соединительная",
+                "ifc_class": "IfcPipeFitting"
+              },
+              {
+                "code": "ЭЛ 40 15 20 50",
+                "subclass_RU": "Ревизия канализационная",
+                "ifc_class": "IfcDistributionChamberElement"
+              },
+              {
+                "code": "ЭЛ 40 15 20 52",
+                "subclass_RU": "Решетка водоприемная",
+                "ifc_class": "IfcPipeFitting"
+              },
+              {
+                "code": "ЭЛ 40 15 20 55",
+                "subclass_RU": "Тройник",
+                "ifc_class": "IfcPipeFitting"
+              },
+              {
+                "code": "ЭЛ 40 15 20 60",
+                "subclass_RU": "Фланец",
+                "ifc_class": "IfcPipeFitting"
+              }
+            ]
+          },
+          {
+            "class_RU": "Коллекторные фитинги  ",
+            "code_class": "ЭЛ 40 15 21",
+            "ifc_class": "IfcPipeFitting"
+          },
+          {
+            "class_RU": "Трубопроводная арматура",
+            "code_class": "ЭЛ 40 15 30",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 15 30 05",
+                "subclass_RU": "Вентиль",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 15 30 10",
+                "subclass_RU": "Задвижка",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 15 30 15",
+                "subclass_RU": "Затвор трубопроводый",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 15 30 20",
+                "subclass_RU": "Кран",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 15 30 21",
+                "subclass_RU": "Кран поливочный",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 15 30 25",
+                "subclass_RU": "Клапан",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 15 30 30",
+                "subclass_RU": "Клапан обратный",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 15 30 35",
+                "subclass_RU": "Клапан предохранительный",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 15 30 36",
+                "subclass_RU": "Клапан приемный",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 15 30 37",
+                "subclass_RU": "Клапан проходной",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 15 30 40",
+                "subclass_RU": "Клапан регулирующий",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 15 30 55",
+                "subclass_RU": "Клапан редукционный",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 15 30 56",
+                "subclass_RU": "Муфта противопожарная",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 15 30 60",
+                "subclass_RU": "Фильтр",
+                "ifc_class": "IfcFilter"
+              },
+              {
+                "code": "ЭЛ 40 15 30 65",
+                "subclass_RU": "Компенсатор",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 15 30 70",
+                "subclass_RU": "Конденсатоотводчик",
+                "ifc_class": "IfcValve"
+              }
+            ]
+          },
+          {
+            "class_RU": "Водоотводные сооружения",
+            "code_class": "ЭЛ 40 15 31",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 15 31 01",
+                "subclass_RU": "Лотки дренажные водоотводные",
+                "ifc_class": "IfcWasteTerminal"
+              },
+              {
+                "code": "ЭЛ 40 15 31 02",
+                "subclass_RU": "Трубы ливневой канализации",
+                "ifc_class": "IfcPipeSegment"
+              },
+              {
+                "code": "ЭЛ 40 15 31 03",
+                "subclass_RU": "Лотки телескопические",
+                "ifc_class": "IfcWasteTerminal"
+              },
+              {
+                "code": "ЭЛ 40 15 31 04",
+                "subclass_RU": "Колодец",
+                "ifc_class": "IfcDistributionChamberElement"
+              },
+              {
+                "code": "ЭЛ 40 15 31 05",
+                "subclass_RU": "Камера",
+                "ifc_class": "IfcDistributionChamberElement"
+              }
+            ]
+          },
+          {
+            "class_RU": "Прокладки",
+            "code_class": "ЭЛ 40 15 32",
+            "ifc_class": "IfcPlate"
+          },
+          {
+            "class_RU": "Изоляция трубопроводов",
+            "code_class": "ЭЛ 40 15 33",
+            "ifc_class": "IfcCovering"
+          },
+          {
+            "class_RU": "Узел напорного трубопровода",
+            "code_class": "ЭЛ 40 15 34"
+          },
+          {
+            "class_RU": "Узел водомерный",
+            "code_class": "ЭЛ 40 15 35"
+          },
+          {
+            "class_RU": "Узел тепловой",
+            "code_class": "ЭЛ 40 15 36"
+          },
+          {
+            "class_RU": "Учет контроля жидкости",
+            "code_class": "ЭЛ 40 15 37",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 15 37 01",
+                "subclass_RU": "Счетчик расхода воды",
+                "ifc_class": "IfcFlowMeter"
+              }
+            ]
+          },
+          {
+            "class_RU": "Оконечные устройства",
+            "code_class": "ЭЛ 40 15 38"
+          },
+          {
+            "class_RU": "Футляр",
+            "code_class": "ЭЛ 40 15 39",
+            "ifc_class": "IfcPipeSegment"
+          }
+        ]
+      },
+      {
+        "purpose": "Вентиляция, кондиционирование",
+        "code_purpose": "ЭЛ 40 20",
+        "classes": [
+          {
+            "class_RU": "Воздуховод",
+            "code_class": "ЭЛ 40 20 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 20 10 10",
+                "subclass_RU": "Воздуховод круглого сечения",
+                "ifc_class": "IfcDuctSegment"
+              },
+              {
+                "code": "ЭЛ 40 20 10 20",
+                "subclass_RU": "Воздуховод прямоугольного сечения",
+                "ifc_class": "IfcDuctSegment"
+              },
+              {
+                "code": "ЭЛ 40 20 10 30",
+                "subclass_RU": "Гибкий воздуховод",
+                "ifc_class": "IfcDuctSegment"
+              },
+              {
+                "code": "ЭЛ 40 20 10 40",
+                "subclass_RU": "Воздуховод плоскоовального сечения",
+                "ifc_class": "IfcDuctSegment"
+              }
+            ]
+          },
+          {
+            "class_RU": "Фасонная часть воздуховода",
+            "code_class": "ЭЛ 40 20 20",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 20 20 10",
+                "subclass_RU": "Врезка круглая",
+                "ifc_class": "IfcDuctFitting"
+              },
+              {
+                "code": "ЭЛ 40 20 20 12",
+                "subclass_RU": "Заглушка",
+                "ifc_class": "IfcDuctFitting"
+              },
+              {
+                "code": "ЭЛ 40 20 20 14",
+                "subclass_RU": "Крестовина",
+                "ifc_class": "IfcDuctFitting"
+              },
+              {
+                "code": "ЭЛ 40 20 20 16",
+                "subclass_RU": "Отвод",
+                "ifc_class": "IfcDuctFitting"
+              },
+              {
+                "code": "ЭЛ 40 20 20 18",
+                "subclass_RU": "Переход",
+                "ifc_class": "IfcDuctFitting"
+              },
+              {
+                "code": "ЭЛ 40 20 20 20",
+                "subclass_RU": "Тройник",
+                "ifc_class": "IfcDuctFitting"
+              },
+              {
+                "code": "ЭЛ 40 20 20 22",
+                "subclass_RU": "Врезка прямоугольная",
+                "ifc_class": "IfcDuctFitting"
+              },
+              {
+                "code": "ЭЛ 40 20 20 24",
+                "subclass_RU": "Врезка плоскоовальная",
+                "ifc_class": "IfcDuctFitting"
+              }
+            ]
+          },
+          {
+            "class_RU": "Оконечные устройства воздуховода",
+            "code_class": "ЭЛ 40 20 30",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 20 30 10",
+                "subclass_RU": "Воздухораспределительная решетка",
+                "ifc_class": "IfcAirTerminal"
+              },
+              {
+                "code": "ЭЛ 40 20 30 20",
+                "subclass_RU": "Воздухораспределительная регулируемая решетка",
+                "ifc_class": "IfcAirTerminal"
+              },
+              {
+                "code": "ЭЛ 40 20 30 30",
+                "subclass_RU": "Диффузор",
+                "ifc_class": "IfcAirTerminal"
+              },
+              {
+                "code": "ЭЛ 40 20 30 50",
+                "subclass_RU": "Сетка декоративная",
+                "ifc_class": "IfcAirTerminal"
+              },
+              {
+                "code": "ЭЛ 40 20 30 40",
+                "subclass_RU": "Анемостат",
+                "ifc_class": "IfcAirTerminal"
+              }
+            ]
+          },
+          {
+            "class_RU": "Вентиляционное изделие",
+            "code_class": "ЭЛ 40 20 40",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 20 40 10",
+                "subclass_RU": "Адаптер",
+                "ifc_class": "IfcAirTerminal"
+              },
+              {
+                "code": "ЭЛ 40 20 40 12",
+                "subclass_RU": "Воздушная заслонка",
+                "ifc_class": "IfcDamper"
+              },
+              {
+                "code": "ЭЛ 40 20 40 14",
+                "subclass_RU": "Воздушный клапан",
+                "ifc_class": "IfcDamper"
+              },
+              {
+                "code": "ЭЛ 40 20 40 16",
+                "subclass_RU": "Воздушный фильтр",
+                "ifc_class": "IfcFilter"
+              },
+              {
+                "code": "ЭЛ 40 20 40 18",
+                "subclass_RU": "Дефлектор",
+                "ifc_class": "IfcStackTerminal"
+              },
+              {
+                "code": "ЭЛ 40 20 40 20",
+                "subclass_RU": "Зонт",
+                "ifc_class": "IfcStackTerminal"
+              },
+              {
+                "code": "ЭЛ 40 20 40 24",
+                "subclass_RU": "Колпак",
+                "ifc_class": "IfcStackTerminal"
+              },
+              {
+                "code": "ЭЛ 40 20 40 25",
+                "subclass_RU": "Клапан обратный",
+                "ifc_class": "IfcDamper"
+              },
+              {
+                "code": "ЭЛ 40 20 40 26",
+                "subclass_RU": "Клапан лепестковый",
+                "ifc_class": "IfcDamper"
+              },
+              {
+                "code": "ЭЛ 40 20 40 27",
+                "subclass_RU": "Клапан перекидной",
+                "ifc_class": "IfcDamper"
+              },
+              {
+                "code": "ЭЛ 40 20 40 28",
+                "subclass_RU": "Камера воздушная",
+                "ifc_class": "IfcAirTerminalBox"
+              },
+              {
+                "code": "ЭЛ 40 20 40 29",
+                "subclass_RU": "Камера обслуживания",
+                "ifc_class": "IfcAirTerminalBox"
+              },
+              {
+                "code": "ЭЛ 40 20 40 30",
+                "subclass_RU": "Камера приточная",
+                "ifc_class": "IfcAirTerminalBox"
+              },
+              {
+                "code": "ЭЛ 40 20 40 31",
+                "subclass_RU": "Камера статического давления",
+                "ifc_class": "IfcAirTerminalBox"
+              },
+              {
+                "code": "ЭЛ 40 20 40 32",
+                "subclass_RU": "Узел прохода вентиляционной шахты",
+                "ifc_class": "IfcDuctSilencer"
+              },
+              {
+                "code": "ЭЛ 40 20 40 33",
+                "subclass_RU": "Противопожарный воздушный клапан",
+                "ifc_class": "IfcDamper"
+              },
+              {
+                "code": "ЭЛ 40 20 40 34",
+                "subclass_RU": "Противодымный клапан",
+                "ifc_class": "IfcDamper"
+              },
+              {
+                "code": "ЭЛ 40 20 40 35",
+                "subclass_RU": "Клапан вытяжки",
+                "ifc_class": "IfcDamper"
+              },
+              {
+                "code": "ЭЛ 40 20 40 40",
+                "subclass_RU": "Шибер",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 20 40 42",
+                "subclass_RU": "Шумоглушитель",
+                "ifc_class": "IfcDuctSilencer"
+              },
+              {
+                "code": "ЭЛ 40 20 40 45",
+                "subclass_RU": "Воздухораспределитель",
+                "ifc_class": "IfcAirTerminalBox"
+              },
+              {
+                "code": "ЭЛ 40 20 40 46",
+                "subclass_RU": "Виброизолятор",
+                "ifc_class": "IfcVibrationIsolator"
+              }
+            ]
+          },
+          {
+            "class_RU": "Изоляция воздуховодов",
+            "code_class": "ЭЛ 40 20 60",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 20 60 10",
+                "subclass_RU": "Изоляция воздуховода обмоткой",
+                "ifc_class": "IfcCovering"
+              },
+              {
+                "code": "ЭЛ 40 20 60 20",
+                "subclass_RU": "Изоляция воздуховода в рукаве",
+                "ifc_class": "IfcCovering"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Теплоснабжение",
+        "code_purpose": "ЭЛ 40 25",
+        "classes": [
+          {
+            "class_RU": "Горячее водоснабжение",
+            "code_class": "ЭЛ 40 25 20"
+          }
+        ]
+      },
+      {
+        "purpose": "Пожаротушение",
+        "code_purpose": "ЭЛ 40 30",
+        "classes": [
+          {
+            "class_RU": "Противодымный экран",
+            "code_class": "ЭЛ 40 30 10"
+          },
+          {
+            "class_RU": "Системы пожарной сигнализации",
+            "code_class": "ЭЛ 40 30 21",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 30 21 01",
+                "subclass_RU": "Оповещатель пожарный",
+                "ifc_class": "IfcAlarm"
+              },
+              {
+                "code": "ЭЛ 40 30 21 02",
+                "subclass_RU": "Извещатель пожарный ручной",
+                "ifc_class": "IfcAlarm"
+              },
+              {
+                "code": "ЭЛ 40 30 21 03",
+                "subclass_RU": "Извещатель пожарный дымовой",
+                "ifc_class": "IfcAlarm"
+              },
+              {
+                "code": "ЭЛ 40 30 21 04",
+                "subclass_RU": "Оповещатель пожарный звуковой гидравлический",
+                "ifc_class": "IfcAlarm"
+              },
+              {
+                "code": "ЭЛ 40 30 21 05",
+                "subclass_RU": "Модуль автоматической установки пожаротушения ",
+                "ifc_class": "IfcFireSuppressionTerminal"
+              },
+              {
+                "code": "ЭЛ 40 30 21 06",
+                "subclass_RU": "Прибор приемно-контрольный и управления пожарный",
+                "ifc_class": "IfcController"
+              },
+              {
+                "code": "ЭЛ 40 30 21 07",
+                "subclass_RU": "Устройство дистанционного пуска",
+                "ifc_class": "IfcSwitchingDevice"
+              },
+              {
+                "code": "ЭЛ 40 30 21 08",
+                "subclass_RU": "Узел управления автоматической установки пожаротушения",
+                "ifc_class": "IfcController"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Трассировка кабелей",
+        "code_purpose": "ЭЛ 40 35",
+        "classes": [
+          {
+            "class_RU": "Прокладка кабеля",
+            "code_class": "ЭЛ 40 35 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 35 10 10",
+                "subclass_RU": "Кабельный лоток",
+                "ifc_class": "IfcCableCarrierSegment"
+              },
+              {
+                "code": "ЭЛ 40 35 10 20",
+                "subclass_RU": "Короб",
+                "ifc_class": "IfcCableCarrierSegment"
+              },
+              {
+                "code": "ЭЛ 40 35 10 30",
+                "subclass_RU": "Труба электротехническая",
+                "ifc_class": "IfcCableCarrierSegment"
+              },
+              {
+                "code": "ЭЛ 40 35 10 35",
+                "subclass_RU": "Кабельный ввод",
+                "ifc_class": "IfcCableCarrierFitting"
+              },
+              {
+                "code": "ЭЛ 40 35 10 36",
+                "subclass_RU": "Соединитель",
+                "ifc_class": "IfcCableCarrierFitting"
+              }
+            ]
+          },
+          {
+            "class_RU": "Комплектующие для кабельных лотков",
+            "code_class": "ЭЛ 40 35 20",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 35 20 10",
+                "subclass_RU": "Полка кабельная",
+                "ifc_class": "IfcCableCarrierFitting"
+              },
+              {
+                "code": "ЭЛ 40 35 20 20",
+                "subclass_RU": "Стойка кабельная",
+                "ifc_class": "IfcCableCarrierFitting"
+              },
+              {
+                "code": "ЭЛ 40 35 20 30",
+                "subclass_RU": "Угол горизонтальный",
+                "ifc_class": "IfcCableCarrierFitting"
+              },
+              {
+                "code": "ЭЛ 40 35 20 40",
+                "subclass_RU": "Крестовина",
+                "ifc_class": "IfcCableCarrierFitting"
+              },
+              {
+                "code": "ЭЛ 40 35 20 50",
+                "subclass_RU": "Переходник",
+                "ifc_class": "IfcCableCarrierFitting"
+              },
+              {
+                "code": "ЭЛ 40 35 20 60",
+                "subclass_RU": "Плоский угол",
+                "ifc_class": "IfcCableCarrierFitting"
+              },
+              {
+                "code": "ЭЛ 40 35 20 70",
+                "subclass_RU": "Вертикальный внутренний угол",
+                "ifc_class": "IfcCableCarrierFitting"
+              },
+              {
+                "code": "ЭЛ 40 35 20 80",
+                "subclass_RU": "Вертикальный внешний угол",
+                "ifc_class": "IfcCableCarrierFitting"
+              },
+              {
+                "code": "ЭЛ 40 35 20 90",
+                "subclass_RU": "Т-образный отвод",
+                "ifc_class": "IfcCableCarrierFitting"
+              }
+            ]
+          },
+          {
+            "class_RU": "Пояс противопожарный",
+            "code_class": "ЭЛ 40 35 25"
+          }
+        ]
+      },
+      {
+        "purpose": "Кабельно-проводниковая продукция",
+        "code_purpose": "ЭЛ 40 36",
+        "classes": [
+          {
+            "class_RU": "Кабели и провода",
+            "code_class": "ЭЛ 40 36 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 36 10 01",
+                "subclass_RU": "Кабели силовые",
+                "ifc_class": "IfcCableSegment"
+              },
+              {
+                "code": "ЭЛ 40 36 10 02",
+                "subclass_RU": "Кабели связи",
+                "ifc_class": "IfcCableSegment"
+              },
+              {
+                "code": "ЭЛ 40 36 10 03",
+                "subclass_RU": "Провода",
+                "ifc_class": "IfcCableSegment"
+              },
+              {
+                "code": "ЭЛ 40 36 10 04",
+                "subclass_RU": "Оптоволоконный кабель",
+                "ifc_class": "IfcCableSegment"
+              },
+              {
+                "code": "ЭЛ 40 36 10 05",
+                "subclass_RU": "Усиливающий провод",
+                "ifc_class": "IfcCableSegment"
+              },
+              {
+                "code": "ЭЛ 40 36 10 06",
+                "subclass_RU": "Медная пара",
+                "ifc_class": "IfcCableSegment"
+              }
+            ]
+          },
+          {
+            "class_RU": "Соединитель кабельной линии",
+            "code_class": "ЭЛ 40 36 15",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 36 15 01",
+                "subclass_RU": "Муфта кабельная",
+                "ifc_class": "IfcCableFitting"
+              },
+              {
+                "code": "ЭЛ 40 36 15 02",
+                "subclass_RU": "Муфта концевая",
+                "ifc_class": "IfcCableFitting"
+              },
+              {
+                "code": "ЭЛ 40 36 15 03",
+                "subclass_RU": "Гильза кабельная",
+                "ifc_class": "IfcCableFitting"
+              },
+              {
+                "code": "ЭЛ 40 36 15 04",
+                "subclass_RU": "Наконечник кабельный",
+                "ifc_class": "IfcCableFitting"
+              },
+              {
+                "code": "ЭЛ 40 36 15 05",
+                "subclass_RU": "Оптический модуль",
+                "ifc_class": "IfcCableFitting"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Элементы наружного водостока",
+        "code_purpose": "ЭЛ 40 40",
+        "classes": [
+          {
+            "class_RU": "Водосточные трубы и желоба",
+            "code_class": "ЭЛ 40 40 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 40 10 10",
+                "subclass_RU": "Водосточный желоб",
+                "ifc_class": "IfcPipeSegment"
+              },
+              {
+                "code": "ЭЛ 40 40 10 20",
+                "subclass_RU": "Водосточная труба",
+                "ifc_class": "IfcPipeSegment"
+              }
+            ]
+          },
+          {
+            "class_RU": "Фасонные части водостока",
+            "code_class": "ЭЛ 40 40 20",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 40 20 10",
+                "subclass_RU": "Угол",
+                "ifc_class": "IfcPipeFitting"
+              },
+              {
+                "code": "ЭЛ 40 40 20 20",
+                "subclass_RU": "Решетка водостока",
+                "ifc_class": "IfcWasteTerminal"
+              },
+              {
+                "code": "ЭЛ 40 40 20 30",
+                "subclass_RU": "Заглушка водостока",
+                "ifc_class": "IfcPipeFitting"
+              },
+              {
+                "code": "ЭЛ 40 40 20 40",
+                "subclass_RU": "Колено",
+                "ifc_class": "IfcPipeFitting"
+              },
+              {
+                "code": "ЭЛ 40 40 20 50",
+                "subclass_RU": "Воронка водосточная",
+                "ifc_class": "IfcWasteTerminal"
+              },
+              {
+                "code": "ЭЛ 40 40 20 60",
+                "subclass_RU": "Воронка сливная",
+                "ifc_class": "IfcWasteTerminal"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Элементы крепления",
+        "code_purpose": "ЭЛ 40 45",
+        "classes": [
+          {
+            "class_RU": "Опоры и подвески",
+            "code_class": "ЭЛ 40 45 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 45 10 10",
+                "subclass_RU": "Кронштейн",
+                "ifc_class": "IfcMechanicalFastener"
+              },
+              {
+                "code": "ЭЛ 40 45 10 20",
+                "subclass_RU": "Опора",
+                "ifc_class": "IfcMember"
+              },
+              {
+                "code": "ЭЛ 40 45 10 30",
+                "subclass_RU": "Подвеска",
+                "ifc_class": "IfcMember"
+              },
+              {
+                "code": "ЭЛ 40 45 10 40",
+                "subclass_RU": "Подпорка",
+                "ifc_class": "IfcMember"
+              },
+              {
+                "code": "ЭЛ 40 45 10 50",
+                "subclass_RU": "Стойка",
+                "ifc_class": "IfcMember"
+              },
+              {
+                "code": "ЭЛ 40 45 10 60",
+                "subclass_RU": "Хомут",
+                "ifc_class": "IfcMechanicalFastener"
+              },
+              {
+                "code": "ЭЛ 40 45 10 70",
+                "subclass_RU": "Этажерка",
+                "ifc_class": "IfcMechanicalFastener"
+              },
+              {
+                "code": "ЭЛ 40 45 10 85",
+                "subclass_RU": "Флагодержатель",
+                "ifc_class": "IfcMechanicalFastener"
+              },
+              {
+                "code": "ЭЛ 40 45 10 86",
+                "subclass_RU": "Опора освещения",
+                "ifc_class": "IfcMember"
+              },
+              {
+                "code": "ЭЛ 40 45 10 87",
+                "subclass_RU": "Кронштейн опоры освещения",
+                "ifc_class": "IfcMechanicalFastener"
+              },
+              {
+                "code": "ЭЛ 40 45 10 88",
+                "subclass_RU": "Консоль под опору освещения",
+                "ifc_class": "IfcBeam"
+              },
+              {
+                "code": "ЭЛ 40 45 10 89",
+                "subclass_RU": "Светофорная стойка",
+                "ifc_class": "IfcMember"
+              },
+              {
+                "code": "ЭЛ 40 45 10 90",
+                "subclass_RU": "Мачта освещения",
+                "ifc_class": "IfcMember"
+              }
+            ]
+          },
+          {
+            "class_RU": "Соединения конструкций",
+            "code_class": "ЭЛ 40 45 20",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 45 20 10",
+                "subclass_RU": "Шпилька",
+                "ifc_class": "IfcMechanicalFastener"
+              },
+              {
+                "code": "ЭЛ 40 45 20 20",
+                "subclass_RU": "Болт анкерный",
+                "ifc_class": "IfcMechanicalFastener"
+              },
+              {
+                "code": "ЭЛ 40 45 20 30",
+                "subclass_RU": "Петля",
+                "ifc_class": "IfcMechanicalFastener"
+              },
+              {
+                "code": "ЭЛ 40 45 20 40",
+                "subclass_RU": "Закладная деталь фундамента опоры освещения",
+                "ifc_class": "IfcPlate"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Оборудование",
+        "code_purpose": "ЭЛ 40 50",
+        "classes": [
+          {
+            "class_RU": "Оборудование общее",
+            "code_class": "ЭЛ 40 50 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 10 10",
+                "subclass_RU": "Бак",
+                "ifc_class": "IfcTank"
+              },
+              {
+                "code": "ЭЛ 40 50 10 11",
+                "subclass_RU": "Бак конденсационный",
+                "ifc_class": "IfcTank"
+              },
+              {
+                "code": "ЭЛ 40 50 10 12",
+                "subclass_RU": "Бойлер",
+                "ifc_class": "IfcBoiler"
+              },
+              {
+                "code": "ЭЛ 40 50 10 16",
+                "subclass_RU": "Водонагреватель",
+                "ifc_class": "IfcBoiler"
+              },
+              {
+                "code": "ЭЛ 40 50 10 20",
+                "subclass_RU": "Воздухоохладитель",
+                "ifc_class": "IfcChiller"
+              },
+              {
+                "code": "ЭЛ 40 50 10 22",
+                "subclass_RU": "Гребенка из труб"
+              },
+              {
+                "code": "ЭЛ 40 50 10 24",
+                "subclass_RU": "Емкость",
+                "ifc_class": "IfcTank"
+              },
+              {
+                "code": "ЭЛ 40 50 10 26",
+                "subclass_RU": "Калорифер",
+                "ifc_class": "IfcSpaceHeater"
+              },
+              {
+                "code": "ЭЛ 40 50 10 30",
+                "subclass_RU": "Котел",
+                "ifc_class": "IfcBoiler"
+              },
+              {
+                "code": "ЭЛ 40 50 10 32",
+                "subclass_RU": "Насос",
+                "ifc_class": "IfcPump"
+              },
+              {
+                "code": "ЭЛ 40 50 10 33",
+                "subclass_RU": "Поддон",
+                "ifc_class": "IfcTank"
+              },
+              {
+                "code": "ЭЛ 40 50 10 34",
+                "subclass_RU": "Пылеулавливающий агрегат",
+                "ifc_class": "IfcUnitaryEquipment"
+              },
+              {
+                "code": "ЭЛ 40 50 10 35",
+                "subclass_RU": "Бак расширительный ",
+                "ifc_class": "IfcTank"
+              },
+              {
+                "code": "ЭЛ 40 50 10 36",
+                "subclass_RU": "Резервуар",
+                "ifc_class": "IfcTank"
+              },
+              {
+                "code": "ЭЛ 40 50 10 37",
+                "subclass_RU": "Рекуператор",
+                "ifc_class": "IfcHeatExchanger"
+              },
+              {
+                "code": "ЭЛ 40 50 10 40",
+                "subclass_RU": "Сплит-система",
+                "ifc_class": "IfcChiller"
+              },
+              {
+                "code": "ЭЛ 40 50 10 42",
+                "subclass_RU": "Теплогенератор",
+                "ifc_class": "IfcSpaceHeater"
+              },
+              {
+                "code": "ЭЛ 40 50 10 44",
+                "subclass_RU": "Теплообменник",
+                "ifc_class": "IfcHeatExchanger"
+              },
+              {
+                "code": "ЭЛ 40 50 10 45",
+                "subclass_RU": "Теплообменник пластинчатый",
+                "ifc_class": "IfcHeatExchanger"
+              },
+              {
+                "code": "ЭЛ 40 50 10 47",
+                "subclass_RU": "Цистерна",
+                "ifc_class": "IfcTank"
+              },
+              {
+                "code": "ЭЛ 40 50 10 49",
+                "subclass_RU": "Блок кондиционера внутренний",
+                "ifc_class": "IfcChiller"
+              },
+              {
+                "code": "ЭЛ 40 50 10 50",
+                "subclass_RU": "Блок кондиционера наружный",
+                "ifc_class": "IfcChiller"
+              },
+              {
+                "code": "ЭЛ 40 50 10 51",
+                "subclass_RU": "Коллектор распределительный",
+                "ifc_class": "IfcPipeFitting"
+              }
+            ]
+          },
+          {
+            "class_RU": "Оборудование электроустановочное",
+            "code_class": "ЭЛ 40 50 20",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 20 10",
+                "subclass_RU": "Розетка штепсельная",
+                "ifc_class": "IfcOutlet"
+              },
+              {
+                "code": "ЭЛ 40 50 20 20",
+                "subclass_RU": "Выключатель",
+                "ifc_class": "IfcSwitchingDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 20 21",
+                "subclass_RU": "Выключатель проходной",
+                "ifc_class": "IfcSwitchingDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 20 22",
+                "subclass_RU": "Переключатель",
+                "ifc_class": "IfcSwitchingDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 20 30",
+                "subclass_RU": "Звонок электрический",
+                "ifc_class": "IfcAlarm"
+              },
+              {
+                "code": "ЭЛ 40 50 20 50",
+                "subclass_RU": "Распределительная коробка",
+                "ifc_class": "IfcJunctionBox"
+              },
+              {
+                "code": "ЭЛ 40 50 20 60",
+                "subclass_RU": "Электрический счетчик",
+                "ifc_class": "IfcFlowMeter"
+              },
+              {
+                "code": "ЭЛ 40 50 20 80",
+                "subclass_RU": "Оконечное устройство",
+                "ifc_class": "IfcOutlet"
+              },
+              {
+                "code": "ЭЛ 40 50 20 90",
+                "subclass_RU": "Розетка коммутационная ",
+                "ifc_class": "IfcOutlet"
+              }
+            ]
+          },
+          {
+            "class_RU": "Оборудование электротехническое ",
+            "code_class": "ЭЛ 40 50 25",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 25 10",
+                "subclass_RU": "Установка компенсации реактивной мощности",
+                "ifc_class": "IfcProtectiveDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 25 20",
+                "subclass_RU": "Частотный преобразователь",
+                "ifc_class": "IfcTransformer"
+              },
+              {
+                "code": "ЭЛ 40 50 25 30",
+                "subclass_RU": "Выпрямитель",
+                "ifc_class": "IfcTransformer"
+              },
+              {
+                "code": "ЭЛ 40 50 25 40",
+                "subclass_RU": "Электродвигатель",
+                "ifc_class": "IfcElectricMotor"
+              },
+              {
+                "code": "ЭЛ 40 50 25 50",
+                "subclass_RU": "Трансформатор",
+                "ifc_class": "IfcTransformer"
+              },
+              {
+                "code": "ЭЛ 40 50 25 60",
+                "subclass_RU": "Электрогенератор",
+                "ifc_class": "IfcElectricGenerator"
+              },
+              {
+                "code": "ЭЛ 40 50 25 70",
+                "subclass_RU": "Фильтр частотный",
+                "ifc_class": "IfcTransformer"
+              }
+            ]
+          },
+          {
+            "class_RU": "Отопительное оборудование",
+            "code_class": "ЭЛ 40 50 26",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 26 01",
+                "subclass_RU": "Воздухосборник",
+                "ifc_class": "IfcAirTerminalBox"
+              },
+              {
+                "code": "ЭЛ 40 50 26 02",
+                "subclass_RU": "Воздухоотводчик",
+                "ifc_class": "IfcAirTerminalBox"
+              },
+              {
+                "code": "ЭЛ 40 50 26 03",
+                "subclass_RU": "Конвектор",
+                "ifc_class": "IfcSpaceHeater"
+              },
+              {
+                "code": "ЭЛ 40 50 26 04",
+                "subclass_RU": "Котел отопительный",
+                "ifc_class": "IfcBoiler"
+              },
+              {
+                "code": "ЭЛ 40 50 26 05",
+                "subclass_RU": "Радиатор отопления",
+                "ifc_class": "IfcSpaceHeater"
+              },
+              {
+                "code": "ЭЛ 40 50 26 06",
+                "subclass_RU": "Регистр",
+                "ifc_class": "IfcSpaceHeater"
+              },
+              {
+                "code": "ЭЛ 40 50 26 07",
+                "subclass_RU": "Счетчик тепла",
+                "ifc_class": "IfcFlowMeter"
+              },
+              {
+                "code": "ЭЛ 40 50 26 08",
+                "subclass_RU": "Терморегулятор",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 50 26 09",
+                "subclass_RU": "Фильтр для очистки воды",
+                "ifc_class": "IfcFilter"
+              },
+              {
+                "code": "ЭЛ 40 50 26 10",
+                "subclass_RU": "Элеватор",
+                "ifc_class": "IfcPipeFitting"
+              },
+              {
+                "code": "ЭЛ 40 50 26 11",
+                "subclass_RU": "Электрообогреватель",
+                "ifc_class": "IfcSpaceHeater"
+              }
+            ]
+          },
+          {
+            "class_RU": "Оборудование пожаротушения",
+            "code_class": "ЭЛ 40 50 27",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 27 01",
+                "subclass_RU": "Дренчер",
+                "ifc_class": "IfcFireSuppressionTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 27 02",
+                "subclass_RU": "Клапан огнезадерживающий",
+                "ifc_class": "IfcDamper"
+              },
+              {
+                "code": "ЭЛ 40 50 27 03",
+                "subclass_RU": "Огнетушитель"
+              },
+              {
+                "code": "ЭЛ 40 50 27 04",
+                "subclass_RU": "Датчик пожарный",
+                "ifc_class": "IfcSensor"
+              },
+              {
+                "code": "ЭЛ 40 50 27 05",
+                "subclass_RU": "Выносное устройство индикации",
+                "ifc_class": "IfcAlarm"
+              },
+              {
+                "code": "ЭЛ 40 50 27 06",
+                "subclass_RU": "Люк дымовой",
+                "ifc_class": "IfcDoor"
+              },
+              {
+                "code": "ЭЛ 40 50 27 07",
+                "subclass_RU": "Пожарный кран",
+                "ifc_class": "IfcFireSuppressionTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 27 08",
+                "subclass_RU": "Пожарный насос",
+                "ifc_class": "IfcPump"
+              },
+              {
+                "code": "ЭЛ 40 50 27 09",
+                "subclass_RU": "Клапан пожарный запорный",
+                "ifc_class": "IfcValve"
+              },
+              {
+                "code": "ЭЛ 40 50 27 10",
+                "subclass_RU": "Спринклер",
+                "ifc_class": "IfcFireSuppressionTerminal"
+              }
+            ]
+          },
+          {
+            "class_RU": "Вентиляционное оборудование",
+            "code_class": "ЭЛ 40 50 28",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 28 01",
+                "subclass_RU": "Приточная установка",
+                "ifc_class": "IfcSpaceHeater"
+              },
+              {
+                "code": "ЭЛ 40 50 28 02",
+                "subclass_RU": "Приточно-рециркуляционный агрегат",
+                "ifc_class": "IfcUnitaryEquipment"
+              },
+              {
+                "code": "ЭЛ 40 50 28 03",
+                "subclass_RU": "Вентиляторный агрегат",
+                "ifc_class": "IfcUnitaryEquipment"
+              },
+              {
+                "code": "ЭЛ 40 50 28 04",
+                "subclass_RU": "Вентилятор",
+                "ifc_class": "IfcFan"
+              },
+              {
+                "code": "ЭЛ 40 50 28 05",
+                "subclass_RU": "Воздушно-тепловая завеса",
+                "ifc_class": "IfcSpaceHeater"
+              },
+              {
+                "code": "ЭЛ 40 50 28 06",
+                "subclass_RU": "Воздушно-отопительный агрегат ",
+                "ifc_class": "IfcUnitaryEquipment"
+              },
+              {
+                "code": "ЭЛ 40 50 28 07",
+                "subclass_RU": "Воздухонагреватель",
+                "ifc_class": "IfcAirToAirHeatRecovery"
+              },
+              {
+                "code": "ЭЛ 40 50 28 08",
+                "subclass_RU": "Фанкойл",
+                "ifc_class": "IfcUnitaryEquipment"
+              },
+              {
+                "code": "ЭЛ 40 50 28 09",
+                "subclass_RU": "Чиллер",
+                "ifc_class": "IfcChiller"
+              },
+              {
+                "code": "ЭЛ 40 50 28 10",
+                "subclass_RU": "Отсос",
+                "ifc_class": "IfcUnitaryEquipment"
+              },
+              {
+                "code": "ЭЛ 40 50 28 11",
+                "subclass_RU": "Скруббер",
+                "ifc_class": "IfcUnitaryEquipment"
+              },
+              {
+                "code": "ЭЛ 40 50 28 12",
+                "subclass_RU": "Циклон",
+                "ifc_class": "IfcUnitaryEquipment"
+              },
+              {
+                "code": "ЭЛ 40 50 28 13",
+                "subclass_RU": "Холодильная машина",
+                "ifc_class": "IfcChiller"
+              },
+              {
+                "code": "ЭЛ 40 50 28 14",
+                "subclass_RU": "Агрегат системы вентиляции и кондиционирования",
+                "ifc_class": "IfcUnitaryEquipment"
+              },
+              {
+                "code": "ЭЛ 40 50 28 15",
+                "subclass_RU": "Воздухообрабатывающая установка",
+                "ifc_class": "IfcUnitaryEquipment"
+              }
+            ]
+          },
+          {
+            "class_RU": "Газовое оборудование",
+            "code_class": "ЭЛ 40 50 29",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 29 01",
+                "subclass_RU": "Баллон"
+              },
+              {
+                "code": "ЭЛ 40 50 29 02",
+                "subclass_RU": "Газовый проточный водонагреватель",
+                "ifc_class": "IfcBurner"
+              },
+              {
+                "code": "ЭЛ 40 50 29 03",
+                "subclass_RU": "Головка воздушная"
+              },
+              {
+                "code": "ЭЛ 40 50 29 04",
+                "subclass_RU": "Горелка"
+              },
+              {
+                "code": "ЭЛ 40 50 29 05",
+                "subclass_RU": "Диафрагма камерная"
+              },
+              {
+                "code": "ЭЛ 40 50 29 06",
+                "subclass_RU": "Затвор газовый"
+              },
+              {
+                "code": "ЭЛ 40 50 29 07",
+                "subclass_RU": "Клапан противовзрывной"
+              },
+              {
+                "code": "ЭЛ 40 50 29 08",
+                "subclass_RU": "Плита газовая",
+                "ifc_class": "IfcBurner"
+              },
+              {
+                "code": "ЭЛ 40 50 29 09",
+                "subclass_RU": "Регулятор давления газа"
+              },
+              {
+                "code": "ЭЛ 40 50 29 10",
+                "subclass_RU": "Установка редуцирования давления газа"
+              },
+              {
+                "code": "ЭЛ 40 50 29 11",
+                "subclass_RU": "Фильтр газовый",
+                "ifc_class": "IfcFilter"
+              },
+              {
+                "code": "ЭЛ 40 50 29 12",
+                "subclass_RU": "Счетчик газа",
+                "ifc_class": "IfcFlowMeter"
+              },
+              {
+                "code": "ЭЛ 40 50 29 13",
+                "subclass_RU": "Газовый запорный клапан",
+                "ifc_class": "IfcDamper"
+              }
+            ]
+          },
+          {
+            "class_RU": "Бытовые электроприборы",
+            "code_class": "ЭЛ 40 50 30",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 30 10",
+                "subclass_RU": "Вытяжка кухонная",
+                "ifc_class": "IfcElectricAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 30 15",
+                "subclass_RU": "Микроволновая печь",
+                "ifc_class": "IfcElectricAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 30 20",
+                "subclass_RU": "Плита электрическая",
+                "ifc_class": "IfcElectricAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 30 25",
+                "subclass_RU": "Посудомоечная машина",
+                "ifc_class": "IfcElectricAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 30 30",
+                "subclass_RU": "Стиральная машина",
+                "ifc_class": "IfcElectricAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 30 35",
+                "subclass_RU": "Телевизор",
+                "ifc_class": "IfcElectricAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 30 40",
+                "subclass_RU": "Холодильник",
+                "ifc_class": "IfcElectricAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 30 45",
+                "subclass_RU": "Шкаф духовой",
+                "ifc_class": "IfcElectricAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 30 50",
+                "subclass_RU": "Полотенцесушитель электрический",
+                "ifc_class": "IfcSpaceHeater"
+              }
+            ]
+          },
+          {
+            "class_RU": "Мультимедийное оборудование",
+            "code_class": "ЭЛ 40 50 35",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 35 10",
+                "subclass_RU": "Видеокамера",
+                "ifc_class": "IfcAudioVisualAppliance"
+              }
+            ]
+          },
+          {
+            "class_RU": "Сантехнические приборы",
+            "code_class": "ЭЛ 40 50 40",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 40 10",
+                "subclass_RU": "Биде",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 15",
+                "subclass_RU": "Ванна",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 20",
+                "subclass_RU": "Душевая кабина",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 25",
+                "subclass_RU": "Кухонная мойка",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 30",
+                "subclass_RU": "Мойка",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 35",
+                "subclass_RU": "Писсуар",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 40",
+                "subclass_RU": "Поддон душевой",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 45",
+                "subclass_RU": "Прочие приборы",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 50",
+                "subclass_RU": "Раковина",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 51",
+                "subclass_RU": "Сантехкабина",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 52",
+                "subclass_RU": "Сантехподдон",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 53",
+                "subclass_RU": "Пьедестал под умывальник",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 55",
+                "subclass_RU": "Смеситель",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 60",
+                "subclass_RU": "Смывной бачок",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 65",
+                "subclass_RU": "Умывальник",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 70",
+                "subclass_RU": "Унитаз",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 72",
+                "subclass_RU": "Экран ванной",
+                "ifc_class": "IfcSanitaryTerminal"
+              },
+              {
+                "code": "ЭЛ 40 50 40 73",
+                "subclass_RU": "Полотенцесушитель проточный",
+                "ifc_class": "IfcSpaceHeater"
+              },
+              {
+                "code": "ЭЛ 40 50 40 74",
+                "subclass_RU": "Сифон",
+                "ifc_class": "IfcWasteTerminal"
+              }
+            ]
+          },
+          {
+            "class_RU": "Осветительные приборы",
+            "code_class": "ЭЛ 40 50 50",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 50 10",
+                "subclass_RU": "Бра",
+                "ifc_class": "IfcLightFixture"
+              },
+              {
+                "code": "ЭЛ 40 50 50 20",
+                "subclass_RU": "Люстра",
+                "ifc_class": "IfcLightFixture"
+              },
+              {
+                "code": "ЭЛ 40 50 50 25",
+                "subclass_RU": "Прожектор",
+                "ifc_class": "IfcLightFixture"
+              },
+              {
+                "code": "ЭЛ 40 50 50 30",
+                "subclass_RU": "Светильник",
+                "ifc_class": "IfcLightFixture"
+              },
+              {
+                "code": "ЭЛ 40 50 50 35",
+                "subclass_RU": "Софит",
+                "ifc_class": "IfcLightFixture"
+              },
+              {
+                "code": "ЭЛ 40 50 50 40",
+                "subclass_RU": "Торшер",
+                "ifc_class": "IfcLightFixture"
+              },
+              {
+                "code": "ЭЛ 40 50 50 45",
+                "subclass_RU": "Фонарь",
+                "ifc_class": "IfcLightFixture"
+              },
+              {
+                "code": "ЭЛ 40 50 50 50",
+                "subclass_RU": "Наружный светильник",
+                "ifc_class": "IfcLightFixture"
+              },
+              {
+                "code": "ЭЛ 40 50 50 55",
+                "subclass_RU": "Указатель направления движения",
+                "ifc_class": "IfcLightFixture"
+              },
+              {
+                "code": "ЭЛ 40 50 50 60",
+                "subclass_RU": "Указатель эвакуационного выхода",
+                "ifc_class": "IfcLightFixture"
+              },
+              {
+                "code": "ЭЛ 40 50 50 65",
+                "subclass_RU": "Указатель ПК",
+                "ifc_class": "IfcLightFixture"
+              }
+            ]
+          },
+          {
+            "class_RU": "Лампа",
+            "code_class": "ЭЛ 40 50 51",
+            "ifc_class": "IfcLamp"
+          },
+          {
+            "class_RU": "Оборудование для передачи данных",
+            "code_class": "ЭЛ 40 50 55",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 55 05",
+                "subclass_RU": "Антенна",
+                "ifc_class": "IfcCommunicationsAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 55 10",
+                "subclass_RU": "Автомат",
+                "ifc_class": "IfcCommunicationsAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 55 15",
+                "subclass_RU": "Компьютер",
+                "ifc_class": "IfcCommunicationsAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 55 20",
+                "subclass_RU": "Периферийное оборудование",
+                "ifc_class": "IfcCommunicationsAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 55 25",
+                "subclass_RU": "Сетевое оборудование",
+                "ifc_class": "IfcCommunicationsAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 55 30",
+                "subclass_RU": "Модем",
+                "ifc_class": "IfcCommunicationsAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 55 35",
+                "subclass_RU": "Сетевой концентратор, хаб",
+                "ifc_class": "IfcCommunicationsAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 55 40",
+                "subclass_RU": "Устройство оптической сети",
+                "ifc_class": "IfcCommunicationsAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 55 45",
+                "subclass_RU": "Телеуправление",
+                "ifc_class": "IfcCommunicationsAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 55 50",
+                "subclass_RU": "Телефонная станция, коммутатор",
+                "ifc_class": "IfcCommunicationsAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 55 55",
+                "subclass_RU": "Преобразователь сигнала ",
+                "ifc_class": "IfcCommunicationsAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 55 60",
+                "subclass_RU": "Транспондер ",
+                "ifc_class": "IfcCommunicationsAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 55 65",
+                "subclass_RU": "Оборудование сети передачи данных",
+                "ifc_class": "IfcCommunicationsAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 55 70",
+                "subclass_RU": "Маршрутизатор",
+                "ifc_class": "IfcCommunicationsAppliance"
+              },
+              {
+                "code": "ЭЛ 40 50 55 75",
+                "subclass_RU": "Блок вызова",
+                "ifc_class": "IfcCommunicationsAppliance"
+              }
+            ]
+          },
+          {
+            "class_RU": "Шкафы, щиты",
+            "code_class": "ЭЛ 40 50 60",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 60 25",
+                "subclass_RU": "Щит огнезащитный",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 50 60 40",
+                "subclass_RU": "Шкаф электрический (корпус)",
+                "ifc_class": "IfcJunctionBox"
+              },
+              {
+                "code": "ЭЛ 40 50 60 50",
+                "subclass_RU": "Шкаф пожарный",
+                "ifc_class": "IfcFurniture"
+              }
+            ]
+          },
+          {
+            "class_RU": "Устройства распределительные",
+            "code_class": "ЭЛ 40 50 65",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 65 02",
+                "subclass_RU": "Распределительный щит",
+                "ifc_class": "IfcElectricDistributionBoard"
+              },
+              {
+                "code": "ЭЛ 40 50 65 03",
+                "subclass_RU": "Щит управления электродвигателями",
+                "ifc_class": "IfcElectricDistributionBoard"
+              },
+              {
+                "code": "ЭЛ 40 50 65 04",
+                "subclass_RU": "Коммутатор сетевой",
+                "ifc_class": "IfcElectricDistributionBoard"
+              },
+              {
+                "code": "ЭЛ 40 50 65 05",
+                "subclass_RU": "Коммутатор оптический",
+                "ifc_class": "IfcElectricDistributionBoard"
+              },
+              {
+                "code": "ЭЛ 40 50 65 06",
+                "subclass_RU": "Вводно-распределительное устройство (ВРУ)",
+                "ifc_class": "IfcElectricDistributionBoard"
+              }
+            ]
+          },
+          {
+            "class_RU": "Накопитель заряда",
+            "code_class": "ЭЛ 40 50 70",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 70 01",
+                "subclass_RU": "Конденсатор",
+                "ifc_class": "IfcElectricFlowStorageDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 70 02",
+                "subclass_RU": "Компенсатор",
+                "ifc_class": "IfcElectricFlowStorageDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 70 03",
+                "subclass_RU": "Индуктор",
+                "ifc_class": "IfcElectricFlowStorageDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 70 04",
+                "subclass_RU": "Зарядное устройство",
+                "ifc_class": "IfcElectricFlowStorageDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 70 05",
+                "subclass_RU": "Источник бесперебойного питания",
+                "ifc_class": "IfcElectricFlowStorageDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 70 06",
+                "subclass_RU": "Аккумуляторная батарея",
+                "ifc_class": "IfcElectricFlowStorageDevice"
+              }
+            ]
+          },
+          {
+            "class_RU": "Устройства защиты электрической сети",
+            "code_class": "ЭЛ 40 50 80",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 80 01",
+                "subclass_RU": "Устройство обнаружения дугового разряда",
+                "ifc_class": "IfcProtectiveDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 80 02",
+                "subclass_RU": "Разрядник",
+                "ifc_class": "IfcProtectiveDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 80 03",
+                "subclass_RU": "Регулятор напряжения",
+                "ifc_class": "IfcProtectiveDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 80 04",
+                "subclass_RU": "Заземлитель",
+                "ifc_class": "IfcProtectiveDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 80 05",
+                "subclass_RU": "Токоотвод",
+                "ifc_class": "IfcCableSegment"
+              },
+              {
+                "code": "ЭЛ 40 50 80 06",
+                "subclass_RU": "Молниеприемник",
+                "ifc_class": "IfcProtectiveDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 80 07",
+                "subclass_RU": "Выключатель автоматический ",
+                "ifc_class": "IfcProtectiveDevice"
+              },
+              {
+                "code": "ЭЛ 40 50 80 08",
+                "subclass_RU": "Устройство защитного отключения",
+                "ifc_class": "IfcProtectiveDevice"
+              }
+            ]
+          },
+          {
+            "class_RU": "Устройства сбора солнечной энергии",
+            "code_class": "ЭЛ 40 50 90",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 50 90 01",
+                "subclass_RU": "Солнечная батарея",
+                "ifc_class": "IfcSolarDevice"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Контрольно-измерительные приборы и аппаратура",
+        "code_purpose": "ЭЛ 40 55",
+        "classes": [
+          {
+            "class_RU": "Аппаратура",
+            "code_class": "ЭЛ 40 55 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 55 10 10",
+                "subclass_RU": "Монитор"
+              },
+              {
+                "code": "ЭЛ 40 55 10 20",
+                "subclass_RU": "Контрольная панель",
+                "ifc_class": "IfcController"
+              },
+              {
+                "code": "ЭЛ 40 55 10 30",
+                "subclass_RU": "Громкоговоритель",
+                "ifc_class": "IfcAudioVisualAppliance"
+              },
+              {
+                "code": "ЭЛ 40 55 10 40",
+                "subclass_RU": "Сирена",
+                "ifc_class": "IfcAlarm"
+              },
+              {
+                "code": "ЭЛ 40 55 10 50",
+                "subclass_RU": "Блок управления",
+                "ifc_class": "IfcController"
+              }
+            ]
+          },
+          {
+            "class_RU": "Контрольно-измерительные приборы",
+            "code_class": "ЭЛ 40 55 20",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 55 20 10",
+                "subclass_RU": "Датчик",
+                "ifc_class": "IfcSensor"
+              },
+              {
+                "code": "ЭЛ 40 55 20 12",
+                "subclass_RU": "Датчик движения",
+                "ifc_class": "IfcSensor"
+              },
+              {
+                "code": "ЭЛ 40 55 20 13",
+                "subclass_RU": "Манометр",
+                "ifc_class": "IfcFlowInstrument"
+              },
+              {
+                "code": "ЭЛ 40 55 20 14",
+                "subclass_RU": "Счетчик",
+                "ifc_class": "IfcFlowInstrument"
+              },
+              {
+                "code": "ЭЛ 40 55 20 15",
+                "subclass_RU": "Термометр",
+                "ifc_class": "IfcFlowInstrument"
+              },
+              {
+                "code": "ЭЛ 40 55 20 16",
+                "subclass_RU": "Дозиметр",
+                "ifc_class": "IfcSensor"
+              },
+              {
+                "code": "ЭЛ 40 55 20 17",
+                "subclass_RU": "Детектор",
+                "ifc_class": "IfcFlowInstrument"
+              },
+              {
+                "code": "ЭЛ 40 55 20 18",
+                "subclass_RU": "Пылемер",
+                "ifc_class": "IfcFlowInstrument"
+              },
+              {
+                "code": "ЭЛ 40 55 20 19",
+                "subclass_RU": "Расходомер",
+                "ifc_class": "IfcFlowInstrument"
+              },
+              {
+                "code": "ЭЛ 40 55 20 20",
+                "subclass_RU": "Тахометр",
+                "ifc_class": "IfcFlowInstrument"
+              },
+              {
+                "code": "ЭЛ 40 55 20 21",
+                "subclass_RU": "Термогигрометр",
+                "ifc_class": "IfcFlowInstrument"
+              },
+              {
+                "code": "ЭЛ 40 55 20 25",
+                "subclass_RU": "Индикатор",
+                "ifc_class": "IfcFlowInstrument"
+              },
+              {
+                "code": "ЭЛ 40 55 20 30",
+                "subclass_RU": "Вольтметр",
+                "ifc_class": "IfcFlowInstrument"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Элементы интерьера",
+        "code_purpose": "ЭЛ 40 60",
+        "classes": [
+          {
+            "class_RU": "Мебель",
+            "code_class": "ЭЛ 40 60 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 60 10 10",
+                "subclass_RU": "Барная стойка",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 12",
+                "subclass_RU": "Гардероб",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 13",
+                "subclass_RU": "Диван",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 14",
+                "subclass_RU": "Зеркало",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 15",
+                "subclass_RU": "Камин",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 16",
+                "subclass_RU": "Кресло",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 17",
+                "subclass_RU": "Кровать",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 18",
+                "subclass_RU": "Кухонный гарнитур",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 19",
+                "subclass_RU": "Полка мебельная",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 20",
+                "subclass_RU": "Стеллаж",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 21",
+                "subclass_RU": "Стенка",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 23",
+                "subclass_RU": "Стол",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 24",
+                "subclass_RU": "Стул",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 25",
+                "subclass_RU": "Тумбочка",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 26",
+                "subclass_RU": "Шкаф",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 27",
+                "subclass_RU": "Шкаф-купе",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 28",
+                "subclass_RU": "Кашпо напольное",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 29",
+                "subclass_RU": "Кресло для трибун",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 30",
+                "subclass_RU": "Обеденная группа",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 31",
+                "subclass_RU": "Журнальный стол",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 32",
+                "subclass_RU": "Сиденье откидное",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 33",
+                "subclass_RU": "Скамья",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 34",
+                "subclass_RU": "Банкетка",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 35",
+                "subclass_RU": "Бокс",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 36",
+                "subclass_RU": "Корпус",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 37",
+                "subclass_RU": "Сейф",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 10 38",
+                "subclass_RU": "Ящик почтовый",
+                "ifc_class": "IfcFurniture"
+              }
+            ]
+          },
+          {
+            "class_RU": "Мебельная фурнитура",
+            "code_class": "ЭЛ 40 60 20",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 60 20 10",
+                "subclass_RU": "Доводчик двери",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 20 20",
+                "subclass_RU": "Кронштейн мебельный",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 20 30",
+                "subclass_RU": "Мебельная ручка",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 20 40",
+                "subclass_RU": "Мебельная петля",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 20 50",
+                "subclass_RU": "Мебельный замок",
+                "ifc_class": "IfcFurniture"
+              },
+              {
+                "code": "ЭЛ 40 60 20 60",
+                "subclass_RU": "Мебельный ограничитель",
+                "ifc_class": "IfcFurniture"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Спортивное оборудование",
+        "code_purpose": "ЭЛ 40 62",
+        "classes": [
+          {
+            "class_RU": "Спортивный инвентарь",
+            "code_class": "ЭЛ 40 62 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 40 62 10 10",
+                "subclass_RU": "Батутная арена",
+                "ifc_class": "IfcBuildingElementProxy"
+              },
+              {
+                "code": "ЭЛ 40 62 10 11",
+                "subclass_RU": "Батут",
+                "ifc_class": "IfcBuildingElementProxy"
+              },
+              {
+                "code": "ЭЛ 40 62 10 12",
+                "subclass_RU": "Спортивный ринг",
+                "ifc_class": "IfcBuildingElementProxy"
+              },
+              {
+                "code": "ЭЛ 40 62 10 13",
+                "subclass_RU": "Скалодром",
+                "ifc_class": "IfcBuildingElementProxy"
+              },
+              {
+                "code": "ЭЛ 40 62 10 14",
+                "subclass_RU": "Трибуна",
+                "ifc_class": "IfcBuildingElementProxy"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "category": "Гидротехнические сооружения",
+    "code_category": "ЭЛ 50",
+    "purposes": [
+      {
+        "purpose": "Защитные сооружения",
+        "code_purpose": "ЭЛ 50 10",
+        "classes": [
+          {
+            "class_RU": "Береговая защита",
+            "code_class": "ЭЛ 50 10 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 50 10 10 10",
+                "subclass_RU": "Волнорез"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Гидроэлектростанция (ГЭС)",
+        "code_purpose": "ЭЛ 50 20",
+        "classes": [
+          {
+            "class_RU": "Гидросиловое оборудование",
+            "code_class": "ЭЛ 50 20 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 50 20 10 10",
+                "subclass_RU": "Турбина"
+              },
+              {
+                "code": "ЭЛ 50 20 10 20",
+                "subclass_RU": "Генератор",
+                "ifc_class": "IfcElectricGenerator"
+              }
+            ]
+          },
+          {
+            "class_RU": "Элементы конструкции",
+            "code_class": "ЭЛ 50 20 20",
+            "subclasses": [
+              {
+                "code": "ЭЛ 50 20 20 10",
+                "subclass_RU": "Спиральная камера"
+              },
+              {
+                "code": "ЭЛ 50 20 20 20",
+                "subclass_RU": "Водовод"
+              },
+              {
+                "code": "ЭЛ 50 20 20 30",
+                "subclass_RU": "Отводящий безнапорный тоннель",
+                "ifc_class": "IfcBuildingElementProxy"
+              },
+              {
+                "code": "ЭЛ 50 20 20 40",
+                "subclass_RU": "Затвор водоприемника"
+              },
+              {
+                "code": "ЭЛ 50 20 20 50",
+                "subclass_RU": "Затвор водосброса"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "category": "Железные дороги, метрополитен",
+    "code_category": "ЭЛ 60",
+    "purposes": [
+      {
+        "purpose": "Полоса отвода железной дороги",
+        "code_purpose": "ЭЛ 60 09",
+        "classes": [
+          {
+            "class_RU": "Временная полоса отвода",
+            "code_class": "ЭЛ 60 09 01"
+          },
+          {
+            "class_RU": "Земельные участки, входящие в полосу отвода",
+            "code_class": "ЭЛ 60 09 02"
+          },
+          {
+            "class_RU": "Земельные участки, прилегающие к полосе отвода",
+            "code_class": "ЭЛ 60 09 03"
+          },
+          {
+            "class_RU": "Земельные участки, пересекаемые полосой отвода",
+            "code_class": "ЭЛ 60 09 04"
+          }
+        ]
+      },
+      {
+        "purpose": "Перегонные тоннели",
+        "code_purpose": "ЭЛ 60 10",
+        "classes": [
+          {
+            "class_RU": "Обделка тоннеля",
+            "code_class": "ЭЛ 60 10 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 60 10 10 10",
+                "subclass_RU": "Железобетонная кольцевая бетонная обделка (блок)",
+                "ifc_class": "IfcWall"
+              },
+              {
+                "code": "ЭЛ 60 10 10 20",
+                "subclass_RU": "Железобетонный тюбинг",
+                "ifc_class": "IfcWall"
+              },
+              {
+                "code": "ЭЛ 60 10 10 30",
+                "subclass_RU": "Чугунный тюбинг",
+                "ifc_class": "IfcWall"
+              },
+              {
+                "code": "ЭЛ 60 10 10 40",
+                "subclass_RU": "Монолитная обделка бетонная",
+                "ifc_class": "IfcWall"
+              },
+              {
+                "code": "ЭЛ 60 10 10 50",
+                "subclass_RU": "Монолитная обделка железобетонная",
+                "ifc_class": "IfcWall"
+              },
+              {
+                "code": "ЭЛ 60 10 10 60",
+                "subclass_RU": "Стеновой блок",
+                "ifc_class": "IfcWall"
+              },
+              {
+                "code": "ЭЛ 60 10 10 70",
+                "subclass_RU": "Блок перекрытия",
+                "ifc_class": "IfcWall"
+              },
+              {
+                "code": "ЭЛ 60 10 10 80",
+                "subclass_RU": "Цельная секция железобетонная",
+                "ifc_class": "IfcWall"
+              }
+            ]
+          },
+          {
+            "class_RU": "Путевой бетон",
+            "code_class": "ЭЛ 60 10 20",
+            "subclasses": [
+              {
+                "code": "ЭЛ 60 10 20 10",
+                "subclass_RU": "Бетонное основание под путь",
+                "ifc_class": "IfcFooting"
+              },
+              {
+                "code": "ЭЛ 60 10 20 20",
+                "subclass_RU": "Лотковый блок"
+              }
+            ]
+          },
+          {
+            "class_RU": "Тонельная крепь",
+            "code_class": "ЭЛ 60 10 30",
+            "subclasses": [
+              {
+                "code": "ЭЛ 60 10 30 10",
+                "subclass_RU": "Крепь тонельная",
+                "ifc_class": "IfcBuildingElementProxy"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Верхнее строение пути, элементы пути",
+        "code_purpose": "ЭЛ 60 20",
+        "classes": [
+          {
+            "class_RU": "Рельсы",
+            "code_class": "ЭЛ 60 20 01",
+            "subclasses": [
+              {
+                "code": "ЭЛ 60 20 01 01",
+                "subclass_RU": "Контррельс",
+                "ifc_class": "IfcRail"
+              },
+              {
+                "code": "ЭЛ 60 20 01 02",
+                "subclass_RU": "Рамный рельс",
+                "ifc_class": "IfcRail"
+              },
+              {
+                "code": "ЭЛ 60 20 01 03",
+                "subclass_RU": "Рельс",
+                "ifc_class": "IfcRail"
+              },
+              {
+                "code": "ЭЛ 60 20 01 04",
+                "subclass_RU": "Остряк",
+                "ifc_class": "IfcRail"
+              },
+              {
+                "code": "ЭЛ 60 20 01 05",
+                "subclass_RU": "Охранный контррельс",
+                "ifc_class": "IfcRail"
+              }
+            ]
+          },
+          {
+            "class_RU": "Шпала",
+            "code_class": "ЭЛ 60 20 02",
+            "ifc_class": "IfcTrackElementTypeEnum.SLEEPER"
+          },
+          {
+            "class_RU": "Стрелочные переводы",
+            "code_class": "ЭЛ 60 20 03",
+            "subclasses": [
+              {
+                "code": "ЭЛ 60 20 03 01",
+                "subclass_RU": "Одиночные стрелочные переводы"
+              },
+              {
+                "code": "ЭЛ 60 20 03 02",
+                "subclass_RU": "Обыкновенные стрелочные переводы"
+              },
+              {
+                "code": "ЭЛ 60 20 03 03",
+                "subclass_RU": "Симметричные стрелочные переводы"
+              },
+              {
+                "code": "ЭЛ 60 20 03 04",
+                "subclass_RU": "Криволинейные разносторонние стрелочные переводы"
+              },
+              {
+                "code": "ЭЛ 60 20 03 05",
+                "subclass_RU": "Криволинейные односторонние стрелочные переводы"
+              },
+              {
+                "code": "ЭЛ 60 20 03 06",
+                "subclass_RU": "Двойные перекрестные стрелочные переводы"
+              }
+            ]
+          },
+          {
+            "class_RU": "Башмак сбрасывающий ",
+            "code_class": "ЭЛ 60 20 04",
+            "ifc_class": "IfcTrackElement"
+          },
+          {
+            "class_RU": "Путевой автостоп",
+            "code_class": "ЭЛ 60 20 05",
+            "ifc_class": "IfcTrackElement"
+          },
+          {
+            "class_RU": "Упор тупиковый",
+            "code_class": "ЭЛ 60 20 06",
+            "ifc_class": "IfcTrackElement"
+          },
+          {
+            "class_RU": "Столбик предельный",
+            "code_class": "ЭЛ 60 20 07",
+            "ifc_class": "IfcTrackElement"
+          },
+          {
+            "class_RU": "Щебеночный балласт",
+            "code_class": "ЭЛ 60 20 08"
+          },
+          {
+            "class_RU": "Мостовое полотно",
+            "code_class": "ЭЛ 60 20 09"
+          },
+          {
+            "class_RU": "Глухие пересечения",
+            "code_class": "ЭЛ 60 20 10",
+            "subclasses": [
+              {
+                "code": "ЭЛ 60 20 10 01",
+                "subclass_RU": "Глухое прямоугольное пересечение"
+              }
+            ]
+          },
+          {
+            "class_RU": "Съезд",
+            "code_class": "ЭЛ 60 20 11",
+            "subclasses": [
+              {
+                "code": "ЭЛ 60 20 11 01",
+                "subclass_RU": "Съезд одиночный"
+              },
+              {
+                "code": "ЭЛ 60 20 11 02",
+                "subclass_RU": "Съезд перекрестный"
+              }
+            ]
+          },
+          {
+            "class_RU": "Стрелка сбрасывающая",
+            "code_class": "ЭЛ 60 20 12"
+          },
+          {
+            "class_RU": "Путевая плита",
+            "code_class": "ЭЛ 60 20 13",
+            "ifc_class": "IfcSlab"
+          },
+          {
+            "class_RU": "Вагонный замедлитель",
+            "code_class": "ЭЛ 60 20 14",
+            "ifc_class": "IfcTrackElement"
+          }
+        ]
+      },
+      {
+        "purpose": "Искусственные сооружения",
+        "code_purpose": "ЭЛ 60 22",
+        "classes": [
+          {
+            "class_RU": "Мостовое сооружение",
+            "code_class": "ЭЛ 60 22 01",
+            "subclasses": [
+              {
+                "code": "ЭЛ 60 22 01 01",
+                "subclass_RU": "Железнодорожный мост"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Аудио-видео связь",
+        "code_purpose": "ЭЛ 60 30",
+        "classes": [
+          {
+            "class_RU": "Телефон",
+            "code_class": "ЭЛ 60 30 01",
+            "ifc_class": "IfcAudioVisualAppliance"
+          },
+          {
+            "class_RU": "Телефон тоннельной связи",
+            "code_class": "ЭЛ 60 30 02",
+            "ifc_class": "IfcAudioVisualAppliance"
+          },
+          {
+            "class_RU": "Колонна экстренной связи",
+            "code_class": "ЭЛ 60 30 03",
+            "ifc_class": "IfcAudioVisualAppliance"
+          },
+          {
+            "class_RU": "Переговорное устройство",
+            "code_class": "ЭЛ 60 30 04",
+            "ifc_class": "IfcAudioVisualAppliance"
+          }
+        ]
+      },
+      {
+        "purpose": "Элементы кабеленесущих систем",
+        "code_purpose": "ЭЛ 60 35",
+        "classes": [
+          {
+            "class_RU": "Кабельный кронштейн",
+            "code_class": "ЭЛ 60 35 01",
+            "ifc_class": "IfcCableCarrierSegment"
+          },
+          {
+            "class_RU": "Продольно-несущий трос",
+            "code_class": "ЭЛ 60 35 02",
+            "ifc_class": "IfcCableCarrierSegment"
+          },
+          {
+            "class_RU": "Струна",
+            "code_class": "ЭЛ 60 35 04",
+            "ifc_class": "IfcCableCarrierSegment"
+          }
+        ]
+      },
+      {
+        "purpose": "Кабельные соединения",
+        "code_purpose": "ЭЛ 60 40",
+        "classes": [
+          {
+            "class_RU": "Разветвительная кабельная сборка",
+            "code_class": "ЭЛ 60 40 01",
+            "ifc_class": "IfcCableFitting"
+          },
+          {
+            "class_RU": "Клемник",
+            "code_class": "ЭЛ 60 40 02",
+            "ifc_class": "IfcCableFitting"
+          },
+          {
+            "class_RU": "Соединитель кабельный",
+            "code_class": "ЭЛ 60 40 03",
+            "ifc_class": "IfcCableFitting"
+          },
+          {
+            "class_RU": "Переход кабельный",
+            "code_class": "ЭЛ 60 40 04",
+            "ifc_class": "IfcCableFitting"
+          }
+        ]
+      },
+      {
+        "purpose": "Участки кабельной линии",
+        "code_purpose": "ЭЛ 60 45",
+        "classes": [
+          {
+            "class_RU": "Контактный провод",
+            "code_class": "ЭЛ 60 45 01",
+            "ifc_class": "IfcCableSegment"
+          }
+        ]
+      },
+      {
+        "purpose": "Контрольно-измерительные приборы и аппаратура",
+        "code_purpose": "ЭЛ 60 55",
+        "classes": [
+          {
+            "class_RU": "Датчики",
+            "code_class": "ЭЛ 60 55 06",
+            "subclasses": [
+              {
+                "code": "ЭЛ 60 55 06 01",
+                "subclass_RU": "Датчик падения посторонних предметов ",
+                "ifc_class": "IfcSensor"
+              },
+              {
+                "code": "ЭЛ 60 55 06 02",
+                "subclass_RU": "Датчик высоты снежного покрова",
+                "ifc_class": "IfcSensor"
+              },
+              {
+                "code": "ЭЛ 60 55 06 03",
+                "subclass_RU": "Датчик прохода поезда",
+                "ifc_class": "IfcSensor"
+              },
+              {
+                "code": "ЭЛ 60 55 06 04",
+                "subclass_RU": "Датчик положения остряка стрелки",
+                "ifc_class": "IfcSensor"
+              },
+              {
+                "code": "ЭЛ 60 55 06 05",
+                "subclass_RU": "Датчик колесной пары",
+                "ifc_class": "IfcSensor"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "category": "Автомобильные дороги",
+    "code_category": "ЭЛ 70",
+    "purposes": [
+      {
+        "purpose": "Полоса отвода автомобильной дороги",
+        "code_purpose": "ЭЛ 70 10",
+        "classes": [
+          {
+            "class_RU": "Временная полоса отвода",
+            "code_class": "ЭЛ 70 10 10"
+          },
+          {
+            "class_RU": "Земельные участки, входящие в полосу отвода",
+            "code_class": "ЭЛ 70 10 20"
+          },
+          {
+            "class_RU": "Земельные участки, прилегающие к полосе отвода",
+            "code_class": "ЭЛ 70 10 30"
+          },
+          {
+            "class_RU": "Земельные участки, пересекаемые полосой отвода",
+            "code_class": "ЭЛ 70 10 40"
+          }
+        ]
+      },
+      {
+        "purpose": "Земляное полотно",
+        "code_purpose": "ЭЛ 70 20",
+        "ifc_class": "IfcEarthworksElement"
+      },
+      {
+        "purpose": "Линейная часть",
+        "code_purpose": "ЭЛ 70 30",
+        "classes": [
+          {
+            "class_RU": "Ось дороги",
+            "code_class": "ЭЛ 70 30 01"
+          },
+          {
+            "class_RU": "Кромка проезжей части",
+            "code_class": "ЭЛ 70 30 02"
+          },
+          {
+            "class_RU": "Бровка дорожного полотна",
+            "code_class": "ЭЛ 70 30 03"
+          },
+          {
+            "class_RU": "Границы бермы",
+            "code_class": "ЭЛ 70 30 04"
+          },
+          {
+            "class_RU": "Внешняя бровка кювета",
+            "code_class": "ЭЛ 70 30 05"
+          },
+          {
+            "class_RU": "Внешняя бровка выемки",
+            "code_class": "ЭЛ 70 30 06"
+          },
+          {
+            "class_RU": "Границы велосипедной дорожки",
+            "code_class": "ЭЛ 70 30 07"
+          },
+          {
+            "class_RU": "Границы тротуара/Бордюр",
+            "code_class": "ЭЛ 70 30 08"
+          },
+          {
+            "class_RU": "Границы разделительной полосы",
+            "code_class": "ЭЛ 70 30 09"
+          },
+          {
+            "class_RU": "Ограждения",
+            "code_class": "ЭЛ 70 30 10",
+            "ifc_class": "IfcRailing"
+          },
+          {
+            "class_RU": "Защитные экраны",
+            "code_class": "ЭЛ 70 30 11",
+            "ifc_class": "IfcRailing"
+          }
+        ]
+      },
+      {
+        "purpose": "Поверхность дороги",
+        "code_purpose": "ЭЛ 70 40",
+        "classes": [
+          {
+            "class_RU": "Проезжая часть",
+            "code_class": "ЭЛ 70 40 01",
+            "subclasses": [
+              {
+                "code": "ЭЛ 70 40 01 01",
+                "subclass_RU": "Полоса движения",
+                "ifc_class": "IfcRoadPart"
+              },
+              {
+                "code": "ЭЛ 70 40 01 02",
+                "subclass_RU": "Обочина",
+                "ifc_class": "IfcRoadPart"
+              },
+              {
+                "code": "ЭЛ 70 40 01 03",
+                "subclass_RU": "Велосипедная дорожка",
+                "ifc_class": "IfcRoadPart"
+              },
+              {
+                "code": "ЭЛ 70 40 01 04",
+                "subclass_RU": "Разделительная полоса",
+                "ifc_class": "IfcRoadPart"
+              },
+              {
+                "code": "ЭЛ 70 40 01 05",
+                "subclass_RU": "Пешеходная дорожка",
+                "ifc_class": "IfcRoadPart"
+              }
+            ]
+          },
+          {
+            "class_RU": "Краевая полоса",
+            "code_class": "ЭЛ 70 40 04",
+            "ifc_class": "IfcRoadPart"
+          },
+          {
+            "class_RU": "Грунтовая обочина",
+            "code_class": "ЭЛ 70 40 05",
+            "ifc_class": "IfcRoadPart"
+          },
+          {
+            "class_RU": "Откос насыпи",
+            "code_class": "ЭЛ 70 40 06",
+            "ifc_class": "IfcRoadPart"
+          },
+          {
+            "class_RU": "Откос выемки",
+            "code_class": "ЭЛ 70 40 07",
+            "ifc_class": "IfcRoadPart"
+          },
+          {
+            "class_RU": "Дно кювета",
+            "code_class": "ЭЛ 70 40 08",
+            "ifc_class": "IfcRoadPart"
+          },
+          {
+            "class_RU": "Обрез",
+            "code_class": "ЭЛ 70 40 09",
+            "ifc_class": "IfcRoadPart"
+          },
+          {
+            "class_RU": "Забанкетная канава",
+            "code_class": "ЭЛ 70 40 10",
+            "ifc_class": "IfcRoadPart"
+          },
+          {
+            "class_RU": "Дорожное полотно",
+            "code_class": "ЭЛ 70 40 11",
+            "ifc_class": "IfcRoadPart"
+          },
+          {
+            "class_RU": "Пересечение в уровне дороги",
+            "code_class": "ЭЛ 70 40 12",
+            "subclasses": [
+              {
+                "code": "ЭЛ 70 40 12 01",
+                "subclass_RU": "Пешеходный переход в уровне дороги",
+                "ifc_class": "IfcRoadPart"
+              },
+              {
+                "code": "ЭЛ 70 40 12 02",
+                "subclass_RU": "Пересечение с велосипедной дорожкой в уровне с дорогой",
+                "ifc_class": "IfcRoadPart"
+              },
+              {
+                "code": "ЭЛ 70 40 12 03",
+                "subclass_RU": "Пересечение дорог в одном уровне",
+                "ifc_class": "IfcRoadPart"
+              }
+            ]
+          },
+          {
+            "class_RU": "Островок безопасности",
+            "code_class": "ЭЛ 70 40 13",
+            "ifc_class": "IfcRoadPart"
+          },
+          {
+            "class_RU": "Островок кругового перекрестка",
+            "code_class": "ЭЛ 70 40 14",
+            "ifc_class": "IfcRoadPart"
+          },
+          {
+            "class_RU": "Парковочное место",
+            "code_class": "ЭЛ 70 40 15",
+            "ifc_class": "IfcRoadPart"
+          }
+        ]
+      },
+      {
+        "purpose": "Санитарно-защитные зоны",
+        "code_purpose": "ЭЛ 70 50",
+        "classes": [
+          {
+            "class_RU": "Природоохранные территории",
+            "code_class": "ЭЛ 70 50 01"
+          },
+          {
+            "class_RU": "Зеленые насаждения",
+            "code_class": "ЭЛ 70 50 02",
+            "ifc_class": "IfcPlant"
+          }
+        ]
+      },
+      {
+        "purpose": "Искусственные сооружения",
+        "code_purpose": "ЭЛ 70 60",
+        "classes": [
+          {
+            "class_RU": "Мостовые сооружения",
+            "code_class": "ЭЛ 70 60 01",
+            "subclasses": [
+              {
+                "code": "ЭЛ 70 60 01 01",
+                "subclass_RU": "Мост"
+              },
+              {
+                "code": "ЭЛ 70 60 01 02",
+                "subclass_RU": "Путепровод"
+              },
+              {
+                "code": "ЭЛ 70 60 01 03",
+                "subclass_RU": "Эстакады"
+              }
+            ]
+          },
+          {
+            "class_RU": "Тоннели",
+            "code_class": "ЭЛ 70 60 02",
+            "subclasses": [
+              {
+                "code": "ЭЛ 70 60 02 01",
+                "subclass_RU": "Тоннель длинный",
+                "ifc_class": "IfcBuildingElementProxy"
+              },
+              {
+                "code": "ЭЛ 70 60 02 02",
+                "subclass_RU": "Тоннель короткий",
+                "ifc_class": "IfcBuildingElementProxy"
+              },
+              {
+                "code": "ЭЛ 70 60 02 03",
+                "subclass_RU": "Тоннель кругового очертания",
+                "ifc_class": "IfcBuildingElementProxy"
+              },
+              {
+                "code": "ЭЛ 70 60 02 04",
+                "subclass_RU": "Тоннель сводчатого очертания",
+                "ifc_class": "IfcBuildingElementProxy"
+              },
+              {
+                "code": "ЭЛ 70 60 02 05",
+                "subclass_RU": "Тоннель эллиптического (овального) очертания",
+                "ifc_class": "IfcBuildingElementProxy"
+              },
+              {
+                "code": "ЭЛ 70 60 02 06",
+                "subclass_RU": "Тоннель прямоугольного очертания",
+                "ifc_class": "IfcBuildingElementProxy"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "purpose": "Организация дорожного движения",
+        "code_purpose": "ЭЛ 70 70",
+        "classes": [
+          {
+            "class_RU": "Знак дорожный",
+            "code_class": "ЭЛ 70 70 01",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Светофор",
+            "code_class": "ЭЛ 70 70 02",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Узлы светофорные",
+            "code_class": "ЭЛ 70 70 03",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Консоль и мостик для знаков и светофоров",
+            "code_class": "ЭЛ 70 70 04",
+            "ifc_class": "ifcBeam"
+          },
+          {
+            "class_RU": "Ограждение барьерное",
+            "code_class": "ЭЛ 70 70 05",
+            "subclasses": [
+              {
+                "code": "ЭЛ 70 70 05 01",
+                "subclass_RU": "Ограждение барьерное одноярусное",
+                "ifc_class": "IfcRailing"
+              },
+              {
+                "code": "ЭЛ 70 70 05 02",
+                "subclass_RU": "Ограждение барьерное двухъярусное",
+                "ifc_class": "IfcRailing"
+              }
+            ]
+          },
+          {
+            "class_RU": "Искусственная дорожная неровность",
+            "code_class": "ЭЛ 70 70 06",
+            "subclasses": [
+              {
+                "code": "ЭЛ 70 70 06 01",
+                "subclass_RU": "Лежачий полицейский"
+              },
+              {
+                "code": "ЭЛ 70 70 06 02",
+                "subclass_RU": "Колесоотбойник",
+                "ifc_class": "IfcRailing"
+              }
+            ]
+          },
+          {
+            "class_RU": "Зеркало безопасности",
+            "code_class": "ЭЛ 70 70 07",
+            "ifc_class": "IfcFurniture"
+          },
+          {
+            "class_RU": "Демпфер",
+            "code_class": "ЭЛ 70 70 08",
+            "ifc_class": "IfcRailing"
+          }
+        ]
+      },
+      {
+        "purpose": "Дорожная одежда",
+        "code_purpose": "ЭЛ 70 80"
+      }
+    ]
+  },
+  {
+    "category": "Оснащение серверных",
+    "code_category": "ЭЛ 90",
+    "purposes": [
+      {
+        "purpose": "Телекоммуникационные стойки и шкафы",
+        "code_purpose": "ЭЛ 90 10",
+        "classes": [
+          {
+            "class_RU": "Телекоммуникационная стойка",
+            "code_class": "ЭЛ 90 10 01",
+            "ifc_class": "IfcElectricDistributionBoard"
+          },
+          {
+            "class_RU": "Телекоммуникационный шкаф",
+            "code_class": "ЭЛ 90 10 02",
+            "ifc_class": "IfcElectricDistributionBoard"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "category": "Проект организации строительства ",
+    "code_category": "ЭЛ 91",
+    "purposes": [
+      {
+        "purpose": "Временные строительные конструкции",
+        "code_purpose": "ЭЛ 91 10",
+        "classes": [
+          {
+            "class_RU": "Вспомогательная опора",
+            "code_class": "ЭЛ 91 10 01",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Пирс",
+            "code_class": "ЭЛ 91 10 02",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Подмости для размещения людей",
+            "code_class": "ЭЛ 91 10 03",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Подмости для размещения инструмента",
+            "code_class": "ЭЛ 91 10 04",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Подмости для размещения оборудования",
+            "code_class": "ЭЛ 91 10 05",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Шпунтовая стенка",
+            "code_class": "ЭЛ 91 10 06",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Перемычка",
+            "code_class": "ЭЛ 91 10 07",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Самоподьемная платформа",
+            "code_class": "ЭЛ 91 10 08",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Переставная платформа",
+            "code_class": "ЭЛ 91 10 09",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Направляющий каркас",
+            "code_class": "ЭЛ 91 10 10",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Сборочные подмости",
+            "code_class": "ЭЛ 91 10 11",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Сборочный стапель",
+            "code_class": "ЭЛ 91 10 12",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Аванбек",
+            "code_class": "ЭЛ 91 10 13",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Арьербек",
+            "code_class": "ЭЛ 91 10 14",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Шпренгель",
+            "code_class": "ЭЛ 91 10 15",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Приемная консоль",
+            "code_class": "ЭЛ 91 10 16",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Устройства для выборки прогиба",
+            "code_class": "ЭЛ 91 10 17",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Анкерные устройства",
+            "code_class": "ЭЛ 91 10 18",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Накаточные пути",
+            "code_class": "ЭЛ 91 10 19",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Плавучие опоры с якорными системами",
+            "code_class": "ЭЛ 91 10 20",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Плашкоуты",
+            "code_class": "ЭЛ 91 10 21",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Подкрановая эстакада",
+            "code_class": "ЭЛ 91 10 22",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Рабочий мостик",
+            "code_class": "ЭЛ 91 10 23",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Временный причал",
+            "code_class": "ЭЛ 91 10 24",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Устройство для подводного бетонирования",
+            "code_class": "ЭЛ 91 10 25",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Строительные леса",
+            "code_class": "ЭЛ 91 10 26",
+            "ifc_class": "IfcBuildingElementProxy"
+          }
+        ]
+      },
+      {
+        "purpose": "Временные ограждения строительной площадки",
+        "code_purpose": "ЭЛ 91 20",
+        "classes": [
+          {
+            "class_RU": "Забор",
+            "code_class": "ЭЛ 91 20 01",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Ограждение",
+            "code_class": "ЭЛ 91 20 02",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Ворота",
+            "code_class": "ЭЛ 91 20 03",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Калитка",
+            "code_class": "ЭЛ 91 20 04",
+            "ifc_class": "IfcBuildingElementProxy"
+          }
+        ]
+      },
+      {
+        "purpose": "Временные дороги",
+        "code_purpose": "ЭЛ 91 30",
+        "classes": [
+          {
+            "class_RU": "Технологические выезды",
+            "code_class": "ЭЛ 91 30 01",
+            "ifc_class": "IfcBuildingElementProxy"
+          },
+          {
+            "class_RU": "Внутриплощадочные дороги",
+            "code_class": "ЭЛ 91 30 02",
+            "ifc_class": "IfcBuildingElementProxy"
+          }
+        ]
+      }
+    ]
+  }
+]
