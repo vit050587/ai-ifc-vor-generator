@@ -13,6 +13,7 @@ from drawing_statistics_analyzer import DrawingStatisticsAnalyzer
 from rectangle_utils import get_two_points_bbox
 from debug_manager import save_legend_rows
 from dino_train_creator import save_dino_train_sample
+from utils import base64_to_image
 
 from config import settings
 from logger import setup_logger
@@ -43,6 +44,20 @@ class HatchingProcessor:
         self._prepare_legends()
         if load_deafult:
             self.legends += self._load_walls_types("default")
+
+    def set_legend(self, legend_object: list[dict[str, str]]):
+        self.legends = []
+        legends_designation_2_symbols: dict[str, list[Image.Image]] = {}
+        for legend_item in legend_object:
+            label = legend_item.get("label")
+            image_bs64 = legend_item.get("image")
+            if label and image_bs64:
+                symbol = base64_to_image(image_bs64)
+                legends_designation_2_symbols.setdefault(label, []).append(symbol)
+
+        for designation, symbols in legends_designation_2_symbols.items():
+            legend_symbols = [{"image": s} for s in symbols]
+            self.legends.append({"full_description": designation, "legend_symbols": legend_symbols})
 
     def reset_to_default_legends(self):
         self.legends = []

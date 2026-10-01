@@ -520,6 +520,8 @@ def _save_list_of_images(images: List[Image.Image], path: Path):
         img.save(path / f"{i}.png")
 
 def save_initial_blueprint(pdf_processor: PdfProcessor):
+    settings.DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+    
     _, img = pdf_processor.pdf_to_base64(2)
     img.save(settings.DEBUG_DIR / "initial_blueprint.png")
 
@@ -546,6 +548,8 @@ def clear_legend_rows_folder():
     path.mkdir(parents=True, exist_ok=True)
 
 def save_run_settings():
+    settings.DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+
     with open(settings.DEBUG_DIR / "run_config.json", "w", encoding="utf-8") as f:
         json.dump(
             settings.model_dump(mode="json"),

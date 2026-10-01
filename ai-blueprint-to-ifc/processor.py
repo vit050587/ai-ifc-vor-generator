@@ -22,6 +22,7 @@ import debug_manager
 from layout_processor import LayoutProcessor
 from legend_layout_processor import LegendLayoutProcessor
 from drawing_statistics_analyzer import DrawingStatisticsAnalyzer
+from wall_detection_pipeline import WallDetectionPipeline
 
 from logger import setup_logger
 from config import settings
@@ -33,6 +34,9 @@ class Processor:
         Image.MAX_IMAGE_PIXELS = settings.MAX_IMAGE_PIXELS
 
         self.PDF_PATH = pdf_path
+        # Ручная легенда от пользователя: {"items": [{"label": "Кирпич", "image": "data:image/png;base64,..."}]}.
+        # label — подпись материала, image — изображение обозначения в формате data URL; None — легенда не передана.
+        self.manual_legend = (params or {}).get("manual_legend")
 
         debug_manager.delete_debug_folder()
 
@@ -42,17 +46,33 @@ class Processor:
         self.drawing_statistics = DrawingStatisticsAnalyzer(self.pdf_processor)
         self.transformers_service = TransformerService(settings.PROMPTS_DIR)
         self.hatching_processor = HatchingProcessor(self.ollama_service, self.drawing_statistics, self.dino_service, pdf_processor=self.pdf_processor)
-        self.layout_processor = LayoutProcessor(self.pdf_processor, self.ollama_service)
-        self.legend_layout_processor = LegendLayoutProcessor(self.pdf_processor, self.dino_service)
+        self.layout_processor = None
+        self.legend_layout_processor = None
 
         self.reference_scale = (1, 200)
 
         self.current_wall_id = 0
+
     def process(self) -> Dict[str, Any]:
+        if self.manual_legend:
+            return self._process_with_hatchfinder()
+        else:
+            return self._process_with_yolo()
+        
+    def _process_with_hatchfinder(self) -> Dict[str, Any]:
+        wdp = WallDetectionPipeline(self.PDF_PATH)
+        return wdp.run(manual_legend=self.manual_legend)
+
+    def _process_with_yolo(self) -> Dict[str, Any]:
         start_time = time.time()
 
         debug_manager.save_run_settings()
         debug_manager.save_initial_blueprint(self.pdf_processor)
+        
+        if not self.layout_processor:
+            self.layout_processor = LayoutProcessor(self.pdf_processor, self.ollama_service)
+        if not self.legend_layout_processor:
+            self.legend_layout_processor = LegendLayoutProcessor(self.pdf_processor, self.dino_service)
 
         global_blueprint_scale = self._get_scale()
         if not global_blueprint_scale:

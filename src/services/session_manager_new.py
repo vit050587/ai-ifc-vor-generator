@@ -1703,7 +1703,6 @@ class SessionManager:
                 from src.services.ifc_reference_builder import (
                     build_reference_output,
                     split_leaf_groups_by_part,
-                    split_leaf_groups_by_name,
                 )
                 from src.services.api_works_lookup import (
                     fetch_works_from_api,
@@ -1725,15 +1724,6 @@ class SessionManager:
                     filtered_path, sheet_name='Данные'
                 ).to_dict('records')
                 api_leaf_groups = split_leaf_groups_by_part(leaf_groups, elements_rows)
-
-                # Разделение групп по типу элемента (имя без № экземпляра) —
-                # группировка итогового перечня КР приводится к виду режима ИИ
-                # (perechen_pipeline): элементы одного типоразмера образуют
-                # отдельную группу, поэтому «Кол-во», объёмы и работы считаются
-                # по конкретному типоразмеру, а не по геометрическому диапазону
-                # целиком. Сумма показателей подгрупп равна показателям
-                # исходной группы (объёмы не меняются).
-                api_leaf_groups = split_leaf_groups_by_name(api_leaf_groups, elements_rows)
 
                 # Преобразуем листовые группы в формат ifc_raw_elements_grouped.json
                 api_groups = build_reference_output(api_leaf_groups, groups)
@@ -1852,21 +1842,11 @@ class SessionManager:
                         if os.path.isfile(stale_path):
                             os.remove(stale_path)
 
-                    if os.getenv("WORKS_SELECTOR", "llm").strip().lower() == "perechen":
-                        # Подбор по перечню сметчиков (data/perechen_kr.xlsx) +
-                        # локальная LLM (perechen_kb) вместо works_final_selector:
-                        # Финальный_перечень_работ.json/.xlsx + analytic.json.
-                        from src.services.perechen_pipeline import build_final_from_perechen
-                        build_final_from_perechen(
-                            tables_json_path=works_json_path,
-                            run_dir=run_dir,
-                        )
-                    else:
-                        select_final_works(
-                            tables_json_path=works_json_path,
-                            works_json_path=works_fetcher_path,
-                            run_dir=run_dir,
-                        )
+                    select_final_works(
+                        tables_json_path=works_json_path,
+                        works_json_path=works_fetcher_path,
+                        run_dir=run_dir,
+                    )
                 except Exception as exc:
                     # Шаг вспомогательный: ошибка LLM не должна ломать
                     # финальную сборку запуска.

@@ -713,24 +713,6 @@
             .legend-item { flex-wrap: wrap; }
             .legend-item input[type="file"] { flex: 1 1 100%; }
         }
-    
-        /* ===== Окно просмотра результата: полный текст без обрезки ===== */
-        #previewModal .modal { max-width: 96vw !important; width: 96vw; }
-        #previewModal .table-wrap td {
-            max-width: none;
-            white-space: normal;
-            overflow: visible;
-            text-overflow: clip;
-            overflow-wrap: anywhere;
-            vertical-align: top;
-        }
-        #previewModal .table-wrap td:hover { box-shadow: none; max-width: none; }
-        #previewModal .table-wrap td:first-child { white-space: nowrap; }
-        #previewModal .table-wrap td:nth-child(n+4) { white-space: nowrap; }
-        #previewModal .table-wrap td:nth-child(2) { min-width: 480px; }
-        #previewModal tr.pv-part td { background: #cbd5e0 !important; font-weight: 700; }
-        #previewModal tr.pv-group td { background: #edf2f7 !important; font-weight: 600; }
-        #previewModal tr.pv-total td { font-weight: 700; border-top: 2px solid #a0aec0; }
     </style>
 </head>
 <body>
@@ -2553,24 +2535,7 @@ function startProcessingPolling(sessionId) {
     }, 2000);
 }
 
-// Повторный запуск без повторной загрузки модели: после завершения обработки
-// кнопка снова активна, следующий запуск идёт через new_run
-// (новая папка run_NNN со своим итоговым Excel).
-function _enableRerun() {
-    isNewRunMode = true;
-    const b = document.getElementById('selectRowsBtn');
-    if (!b) return;
-    b.disabled = false;
-    b.innerHTML = `🚀 Запустить обработку (<span id="selectedCount">${selectedRows.size}</span>)`;
-    if (typeof updateSelectionUI === 'function') updateSelectionUI();
-}
-
 async function onProcessingComplete(sessionId) {
-    try { await _onProcessingCompleteOrig(sessionId); }
-    finally { _enableRerun(); }
-}
-
-async function _onProcessingCompleteOrig(sessionId) {
     document.getElementById('processingProgressBar').style.width = '100%';
     document.getElementById('processingProgressText').textContent = 'Обработка завершена';
     updateProcessingTypeBadges();
@@ -3705,28 +3670,39 @@ function groupRowsCommon(mode) {
         });
     };
 
-    // ============================================================
-    // Группировка ИИ: Часть здания (L1) → Код МССК (L2) → Материал → Наименование.
-    // Часть здания определяется по колонке «Этаж» (как в бэкенде group_excel).
-    // ============================================================
     if (mode === 'ИИ') {
-        const partLabelsAR = {
-            'Подземная': 'Подземная часть здания (до отм. 0,000)',
-            'Цоколь': 'Цокольная часть здания (отм. 0,000)',
-            'Надземная': 'Надземная часть здания (выше отм. 0,000)'
-        };
-        const partOfRow = rd => (partOrder.includes(rd.part) ? rd.part : 'Надземная');
+        const msskGroups = {};
+        rowData.forEach(rd => {
+            const key = rd.mssk.code ? `${rd.mssk.code}__${rd.mssk.name}` : '__OTHER__';
+            if (!msskGroups[key]) msskGroups[key] = { ...rd.mssk, rows: [] };
+            msskGroups[key].rows.push(rd);
+        });
 
-        partOrder.forEach(part => {
-            const partRows = rowData.filter(rd => partOfRow(rd) === part);
-            if (partRows.length === 0) return;
+        // Сортируем группы: сначала известные (по порядку в справочнике),
+        // затем «Прочее»
+        const groupKeys = Object.keys(msskGroups);
+        groupKeys.sort((a, b) => {
+            const ga = msskGroups[a], gb = msskGroups[b];
+            if (ga.order !== gb.order) return ga.order - gb.order;
+            return (ga.name || '').localeCompare(gb.name || '');
+        });
 
-            let partVolume = 0, partArea = 0;
-            partRows.forEach(rd => { partVolume += getVolume(rd.index); partArea += getArea(rd.index); });
+        groupKeys.forEach(key => {
+            const group = msskGroups[key];
+            const groupRows = group.rows;
+            if (groupRows.length === 0) return;
 
-            // Уровень 1: Часть здания
-            const l1Id = 'L1_' + (groupCounter++);
-            groupIndexMap[l1Id] = partRows.map(r => r.index);
+            let groupVolume = 0;
+            groupRows.forEach(rd => { groupVolume += getVolume(rd.index); });
+            let groupArea = 0;
+            groupRows.forEach(rd => { groupArea += getArea(rd.index); });
+
+            // Название группы: название из справочника МССК, «Прочее» для неизвестных
+            const label = group.name || 'Прочее';
+
+            // Уровень 1: Код МССК
+            const l1Id = 'MSSK_' + (groupCounter++);
+            groupIndexMap[l1Id] = groupRows.map(r => r.index);
             groupLevel[l1Id] = 1;
             groupChildren[l1Id] = [];
 
@@ -3738,81 +3714,26 @@ function groupRowsCommon(mode) {
                 if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
                 toggleGroup(l1Id);
             };
+
             l1Tr.innerHTML = `
                 <td style="text-align:center;">
                     <span class="group-arrow" id="${l1Id}_arrow">▶</span>
                     <input type="checkbox" class="group-checkbox" data-group-id="${l1Id}">
                 </td>
                 <td colspan="${totalCols - 1}" style="font-weight:700; font-size:15px; color:#2d3748;">
-                    🏗️ ${partLabelsAR[part] || part}
-                    <span class="group-badge">×${partRows.length}</span>
-                    <span style="font-size:11px; color:#4a5568; margin-left:12px;">Σ Объём: ${partVolume.toFixed(2)} м³${fmtAreaSummary(partArea)}</span>
+                    📋 ${label}
+                    ${group.code ? `<span style="color:#718096; margin-left:8px;">(${group.code})</span>` : ''}
+                    <span class="group-badge">×${groupRows.length}</span>
+                    <span style="font-size:11px; color:#4a5568; margin-left:12px;">Σ Объём: ${groupVolume.toFixed(2)} м³${fmtAreaSummary(groupArea)}</span>
                 </td>
             `;
             body.appendChild(l1Tr);
-            l1Tr.querySelector('.group-checkbox').addEventListener('change', function(e) {
-                e.stopPropagation(); toggleGroupSelection(l1Id, this.checked);
-            });
 
-            // Уровень 2: Код МССК внутри части здания
-            const msskGroups = {};
-            partRows.forEach(rd => {
-                const key = rd.mssk.code ? `${rd.mssk.code}__${rd.mssk.name}` : '__OTHER__';
-                if (!msskGroups[key]) msskGroups[key] = { ...rd.mssk, rows: [] };
-                msskGroups[key].rows.push(rd);
-            });
-            const groupKeys = Object.keys(msskGroups);
-            groupKeys.sort((a, b) => {
-                const ga = msskGroups[a], gb = msskGroups[b];
-                if (ga.order !== gb.order) return ga.order - gb.order;
-                return (ga.name || '').localeCompare(gb.name || '');
-            });
+            const l1Cb = l1Tr.querySelector('.group-checkbox');
+            l1Cb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(l1Id, this.checked); });
 
-            groupKeys.forEach(key => {
-                const group = msskGroups[key];
-                const groupRows = group.rows;
-                if (groupRows.length === 0) return;
-
-                let groupVolume = 0, groupArea = 0;
-                groupRows.forEach(rd => { groupVolume += getVolume(rd.index); groupArea += getArea(rd.index); });
-                const label = group.name || 'Прочее';
-
-                const l2Id = 'MSSK_' + (groupCounter++);
-                groupIndexMap[l2Id] = groupRows.map(r => r.index);
-                groupLevel[l2Id] = 2;
-                groupParent[l2Id] = l1Id;
-                groupChildren[l2Id] = [];
-                groupChildren[l1Id].push(l2Id);
-
-                const l2Tr = document.createElement('tr');
-                l2Tr.className = 'group-row hidden-row';
-                l2Tr.dataset.group = l1Id;
-                l2Tr.dataset.groupId = l2Id;
-                l2Tr.style.cssText = 'background:#edf2f7 !important; cursor:pointer;';
-                l2Tr.onclick = function(e) {
-                    if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
-                    toggleGroup(l2Id);
-                };
-                l2Tr.innerHTML = `
-                    <td style="text-align:center; padding-left: 30px;">
-                        <span class="group-arrow" id="${l2Id}_arrow">▶</span>
-                        <input type="checkbox" class="group-checkbox" data-group-id="${l2Id}">
-                    </td>
-                    <td colspan="${totalCols - 1}" style="font-weight:600; color:#2d3748;">
-                        📋 ${label}
-                        ${group.code ? `<span style="color:#718096; margin-left:8px;">(${group.code})</span>` : ''}
-                        <span class="group-badge">×${groupRows.length}</span>
-                        <span style="font-size:11px; color:#4a5568; margin-left:12px;">Σ Объём: ${groupVolume.toFixed(2)} м³${fmtAreaSummary(groupArea)}</span>
-                    </td>
-                `;
-                body.appendChild(l2Tr);
-                l2Tr.querySelector('.group-checkbox').addEventListener('change', function(e) {
-                    e.stopPropagation(); toggleGroupSelection(l2Id, this.checked);
-                });
-
-                // Материал → Наименование (на уровень глубже)
-                addMaterialAndNameGroupsAR(l2Id, groupRows, 60);
-            });
+            // L2: Материал → L3: Наименование
+            addMaterialAndNameGroupsAR(l1Id, groupRows, 30);
         });
 
         document.getElementById('autoGroupBtn').style.display = 'none';
@@ -4110,14 +4031,7 @@ function previewResultFile(filename) {
                     const isCost = highlightCols.has(i) && cell !== '-' && cell !== '';
                     return `<td title="${cell}"${isCost ? ' style="font-weight:600;color:#234e52;background:#f0fff4;"' : ''}>${cell}</td>`;
                 }).join('');
-                return `<tr${(() => {
-                    const empty = v => v === '-' || v === '' || v === null || v === undefined;
-                    const label = String(row[1] ?? '');
-                    if (/^ИТОГО/.test(label)) return ' class="pv-total"';
-                    if (empty(row[0]) && !empty(row[1]) && row.slice(2).every(empty))
-                        return (label === label.toUpperCase()) ? ' class="pv-part"' : ' class="pv-group"';
-                    return '';
-                })()}>` + cells + '</tr>';
+                return '<tr>' + cells + '</tr>';
             }).join('');
         })
         .catch(e => { document.getElementById('previewModalInfo').textContent = 'Ошибка загрузки'; document.getElementById('previewModalInfo').style.color = '#fc8181'; });
@@ -4581,244 +4495,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.key === 'Escape') { closePreview(); closeBlueprintImage(); closeMaterialsLegend(); closeSessionJsonModal(); close3DViewer(); }
     });
 });
-</script>
-
-<style>
-#pdFoundCard { margin: 12px 0 16px; padding: 14px 16px; border: 1px solid #bee3f8; background: #f7fbff; border-radius: 10px; }
-#pdFoundCard h4 { margin: 0 0 8px; font-size: 15px; color: #2c5282; }
-#pdFoundCard table { width: 100%; border-collapse: collapse; font-size: 13px; }
-#pdFoundCard td, #pdFoundCard th { padding: 5px 8px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: top; }
-#pdFoundCard .src { color: #718096; white-space: nowrap; }
-#pdFoundCard .nomatch { color: #c05621; font-size: 12px; }
-#pdFoundCard button { margin-top: 10px; }
-</style>
-<script>
-/* PD_V5 — панель «Всё найденное в ПОС и ПЗ» (полный разбор pd_full) и режим «с учётом ПОС/ПЗ».
-   Показывается только в режиме ИИ (AI). */
-(function(){
-  let mode='on', lastSid=null, pos={}, posFile='', full=null, fullStatus='', fullSid=null;
-  const origCollect = window.collectArConstants;
-  window.collectArConstants = function(){ if(mode==='off') return {}; const r=origCollect(); for(const n in pos){ const v=pos[n]; if(v!==undefined && v!==null && v!=='' && !r[n]) r[n]=v; } return r; };
-  function esc(t){ return String(t).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-  function norm(t){ return String(t||'').toLowerCase().replace(/\s+/g,' ').trim(); }
-  function label(sel){
-    let w=sel.parentElement;
-    for(let i=0;i<3&&w;i++,w=w.parentElement){ const l=w.querySelector('label'); if(l) return l.textContent.trim(); }
-    return sel.dataset.constName;
-  }
-  function fields(){ return document.getElementById('arConstantsFields'); }
-
-  function panel(){
-    const btn=document.getElementById('selectRowsBtn'); if(!btn) return null;
-    let c=document.getElementById('pdPanel');
-    if(!c){
-      c=document.createElement('div'); c.id='pdPanel';
-      c.style.cssText='border:1px solid #9ec5fe;background:#f4f8ff;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:14px';
-      c.innerHTML='<div id="pdList"></div>'
-        +'<div style="margin-top:10px;padding-top:10px;border-top:1px solid #d6e4ff">'
-        +'<b>Как считать:</b>&nbsp; <label><input type="radio" name="pdMode" value="on" checked> с учётом ПОС и ПЗ</label>'
-        +'&nbsp;&nbsp; <label><input type="radio" name="pdMode" value="off"> без учёта (только модель)</label>'
-        +'&nbsp;&nbsp;&nbsp; <a href="#" id="pdEdit">✎ изменить вручную</a></div>';
-      btn.parentElement.before(c);
-      c.querySelectorAll('input[name=pdMode]').forEach(r=>r.onchange=()=>{ mode=r.value; render(); });
-      c.querySelector('#pdEdit').onclick=e=>{ e.preventDefault(); const f=fields(); if(f){ f.style.display = f.style.display==='none' ? '' : 'none'; if(f.style.display!=='none') f.scrollIntoView({behavior:'smooth',block:'center'}); } };
-      const all=document.createElement('button');
-      all.className='btn btn-success'; all.id='pdAllBtn'; all.style.marginLeft='8px';
-      all.textContent='✅ Рассчитать все элементы';
-      all.onclick=()=>{ if(typeof selectAllRows==='function') selectAllRows(); setTimeout(()=>{ if(typeof confirmRowSelection==='function') confirmRowSelection(); },200); };
-      btn.after(all);
-      const f=fields(); if(f) f.style.display='none';
-    }
-    return c;
-  }
-  function render(){
-    const c=panel(); if(!c) return;
-    const f=fields(); const sels=f?Array.from(f.querySelectorAll('select[data-const-name]')):[];
-    const off = mode==='off';
-    let h='<b>📄 Параметры для расчёта</b> '+(off
-      ?'<span style="color:#b02a37">— ПОС и ПЗ НЕ учитываются, берутся значения по умолчанию</span>'
-      :'<span style="color:#198754">— применяются ко всем выбранным элементам</span>');
-    h+='<table style="margin-top:6px;border-collapse:collapse;'+(off?'opacity:.45':'')+'">';
-    sels.forEach(sel=>{
-      const opt=sel.options[sel.selectedIndex]; const v=opt?opt.text.trim():'';
-      const pv=pos[sel.dataset.constName];
-      const fromPos = pv!==undefined && pv!==null && pv!=='' && (norm(pv)===norm(sel.value) || norm(pv)===norm(v));
-      const src = fromPos ? '<span style="color:#198754">✓ из ПОС</span>' : '<span style="color:#888">по умолчанию</span>';
-      h+='<tr><td style="padding:2px 14px 2px 0;color:#444">'+esc(label(sel))+'</td><td style="padding:2px 14px 2px 0"><b>'+esc(v||'—')+'</b></td><td>'+src+'</td></tr>';
-    });
-    h+='</table>';
-    if(!Object.keys(pos).length) h+='<div style="color:#888;margin-top:6px">ПОС не загружен или ещё разбирается — используются значения по умолчанию.</div>';
-    else if(posFile) h+='<div style="color:#888;margin-top:6px">Источник: '+esc(posFile)+'</div>';
-    h+=renderFull(off);
-    document.getElementById('pdList').innerHTML=h;
-  }
-  function renderFull(off){
-    let h='<div style="margin-top:12px;padding-top:10px;border-top:1px solid #d6e4ff">';
-    if(fullStatus==='running') return h+'⏳ <b>Идёт полный разбор ПОС и ПЗ</b> (около 1 минуты)…</div>';
-    if(fullStatus==='none') return h+'<span style="color:#888">ПОС/ПЗ в этой сессии не найдены — полный разбор не выполнен.</span></div>';
-    if(!full) return '';
-    const got=full.filter(r=>r.value), miss=full.filter(r=>!r.value);
-    h+='<b>📑 Всё найденное в ПОС и ПЗ</b> — '+got.length+' из '+full.length+' параметров'
-      +'<div style="color:#666;font-size:13px">наведите мышь на значение — будет цитата из документа</div>';
-    h+='<table style="margin-top:6px;border-collapse:collapse;width:100%;'+(off?'opacity:.45':'')+'">';
-    let g=null;
-    got.forEach(r=>{
-      if(r.group!==g){ g=r.group; h+='<tr><td colspan="3" style="padding:8px 0 2px;font-weight:600;color:#0a58ca">'+esc(g)+'</td></tr>'; }
-      let use=r.use||'info', badge;
-      if(use==='calc') badge='<span style="color:#198754">✓ учтено в подборе</span>';
-      else if(use==='other') badge='<span style="color:#b26a00">другой раздел сметы</span>';
-      else if(use.startsWith('note:')) badge='<span style="color:#b26a00">ℹ '+esc(use.slice(5))+'</span>';
-      else badge='<span style="color:#888">справочно</span>';
-      h+='<tr style="border-top:1px solid #e7eefc"><td style="padding:3px 12px 3px 0;color:#444;width:28%;vertical-align:top">'+esc(r.title)+'</td>'
-        +'<td style="padding:3px 12px 3px 0;vertical-align:top" title="'+esc(r.quote||'')+'"><b>'+esc(r.value)+'</b> <span style="color:#888">('+esc(r.src||'')+(r.page?', стр. '+r.page:'')+')</span></td>'
-        +'<td style="padding:3px 0;vertical-align:top;width:22%;font-size:13px">'+badge+'</td></tr>';
-    });
-    h+='</table>';
-    if(miss.length) h+='<div style="margin-top:6px;color:#888">Нет в документах: '+esc(miss.map(r=>r.title.split(/[:(]/)[0].trim()).join(', '))+'</div>';
-    return h+'</div>';
-  }
-  async function loadFull(sid){
-    if(fullSid===sid && fullStatus==='ready') return;
-    if(fullSid!==sid){ full=null; fullStatus=''; fullSid=sid; }
-    try{ const base=(typeof API_BASE!=='undefined')?API_BASE:'';
-      const d=await (await fetch(base+'/session/'+sid+'/pd_full')).json();
-      fullStatus=d.status||''; if(d.status==='ready') full=d.items||[];
-    }catch(e){}
-  }
-  async function load(){
-    const sid=(typeof currentSessionId!=='undefined')?currentSessionId:null;
-    // Панель работает только в режиме ИИ (AI); легаси-код AR нормализуется isAIMode.
-    if(!sid || (typeof isAIMode==='function' && !isAIMode(currentProcessingType))) return;
-    if(sid!==lastSid || !Object.keys(pos).length){
-      lastSid=sid; pos={}; posFile='';
-      try{ const base=(typeof API_BASE!=='undefined')?API_BASE:'';
-        const d=await (await fetch(base+'/session/'+sid+'/works_constants')).json();
-        for(const k in d){
-          if(/pos.?detected/i.test(k) && d[k] && typeof d[k]==='object'){
-            for(const n in d[k]){ const x=d[k][n]; pos[n]=(x&&typeof x==='object')?(x.value??''):x; }
-          }
-          if(/pos.?file/i.test(k)) posFile=d[k]||'';
-        }
-      }catch(e){}
-    }
-    await loadFull(sid);
-    render();
-  }
-  document.addEventListener('change',e=>{ if(e.target.matches&&e.target.matches('select[data-const-name]')) render(); });
-  setInterval(load, 3000);
-})();
-</script>
-<script>
-/* TSN_UI_V1 — панель «Сборники ТСН» и режим «поправки: учитывать / не учитывать» (режим ИИ) */
-(function(){
-  let docs=null, mode='on', lastSid=null, lastTry=0;
-  const base=()=> (typeof API_BASE!=='undefined')?API_BASE:'';
-  function esc(t){ return String(t).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-  async function setMode(v){
-    mode=v;
-    const sid=(typeof currentSessionId!=='undefined')?currentSessionId:null;
-    if(sid){ try{ await fetch(base()+'/session/'+sid+'/tsn_mode?set='+v); }catch(e){} }
-    render();
-  }
-  function render(){
-    const panel=document.getElementById('pdPanel'); if(!panel) return;
-    let box=document.getElementById('tsnBox');
-    if(!box){
-      box=document.createElement('div'); box.id='tsnBox';
-      box.style.cssText='margin-top:10px;padding-top:10px;border-top:1px solid #d6e4ff';
-      panel.appendChild(box);
-    }
-    let list;
-    if(docs===null) list='<span style="color:#888">загрузка списка…</span>';
-    else if(!docs.length) list='<span style="color:#b26a00">не загружены — поправочные коэффициенты проверяться не будут</span>';
-    else list=docs.map(d=>'<b>'+esc(d.code)+'</b> '+esc(d.title||'')+' <span style="color:#666">('+d.items+' поправок)</span>').join('; ');
-    box.innerHTML='<div>📚 <b>Сборники ТСН:</b> '+list+'</div>'
-      +'<div style="margin-top:6px"><b>Поправки из сборников:</b>&nbsp; '
-      +'<label><input type="radio" name="tsnMode" value="on" '+(mode==='on'?'checked':'')+'> учитывать</label>&nbsp;&nbsp; '
-      +'<label><input type="radio" name="tsnMode" value="off" '+(mode==='off'?'checked':'')+'> не учитывать</label>'
-      +(mode==='off'?' <span style="color:#b02a37">— поправки не проверяются</span>':' <span style="color:#198754">— подходящие поправки попадут в перечень и справку</span>')
-      +'</div>';
-    box.querySelectorAll('input[name=tsnMode]').forEach(r=>r.onchange=()=>setMode(r.value));
-  }
-  async function tick(){
-    // не кэшируем ошибки/401 и пустой список: перепроверяем раз в 10с
-    if(docs===null || (!docs.length && Date.now()-lastTry>10000)){
-      lastTry=Date.now();
-      try{
-        const r=await fetch(base()+'/tsn/docs');
-        if(r.ok) docs=(await r.json()).docs||[];
-      }catch(e){}
-    }
-    const sid=(typeof currentSessionId!=='undefined')?currentSessionId:null;
-    if(sid && sid!==lastSid){
-      lastSid=sid;
-      try{ await fetch(base()+'/session/'+sid+'/tsn_mode?set='+mode); }catch(e){}
-    }
-    if(!document.getElementById('tsnBox')) render();
-  }
-  setInterval(tick, 3000);
-})();
-</script>
-<script>
-/* AN_V3 — аналитическая справка по расчёту (analytic.json, режим ИИ) */
-(function(){
-  let lastM=0;
-  function esc(t){ return String(t).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-  const ICON={'Из ПОС':'📄','Из ПЗ':'📘','Из ПОС и ПЗ':'📄','Из сборников ТСН':'📚','Из модели и справочника цен':'🏗','Противоречия между документами':'❗'};
-  function card(){
-    let c=document.getElementById('anCard'); if(c) return c;
-    const anchor=document.getElementById('pdPanel') || document.getElementById('selectRowsBtn'); if(!anchor) return null;
-    c=document.createElement('div'); c.id='anCard';
-    c.style.cssText='border:1px solid #ffda6a;background:#fffbea;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:14px';
-    (anchor.id==='pdPanel'?anchor:anchor.parentElement).before(c);
-    return c;
-  }
-  function groups(list, color){
-    let h='';
-    (list||[]).forEach(g=>{
-      h+='<div style="margin:6px 0 0 4px;font-weight:600;color:'+color+'">'+(ICON[g.src]||'•')+' '+esc(g.src)+'</div><ul style="margin:2px 0 0 26px;padding:0">';
-      g.items.forEach(t=>h+='<li>'+esc(t)+'</li>'); h+='</ul>';
-    });
-    return h;
-  }
-  async function load(){
-    const sid=(typeof currentSessionId!=='undefined')?currentSessionId:null; if(!sid) return;
-    try{
-      const base=(typeof API_BASE!=='undefined')?API_BASE:'';
-      const d=await (await fetch(base+'/session/'+sid+'/analytic')).json();
-      if(d.status!=='ready' || d.mtime===lastM) return;
-      lastM=d.mtime;
-      const c=card(); if(!c) return;
-      let h='<b>📋 Справка по расчёту</b> <span style="color:#666">('+d.elements+' типов элементов, '+d.rows+' позиций; '
-        +(d.with_pd?'с учётом ПОС/ПЗ':'без учёта ПОС/ПЗ')+'; '+(d.with_tsn===false?'без сборников ТСН':'со сборниками ТСН')+')</span>';
-      const G=d.groups||{ok:[{src:'Учтено',items:d.ok||[]}],doubt:[{src:'Проверить',items:(d.doubt||[]).map(x=>x.text||x)}]};
-      h+='<div style="margin-top:10px;font-weight:700;color:#198754">✓ Учтено в перечне</div>'+groups(G.ok,'#146c43');
-      if((G.doubt||[]).length) h+='<div style="margin-top:12px;font-weight:700;color:#b26a00">⚠ Проверить</div>'+groups(G.doubt,'#8a5300');
-      else h+='<div style="margin-top:10px;color:#198754">Сомнительных мест не найдено.</div>';
-      if((d.info||[]).length){
-        h+='<div style="margin-top:12px;font-weight:700;color:#0a58ca">ℹ Не входит в перечень</div><ul style="margin:2px 0 0 26px;padding:0">';
-        d.info.forEach(t=>h+='<li>'+esc(t)+'</li>'); h+='</ul>';
-      }
-      c.innerHTML=h;
-    }catch(e){}
-  }
-  setInterval(load, 5000);
-})();
-</script>
-<script>
-/* PDMODE_V1: режим ПОС/ПЗ запоминается на сервере */
-(function(){
-  let lastSid=null;
-  const base=()=> (typeof API_BASE!=='undefined')?API_BASE:'';
-  const cur=()=>{ const r=document.querySelector('input[name=pdMode]:checked'); return r?r.value:'on'; };
-  async function send(){
-    const sid=(typeof currentSessionId!=='undefined')?currentSessionId:null; if(!sid) return;
-    try{ await fetch(base()+'/session/'+sid+'/pd_mode?set='+cur()); }catch(e){}
-  }
-  document.addEventListener('change', e=>{ if(e.target && e.target.name==='pdMode') send(); });
-  setInterval(()=>{ const sid=(typeof currentSessionId!=='undefined')?currentSessionId:null;
-    if(sid && sid!==lastSid){ lastSid=sid; send(); } }, 3000);
-})();
 </script>
 </body>
 </html>

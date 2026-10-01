@@ -1101,46 +1101,9 @@ def split_leaf_groups_by_part(
     headers = list(elements_rows[0].keys())
     volume_cols = _find_volume_columns(headers)
 
-    def _row_volume(row: Dict[str, Any]) -> float:
-        # Первое ненулевое значение среди колонок-источников объёма
-        # (coalesce — та же логика, что в _create_group/group_elements)
-        for col in volume_cols:
-            val = safe_parse_float(row.get(col, 0))
-            if val > 0:
-                return val
-        return 0.0
-
     def _recompute_aggregates(sub_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Агрегаты подгруппы: объём, площади, расход арматуры (суммы)."""
-        volume = float(round(sum(_row_volume(r) for r in sub_rows), 2))
-        areas: Dict[str, float] = {}
-        for col in headers:
-            if 'площадь' not in str(col).lower():
-                continue
-            total = sum(safe_parse_float(r.get(col, 0)) for r in sub_rows)
-            if total > 0:
-                areas[col] = float(round(total, 2))
-        reinforcement = float(round(sum(
-            safe_parse_float(r.get('ReinforcementVolumeRatio', 0)) * _row_volume(r)
-            for r in sub_rows
-        ), 2))
-        # Площадь опалубки плит подгруппы (фундаментные плиты — периметр ×
-        # толщина; перекрытия — периметр × толщина + площадь плиты) —
-        # пересчитывается по элементам своей части здания, чтобы сумма
-        # площадей опалубки подгрупп равнялась площади исходной группы.
-        perim_cols, depth_cols = _find_formwork_columns(headers)
-        formwork_area = 0.0
-        if perim_cols and depth_cols:
-            formwork_area = float(round(sum(
-                _element_formwork_area_m2(r, perim_cols, depth_cols)
-                for r in sub_rows
-            ), 2))
-        return {
-            'total_volume': volume,
-            'total_areas': areas,
-            'total_reinforcement': reinforcement,
-            'formwork_area': formwork_area,
-        }
+        return _recompute_group_aggregates(sub_rows, headers, volume_cols)
 
     result: List[Dict[str, Any]] = []
 
@@ -1196,6 +1159,153 @@ def split_leaf_groups_by_part(
                 sub_path = [_PART_PATH_LABELS[part]]
             sub_group['path'] = sub_path
 
+            result.append(sub_group)
+
+    return result
+
+
+def _element_type_key(name: Any) -> str:
+    """«Лестницы 230:Лестницы 1:3325181» → «Лестницы:Лестницы».
+
+    Ключ типа элемента без номера экземпляра (совпадает с
+    ``perechen_kb.type_key``): убираются части, состоящие только из цифр
+    (ID экземпляра), и хвостовые номера вида « 230»/« 1».
+    Используется для группировки итогового перечня КР так же, как в АР.
+    """
+    parts = [p.strip() for p in str(name or '').split(':')]
+    parts = [re.sub(r'\s+\d+$', '', p) for p in parts if p and not p.isdigit()]
+    return ':'.join(parts)
+
+
+def _recompute_group_aggregates(
+    sub_rows: List[Dict[str, Any]],
+    headers: List[str],
+    volume_cols: List[str],
+) -> Dict[str, Any]:
+    """Агрегаты подгруппы листовой группы: объём, площади, арматура, опалубка.
+
+    Суммы по элементам подгруппы. Используется при разделении листовых групп
+    (по частям здания — ``split_leaf_groups_by_part``, по типу элемента —
+    ``split_leaf_groups_by_name``): сумма показателей подгрупп равна
+    показателям исходной группы.
+    """
+
+    def _row_volume(row: Dict[str, Any]) -> float:
+        # Первое ненулевое значение среди колонок-источников объёма
+        # (coalesce — та же логика, что в _create_group/group_elements)
+        for col in volume_cols:
+            val = safe_parse_float(row.get(col, 0))
+            if val > 0:
+                return val
+        return 0.0
+
+    volume = float(round(sum(_row_volume(r) for r in sub_rows), 2))
+    areas: Dict[str, float] = {}
+    for col in headers:
+        if 'площадь' not in str(col).lower():
+            continue
+        total = sum(safe_parse_float(r.get(col, 0)) for r in sub_rows)
+        if total > 0:
+            areas[col] = float(round(total, 2))
+    reinforcement = float(round(sum(
+        safe_parse_float(r.get('ReinforcementVolumeRatio', 0)) * _row_volume(r)
+        for r in sub_rows
+    ), 2))
+    # Площадь опалубки плит подгруппы (фундаментные плиты — периметр ×
+    # толщина; перекрытия — периметр × толщина + площадь плиты) —
+    # пересчитывается по элементам подгруппы, чтобы сумма площадей
+    # опалубки подгрупп равнялась площади исходной группы.
+    perim_cols, depth_cols = _find_formwork_columns(headers)
+    formwork_area = 0.0
+    if perim_cols and depth_cols:
+        formwork_area = float(round(sum(
+            _element_formwork_area_m2(r, perim_cols, depth_cols)
+            for r in sub_rows
+        ), 2))
+    return {
+        'total_volume': volume,
+        'total_areas': areas,
+        'total_reinforcement': reinforcement,
+        'formwork_area': formwork_area,
+    }
+
+
+def split_leaf_groups_by_name(
+    leaf_groups: List[Dict[str, Any]],
+    elements_rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Разделяет листовые группы по типу элемента (имя без № экземпляра).
+
+    Группировка итогового перечня работ КР приводится к виду режима ИИ
+    (``perechen_pipeline``): элементы одного типоразмера (совпадают имя и
+    материал) образуют отдельную группу, поэтому «Кол-во», объёмы и работы
+    считаются по конкретному типоразмеру, а не по геометрическому диапазону
+    целиком. Сумма показателей подгрупп равна показателям исходной группы.
+
+    Аргументы:
+        leaf_groups   — листовые группы дерева группировки (ключ ``indices``
+            ссылается на позиции строк ``elements_rows``).
+        elements_rows — строки элементов (записи DataFrame отфильтрованных
+            элементов, по которым выполнялась группировка).
+
+    Возвращает:
+        Новый список листовых групп: однотипные — без изменений, смешанные по
+        типу элемента — разбитые на подгруппы.
+    """
+    if not leaf_groups or not elements_rows:
+        return list(leaf_groups)
+
+    headers = list(elements_rows[0].keys())
+    volume_cols = _find_volume_columns(headers)
+
+    result: List[Dict[str, Any]] = []
+
+    for group in leaf_groups:
+        # Раскладываем элементы группы по типу (имя без ID + материал)
+        rows_by_key: Dict[Tuple[str, str], List[int]] = {}
+        keys_order: List[Tuple[str, str]] = []
+        for idx in group.get('indices') or []:
+            try:
+                idx = int(idx)
+            except (TypeError, ValueError):
+                continue
+            if not 0 <= idx < len(elements_rows):
+                continue
+            row = elements_rows[idx]
+            key = (
+                _element_type_key(row.get('Имя', '')),
+                str(row.get('Материал', '') or ''),
+            )
+            if key not in rows_by_key:
+                rows_by_key[key] = []
+                keys_order.append(key)
+            rows_by_key[key].append(idx)
+
+        # Однотипная группа (или элементы не найдены) — без изменений
+        if len(rows_by_key) <= 1:
+            result.append(group)
+            continue
+
+        path = list(group.get('path') or [])
+        logger.info(
+            f"Разделение группы по типу элемента: "
+            f"{path[-1] if path else group.get('name', '?')} "
+            f"({group.get('count', len(group.get('indices') or []))} эл.) → "
+            + ", ".join(f"{k[0]}: {len(rows_by_key[k])} эл." for k in keys_order)
+        )
+
+        for key in keys_order:
+            sub_indices = sorted(rows_by_key[key])
+            sub_rows = [elements_rows[i] for i in sub_indices]
+
+            sub_group = dict(group)
+            sub_group['indices'] = sub_indices
+            sub_group['count'] = len(sub_indices)
+            # Первый элемент подгруппы — элемент своего типоразмера
+            sub_group['first_element'] = dict(elements_rows[sub_indices[0]])
+            sub_group.update(
+                _recompute_group_aggregates(sub_rows, headers, volume_cols)
+            )
             result.append(sub_group)
 
     return result
@@ -1426,6 +1536,13 @@ def build_reference_output(
                 if area_num and area_num > 0:
                     total_areas_clean[str(area_key)] = round(area_num, 2)
 
+        # Сырой материал первого элемента группы — для заголовка группы в
+        # формате режима ИИ («<Имя> (<Материал>)»). Заглушки («-», «Не указан»)
+        # приводятся к пустой строке — как пустой материал в ИИ.
+        raw_material = str(first.get('Материал', '') or '').strip()
+        if raw_material in ('-', 'Не указан'):
+            raw_material = ''
+
         obj = {
             'buildingElementName': _singularize_ru_name(ru_name),
             'isActive': True,
@@ -1459,6 +1576,14 @@ def build_reference_output(
         # используется при формировании финального перечня работ —
         # таблица разбивается на части здания с итогами по каждой части.
         '_buildingPart': part_key,
+        # Внутреннее служебное поле: тип элемента без номера экземпляра
+        # (см. _element_type_key) — основа заголовка группы в финальном
+        # перечне работ КР (формат режима ИИ). Не отправляется в API.
+        '_typeKey': _element_type_key(elem_name),
+        # Внутреннее служебное поле: сырой материал первого элемента группы
+        # («Железобетон монолитный» и т.п.) — для заголовка группы в формате
+        # режима ИИ. Не отправляется в API (префикс '_').
+        '_rawMaterial': raw_material,
     }
 
         result.append(obj)

@@ -8,6 +8,7 @@ from json_repair import repair_json
 import io
 import base64
 from PIL import Image
+from io import BytesIO
 
 from logger import setup_logger
 
@@ -134,6 +135,12 @@ def image_to_base64(img: Image.Image) -> str:
     return base64.b64encode(
         buffer.getvalue()
     ).decode("utf-8")
+
+def base64_to_image(image_base64: str) -> Image.Image:
+    image_bytes = base64.b64decode(image_base64.split(",", 1)[1])
+
+    image = Image.open(BytesIO(image_bytes)).convert("RGB")
+    return image
 
 def execute_llm_chain(chain, params = {}, stub = {}):
     response = invoke_with_retry(chain,params)

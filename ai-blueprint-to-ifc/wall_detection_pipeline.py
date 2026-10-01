@@ -41,40 +41,41 @@ class WallDetectionPipeline:
 
         self.pdf_processor = PdfProcessor(pdf_path)
         self.dino_service = DinoService(model_path=settings.DINO_HATCHING_MODEL)
-        self.layout_processor = LayoutProcessor(self.pdf_processor, self.ollama_service)
-        self.legend_layout_processor = LegendLayoutProcessor(self.pdf_processor, self.dino_service)
+        self.layout_processor = None
+        self.legend_layout_processor = None
         self.hatching_detector = HatchingDetector(self.wall_detection, self.pdf_processor)
         self.drawing_statistics = DrawingStatisticsAnalyzer(self.pdf_processor)
         self.hatching_processor = HatchingProcessor(self. ollama_service, self.drawing_statistics, self.dino_service, pdf_processor=self.pdf_processor, ollama_service_tg=self.ollama_service_tg)
 
         self.reference_scale = (1, 200)
 
-    def run(self):
+    def run(self, manual_legend: dict[str, Any] | None = None):
         start_time = time.time()
         
         debug_manager.save_run_settings()
         debug_manager.save_initial_blueprint(self.pdf_processor)
 
+        if not self.layout_processor:
+           self.layout_processor = LayoutProcessor(self.pdf_processor, self.ollama_service)
+
         result_object: dict[str, Any] = {"drawings": []}
+        self.legend_row_items = None
         
         global_blueprint_scale = self._get_scale()
         if not global_blueprint_scale:
             self.layout_processor.parse_drawings_scales()
 
-        legends = self.layout_processor.get_legends()
         drawings = self.layout_processor.get_drawings()
         if not drawings:
             drawings = [None]
 
         results = []
         all_walls_for_debug = []
-        self.legend_row_items = None
-        if legends:
-            self.legend_layout_processor.parse_legend([legend["object"]["bbox"] for legend in legends], dpi=settings.DPI)
-            self.legend_row_items = self.legend_layout_processor.get_legend_row_items(min_inside_ratio=settings.LEGEND_LAYOUT_MIN_INSIDE_RATIO, merge_similar=False)
-            self.hatching_processor.specify_legends(self.legend_row_items, load_deafult=False)
+
+        if manual_legend and manual_legend.get("items", None):
+            self.hatching_processor.set_legend(manual_legend["items"])
         else:
-            logger.info("Легенда не найдена")
+            self._extract_legend()
 
         debug_matrixs = []
 
@@ -90,7 +91,7 @@ class WallDetectionPipeline:
                 drawing_index=i,
             )
 
-            if i == 0 and (walls_result["matrix_debug_object"] is None or self.validate_walls_result_with_retry(walls_result["matrix_debug_object"]["matrix"])):
+            if not manual_legend and i == 0 and (walls_result["matrix_debug_object"] is None or self.validate_walls_result_with_retry(walls_result["matrix_debug_object"]["matrix"])):
                 self.hatching_processor.reset_to_default_legends()
                 self.legend_row_items = None
                 walls_result = self.hatching_detector.get_walls(
@@ -151,6 +152,19 @@ class WallDetectionPipeline:
 
         logger.info(f"Полное время обработки: {((time.time() - start_time)/60):.2f} мин")
         return result_object
+
+    def _extract_legend(self):
+        legends = self.layout_processor.get_legends()
+
+        if not self.legend_layout_processor:
+            self.legend_layout_processor = LegendLayoutProcessor(self.pdf_processor, self.dino_service)
+
+        if legends:
+            self.legend_layout_processor.parse_legend([legend["object"]["bbox"] for legend in legends], dpi=settings.DPI)
+            self.legend_row_items = self.legend_layout_processor.get_legend_row_items(min_inside_ratio=settings.LEGEND_LAYOUT_MIN_INSIDE_RATIO, merge_similar=False)
+            self.hatching_processor.specify_legends(self.legend_row_items, load_deafult=False)
+        else:
+            logger.info("Легенда не найдена")
 
     def validate_walls_result_with_retry(self, matrix: torch.Tensor) -> bool:
         ratio = matrix.any(dim=0).float().mean().item()

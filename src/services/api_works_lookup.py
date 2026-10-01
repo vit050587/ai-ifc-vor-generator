@@ -844,9 +844,10 @@ def _resolve_unit_label(work: Dict[str, Any]) -> str:
 BUILDING_PART_ORDER = ['Подземная', 'Цоколь', 'Надземная']
 
 # Заголовки частей здания в финальном перечне работ
+# (в формате режима ИИ — perechen_pipeline.PART_TITLES)
 _BUILDING_PART_TITLES = {
     'Подземная': 'ПОДЗЕМНАЯ ЧАСТЬ',
-    'Цоколь': 'ЦОКОЛЬ',
+    'Цоколь': 'ЦОКОЛЬНАЯ ЧАСТЬ',
     'Надземная': 'НАДЗЕМНАЯ ЧАСТЬ',
 }
 
@@ -932,43 +933,48 @@ def build_final_works_from_api(
     element_info = []  # список словарей с информацией о каждом элементе
 
     for element_idx, (element, response) in enumerate(api_results):
-        # Получаем название элемента из разных возможных полей
+        # Заголовок группы — в формате режима ИИ
+        # («<Имя элемента без № экземпляра> (<Материал>)  Кол-во: N»):
+        # группировка и вид итогового перечня КР совпадают с ИИ
+        # (perechen_pipeline). Раньше заголовок был
+        # «<Тип элемента> (<Материал>, <Имя элемента>) Кол-во: N».
         element_name = element.get("buildingElementName") or element.get("name") or f"Элемент {element_idx + 1}"
-        
-        # Дополнительная информация об элементе
-        element_info_parts = []
-        
-        # Добавляем материал, если есть
-        if element.get("characteristics"):
-            for char in element["characteristics"]:
+
+        # Материал группы: сырой (как в ИИ) — из служебного поля
+        # _rawMaterial (заполняется build_reference_output), fallback —
+        # нормализованная характеристика «Материал».
+        material = str(element.get("_rawMaterial") or "").strip()
+        if not material:
+            for char in element.get("characteristics") or []:
                 if char.get("name") == "Материал" and char.get("values"):
-                    material = char["values"][0].get("strValue", "")
-                    if material:
-                        element_info_parts.append(material)
-        
-        # Добавляем имя элемента из Revit (обрезаем ID после двоеточия)
-        if element.get("additionalCharacteristics"):
-            for char in element["additionalCharacteristics"]:
+                    material = str(char["values"][0].get("strValue", "") or "")
+                    break
+
+        # Имя элемента без номера экземпляра: служебное поле _typeKey
+        # (заполняется build_reference_output), fallback — «Имя элемента»
+        # из additionalCharacteristics с отсечением цифрового ID.
+        base_name = str(element.get("_typeKey") or "").strip()
+        if not base_name:
+            base_name = element_name
+            for char in element.get("additionalCharacteristics") or []:
                 if char.get("name") == "Имя элемента" and char.get("values"):
-                    revit_name = char["values"][0].get("strValue", "")
+                    revit_name = str(char["values"][0].get("strValue", "") or "")
                     # Убираем цифровой ID в конце (после последнего двоеточия)
                     if ":" in revit_name:
                         parts = revit_name.split(":")
-                        # Если последний элемент - цифры, убираем его
                         if parts[-1].strip().isdigit():
                             revit_name = ":".join(parts[:-1])
                     if revit_name:
-                        element_info_parts.append(revit_name)
-        
-        # Формируем полное название с дополнительной информацией
-        element_full_name = element_name
-        if element_info_parts:
-            element_full_name += f" ({', '.join(element_info_parts)})"
-        
-        # Добавляем информацию о количестве
+                        base_name = revit_name
+                    break
+
+        # Формируем заголовок группы: имя элемента, материал в скобках,
+        # количество (всегда, как в режиме ИИ).
+        element_full_name = base_name
+        if material:
+            element_full_name += f" ({material})"
         element_count = element.get("elementCount", 1)
-        if element_count > 1:
-            element_full_name += f" Кол-во: {element_count}"
+        element_full_name += f"  Кол-во: {element_count}"
 
         # Сборный железобетон: работы из ЦС не подбираются — причина
         # фиксируется в заголовке группы (в ЦС только монолитные
@@ -1226,7 +1232,7 @@ def build_final_works_from_api(
             final_rows.append(row)
             all_work_rows.append(row)
 
-    for part_pos, part in enumerate(parts_in_order):
+    for part in parts_in_order:
         part_elements = [info for info in element_info if info["part"] == part]
 
         # Заголовок части здания
@@ -1238,7 +1244,7 @@ def build_final_works_from_api(
         final_rows.append(part_header)
 
         part_work_rows: List[Dict[str, Any]] = []
-        for elem_pos, elem_info in enumerate(part_elements):
+        for elem_info in part_elements:
             # Заголовок группы элементов
             header_row = _blank_row()
             header_row["Наименование расценки/ресурса"] = elem_info["header"]
@@ -1255,9 +1261,10 @@ def build_final_works_from_api(
                 part_work_rows.append(row)
                 all_work_rows.append(row)
 
-            # Пустая строка после каждой группы (кроме последней в части)
-            if elem_pos < len(part_elements) - 1:
-                final_rows.append(_blank_row())
+            # Пустая строка после каждой группы (как в режиме ИИ —
+            # perechen_pipeline._write_xlsx: пустая строка идёт и после
+            # последней группы части)
+            final_rows.append(_blank_row())
 
         # Итоговая строка по части здания
         part_total = _blank_row()
@@ -1269,9 +1276,9 @@ def build_final_works_from_api(
             part_total[col] = value
         final_rows.append(part_total)
 
-        # Пустая строка между частями (после последней части — общий итог)
-        if part_pos < len(parts_in_order) - 1:
-            final_rows.append(_blank_row())
+        # Пустая строка после итога части (как в режиме ИИ — в том числе
+        # перед общей строкой «ИТОГО:»)
+        final_rows.append(_blank_row())
 
     # Общая итоговая строка по всему перечню (сумма работ всех частей —
     # суммы итоговых строк частей не задваиваются, т.к. суммируются
