@@ -2801,6 +2801,7 @@ function renderPreview(data) {
     const globalMatSelect = document.getElementById('globalMaterialSelect');
     if (globalMatSelect) globalMatSelect.style.display = isAI ? 'none' : '';
     const typeFloorIdx = data.headers.indexOf('Этаж');
+    const storeyTypeIdx = data.headers.indexOf('Тип_этажа');
     const materialIdx = data.headers.indexOf('Материал');
     const requiredColumns = ['№ п/п', 'Имя', 'Тип элемента', 'Толщина, мм', 'Объём, м3', 'Площадь, м2'];
     const findColumn = (partialName) => data.headers.find(h => h.toLowerCase().replace(/\s/g, '').includes(partialName.toLowerCase().replace(/\s/g, '')));
@@ -2841,18 +2842,32 @@ function renderPreview(data) {
             //   'С01_-1_подвал_основной'         → Подземная
             //   'К01_Крыша'                     → Надземная
             const segments = rawValue.split(/[_\s]+/);
+            let numericMatched = false;
             for (const seg of segments) {
                 const s = seg.trim();
-                if (/^-\d+\s*\/\s*\d+$/.test(s)) { defaultPart = 'Цоколь'; break; }
-                if (/^-\d+$/.test(s)) { defaultPart = 'Подземная'; break; }
-                if (/^\d+$/.test(s)) { defaultPart = 'Надземная'; break; }
+                if (/^-\d+\s*\/\s*\d+$/.test(s)) { defaultPart = 'Цоколь'; numericMatched = true; break; }
+                if (/^-\d+$/.test(s)) { defaultPart = 'Подземная'; numericMatched = true; break; }
+                if (/^\d+$/.test(s)) { defaultPart = 'Надземная'; numericMatched = true; break; }
+            }
+            // Числового индикатора нет (произвольные имена этажей: «Подвал»,
+            // «Тех. прост», «Крыша») — определяем часть по нормализованному
+            // «Тип_этажа» (та же логика, что в бэкенде: group_excel.get_building_part).
+            // Переквалификация по «Типу этажа» не выполняется, когда числовой
+            // индикатор распознан (1-й этаж на отм. 0,000 не должен стать цокольным).
+            if (!numericMatched && storeyTypeIdx !== -1 && row[storeyTypeIdx]) {
+                const st = String(row[storeyTypeIdx]).trim().toLowerCase();
+                if (st.includes('подзем') || st.includes('подвал')) defaultPart = 'Подземная';
+                else if (st.includes('цоколь')) defaultPart = 'Цоколь';
+                else if (st.includes('надзем') || st.includes('мансард') || st.includes('кровл') || st.includes('техническ')) defaultPart = 'Надземная';
             }
         }
-        // Часть здания — строго по числовому индикатору параметра «Этаж»
-        // (та же логика, что в бэкенде: ifc_reference_builder._element_part).
-        // Переквалификация по «Типу этажа» не выполняется: отметка 1-го этажа
-        // (0,000) ошибочно размечала его как цокольный, и элементы 1-го этажа
-        // попадали в цокольную часть здания.
+        // Часть здания — приоритет у числового индикатора «Этаж»
+        // (та же логика, что в бэкенде: group_excel.get_building_part и
+        // ifc_reference_builder._element_part). Если числового индикатора нет,
+        // используется нормализованный «Тип_этажа» (см. выше): «Подвал»,
+        // «Тех. прост» относятся к подземной части. Переквалификация по
+        // «Типу этажа» при распознанном числе не выполняется — отметка 1-го
+        // этажа (0,000) в старых сессиях ошибочно размечалась как цокольная.
         rowParts[index] = defaultPart;
         let defaultMaterial = '-';
         if (materialIdx !== -1 && row[materialIdx] && row[materialIdx] !== '-') defaultMaterial = row[materialIdx].trim();

@@ -607,8 +607,56 @@ def get_placement_info(element):
     return placement
 
 
+def _iter_type_property_sets(element):
+    """Property Sets, привязанные к типу элемента (IfcTypeObject).
+
+    В части моделей свойства вида ``ExpCheck_*::MGE_ElementCode`` /
+    ``MGE_MaterialCode`` размещены НЕ на экземпляре элемента
+    (``IfcRelDefinesByProperties``), а на его типе (``IfcWallType``,
+    ``IfcSlabType``, ``IfcBeamType`` и т.п.) — через
+    ``IfcRelDefinesByType`` → ``RelatingType`` → ``HasPropertySets``.
+    Без обхода типа такие свойства (и, как следствие, код МССК элемента)
+    не попадают в разбор, и элементы отбрасываются фильтром по коду
+    (пустая таблица ``ДЛЯ_СМЕТЧИКА``).
+
+    Yields:
+        IfcPropertySet / IfcElementQuantity типа элемента.
+    """
+    seen = set()
+    try:
+        for rel in getattr(element, 'IsTypedBy', None) or []:
+            if not rel.is_a('IfcRelDefinesByType'):
+                continue
+            type_obj = getattr(rel, 'RelatingType', None)
+            if type_obj is None:
+                continue
+            for props in getattr(type_obj, 'HasPropertySets', None) or []:
+                if props is None:
+                    continue
+                try:
+                    key = props.id()
+                except Exception:
+                    key = id(props)
+                if key in seen:
+                    continue
+                seen.add(key)
+                yield props
+    except Exception as exc:
+        logger.debug(f"Не удалось прочитать свойства типа элемента: {exc}")
+
+
 def get_all_properties(element):
-    """Извлекает все свойства элемента из Property Sets"""
+    """Извлекает все свойства элемента из Property Sets.
+
+    Свойства читаются в два прохода:
+      1. с экземпляра элемента (``IsDefinedBy`` → ``IfcRelDefinesByProperties``);
+      2. с типа элемента (``IsTypedBy`` → ``RelatingType`` → ``HasPropertySets``).
+
+    Второй проход — fallback: значения экземпляра имеют приоритет
+    (``setdefault``). Это покрывает модели, где код МССК
+    (``ExpCheck_*::MGE_ElementCode``) и прочие параметры заданы на типе
+    элемента, а не на самом элементе.
+    """
     properties = {}
     try:
         if hasattr(element, 'IsDefinedBy'):
@@ -631,6 +679,27 @@ def get_all_properties(element):
                                         properties[key] = value
     except:
         pass
+
+    # Свойства типа элемента — только для ключей, которых нет у экземпляра.
+    try:
+        for props in _iter_type_property_sets(element):
+            pset_name = safe_get_attr(props, 'Name')
+            if props.is_a('IfcPropertySet') and hasattr(props, 'HasProperties'):
+                for prop in props.HasProperties:
+                    prop_name = safe_get_attr(prop, 'Name')
+                    val = prop.NominalValue
+                    if not val:
+                        continue
+                    if hasattr(val, 'wrappedValue'):
+                        value = val.wrappedValue
+                    else:
+                        value = str(val)
+                    key = (f"Свойство_{pset_name}_{prop_name}"
+                           if pset_name != '-' else f"Свойство_{prop_name}")
+                    properties.setdefault(key, value)
+    except Exception as exc:
+        logger.debug(f"Ошибка чтения свойств типа элемента: {exc}")
+
     return properties
 
 

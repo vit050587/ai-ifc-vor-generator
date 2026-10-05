@@ -267,6 +267,64 @@ def _get_part_from_storey_name(storey_name: Any) -> str:
     return 'Надземная'
 
 
+# Соответствие «Тип_этажа» (нормализуется в zero_step.classify_storey_type)
+# → часть здания. Используется как более устойчивый источник, чем разбор
+# имени этажа: работает для произвольных имён («Подвал», «Тех. прост»,
+# «Этаж 1»), где нет числового индикатора.
+_PART_FROM_STOREY_TYPE = {
+    'Подземный': 'Подземная',
+    'Цокольный': 'Цоколь',
+    'Надземный': 'Надземная',
+    'Технический': 'Надземная',
+    'Мансардный': 'Надземная',
+    'Кровля': 'Надземная',
+}
+
+
+def get_building_part(row: Dict[str, Any]) -> str:
+    """Определяет часть здания по строке элемента.
+
+    Правила (совместимы с ``_element_part`` из ``ifc_reference_builder`` и
+    фронтендом): **приоритет — числовой индикатор** значения «Этаж»
+    (разбивка по «_» и пробелам, текстовые префиксы игнорируются):
+      '-N/M' → Цоколь, '-N' → Подземная, 'N' → Надземная.
+
+    Если числового индикатора нет (произвольные имена этажей: «Подвал»,
+    «Тех. прост», «Крыша»), часть определяется по нормализованной колонке
+    «Тип_этажа» (``zero_step.classify_storey_type``: слова
+    «подвал/подзем/цоколь» + знак отметки этажа). Раньше такие имена
+    безоговорочно относились к надземной части.
+
+    Переквалификация по «Тип_этажа» НЕ применяется, когда числовой
+    индикатор распознан: отметка 1-го этажа (0,000) в старых сессиях
+    ошибочно размечалась как цокольная, и элементы 1-го этажа попадали
+    в цокольную часть. Это сохраняет прежнее поведение по «хорошим» проектам.
+
+    Args:
+        row: строка элемента (словарь колонок).
+
+    Returns:
+        'Подземная' / 'Цоколь' / 'Надземная'.
+    """
+    if row is None:
+        return 'Надземная'
+
+    storey = str(row.get('Этаж', '') or '').strip()
+    if storey and storey not in ('-', 'nan'):
+        for segment in re.split(r'[_\s]+', storey):
+            seg = segment.strip()
+            if re.match(r'^-\d+\s*/\s*\d+$', seg):
+                return 'Цоколь'
+            if re.match(r'^-\d+$', seg):
+                return 'Подземная'
+            if re.match(r'^\d+$', seg):
+                return 'Надземная'
+
+    # Числовой индикатор не распознан — по «Тип_этажа» (fallback).
+    storey_type = str(row.get('Тип_этажа', '') or '').strip()
+    return _PART_FROM_STOREY_TYPE.get(storey_type, 'Надземная')
+
+
 def safe_parse_float(value: Any) -> float:
     if value is None or value == '' or value == '-':
         return 0.0
@@ -901,13 +959,12 @@ def group_elements_mssk(rows: List[Dict[str, Any]], headers: List[str]) -> List[
     if volume_col and volume_col in df.columns:
         df[volume_col] = pd.to_numeric(df[volume_col], errors='coerce').fillna(0)
 
-    def get_part(storey_name):
-        return _get_part_from_storey_name(storey_name)
-
     def get_ifc_type_row(row):
         return get_ifc_type(str(row.get('Тип элемента', '')), str(row.get('Имя', '')))
 
-    df['_part'] = df['Этаж'].apply(get_part) if 'Этаж' in df.columns else 'Надземная'
+    # Часть здания — приоритет числового индикатора «Этаж», при его
+    # отсутствии — по «Тип_этажа» (см. get_building_part).
+    df['_part'] = df.apply(get_building_part, axis=1)
     df['_ifc_type'] = df.apply(get_ifc_type_row, axis=1)
 
     has_mssk_col = 'Код мсск' in headers
@@ -1381,10 +1438,9 @@ def group_elements_ar(rows: List[Dict[str, Any]], headers: List[str]) -> List[Di
     has_mssk_col = 'Код мсск' in headers
 
     # --- Определяем часть здания для каждой строки ---
-    if 'Этаж' in df.columns:
-        df['_part'] = df['Этаж'].apply(_get_part_from_storey_name)
-    else:
-        df['_part'] = 'Надземная'
+    # Приоритет — «Тип_этажа» (устойчиво к произвольным именам этажей),
+    # fallback — разбор имени «Этаж».
+    df['_part'] = df.apply(get_building_part, axis=1)
 
     part_order = ['Подземная', 'Цоколь', 'Надземная']
     part_labels = {

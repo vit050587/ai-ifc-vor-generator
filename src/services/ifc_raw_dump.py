@@ -206,45 +206,107 @@ def _extract_quantity_value(qty):
     return ""
 
 
+def _iter_type_propsets(element):
+    """Property Sets, привязанные к типу элемента (IfcTypeObject).
+
+    В части моделей параметры (например ``ExpCheck_*::MGE_ElementCode``,
+    ``MGE_MaterialCode``) размещены на типе (``IfcWallType``, ``IfcSlabType``,
+    ...), а не на экземпляре элемента. Их нужно добавить в дамп, иначе
+    downstream-модули не увидят код МССК и материал.
+
+    Yields:
+        IfcPropertySet / IfcElementQuantity типа элемента.
+    """
+    seen = set()
+    try:
+        for rel in getattr(element, "IsTypedBy", None) or []:
+            if not rel.is_a("IfcRelDefinesByType"):
+                continue
+            type_obj = getattr(rel, "RelatingType", None)
+            if type_obj is None:
+                continue
+            for pset in getattr(type_obj, "HasPropertySets", None) or []:
+                if pset is None:
+                    continue
+                try:
+                    key = pset.id()
+                except Exception:
+                    key = id(pset)
+                if key in seen:
+                    continue
+                seen.add(key)
+                yield pset
+    except Exception as exc:
+        logger.debug(f"Не удалось прочитать свойства типа элемента: {exc}")
+
+
 def _collect_propsets(element):
     """Собирает свойства (Pset) и количества (QTO) элемента в виде словаря.
 
     Ключи: ``Свойство::{PsetName}::{PropName}`` и ``QTO::{QtoName}::{QtyName}``.
+
+    Свойства читаются с экземпляра элемента, затем дополняются свойствами
+    его типа (``IsTypedBy`` → ``RelatingType`` → ``HasPropertySets``) — только
+    для отсутствующих ключей (приоритет у экземпляра). Так покрываются
+    модели, где код МССК и материал заданы на типе элемента.
     """
     result = {}
     try:
-        if not hasattr(element, "IsDefinedBy"):
-            return result
+        if hasattr(element, "IsDefinedBy"):
+            for rel in element.IsDefinedBy:
+                if not rel.is_a("IfcRelDefinesByProperties"):
+                    continue
+                pset = rel.RelatingPropertyDefinition
+                if pset is None:
+                    continue
 
-        for rel in element.IsDefinedBy:
-            if not rel.is_a("IfcRelDefinesByProperties"):
-                continue
-            pset = rel.RelatingPropertyDefinition
-            if pset is None:
-                continue
+                set_name = getattr(pset, "Name", None)
+                set_name = str(set_name) if set_name else ""
 
+                # Property Set
+                if pset.is_a("IfcPropertySet"):
+                    for prop in getattr(pset, "HasProperties", []) or []:
+                        prop_name = getattr(prop, "Name", None)
+                        if not prop_name:
+                            continue
+                        key = f"Свойство::{set_name}::{prop_name}"
+                        result[key] = _extract_property_value(prop)
+
+                # Element Quantity (QTO)
+                elif pset.is_a("IfcElementQuantity"):
+                    for qty in getattr(pset, "Quantities", []) or []:
+                        qty_name = getattr(qty, "Name", None)
+                        if not qty_name:
+                            continue
+                        key = f"QTO::{set_name}::{qty_name}"
+                        result[key] = _extract_quantity_value(qty)
+    except Exception as exc:
+        logger.debug(f"Ошибка сбора Pset/QTO для элемента: {exc}")
+
+    # Свойства типа элемента — fallback для отсутствующих ключей.
+    try:
+        for pset in _iter_type_propsets(element):
             set_name = getattr(pset, "Name", None)
             set_name = str(set_name) if set_name else ""
 
-            # Property Set
             if pset.is_a("IfcPropertySet"):
                 for prop in getattr(pset, "HasProperties", []) or []:
                     prop_name = getattr(prop, "Name", None)
                     if not prop_name:
                         continue
                     key = f"Свойство::{set_name}::{prop_name}"
-                    result[key] = _extract_property_value(prop)
-
-            # Element Quantity (QTO)
+                    if key not in result:
+                        result[key] = _extract_property_value(prop)
             elif pset.is_a("IfcElementQuantity"):
                 for qty in getattr(pset, "Quantities", []) or []:
                     qty_name = getattr(qty, "Name", None)
                     if not qty_name:
                         continue
                     key = f"QTO::{set_name}::{qty_name}"
-                    result[key] = _extract_quantity_value(qty)
+                    if key not in result:
+                        result[key] = _extract_quantity_value(qty)
     except Exception as exc:
-        logger.debug(f"Ошибка сбора Pset/QTO для элемента: {exc}")
+        logger.debug(f"Ошибка сбора Pset/QTO типа элемента: {exc}")
 
     return result
 
