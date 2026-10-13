@@ -5,7 +5,9 @@
   Часть здания → Раздел → Подраздел (конструкция) → Группа → Работа → расценки/ресурсы.
 
 Подбор для элемента (pick_for_element):
-  0) сборный ж/б пропускается (в перечне КР только монолит);
+  0) сборный ж/б — работы по монтажу сборных конструкций, если они есть в
+     подразделе (напр. «Установка сборных железобетонных лестничных маршей»);
+     иначе — поиск по полному справочнику ТСН (монолитные работы не берутся);
   1) LLM выбирает конструкцию (подраздел) в пределах части здания;
   2) фильтры кодом: высота здания (по названиям таблиц), толщина элемента;
   3) LLM выбирает работы; 4) LLM-контролёр проверяет выбор;
@@ -315,6 +317,12 @@ def is_precast(el: Dict[str, Any]) -> bool:
     return "сборн" in text or "precast" in text
 
 
+def _is_precast_work(w: Dict[str, Any]) -> bool:
+    """Работа относится к сборному железобетону (монтаж/установка сборных конструкций)."""
+    text = (w["name"] + " " + " ".join(r["title"] for r in w["rates"])).lower()
+    return "сборн" in text
+
+
 def building_height_for_run(run_json_path: str, data: Dict[str, Any]) -> Optional[float]:
     session_dir = os.path.dirname(os.path.dirname(run_json_path))
     try:
@@ -472,7 +480,15 @@ def select_subsection(el: Dict[str, Any], part: str,
 
 def select_works(el: Dict[str, Any], part: str, sub: Dict[str, Any]) -> Dict[str, Any]:
     visible = [w for w in sub["works"] if not _is_rebar_diameter(w)]
-    if not _is_concrete(el):
+    if is_precast(el):
+        # Сборный железобетон: в перечне есть работы по монтажу сборных
+        # конструкций (напр. «Установка сборных железобетонных лестничных
+        # маршей»). Если их в подразделе нет — работ не подбираем, и
+        # pick_for_element уходит в поиск по полному справочнику ТСН.
+        visible = [w for w in visible if _is_precast_work(w)]
+        if not visible:
+            return {"works": [], "reason": "в подразделе нет работ по сборному железобетону"}
+    elif not _is_concrete(el):
         visible = [w for w in visible if not _is_concrete_work(w)] or visible
         lk = _layer_kind(el)
         if lk:
@@ -520,6 +536,10 @@ def review_selection(el: Dict[str, Any], part: str, sub: Dict[str, Any],
     """Контролёр: убирает взаимоисключающие/чужие работы, добавляет пропущенные."""
     chosen_ids = {w["wid"] for w in chosen}
     visible = [w for w in sub["works"] if not _is_rebar_diameter(w)]
+    if is_precast(el):
+        # Для сборного ж/б контролёр видит только работы по сборным конструкциям,
+        # чтобы не вернуть монолитные опалубку/арматуру/бетонирование.
+        visible = [w for w in visible if _is_precast_work(w)] or visible
     selected = "\n".join(_work_line(w) for w in visible if w["wid"] in chosen_ids)
     rest = "\n".join(_work_line(w) for w in visible if w["wid"] not in chosen_ids) or "(нет)"
     prompt = (
@@ -850,9 +870,6 @@ def pick_for_element(el: Dict[str, Any], part: str, subs: List[Dict[str, Any]],
         _save_cache(cache)
         return {"status": "none", "subsection": None, "works": [], "reason": reason}
 
-    if is_precast(el):
-        return fallback("сборный железобетон — в перечне КР только монолит")
-
     s1 = select_subsection(el, part, subs)
     sub = s1["subsection"]
     if not sub:
@@ -887,7 +904,7 @@ def pick_for_element(el: Dict[str, Any], part: str, subs: List[Dict[str, Any]],
         if not chosen:
             return fallback("материал элемента — не бетон, в перечне КР подходящих работ нет")
     if not chosen:
-        return fallback("модель не выбрала работ из перечня")
+        return fallback(reason or "модель не выбрала работ из перечня")
     chosen, rates_reason = select_rates(el, part, chosen)
     if rates_reason:
         reason += f" | РАСЦЕНКИ: {rates_reason}"

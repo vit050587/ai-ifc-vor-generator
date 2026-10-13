@@ -124,6 +124,17 @@ def _element_quantities(run_dir: str, filename: str = "filtered_elements.xlsx") 
         except (TypeError, ValueError, KeyError):
             return 0.0
 
+    def rebar_ratio(row, c) -> float:
+        """Расход арматуры из модели, кг/м3 (0 — если данных нет).
+
+        В моделях расход часто проставлен заглушкой 999 (или другим
+        нереальным значением) — это признак «данных нет», а не норма
+        армирования: считать по ней 999 кг/м3 нельзя (получались тысячи тонн).
+        Реальные значения лежат в диапазоне примерно 20–400 кг/м3.
+        """
+        v = num(row, c)
+        return v if 0 < v < 500 else 0.0
+
     out = []
     df.columns = cols
     for _, r in df.iterrows():
@@ -133,7 +144,7 @@ def _element_quantities(run_dir: str, filename: str = "filtered_elements.xlsx") 
             area = max(num(r, c) for c in area_cols)
         fw = _element_formwork_area_m2(r.to_dict(), perim_cols, depth_cols)
         out.append({"volume": vol, "area": area, "fw_hint": fw,
-                    "rebar_kg": num(r, rebar_col) * vol if rebar_col else 0.0})
+                    "rebar_kg": rebar_ratio(r, rebar_col) * vol if rebar_col else 0.0})
     return out
 
 
@@ -225,6 +236,12 @@ def _volume(rate: Dict[str, Any], el: Dict[str, Any], q: Dict[str, float]) -> Op
     elif "шт" in unit:
         if rate["is_resource"]:
             return None   # сколько штук материала — модель не знает
+        base = q["count"]
+    elif "конструкц" in unit or "элемент" in unit:
+        # Напр. «100 сборных конструкций» (монтаж сборного ж/б): объём —
+        # количество элементов группы, приведённое к единице расценки.
+        if rate["is_resource"]:
+            return None
         base = q["count"]
     else:
         return None
@@ -2188,3 +2205,554 @@ _build_before_fix = build_final_from_perechen
 def build_final_from_perechen(tables_json_path, run_dir):
     _RATE_FIX.clear()
     return _build_before_fix(tables_json_path, run_dir)
+
+
+# ==== DOC_FACTS: класс бетона/арматуры и объёмы из ВОР и ПД (режим ИИ) ====
+# Дополнительные документы (ВОР — ведомость объёмов работ, ПД — проектная
+# документация, §4.1 readme_ar.md) дают то, чего нет в модели:
+#   * класс бетона B/W/F по конструкциям (в модели он указан у единичных
+#     элементов) — подставляется в подбор бетонной смеси (`_concrete_resource`);
+#   * класс арматуры (А500С и т.п.) — для блока REBAR_STEEL;
+#   * объёмы работ, которых нет в модели (опалубка торца плиты, гидроизоляция
+#     шва, засыпка и т.п.) — для строк «объём по проекту»;
+#   * сверка объёмов модель ↔ ВОР — в аналитическую справку.
+# Все шаги аддитивны: без загруженных ВОР/ПД подбор работает как раньше.
+DOC = None
+_DOC_GROUPS = []
+_DOC_STATS = {"bwf": 0, "volumes": 0, "rebar": 0}
+DOC_SRC = "Сверка с ВОР и ПД"
+# Удельный расход арматуры (т/м3) по видам конструкций из ВОР: суммарная масса
+# арматуры конструкции делится на суммарный объём бетона этой конструкции в
+# модели — так объёмы групп складываются ровно в расход по ВОР.
+_DOC_REBAR_NORM: Dict[str, float] = {}
+_DOC_REBAR_SRC: Dict[str, Dict[str, Any]] = {}
+# Суммарный объём бетона конструкций каждого вида (м3) — знаменатель для
+# раскладки объёмов из ВОР по группам перечня (объём ВОР относится к
+# конструкции целиком, а в перечне она представлена несколькими группами).
+_DOC_KIND_VOL: Dict[str, float] = {}
+# Применённые классы бетона и работы, объёмы которых взяты из ВОР (для справки).
+_DOC_BWF_APPLIED: List[Dict[str, Any]] = []
+
+
+def _docs_load(run_dir):
+    """Загружает факты ВОР/ПД для сессии запуска (None — документов нет)."""
+    global DOC
+    try:
+        from src.services import doc_facts
+        doc_facts.reset()
+        DOC = doc_facts.load(run_dir)
+    except Exception as e:
+        logger.warning(f"документы ВОР/ПД: {e}")
+        DOC = None
+    if DOC is not None:
+        logger.info(f"ВОР/ПД: записей ВОР {len(DOC.vor)}, ПД {len(DOC.pd)}")
+    return DOC
+
+
+def _doc_prepare_rebar(tables_json_path, run_dir):
+    """Считает удельный расход арматуры (т/м3) по видам конструкций из ВОР.
+
+    В ВОР расход арматуры привязан к конструкциям (цитата «Уточнение объемов
+    арматуры ФП и …», «… ж/б плит перекрытия»), а не к отдельным элементам.
+    Поэтому масса из ВОР раскладывается по группам перечня пропорционально
+    объёму бетона конструкции в модели.
+    """
+    global _DOC_REBAR_NORM, _DOC_REBAR_SRC, _DOC_KIND_VOL
+    _DOC_REBAR_NORM, _DOC_REBAR_SRC, _DOC_KIND_VOL = {}, {}, {}
+    if DOC is None:
+        return
+    try:
+        from src.services import doc_facts
+        data = json.load(open(tables_json_path, encoding="utf-8"))
+        elements = data.get("elements") or []
+        per_el = _element_quantities(run_dir)
+        vol_by_kind: Dict[str, float] = {}
+        for i, entry in enumerate(elements):
+            if i >= len(per_el):
+                break
+            el = entry.get("element") or {}
+            kind = doc_facts.primary_kind(doc_facts.el_text(el))
+            if not kind:
+                continue
+            vol_by_kind[kind] = vol_by_kind.get(kind, 0.0) + float(per_el[i].get("volume") or 0.0)
+        _DOC_KIND_VOL = {k: round(v, 4) for k, v in vol_by_kind.items() if v > 0}
+        for kind, vol in vol_by_kind.items():
+            if vol <= 0:
+                continue
+            mass = DOC.rebar_mass(kind)
+            if not mass:
+                continue
+            _DOC_REBAR_NORM[kind] = mass / vol
+            _DOC_REBAR_SRC[kind] = {"mass": mass, "volume": round(vol, 2)}
+            logger.info(f"арматура по ВОР: {kind} — {mass} т на {round(vol, 1)} м3 "
+                        f"({round(mass / vol * 1000, 1)} кг/м3)")
+    except Exception as e:
+        logger.warning(f"норма арматуры по ВОР: {e}")
+
+
+def _doc_fill_rebar(el, q):
+    """Масса арматуры элемента — по удельному расходу из ВОР (если он известен)."""
+    if DOC is None or not _DOC_REBAR_NORM:
+        return
+    from src.services import doc_facts
+    kind = doc_facts.primary_kind(doc_facts.el_text(el))
+    norm = _DOC_REBAR_NORM.get(kind)
+    if not norm:
+        return
+    vol = float(q.get("volume") or 0.0)
+    if vol <= 0:
+        return
+    q["rebar_kg"] = round(vol * norm * 1000, 2)
+    _DOC_STATS["rebar"] = _DOC_STATS.get("rebar", 0) + 1
+    logger.info(f"арматура по ВОР: {_an_short(el.get('name'))} — "
+                f"{round(q['rebar_kg'] / 1000, 2)} т (по {round(norm * 1000, 1)} кг/м3)")
+
+
+# --- (1) класс бетона: если в модели его нет — берём по конструкции из ВОР/ПД ---
+_cr_before_docs = _concrete_resource
+
+
+def _concrete_resource(el, subs):
+    res = _cr_before_docs(el, subs)
+    if res is not None or DOC is None:
+        return res
+    if not kb._is_concrete(el) or kb.is_precast(el):
+        return None
+    try:
+        got = DOC.concrete_bwf(el)
+    except Exception as e:
+        logger.warning(f"класс бетона по документам: {e}")
+        return None
+    if not got:
+        return None
+    b, w, f = got
+    # Справочник смесей уже заполнен вызовом выше (`_conc_res`) — выбираем
+    # марку того же класса прочности, ближайшую по W/F (правило блока (6)).
+    best, best_score = None, None
+    for r in (_conc_res or {}).values():
+        rb, rw, rf = _bwf(r["title"])
+        if rb != b:
+            continue
+        score = (10 if w and rw == w else 0) + (1 if f and rf == f else 0) \
+            + (0.5 if "гранит" in r["title"].lower() else 0)
+        if best_score is None or score > best_score:
+            best, best_score = r, score
+    if best is not None:
+        _DOC_STATS["bwf"] += 1
+        _DOC_BWF_APPLIED.append({"el": _an_short(el.get("name")), "b": b, "w": w, "f": f,
+                                 "pressmark": best["pressmark"]})
+        logger.info(f"класс бетона по ВОР/ПД: B{b:g}"
+                    + (f" W{w}" if w else "") + (f" F{f}" if f else "")
+                    + f" -> {best['pressmark']}")
+    return best
+
+
+# --- (2) объёмы «по проекту» из ВОР + фильтр бетонной смеси по классу документов ---
+_fin_before_docs = finalize_rows
+
+
+def finalize_rows(el, q, works, subs):
+    if DOC is not None:
+        try:
+            _doc_fill_rebar(el, q)     # масса арматуры из ВОР — до строк перечня
+        except Exception as e:
+            logger.warning(f"арматура по ВОР: {e}")
+    rows = _fin_before_docs(el, q, works, subs)
+    if DOC is None:
+        return rows
+    _DOC_GROUPS.append({"el": el, "q": q})
+    try:
+        _doc_filter_concrete(el, rows)
+    except Exception as e:
+        logger.warning(f"фильтр бетонной смеси по документам: {e}")
+    try:
+        _doc_fill_volumes(el, q, rows)
+    except Exception as e:
+        logger.warning(f"объёмы из ВОР: {e}")
+    return rows
+
+
+def _doc_filter_concrete(el, rows):
+    """Убирает бетонную смесь чужого класса, если класс известен только из ВОР/ПД.
+
+    Штатный фильтр `finalize_rows` работает по классу из модели; когда класса в
+    модели нет, строку смеси не отсечь — здесь используем класс из документов.
+    """
+    if _bwf(f"{el.get('name')} {el.get('material')}")[0] is not None:
+        return                                   # класс есть в модели — штатный фильтр
+    got = DOC.concrete_bwf(el)
+    if not got:
+        return
+    b = got[0]
+    kept = []
+    for r in rows:
+        pm = str(r.get("pressmark") or "")
+        if pm.startswith("1.3-1-"):
+            rb = _bwf(kb._full_title(r))[0]
+            if rb is not None and rb != b:
+                continue
+        kept.append(r)
+    rows[:] = kept
+
+
+def _work_text(r):
+    """Название работы строки без служебных хвостов — для сопоставления с ВОР.
+
+    В ВОР работы названы «по-своему» (напр. «Гидрошпонка АКВАСТОП…»), тогда как
+    наименование расценки описывает совсем другое («Заполнение вертикальных швов
+    стеновых панелей…»). Поэтому сопоставляем по работе, а не по расценке.
+    """
+    text = re.sub(r"\s*—\s*(объём по проекту|объём из ВОР)[^;|]*", "",
+                  str(r.get("work") or "")).strip()
+    return text or str(r.get("title") or "")
+
+
+def _doc_share(el, q, vol: float) -> float:
+    """Доля объёма ВОР, приходящаяся на группу (по объёму бетона конструкции)."""
+    try:
+        from src.services import doc_facts
+        kind = doc_facts.primary_kind(doc_facts.el_text(el))
+        total = _DOC_KIND_VOL.get(kind)
+        cur = float(q.get("volume") or 0.0)
+        if total and cur > 0:
+            return vol * cur / total
+    except Exception:
+        pass
+    return vol
+
+
+def _doc_fill_volumes(el, q, rows):
+    """Подставляет объём работ из ВОР там, где по модели он не определён.
+
+    Объём в ВОР относится к конструкции целиком (напр. гидрошпонка — 61,6 пог.м
+    на всю фундаментную плиту), а в перечне конструкция представлена несколькими
+    группами (по классу бетона). Поэтому найденный объём раскладывается по
+    группам пропорционально объёму бетона конструкции в модели — сумма по
+    группам соответствует ВОР (иначе объём задваивался бы в каждой группе).
+    """
+    last_work = None
+    for r in rows:
+        if not r.get("is_resource"):
+            if r.get("volume") is not None:
+                last_work = r
+                continue
+            vol = DOC.volume_for(_work_text(r), r.get("unit") or "", el)
+            if not vol:
+                last_work = None
+                continue
+            vol = _doc_share(el, q, vol)
+            v = round(vol / _divisor(r.get("unit") or ""), 4)
+            r["volume"] = v
+            zp, em, mr, total = _costs({"pressmark": r["pressmark"], "is_resource": False}, v)
+            r.update(zp=zp, em=em, mr=mr, total=total)
+            r["work"] = re.sub(r"\s*—\s*объём по проекту[^;|]*", "", str(r.get("work") or "")).strip()
+            r["work"] = (r["work"] + " — объём из ВОР (ведомость объёмов работ)").strip(" —")
+            _DOC_STATS["volumes"] += 1
+            last_work = r
+            continue
+        # ресурс без объёма — по норме расхода своей расценки (как в блоке (4))
+        if r.get("volume") is None and last_work is not None and last_work.get("volume"):
+            try:
+                from src.services.local_resources import norm as _norm
+            except Exception:
+                _norm = None
+            n = (_norm(last_work["pressmark"], r["pressmark"]) if _norm else None) \
+                or _norm_similar(last_work["pressmark"], r["pressmark"])
+            if n:
+                v = round(last_work["volume"] * n, 4)
+                r["volume"] = v
+                zp, em, mr, total = _costs({"pressmark": r["pressmark"], "is_resource": True}, v)
+                r.update(zp=zp, em=em, mr=mr, total=total)
+
+
+# --- (3) класс арматуры из ВОР/ПД (блок REBAR_STEEL) ---
+_rebar_before_docs = _rebar_class
+
+
+def _rebar_class(el):
+    cls = _rebar_before_docs(el)
+    if cls and _REBAR_OK_CLASS.search(cls):
+        return cls
+    if DOC is not None:
+        doc_cls = DOC.rebar_class(el)
+        if doc_cls:
+            return doc_cls
+    return cls
+
+
+# --- (4) сверка объёмов модель ↔ ВОР в аналитическую справку ---
+def _doc_volume_compare(limit=6):
+    """Строки сверки: объём бетона группы по модели против объёма ВОР."""
+    out, seen = [], set()
+    for g in _DOC_GROUPS:
+        el, q = g.get("el") or {}, g.get("q") or {}
+        vol = q.get("volume") or 0
+        if vol <= 0:
+            continue
+        key = kb.type_key(el.get("name"))
+        if not key or key in seen:
+            continue
+        try:
+            vor = DOC.beton_volume(el)
+        except Exception:
+            continue
+        if not vor:
+            continue
+        diff = (vol - vor) / vor * 100
+        if abs(diff) < 25 or abs(vol - vor) < 1.0:
+            continue
+        seen.add(key)
+        out.append(f"{_an_short(el.get('name'))}: в модели {_fmt_num(vol)} м³, "
+                   f"в ВОР {_fmt_num(vor)} м³ ({'+' if diff > 0 else ''}{diff:.0f}%) — "
+                   f"проверить состав выбранных элементов и полноту ВОР (захватки, корпуса).")
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _fmt_num(v: float) -> str:
+    """Число с пробелом-разделителем тысяч: 3169.0 → «3 169.0»."""
+    return f"{v:,.1f}".replace(",", " ")
+
+
+def _num_ru(v: float) -> str:
+    """Число в русском формате: 1244.38 → «1 244,4»."""
+    return f"{v:,.1f}".replace(",", " ").replace(".", ",")
+
+
+_an_before_docs = _an_build
+
+
+def _an_build(run_dir):
+    res = _an_before_docs(run_dir)
+    if DOC is None:
+        return res
+    g = res.setdefault("groups", {})
+
+    def put(sect, src, items):
+        if not items:
+            return
+        tgt = next((x for x in g.setdefault(sect, []) if x.get("src") == src), None)
+        if tgt is None:
+            tgt = {"src": src, "items": []}
+            g[sect].append(tgt)
+        tgt["items"].extend(items)
+
+    # --- что взято из ВОР/ПД
+    applied = []
+    if _DOC_STATS["bwf"]:
+        applied.append(f"класс бетона B/W/F по конструкциям — {_DOC_STATS['bwf']} тип.")
+    if _DOC_STATS["volumes"]:
+        applied.append(f"объёмы работ, которых нет в модели — {_DOC_STATS['volumes']} поз.")
+    if _DOC_STATS.get("rebar"):
+        applied.append(f"масса арматуры по конструкциям — {_DOC_STATS['rebar']} тип.")
+    if DOC.rebar_class():
+        applied.append(f"класс арматуры — {DOC.rebar_class()}")
+    if applied:
+        put("ok", DOC_SRC, ["Из ВОР/ПД взято: " + "; ".join(applied) + "."])
+
+    # --- тезисы из ВОР: арматура и объёмы работ
+    vor_items = []
+    if _DOC_REBAR_SRC:
+        parts = []
+        for kind, src in _DOC_REBAR_SRC.items():
+            parts.append(f"{_KIND_RU.get(kind, kind)} — {_num_ru(src['mass'])} т "
+                         f"({_num_ru(round(src['mass'] / src['volume'] * 1000, 1))} кг/м³ "
+                         f"на {_num_ru(src['volume'])} м³ бетона)")
+        vor_items.append("Расход арматуры по ВОР: " + "; ".join(parts) + ".")
+    if _DOC_STATS["volumes"]:
+        vor_items.append(f"Объёмы работ, которых нет в модели (гидрошпонка, "
+                         f"уплотнители/герметизация швов и т.п.), взяты из ВОР — "
+                         f"{_DOC_STATS['volumes']} поз.")
+    vor_items.append(f"ВОР (ведомость объёмов работ): {len(DOC.vor)} записей.")
+    put("ok", "Из ВОР", vor_items)
+
+    # --- тезисы из ПД: классы бетона конструкций
+    pd_items = []
+    seen_bwf = set()
+    for rec in _DOC_BWF_APPLIED:
+        key = (rec["el"], rec["b"], rec.get("w"), rec.get("f"))
+        if key in seen_bwf:
+            continue
+        seen_bwf.add(key)
+        mark = f"B{rec['b']:g}" + (f" W{rec['w']}" if rec.get("w") else "") \
+            + (f" F{rec['f']}" if rec.get("f") else "")
+        pd_items.append(f"{rec['el']} — {mark}")
+        if len(pd_items) >= 6:
+            break
+    if pd_items:
+        put("ok", "Из ПД", ["Класс бетона конструкций по ВОР/ПД: " + "; ".join(pd_items) + "."])
+    if DOC.pd:
+        put("ok", "Из ПД", [f"ПД (проектная документация): {len(DOC.pd)} записей "
+                            f"(характеристики конструкций, классы бетона)."])
+
+    # сверка объёмов
+    try:
+        lines = _doc_volume_compare()
+    except Exception as e:
+        logger.warning(f"сверка объёмов с ВОР: {e}")
+        lines = []
+    if lines:
+        res["doc_volumes"] = lines
+        put("doubt", DOC_SRC, lines)
+    try:
+        json.dump(res, open(os.path.join(run_dir, "analytic.json"), "w", encoding="utf-8"),
+                  ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+    return res
+
+
+# Русские названия видов конструкций для аналитической справки.
+_KIND_RU = {"foundation_slab": "Фундаментные плиты", "footing": "Фундаменты",
+            "pile": "Сваи", "slab": "Плиты перекрытий", "wall": "Стены",
+            "column": "Колонны", "beam": "Балки", "stair": "Лестницы"}
+
+
+_build_before_docs = build_final_from_perechen
+
+
+def build_final_from_perechen(tables_json_path, run_dir):
+    _DOC_GROUPS.clear()
+    _DOC_STATS.update(bwf=0, volumes=0, rebar=0)
+    _DOC_BWF_APPLIED.clear()
+    _docs_load(run_dir)
+    _doc_prepare_rebar(tables_json_path, run_dir)
+    return _build_before_docs(tables_json_path, run_dir)
+
+
+# ==== CONDITIONAL_WORKS: работы «не моделируется» — только при подтверждении проектом ====
+# Перечень сметчиков добавляет к бетонной конструкции работы, которых нет в
+# модели (гидрошпонка, штуцер инъекционный, набухающий профиль, закладные
+# детали и т.п.). Раньше они попадали в перечень всегда — строкой-заглушкой
+# «объём по проекту». Теперь такая работа остаётся, только если её наличие
+# подтверждено документом сессии (IFC-модель, ПОС, ВОР, ПД): найден объём
+# (тогда он подставляется) либо упоминание работы в документе. Если работа
+# нигде не упомянута — строка (и её ресурсы) удаляется.
+_COND_RX = re.compile(r"шпонк|аквастоп|штуцер|инъекц|набуха|каучук|уплотнит|гермет|гермит|закладн",
+                      re.I)
+# Обязательные работы бетонной конструкции — не фильтруются (шаблон узкий:
+# «бетонирование» как отдельная работа, а не слово внутри «швов бетонирования»).
+_ALWAYS_RX = re.compile(r"опалуб|арматур|уход за бетоном|бетон \(по классу|^бетонирование", re.I)
+# Категория работы → характерные слова для поиска в документах.
+_COND_KEYS = (
+    (re.compile(r"шпонк|аквастоп", re.I), ("шпонк", "аквастоп")),
+    (re.compile(r"штуцер|инъекц", re.I), ("штуцер", "инъекц")),
+    (re.compile(r"набуха|каучук", re.I), ("набуха", "каучук")),
+    (re.compile(r"уплотнит|гермет|гермит", re.I), ("уплотнит", "вилатерм", "гермет", "гермит")),
+    (re.compile(r"закладн", re.I), ("закладн",)),
+)
+_COND_STATS: List[Dict[str, Any]] = []
+
+
+def _cond_keys(work: str) -> Tuple[str, ...]:
+    for rx, keys in _COND_KEYS:
+        if rx.search(work):
+            return keys
+    return ()
+
+
+def _cond_filter(el, rows, run_dir):
+    """Оставляет «условные» работы только при подтверждении в документах сессии."""
+    from src.services import doc_facts
+    groups: Dict[str, List[int]] = {}
+    for i, r in enumerate(rows):
+        if not isinstance(r, dict):
+            continue
+        groups.setdefault(_work_text(r), []).append(i)
+    drop: set = set()
+    for work, idxs in groups.items():
+        if not _COND_RX.search(work) or _ALWAYS_RX.search(work):
+            continue
+        keys = _cond_keys(work)
+        if not keys:
+            continue
+        if any(rows[i].get("volume") for i in idxs):
+            continue                     # объём уже взят из ВОР — работа подтверждена
+        conf = doc_facts.confirm_keys(keys, run_dir)
+        if conf:
+            src = conf["src"] + (f", стр. {conf['page']}" if conf.get("page") else "")
+            for i in idxs:
+                rows[i]["work"] = re.sub(
+                    r"\s*—\s*по документам[^;|]*", "", str(rows[i].get("work") or "")).strip()
+                rows[i]["work"] = (rows[i]["work"] + f" — по документам ({src})").strip(" —")
+            _COND_STATS.append({"work": work, "el": _an_short(el.get("name")),
+                                "src": src, "dropped": False})
+            logger.info(f"работа «{work[:50]}» подтверждена документом ({src})")
+        else:
+            drop.update(idxs)
+            _COND_STATS.append({"work": work, "el": _an_short(el.get("name")),
+                                "src": "", "dropped": True})
+            logger.info(f"работа «{work[:50]}» удалена — нет подтверждения в документах")
+    if drop:
+        rows[:] = [r for i, r in enumerate(rows) if i not in drop]
+
+
+_fin_before_cond = finalize_rows
+
+
+def finalize_rows(el, q, works, subs):
+    rows = _fin_before_cond(el, q, works, subs)
+    try:
+        _cond_filter(el, rows, _COND_RUN_DIR)
+    except Exception as e:
+        logger.warning(f"фильтр условных работ: {e}")
+    return rows
+
+
+_an_before_cond = _an_build
+
+
+def _an_build(run_dir):
+    res = _an_before_cond(run_dir)
+    if not _COND_STATS:
+        return res
+    g = res.setdefault("groups", {})
+    dropped = [x for x in _COND_STATS if x["dropped"]]
+    kept = [x for x in _COND_STATS if not x["dropped"]]
+
+    def put(sect, src, items):
+        if not items:
+            return
+        tgt = next((x for x in g.setdefault(sect, []) if x.get("src") == src), None)
+        if tgt is None:
+            tgt = {"src": src, "items": []}
+            g[sect].append(tgt)
+        tgt["items"].extend(items)
+
+    if kept:
+        uniq = {}
+        for x in kept:
+            uniq.setdefault(x["work"], x["src"])
+        put("ok", "Из проектной документации",
+            ["Работы «не моделируется» подтверждены проектом и оставлены в перечне: "
+             + "; ".join(f"{w[:45]} ({s})" for w, s in list(uniq.items())[:6]) + "."])
+    if dropped:
+        uniq = sorted({x["work"] for x in dropped})
+        put("info", "Из проектной документации",
+            [f"Работы «не моделируется» не найдены ни в IFC/ПОС, ни в ВОР/ПД — "
+             f"из перечня исключены ({len(dropped)} поз.): "
+             + "; ".join(w[:45] for w in uniq[:8]) + "."])
+    try:
+        json.dump(res, open(os.path.join(run_dir, "analytic.json"), "w", encoding="utf-8"),
+                  ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+    return res
+
+
+_COND_RUN_DIR = ""
+
+_build_before_cond = build_final_from_perechen
+
+
+def build_final_from_perechen(tables_json_path, run_dir):
+    global _COND_RUN_DIR
+    _COND_STATS.clear()
+    _COND_RUN_DIR = run_dir
+    try:
+        from src.services import doc_facts
+        doc_facts.reset_corpus()
+    except Exception:
+        pass
+    return _build_before_cond(tables_json_path, run_dir)

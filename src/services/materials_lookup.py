@@ -137,6 +137,110 @@ def parse_material_segments(value) -> List[Tuple[str, str]]:
     return segments
 
 
+@lru_cache(maxsize=4)
+def build_material_children_map(
+    data_path: str = _DEFAULT_MATERIALS_PATH,
+) -> Dict[str, Tuple[Tuple[str, str], ...]]:
+    """Строит карту «код материала → дочерние коды» из иерархии справочника.
+
+    Нужна для определения **неполного** кода материала: код присутствует в
+    справочнике как родительский узел (category/purpose/class/subclass) и не
+    позволяет однозначно определить материал. Пример: ``СТ 00 15`` —
+    «Железобетон»; не ясно, сборный он или монолитный (дочерние:
+    ``СТ 00 15 01`` «Железобетон сборный», ``СТ 00 15 02`` «Железобетон
+    монолитный»).
+
+    Возвращает: code → кортеж пар (дочерний_код, имя_дочернего_узла).
+    """
+    children: Dict[str, list] = {}
+
+    def add(parent_code, child_code, child_name) -> None:
+        if not parent_code or not child_code:
+            return
+        parent = str(parent_code).strip()
+        child = str(child_code).strip()
+        if not parent or not child or parent == child:
+            return
+        children.setdefault(parent, []).append((child, str(child_name or '').strip()))
+
+    try:
+        with open(data_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        logger.error(f"Справочник материалов не найден: {data_path}")
+        return {}
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.error(f"Ошибка чтения справочника материалов: {exc}")
+        return {}
+
+    if not isinstance(data, list):
+        return {}
+
+    for category in data:
+        if not isinstance(category, dict):
+            continue
+        cat_code = category.get("code_category")
+        for purpose in category.get("purposes", []) or []:
+            if not isinstance(purpose, dict):
+                continue
+            add(cat_code, purpose.get("code_purpose"), purpose.get("purpose"))
+            for cls in purpose.get("classes", []) or []:
+                if not isinstance(cls, dict):
+                    continue
+                add(purpose.get("code_purpose"), cls.get("code_class"), cls.get("class_RU"))
+                for sub in cls.get("subclasses", []) or []:
+                    if not isinstance(sub, dict):
+                        continue
+                    add(cls.get("code_class"), sub.get("code"), sub.get("subclass_RU"))
+                    for mat in sub.get("materials", []) or []:
+                        if not isinstance(mat, dict):
+                            continue
+                        add(sub.get("code"), mat.get("code"), mat.get("material"))
+
+    # Уникализируем дочерние коды, сохраняя порядок обхода справочника
+    result: Dict[str, Tuple[Tuple[str, str], ...]] = {}
+    for code, items in children.items():
+        seen = set()
+        uniq = []
+        for child_code, child_name in items:
+            if child_code in seen:
+                continue
+            seen.add(child_code)
+            uniq.append((child_code, child_name))
+        result[code] = tuple(uniq)
+    return result
+
+
+def material_code_options(
+    code, data_path: str = _DEFAULT_MATERIALS_PATH,
+) -> List[Dict[str, str]]:
+    """Дочерние варианты материала для **неполного** кода МССК.
+
+    Возвращает список ``[{"code": ..., "name": ...}, ...]`` — варианты
+    уточнения материала (например, для ``СТ 00 15``: «Железобетон сборный»
+    ``СТ 00 15 01`` и «Железобетон монолитный» ``СТ 00 15 02``). Пустой
+    список — код полный (листовой узел) либо неизвестен.
+    """
+    if code is None:
+        return []
+    code_str = str(code).strip()
+    if not code_str or code_str == "-":
+        return []
+
+    items = build_material_children_map(data_path).get(code_str, ())
+    if not items:
+        return []
+
+    # Имя дочернего кода — из иерархии, при отсутствии — из плоской карты.
+    lookup, _ = build_materials_lookup(data_path)
+    options: List[Dict[str, str]] = []
+    for child_code, child_name in items:
+        info = lookup.get(child_code)
+        name = child_name or (info["name"] if info else "")
+        options.append({"code": child_code, "name": name})
+    return options
+
+
 def resolve_material_group_with_code(
     value, lookup: Dict[str, Dict[str, object]] = None
 ) -> Tuple[str, int, Optional[str]]:

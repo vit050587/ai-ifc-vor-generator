@@ -11,7 +11,13 @@ from flask import (
     send_file, render_template,
     jsonify, redirect, Response
 )
-from src.services.session_manager import SessionManager, POS_CONSTANTS_FILENAME, PZ_CONSTANTS_FILENAME
+from src.services.session_manager import (
+    SessionManager,
+    POS_CONSTANTS_FILENAME,
+    PZ_CONSTANTS_FILENAME,
+    VOR_RESULT_JSON,
+    PD_RESULT_JSON,
+)
 from src.services.mssk_lookup import get_mssk_code_map
 from src.core.logger import setup_logger
 from src.core.config import load_config
@@ -228,6 +234,21 @@ def upload_ifc():
         description: Дополнительный PDF-файл пояснительной записки (только для
           режима AI/ИИ) — разбирается тем же пайплайном, что и ПОС; из него
           извлекаются глобальные константы, не найденные в IFC и ПОС
+      - name: vorFile
+        in: formData
+        type: file
+        required: false
+        description: Дополнительный PDF-файл ВОР (ведомость объёмов работ, только
+          для режима AI/ИИ) — из него извлекаются группы элементов, объёмы работ
+          и единицы измерения
+      - name: pdFile
+        in: formData
+        type: file
+        required: false
+        description: Дополнительный PDF-файл ПД (проектная документация, только
+          для режима AI/ИИ) — разбирается только текстовая часть; извлекаются
+          характеристики элементов (класс бетона, прочность, пластичность,
+          морозостойкость, водонепроницаемость)
       - name: autoLegend
         in: formData
         type: string
@@ -379,6 +400,26 @@ def upload_ifc():
                 _get_manager().upload_pz(result["session_id"], pz_file, pz_file.filename)
             except ValueError as e:
                 logger.warning(f"Файл ПЗ не принят: {e}")
+
+        # Дополнительный файл ВОР (режим ИИ): ведомость объёмов работ,
+        # разбирается в фоне (doc_pdf_parser.parse_vor), результат —
+        # ВОР_ведомость_объемов_работ.json/.xlsx
+        vor_file = request.files.get("vorFile")
+        if vor_file and vor_file.filename and processing_type == "AR":
+            try:
+                _get_manager().upload_vor(result["session_id"], vor_file, vor_file.filename)
+            except ValueError as e:
+                logger.warning(f"Файл ВОР не принят: {e}")
+
+        # Дополнительный файл ПД (режим ИИ): проектная документация,
+        # разбирается в фоне (doc_pdf_parser.parse_pd) — только текстовая часть,
+        # результат — ПД_характеристики_элементов.json/.xlsx
+        pd_file = request.files.get("pdFile")
+        if pd_file and pd_file.filename and processing_type == "AR":
+            try:
+                _get_manager().upload_pd(result["session_id"], pd_file, pd_file.filename)
+            except ValueError as e:
+                logger.warning(f"Файл ПД не принят: {e}")
 
         # В ответе клиенту отдаём публичный код режима (CS/AI)
         if "processing_type" in result:
@@ -1048,6 +1089,7 @@ def preview_excel(session_id: str):
             from src.services.materials_lookup import (
                 build_materials_lookup,
                 resolve_material_group_with_code,
+                material_code_options,
             )
             mat_lookup, _ = build_materials_lookup()
             raw_map = _get_manager()._load_material_layer_map(session_id)
@@ -1056,7 +1098,17 @@ def preview_excel(session_id: str):
                 for gid in df['GlobalId'].dropna().astype(str).unique():
                     raw_val = raw_map.get(gid, '')
                     name, order, code = resolve_material_group_with_code(raw_val, mat_lookup)
-                    materials_group_map[gid] = {"name": name, "order": order, "code": code}
+                    # Неполный код МССК материала (напр. «СТ 00 15» —
+                    # «Железобетон»): в превью строка группы подсвечивается,
+                    # пользователь уточняет материал (сборный/монолитный).
+                    options = material_code_options(code) if code else []
+                    materials_group_map[gid] = {
+                        "name": name,
+                        "order": order,
+                        "code": code,
+                        "incomplete": len(options) >= 2,
+                        "options": options,
+                    }
         except Exception as e:
             logger.warning(f"Не удалось построить карту материалов для превью: {e}", exc_info=True)
             materials_group_map = None
@@ -1246,6 +1298,40 @@ def get_works_constants(session_id: str):
         except Exception as e:
             logger.warning(f"Не удалось прочитать константы ПЗ: {e}")
 
+    # Результаты разбора ВОР (ведомость объёмов работ, ВОР_ведомость_объемов_работ.json)
+    vor_ready = False
+    vor_file_name = None
+    vor_count = None
+    vor_result_path = os.path.join(
+        _get_manager().output_folder, session_id, VOR_RESULT_JSON
+    )
+    if os.path.isfile(vor_result_path):
+        try:
+            with open(vor_result_path, "r", encoding="utf-8") as f:
+                vor_data = json.load(f)
+            vor_ready = True
+            vor_file_name = vor_data.get("file_name")
+            vor_count = len(vor_data.get("items") or [])
+        except Exception as e:
+            logger.warning(f"Не удалось прочитать результат ВОР: {e}")
+
+    # Результаты разбора ПД (проектная документация, ПД_характеристики_элементов.json)
+    pd_ready = False
+    pd_file_name = None
+    pd_count = None
+    pd_result_path = os.path.join(
+        _get_manager().output_folder, session_id, PD_RESULT_JSON
+    )
+    if os.path.isfile(pd_result_path):
+        try:
+            with open(pd_result_path, "r", encoding="utf-8") as f:
+                pd_data = json.load(f)
+            pd_ready = True
+            pd_file_name = pd_data.get("file_name")
+            pd_count = len(pd_data.get("items") or [])
+        except Exception as e:
+            logger.warning(f"Не удалось прочитать результат ПД: {e}")
+
     return _ok(WorksConstantsResponse(
         session_id=session_id,
         processing_type=to_public_type(s.get("processing_type")),
@@ -1259,6 +1345,14 @@ def get_works_constants(session_id: str):
         pz_ready=pz_ready,
         pz_file_name=pz_file_name,
         pz_status=s.get("pz_status"),
+        vor_ready=vor_ready,
+        vor_file_name=vor_file_name,
+        vor_status=s.get("vor_status"),
+        vor_count=vor_count,
+        pd_ready=pd_ready,
+        pd_file_name=pd_file_name,
+        pd_status=s.get("pd_status"),
+        pd_count=pd_count,
     ))
 
 
@@ -1400,6 +1494,150 @@ def upload_pz(session_id: str):
         return _err(ErrorResponse(detail=str(e)), status)
     except Exception as e:
         logger.error(f"Ошибка загрузки файла ПЗ: {e}", exc_info=True)
+        return _err(ErrorResponse(detail=f"Внутренняя ошибка: {str(e)}"), 500)
+
+
+@bp.route("/api/session/<session_id>/upload_vor", methods=["POST"])
+def upload_vor(session_id: str):
+    """
+    Загрузка PDF-файла ВОР (ведомость объёмов работ) для сессии
+    (режим ИИ (AI), ранее АР).
+    Из документа извлекаются группы элементов, их объёмы работ и единицы
+    измерения → ВОР_ведомость_объемов_работ.json и .xlsx в папке сессии.
+    ---
+    tags:
+      - upload
+    consumes:
+      - multipart/form-data
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+        description: ID сессии
+      - name: file
+        in: formData
+        type: file
+        required: true
+        description: PDF-файл ВОР, максимум 500 МБ
+    responses:
+      200:
+        description: Файл ВОР принят, фоновый разбор запущен
+        schema:
+          type: object
+          properties:
+            sessionId:
+              type: string
+            status:
+              type: string
+              example: "vor_processing"
+            message:
+              type: string
+      400:
+        description: Ошибка валидации (не PDF, не режим ИИ (AI) и т.п.)
+      404:
+        description: Сессия не найдена
+    """
+    if not session_id:
+        return _err(ErrorResponse(detail="ID сессии не указан"), 400)
+    if "file" not in request.files:
+        return _err(ErrorResponse(detail="Файл не передан"), 400)
+
+    f = request.files["file"]
+    if not f.filename:
+        return _err(ErrorResponse(detail="Пустое имя файла"), 400)
+    if not f.filename.lower().endswith(".pdf"):
+        return _err(ErrorResponse(detail="Файл ВОР должен быть в формате PDF"), 400)
+
+    f.seek(0, 2)
+    size = f.tell()
+    f.seek(0)
+    max_size = 500 * 1024 * 1024
+    if size > max_size:
+        return _err(ErrorResponse(detail=f"Файл слишком большой. Максимум {max_size // (1024*1024)} МБ"), 413)
+
+    try:
+        result = _get_manager().upload_vor(session_id, f, f.filename)
+        logger.info(f"Файл ВОР принят для сессии {session_id}: {f.filename}")
+        return _ok(PosUploadResponse(**result))
+    except ValueError as e:
+        status = 404 if "не найдена" in str(e).lower() else 400
+        return _err(ErrorResponse(detail=str(e)), status)
+    except Exception as e:
+        logger.error(f"Ошибка загрузки файла ВОР: {e}", exc_info=True)
+        return _err(ErrorResponse(detail=f"Внутренняя ошибка: {str(e)}"), 500)
+
+
+@bp.route("/api/session/<session_id>/upload_pd", methods=["POST"])
+def upload_pd(session_id: str):
+    """
+    Загрузка PDF-файла ПД (проектная документация) для сессии
+    (режим ИИ (AI), ранее АР).
+    Разбирается только текстовая часть (графические/альбомные страницы
+    пропускаются): извлекаются характеристики элементов (класс бетона,
+    прочность, пластичность, морозостойкость, водонепроницаемость)
+    → ПД_характеристики_элементов.json и .xlsx в папке сессии.
+    ---
+    tags:
+      - upload
+    consumes:
+      - multipart/form-data
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+        description: ID сессии
+      - name: file
+        in: formData
+        type: file
+        required: true
+        description: PDF-файл проектной документации, максимум 500 МБ
+    responses:
+      200:
+        description: Файл ПД принят, фоновый разбор запущен
+        schema:
+          type: object
+          properties:
+            sessionId:
+              type: string
+            status:
+              type: string
+              example: "pd_processing"
+            message:
+              type: string
+      400:
+        description: Ошибка валидации (не PDF, не режим ИИ (AI) и т.п.)
+      404:
+        description: Сессия не найдена
+    """
+    if not session_id:
+        return _err(ErrorResponse(detail="ID сессии не указан"), 400)
+    if "file" not in request.files:
+        return _err(ErrorResponse(detail="Файл не передан"), 400)
+
+    f = request.files["file"]
+    if not f.filename:
+        return _err(ErrorResponse(detail="Пустое имя файла"), 400)
+    if not f.filename.lower().endswith(".pdf"):
+        return _err(ErrorResponse(detail="Файл ПД должен быть в формате PDF"), 400)
+
+    f.seek(0, 2)
+    size = f.tell()
+    f.seek(0)
+    max_size = 500 * 1024 * 1024
+    if size > max_size:
+        return _err(ErrorResponse(detail=f"Файл слишком большой. Максимум {max_size // (1024*1024)} МБ"), 413)
+
+    try:
+        result = _get_manager().upload_pd(session_id, f, f.filename)
+        logger.info(f"Файл ПД принят для сессии {session_id}: {f.filename}")
+        return _ok(PosUploadResponse(**result))
+    except ValueError as e:
+        status = 404 if "не найдена" in str(e).lower() else 400
+        return _err(ErrorResponse(detail=str(e)), status)
+    except Exception as e:
+        logger.error(f"Ошибка загрузки файла ПД: {e}", exc_info=True)
         return _err(ErrorResponse(detail=f"Внутренняя ошибка: {str(e)}"), 500)
 
 
@@ -1829,6 +2067,9 @@ def select_rows(session_id: str):
             rowMaterials:
               type: object
               description: "Материал для каждой строки: {row_index: 'Бетон'|'Цемент'|'Кирпич'|'Дерево'|...}"
+            rowMaterialCodes:
+              type: object
+              description: "Уточнение неполных МССК-кодов материала: {row_index: 'СТ 00 15 01'|'СТ 00 15 02'}"
             buildingHeight:
               type: number
               description: Высота здания в метрах (1-10000)
@@ -1863,6 +2104,7 @@ def select_rows(session_id: str):
     all_rows = data.get("allRows", data.get("all_rows", False))
     row_types = data.get("rowTypes", data.get("row_types", {}))
     row_materials = data.get("rowMaterials", data.get("row_materials", {}))
+    row_material_codes = data.get("rowMaterialCodes", data.get("row_material_codes", {})) or {}
     building_height = data.get("buildingHeight", data.get("building_height"))
     floor_height = data.get("floorHeight", data.get("floor_height"))
     grouped_data = data.get("groupedData", data.get("grouped_data", {}))
@@ -1929,6 +2171,22 @@ def select_rows(session_id: str):
                 return _err(ErrorResponse(detail=f"Некорректный индекс строки в частях здания: {key}"), 400)
         row_types = validated_types
 
+    # Валидация уточнений неполных МССК-кодов материала (ИИ и ЦС):
+    # {индекс строки: код материала} — «СТ 00 15» → «СТ 00 15 01/02».
+    if row_material_codes:
+        if not isinstance(row_material_codes, dict):
+            return _err(ErrorResponse(detail="rowMaterialCodes должен быть объектом {индекс: код МССК}"), 400)
+        validated_codes = {}
+        for key, value in row_material_codes.items():
+            try:
+                int_key = int(key)
+            except (ValueError, TypeError):
+                return _err(ErrorResponse(detail=f"Некорректный индекс строки в rowMaterialCodes: {key}"), 400)
+            if value is None or not str(value).strip():
+                continue
+            validated_codes[str(int_key)] = str(value).strip()
+        row_material_codes = validated_codes
+
     logger.info(f"select_rows: session={session_id}, строк={len(row_indices)}, тип={processing_type}")
 
     try:
@@ -1942,7 +2200,8 @@ def select_rows(session_id: str):
             grouped_data,
             processing_type,
             global_constants,
-            floor_height
+            floor_height,
+            row_material_codes
         )
         # В ответе клиенту отдаём публичный код режима (CS/AI)
         if "processing_type" in result:
@@ -1989,6 +2248,9 @@ def new_run(session_id: str):
               type: object
             rowMaterials:
               type: object
+            rowMaterialCodes:
+              type: object
+              description: "Уточнение неполных МССК-кодов материала: {row_index: 'СТ 00 15 01'|'СТ 00 15 02'}"
             buildingHeight:
               type: number
             floorHeight:
@@ -2019,6 +2281,7 @@ def new_run(session_id: str):
     row_indices = data.get("rowIndices", data.get("row_indices", []))
     row_types = data.get("rowTypes", data.get("row_types", {}))
     row_materials = data.get("rowMaterials", data.get("row_materials", {}))
+    row_material_codes = data.get("rowMaterialCodes", data.get("row_material_codes", {})) or {}
     building_height = data.get("buildingHeight", data.get("building_height"))
     floor_height = data.get("floorHeight", data.get("floor_height"))
     grouped_data = data.get("groupedData", data.get("grouped_data", {}))
@@ -2057,6 +2320,22 @@ def new_run(session_id: str):
         except (ValueError, TypeError):
             return _err(ErrorResponse(detail="Некорректное значение высоты этажа"), 400)
 
+    # Валидация уточнений неполных МССК-кодов материала (ИИ и ЦС):
+    # {индекс строки: код материала} — «СТ 00 15» → «СТ 00 15 01/02».
+    if row_material_codes:
+        if not isinstance(row_material_codes, dict):
+            return _err(ErrorResponse(detail="rowMaterialCodes должен быть объектом {индекс: код МССК}"), 400)
+        validated_codes = {}
+        for key, value in row_material_codes.items():
+            try:
+                int_key = int(key)
+            except (ValueError, TypeError):
+                return _err(ErrorResponse(detail=f"Некорректный индекс строки в rowMaterialCodes: {key}"), 400)
+            if value is None or not str(value).strip():
+                continue
+            validated_codes[str(int_key)] = str(value).strip()
+        row_material_codes = validated_codes
+
     logger.info(f"new_run: session={session_id}, строк={len(row_indices)}, тип={processing_type}")
 
     try:
@@ -2069,7 +2348,8 @@ def new_run(session_id: str):
             grouped_data or {},
             processing_type,
             global_constants,
-            floor_height
+            floor_height,
+            row_material_codes
         )
         # В ответе клиенту отдаём публичный код режима (CS/AI)
         if "processing_type" in result:
@@ -2588,6 +2868,35 @@ def get_pd_full(session_id: str):
     return _pd_jsonify({"status": "running", "pos": pos and os.path.basename(pos), "pz": pz and os.path.basename(pz)})
 
 
+# ==== DOC_FACTS: сводка фактов из ВОР и ПД (ведомость объёмов работ, характеристики) ====
+@bp.route("/api/session/<session_id>/doc_facts", methods=["GET"])
+def get_doc_facts(session_id: str):
+    """
+    Тезисная сводка фактов из дополнительных документов сессии: ВОР (ведомость
+    объёмов работ) и ПД (характеристики конструкций) — наименование, объём,
+    класс бетона, страница и цитата. Показывается в блоке «Всё найденное в ВОР
+    и ПД» (только режим ИИ). Разбор уже выполнен на этапе 0 (doc_pdf_parser),
+    поэтому эндпоинт читает готовые JSON сессии.
+    ---
+    tags:
+      - processing
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+    responses:
+      200:
+        description: Сводка (status=ready) либо status=none, если документов нет
+    """
+    base = os.path.join(_get_manager().output_folder, session_id)
+    try:
+        from src.services import doc_facts
+        return _pd_jsonify(doc_facts.facts_items(base))
+    except Exception as e:
+        return _pd_jsonify({"status": "none", "items": [], "error": str(e)})
+
+
 # ==== ANALYTIC: аналитическая справка последнего расчёта ====
 @bp.route("/api/session/<session_id>/analytic", methods=["GET"])
 def get_analytic(session_id: str):
@@ -2617,6 +2926,69 @@ def get_analytic(session_id: str):
     d["status"] = "ready"
     d["mtime"] = os.path.getmtime(fp)
     return _pd_jsonify(d)
+
+
+# ==== COMPARE_VOR: сравнение работ/объёмов ВОР заказчика и сформированного перечня ====
+@bp.route("/api/session/<session_id>/compare_vor", methods=["GET"])
+def get_compare_vor(session_id: str):
+    """
+    Сравнение работ и объёмов ВОР заказчика и сформированного перечня работ
+    (``Финальный_перечень_работ.json`` последнего запуска). ВОР — загруженный
+    PDF (разбирается детерминированно: разделы, блоки/захватки, объёмы «стало»),
+    при его отсутствии — ``ВОР_ведомость_объемов_работ.json``. Единицы
+    приводятся к базовым (м2/м3/т/м/шт), работы сопоставляются **по каждой
+    группе элементов и каждой работе** (группа — канонический вид конструкции:
+    стены, плиты перекрытия, лестничные марши/площадки, балки и т.д.; разбивка
+    ВОР по секциям/этажам приводится к части здания; арматура не сравнивается —
+    «взято из ВОР»; ресурсы перечня — отдельным листом).
+    Результат — ``Сравнение_ВОР_и_перечня.xlsx/.json`` в папке последнего
+    запуска. Только режим ИИ (AI). Параметр ``?rebuild=1`` — пересобрать
+    сравнение заново.
+    ---
+    tags:
+      - processing
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+      - name: rebuild
+        in: query
+        type: boolean
+        required: false
+    responses:
+      200:
+        description: Сравнение (status=ready) либо status=none, если нет ВОР/перечня
+    """
+    from src.services import vor_comparison
+
+    base = os.path.join(_get_manager().output_folder, session_id)
+    run_dir = vor_comparison.latest_run_with_final_works(base)
+    if not run_dir:
+        return _pd_jsonify({"status": "none",
+                            "detail": "Нет запуска с Финальный_перечень_работ.json"})
+    json_path = os.path.join(run_dir, vor_comparison.COMPARE_JSON)
+    rebuild = str(request.args.get("rebuild", "")).lower() in ("1", "true", "yes")
+    try:
+        if rebuild or not os.path.isfile(json_path):
+            result = vor_comparison.run(run_dir)
+            if result is None:
+                return _pd_jsonify({"status": "none",
+                                    "detail": "Не найдены ВОР или перечень работ"})
+        else:
+            with open(json_path, encoding="utf-8") as f:
+                result = json.load(f)
+        xlsx_path = os.path.join(run_dir, vor_comparison.COMPARE_XLSX)
+        _get_manager().register_file(session_id, xlsx_path)
+        result["status"] = "ready"
+        result["file"] = vor_comparison.COMPARE_XLSX
+        result["download_url"] = (
+            f"/ifc-vor/api/session/{session_id}/download/{vor_comparison.COMPARE_XLSX}"
+        )
+        return _pd_jsonify(result)
+    except Exception as e:
+        logger.error(f"compare_vor: ошибка сравнения ВОР и перечня: {e}", exc_info=True)
+        return _pd_jsonify({"status": "error", "detail": str(e)})
 
 
 # ==== TSN_MODE: список сборников ТСН и режим «с учётом / без» ====

@@ -1,8 +1,10 @@
 import argparse
+import hashlib
 import json
 import math
 import os
 import re
+import threading
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -577,6 +579,103 @@ class LLMError(RuntimeError):
     pass
 
 
+# Глобальная сериализация обращений к Ollama: разбор ПОС, ПЗ, ВОР и ПД идёт в
+# четырёх фоновых потоках, а Ollama обслуживает одну GPU. При
+# ``OLLAMA_NUM_PARALLEL=1`` она обрабатывает запросы строго по одному (замер:
+# 4 параллельных запроса — ускорение 1.03×), поэтому конкурентность задаётся
+# согласованно с Ollama: ``LLM_MAX_CONCURRENCY`` — сколько запросов к модели
+# допускается одновременно. При ``OLLAMA_NUM_PARALLEL=1`` значение >1 не
+# замедляет (запросы просто ждут очереди внутри Ollama), но при поднятом
+# параллелизме Ollama даёт ускорение за счёт одновременной генерации ответов
+# (генерация memory-bound и занимает 70–85 % времени вызова). Семафор также
+# ограничивает размер очереди и защищает от ложных таймаутов.
+_LLM_MAX_CONCURRENCY = max(1, int(os.getenv("LLM_MAX_CONCURRENCY", "4")))
+_LLM_SEMAPHORE = threading.Semaphore(_LLM_MAX_CONCURRENCY)
+
+
+def llm_concurrency() -> int:
+    """Максимальное число одновременных обращений к Ollama (см. семафор)."""
+    return _LLM_MAX_CONCURRENCY
+
+
+# ---------------------------------------------------------------------------
+#  Кэш результатов LLM-разбора документов (ПОС/ПЗ/ВОР/ПД)
+# ---------------------------------------------------------------------------
+# Один и тот же документ (ПОС, ПЗ, ВОР, ПД) часто загружается в разные сессии
+# (например, при прогоне одной модели на нескольких запусках). Разбор целиком
+# детерминирован относительно содержимого файла, модели и версии логики, поэтому
+# результат кэшируется по SHA-256 содержимого: повторная загрузка того же файла
+# не тратит время LLM (десятки вызовов на одной GPU). Кэш — служебный, лежит вне
+# папок сессий (``DOC_CACHE_DIR``, по умолчанию ``outputs/_doc_cache``).
+DOC_CACHE_DIR = os.getenv("DOC_CACHE_DIR", os.path.join("outputs", "_doc_cache"))
+# Версия логики разбора: при изменении промптов/алгоритма поднять, чтобы
+# старый кэш не использовался.
+DOC_CACHE_VERSION = "v1"
+
+
+def _doc_cache_key(kind: str, source: Union[str, Path, bytes, bytearray],
+                   config: "Config", use_llm: bool) -> Optional[str]:
+    """SHA-256 ключ кэша: содержимое файла + вид разбора + модель + версия."""
+    try:
+        if isinstance(source, (bytes, bytearray)):
+            data = bytes(source)
+        else:
+            with open(source, "rb") as f:
+                data = f.read()
+    except OSError:
+        return None
+    h = hashlib.sha256()
+    h.update(kind.encode("utf-8"))
+    h.update(b"|")
+    h.update(DOC_CACHE_VERSION.encode("utf-8"))
+    h.update(b"|")
+    h.update(str(getattr(config, "llm_model", "")).encode("utf-8"))
+    h.update(b"|")
+    h.update(b"llm" if use_llm else b"nollm")
+    h.update(b"|")
+    h.update(data)
+    return h.hexdigest()
+
+
+def doc_cache_path(kind: str, source: Union[str, Path, bytes, bytearray],
+                   config: "Config", use_llm: bool = True) -> Optional[str]:
+    """Путь к файлу кэша разбора документа (None, если файл недоступен)."""
+    key = _doc_cache_key(kind, source, config, use_llm)
+    if not key:
+        return None
+    return os.path.join(DOC_CACHE_DIR, f"{kind}_{key}.json")
+
+
+def doc_cache_load(kind: str, source: Union[str, Path, bytes, bytearray],
+                   config: "Config", use_llm: bool = True) -> Optional[dict]:
+    """Результат разбора из кэша или None (файла нет / повреждён)."""
+    path = doc_cache_path(kind, source, config, use_llm)
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            cached = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return cached if isinstance(cached, dict) else None
+
+
+def doc_cache_save(kind: str, source: Union[str, Path, bytes, bytearray],
+                   config: "Config", result: dict, use_llm: bool = True) -> None:
+    """Сохраняет результат разбора в кэш (ошибки записи не критичны)."""
+    path = doc_cache_path(kind, source, config, use_llm)
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
 def _extract_json(text: str) -> dict:
     text = text.strip()
     if text.startswith("```"):
@@ -634,7 +733,7 @@ class LLMClient:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
-        with httpx.Client(timeout=self.config.llm_timeout) as client:
+        with _LLM_SEMAPHORE, httpx.Client(timeout=self.config.llm_timeout) as client:
             if self.openai_mode:
                 return self._chat_openai(client, messages, schema)
             payload = {
@@ -1987,6 +2086,22 @@ CONSTANT_MAPPERS = {
     "equipment_power": _map_equipment_power,
 }
 
+# Мапперы, которые выбирают **первое подходящее** значение из списка (порядок
+# важен): если regex-шаблон уже дал распознанное значение, добавление после него
+# результатов LLM итог не меняет — вызов модели для такой константы избыточен
+# (см. ``extract_pos_constants``). Мапперы, объединяющие весь список значений
+# (``_map_formwork_type`` и подобные), в набор НЕ входят: модель может уточнить
+# результат, поэтому для них LLM вызывается всегда.
+FIRST_MATCH_MAPPERS = {
+    _map_building_height,
+    _map_floor_height,
+    _map_soil_group,
+    _map_movement_distance,
+    _map_crane_capacity,
+    _map_bucket_capacity,
+    _map_equipment_power,
+}
+
 
 def extract_pos_constants(llm: Optional[LLMClient], index: PageIndex,
                           pages: List[Page], config: Config,
@@ -2032,8 +2147,17 @@ def extract_pos_constants(llm: Optional[LLMClient], index: PageIndex,
         if field_def and top_pages:
             template_values = harvest_field(top_pages, field_def)
 
+        mapper = CONSTANT_MAPPERS.get(name)
+        # Если regex-шаблон уже дал распознанное значение, а маппер выбирает
+        # первое подходящее значение (FIRST_MATCH_MAPPERS), LLM итог не изменит
+        # — вызов модели пропускается (экономия времени на одной GPU).
+        template_decided = bool(
+            template_values and mapper in FIRST_MATCH_MAPPERS
+            and mapper([v["value"] for v in template_values]) is not None
+        )
+
         model_items: List[dict] = []
-        if llm is not None and top_pages:
+        if llm is not None and top_pages and not template_decided:
             pseudo_type = {
                 "id": name,
                 "name": const.get("title", field_name),
@@ -2050,7 +2174,6 @@ def extract_pos_constants(llm: Optional[LLMClient], index: PageIndex,
                        "page": it.get("page"), "source": "модель"}
                       for it in model_items])
         raw_values = [o["value"] for o in ordered]
-        mapper = CONSTANT_MAPPERS.get(name)
         mapped = mapper(raw_values) if mapper and raw_values else None
 
         # Цитата/страница - от первой находки, давшей итоговое значение
@@ -2085,6 +2208,10 @@ def parse_pos_constants(pdf_source: Union[str, Path, bytes],
     Возвращает {"document": ..., "constants": {...}, "warnings": [...]}.
     """
     config = config or Config()
+    cached = doc_cache_load("pos_constants", pdf_source, config, use_llm)
+    if cached is not None:
+        _say(progress, f"{document_label}: результат разбора взят из кэша")
+        return cached
     llm = LLMClient(config) if use_llm else None
     pages = extract_pages(pdf_source)
     name = Path(pdf_source).name if not isinstance(pdf_source, (bytes, bytearray)) else ""
@@ -2095,10 +2222,12 @@ def parse_pos_constants(pdf_source: Union[str, Path, bytes],
     }
     if not any(p.text.strip() for p in pages):
         result["warnings"].append(f"В файле {document_label} нет текстового слоя")
+        doc_cache_save("pos_constants", pdf_source, config, result, use_llm)
         return result
     index = PageIndex(pages)
     result["constants"] = extract_pos_constants(
         llm, index, pages, config, progress, label=document_label)
+    doc_cache_save("pos_constants", pdf_source, config, result, use_llm)
     return result
 
 

@@ -942,68 +942,6 @@ def get_element_info(element, processing_type: str = "KR"):
     return info
 
 
-def analyze_qto_properties(ifc_file_path):
-    """
-    Анализирует все QTO свойства в IFC файле (для отладки)
-    """
-    model = ifcopenshell.open(ifc_file_path)
-    
-    print("=" * 80)
-    print("АНАЛИЗ QTO (Quantity Take-Off) СВОЙСТВ В IFC ФАЙЛЕ")
-    print("=" * 80)
-    
-    # Словарь для сбора всех уникальных QTO свойств
-    all_qto_properties = {}
-    
-    # Проходим по всем элементам
-    for element in model:
-        if hasattr(element, 'IsDefinedBy'):
-            for rel in element.IsDefinedBy:
-                if rel.is_a('IfcRelDefinesByProperties'):
-                    props = rel.RelatingPropertyDefinition
-                    
-                    # Проверяем, является ли это QTO
-                    if props and props.is_a('IfcElementQuantity'):
-                        qto_name = props.Name if hasattr(props, 'Name') else "Без имени"
-                        element_type = element.is_a()
-                        
-                        if qto_name not in all_qto_properties:
-                            all_qto_properties[qto_name] = {
-                                'count': 0,
-                                'element_types': set(),
-                                'quantities': {}
-                            }
-                        
-                        all_qto_properties[qto_name]['count'] += 1
-                        all_qto_properties[qto_name]['element_types'].add(element_type)
-                        
-                        # Анализируем количества внутри QTO
-                        if hasattr(props, 'Quantities'):
-                            for qty in props.Quantities:
-                                qty_name = qty.Name
-                                qty_type = qty.is_a()
-                                
-                                if qty_name not in all_qto_properties[qto_name]['quantities']:
-                                    all_qto_properties[qto_name]['quantities'][qty_name] = {
-                                        'type': qty_type,
-                                        'count': 0
-                                    }
-                                
-                                all_qto_properties[qto_name]['quantities'][qty_name]['count'] += 1
-    
-    # Выводим результаты
-    for qto_name, qto_data in all_qto_properties.items():
-        print(f"\n📊 QTO Set: {qto_name}")
-        print(f"   Количество использований: {qto_data['count']}")
-        print(f"   Типы элементов: {', '.join(sorted(qto_data['element_types']))}")
-        print(f"   Свойства:")
-        
-        for qty_name, qty_data in qto_data['quantities'].items():
-            print(f"     • {qty_name} ({qty_data['type']}) - {qty_data['count']} использований")
-    
-    return all_qto_properties
-
-
 def parse_name(name: str, ifc_class: str):
     """
     Извлекает геометрические параметры из имени элемента
@@ -1168,7 +1106,8 @@ def fill_missing_from_name(df):
     return df
 
 
-def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_type="KR"):
+def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_type="KR",
+              model=None):
     """Основная функция обработки IFC файла
 
     Args:
@@ -1180,6 +1119,8 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
         processing_type: тип обработки — "KR" (конструктив, по умолчанию)
             или "AR" (архитектура). Определяет набор извлекаемых IFC-классов:
             ELEMENT_TYPES_KR / ELEMENT_TYPES_AR.
+        model: необязательная уже открытая модель ifcopenshell — если задана,
+            повторное открытие файла не выполняется (экономия на больших IFC).
     """
     logger.info(f"Начата обработка файла {ifc_file} (тип: {processing_type})")
 
@@ -1190,13 +1131,11 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
         f"{len(selected_types)} шт"
     )
 
-    model = ifcopenshell.open(ifc_file)
+    if model is None:
+        model = ifcopenshell.open(ifc_file)
 
     logger.info("Обработка ifc с анализом этажей")
     
-    # Анализ QTO свойств (для отладки)
-    analyze_qto_properties(ifc_file)
-
     storeys = {}
     for storey in model.by_type('IfcBuildingStorey'):
         name = safe_get_attr(storey, 'Name')

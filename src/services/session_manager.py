@@ -53,6 +53,44 @@ _DOC_CONSTANTS_CONFIG = {
     },
 }
 
+# Имена JSON/XLSX результатов разбора ВОР (ведомость объёмов работ) —
+# сохраняются в корень сессии.
+VOR_RESULT_JSON = "ВОР_ведомость_объемов_работ.json"
+VOR_RESULT_XLSX = "ВОР_ведомость_объемов_работ.xlsx"
+
+# Имена JSON/XLSX результатов разбора ПД (проектная документация) —
+# сохраняются в корень сессии.
+PD_RESULT_JSON = "ПД_характеристики_элементов.json"
+PD_RESULT_XLSX = "ПД_характеристики_элементов.xlsx"
+
+# Параметры разбора PDF-документов режима ИИ, которые разбираются модулем
+# doc_pdf_parser (в отличие от ПОС/ПЗ — там извлекаются глобальные константы):
+# ВОР (ведомость объёмов работ) и ПД (проектная документация). Отличаются
+# только именами файлов, префиксами полей состояния (vor_* / pd_*) и функцией
+# разбора/экспорта.
+_DOC_PARSE_CONFIG = {
+    "vor": {
+        "label": "ВОР",
+        "json_filename": VOR_RESULT_JSON,
+        "xlsx_filename": VOR_RESULT_XLSX,
+        "saved_prefix": "vor_",
+        "status_prefix": "vor",
+        "thread_prefix": "VOR-Parsing",
+        "parser": "parse_vor",
+        "xlsx_fn": "vor_to_xlsx",
+    },
+    "pd": {
+        "label": "ПД",
+        "json_filename": PD_RESULT_JSON,
+        "xlsx_filename": PD_RESULT_XLSX,
+        "saved_prefix": "pd_",
+        "status_prefix": "pd",
+        "thread_prefix": "PD-Parsing",
+        "parser": "parse_pd",
+        "xlsx_fn": "pd_to_xlsx",
+    },
+}
+
 
 class SessionManager:
     """Управление сессиями обработки IFC файлов"""
@@ -227,6 +265,35 @@ class SessionManager:
             if f.get("filename") == filename:
                 return f.get("path")
         return None
+
+    def register_file(self, session_id: str, path: str, filename: Optional[str] = None) -> None:
+        """Регистрирует файл результата в списке файлов сессии (для скачивания).
+
+        Используется эндпоинтами, создающими дополнительные артефакты после
+        завершения запуска (напр. сравнение ВОР заказчика и перечня работ).
+        """
+        if not path or not os.path.isfile(path):
+            return
+        name = filename or os.path.basename(path)
+        with self._state_lock:
+            s = self._sessions.get(session_id)
+            if not s:
+                return
+            entry = {"path": path, "filename": name, "size": os.path.getsize(path)}
+            files = [f for f in s.get("files", []) if f.get("filename") != name]
+            files.append(dict(entry))
+            s["files"] = files
+            # Файлы текущего запуска перекрывают файлы сессии в get()/file_path(),
+            # поэтому регистрируем и в запуске (иначе файл не скачивается).
+            current = s.get("current_run_id")
+            for run in s.get("runs", []):
+                if run.get("run_id") == current:
+                    run_files = [f for f in run.get("files", [])
+                                 if f.get("filename") != name]
+                    run_files.append(dict(entry))
+                    run["files"] = run_files
+                    break
+            self._save()
     
     def _prepare_original_dir(self, session_dir: str) -> str:
         """Перемещает исходные файлы в original/ поддиректорию"""
@@ -541,6 +608,12 @@ class SessionManager:
             
             self._update_progress(session_id, 10, f"Обработка IFC файла ({processing_type})...")
 
+            # Модель IFC открывается ОДИН раз на весь этап 0 и передаётся в
+            # выгрузку сырого дампа и в zero_step — на больших файлах это
+            # экономит повторные открытия (несколько секунд каждое).
+            import ifcopenshell
+            ifc_model = ifcopenshell.open(ifc_path)
+
             # Сохраняем в корень сессии XLSX/JSON со всеми элементами IFC и их
             # параметрами в исходном виде (без нормализации).
             # Файлы создаются в обоих режимах (КР и АР).
@@ -554,7 +627,7 @@ class SessionManager:
                     RAW_DUMP_FILENAME,
                     RAW_DUMP_JSON_FILENAME,
                 )
-                raw_dump_path = dump_ifc_elements_raw(ifc_path, session_dir)
+                raw_dump_path = dump_ifc_elements_raw(ifc_path, session_dir, model=ifc_model)
                 if raw_dump_path and os.path.exists(raw_dump_path):
                     with self._state_lock:
                         if session_id in self._sessions:
@@ -585,7 +658,7 @@ class SessionManager:
 
             self._update_progress(session_id, 20, "Извлечение элементов из IFC...")
             zero_step(ifc_path, output_folder=session_dir, write_full_data=False,
-                      processing_type=processing_type)
+                      processing_type=processing_type, model=ifc_model)
 
             # Глобальные константы, определённые по модели IFC
             # (IFC_глобальные_константы.json в корне сессии), регистрируем
@@ -957,6 +1030,32 @@ class SessionManager:
                 f"для сессии {session_id}: {e}",
             )
             logger.debug(traceback.format_exc())
+
+    def _update_selection_parameters_constants(self, session_id: str, session_dir: str) -> None:
+        """Точечное обновление констант в Параметры_подбора_элементов.json.
+
+        Обёртка над selection_template_builder.update_selection_parameters_constants:
+        после разбора ПОС/ПЗ пересчитывает только раздел ``constants`` и
+        параметры-константы элементов, не перечитывая сырой дамп и не
+        пересобирая файл целиком (экономия чтения 63 МБ + записи 70 МБ).
+        Ошибки не прерывают обработку — шаг вспомогательный.
+        """
+        try:
+            from src.services.selection_template_builder import (
+                update_selection_parameters_constants,
+            )
+            output_path = update_selection_parameters_constants(session_dir)
+            if output_path and os.path.isfile(output_path):
+                logger.info(
+                    f"Обновлены константы шаблона параметров подбора в корне сессии: {output_path}"
+                )
+        except Exception as e:
+            import traceback
+            logger.warning(
+                f"Не удалось обновить константы шаблона параметров подбора "
+                f"для сессии {session_id}: {e}",
+            )
+            logger.debug(traceback.format_exc())
     
     def _process_pdf_with_progress(self, session_id: str, pdf_path: str,
                                    session_dir: str, manual_legend: dict = None) -> Dict[str, str]:
@@ -1120,11 +1219,12 @@ class SessionManager:
                     self._sessions[session_id]["files"] = files
                     self._save()
 
-            # Перезаполняем шаблоны параметров подбора: в раздел constants
+            # Обновляем константы шаблона параметров подбора: в раздел constants
             # Параметры_подбора_элементов.json должны попасть константы,
             # найденные из документа (первоначальный файл строится на этапе 0,
-            # до разбора документа).
-            self._build_selection_parameters_templates(session_id, session_dir)
+            # до разбора документа). Пересчитываются только константы — сырой
+            # дамп не перечитывается (экономия на больших сессиях).
+            self._update_selection_parameters_constants(session_id, session_dir)
 
             detected = {
                 k: v.get("value")
@@ -1144,6 +1244,176 @@ class SessionManager:
             logger.info(
                 f"Разбор {label} для сессии {session_id} завершён, "
                 f"констант найдено: {found} -> {out_path}"
+            )
+        except Exception as e:
+            import traceback
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            logger.error(
+                f"Ошибка разбора {label} для сессии {session_id}:\n"
+                f"{traceback.format_exc()}"
+            )
+            self._update(
+                session_id,
+                **{
+                    f"{prefix}_status": f"{prefix}_error",
+                    f"{prefix}_error": error_msg,
+                    f"{prefix}_progress_message": f"Ошибка разбора {label}: {error_msg}",
+                },
+            )
+
+    # =====================================================================
+    #  ФАЙЛЫ ВОР / ПД: РАЗБОР ТЕКСТА И ТАБЛИЦ (АР)
+    # =====================================================================
+
+    def upload_vor(self, session_id: str, file, original_name: str) -> Dict[str, Any]:
+        """Приём PDF-файла ВОР (ведомость объёмов работ) для сессии.
+
+        Файл сохраняется в папку сессии, запускается фоновый разбор
+        (doc_pdf_parser.parse_vor): извлекаются группы элементов, их объёмы и
+        единицы измерения. Результаты — ВОР_ведомость_объемов_работ.json/.xlsx
+        в корне сессии.
+        """
+        return self._upload_parsed_doc(session_id, file, original_name, "vor")
+
+    def upload_pd(self, session_id: str, file, original_name: str) -> Dict[str, Any]:
+        """Приём PDF-файла ПД (проектная документация) для сессии.
+
+        Разбирается только текстовая часть (графические/альбомные страницы
+        пропускаются): извлекаются характеристики элементов (класс бетона,
+        прочность, пластичность, морозостойкость, водонепроницаемость).
+        Результаты — ПД_характеристики_элементов.json/.xlsx в корне сессии.
+        """
+        return self._upload_parsed_doc(session_id, file, original_name, "pd")
+
+    def _upload_parsed_doc(self, session_id: str, file, original_name: str,
+                           doc: str) -> Dict[str, Any]:
+        """Общий приём PDF-документа ВОР/ПД (АР) с фоновым разбором текста/таблиц."""
+        cfg = _DOC_PARSE_CONFIG[doc]
+        label = cfg["label"]
+        prefix = cfg["status_prefix"]
+        s = self.get(session_id)
+        if not s:
+            raise ValueError("Сессия не найдена")
+        if s.get("processing_type", "KR").upper() != "AR":
+            raise ValueError(f"Файл {label} поддерживается только в режиме АР")
+        if not file or not original_name:
+            raise ValueError("Отсутствует файл или имя файла")
+        if not str(original_name).lower().endswith(".pdf"):
+            raise ValueError(f"Файл {label} должен быть в формате PDF")
+
+        safe_name = secure_filename(original_name) or f"{prefix}.pdf"
+        session_dir = os.path.join(self.output_folder, session_id)
+        os.makedirs(session_dir, exist_ok=True)
+        doc_path = os.path.join(session_dir, f"{cfg['saved_prefix']}{safe_name}")
+
+        try:
+            file.save(doc_path)
+            if not os.path.exists(doc_path) or os.path.getsize(doc_path) == 0:
+                raise ValueError(f"Ошибка сохранения файла {label}")
+        except Exception as e:
+            logger.error(f"Ошибка сохранения файла {label}: {e}")
+            raise
+
+        # Сбрасываем предыдущие результаты разбора
+        for filename in (cfg["json_filename"], cfg["xlsx_filename"]):
+            old_result = os.path.join(session_dir, filename)
+            if os.path.exists(old_result):
+                try:
+                    os.remove(old_result)
+                except OSError:
+                    pass
+
+        self._update(
+            session_id,
+            **{
+                f"{prefix}_file_name": original_name,
+                f"{prefix}_file_path": doc_path,
+                f"{prefix}_status": f"{prefix}_processing",
+                f"{prefix}_error": None,
+                f"{prefix}_count": None,
+                f"{prefix}_progress_message": f"Разбор файла {label}...",
+            },
+        )
+
+        thread = threading.Thread(
+            target=self._process_parsed_doc_bg,
+            args=(session_id, doc_path, original_name, doc),
+            daemon=True,
+            name=f"{cfg['thread_prefix']}-{session_id[:8]}",
+        )
+        thread.start()
+
+        return {
+            "session_id": session_id,
+            "status": f"{prefix}_processing",
+            "message": f"Файл {label} принят, начат разбор",
+        }
+
+    def _process_parsed_doc_bg(self, session_id: str, doc_path: str,
+                               original_name: str, doc: str) -> None:
+        """Фоновый разбор PDF ВОР/ПД: текст/таблицы → JSON и XLSX в сессии."""
+        cfg = _DOC_PARSE_CONFIG[doc]
+        label = cfg["label"]
+        prefix = cfg["status_prefix"]
+        try:
+            from src.core.config import load_config
+            from src.services import doc_pdf_parser
+            from src.services import pd_parser
+
+            app_cfg = load_config()
+            parser_config = pd_parser.Config(
+                llm_base_url=app_cfg.ollama_url,
+                llm_model=app_cfg.model_ollama,
+            )
+
+            def _progress(message: str) -> None:
+                self._update(session_id, **{f"{prefix}_progress_message": message})
+
+            parse_fn = getattr(doc_pdf_parser, cfg["parser"])
+            result = parse_fn(
+                doc_path, use_llm=True, config=parser_config, progress=_progress,
+            )
+            result["file_name"] = original_name
+            result["generated_at"] = datetime.utcnow().isoformat() + "Z"
+
+            session_dir = os.path.join(self.output_folder, session_id)
+            out_json = os.path.join(session_dir, cfg["json_filename"])
+            with open(out_json, "w", encoding="utf-8") as f:
+                json.dump(result, f, ensure_ascii=False, indent=2)
+
+            out_xlsx = os.path.join(session_dir, cfg["xlsx_filename"])
+            getattr(doc_pdf_parser, cfg["xlsx_fn"])(result.get("items") or [], out_xlsx)
+
+            # Регистрируем оба файла в списке файлов сессии (доступны для скачивания)
+            with self._state_lock:
+                if session_id in self._sessions:
+                    files = [
+                        f for f in self._sessions[session_id].get("files", [])
+                        if f.get("filename") not in (cfg["json_filename"], cfg["xlsx_filename"])
+                    ]
+                    for path in (out_json, out_xlsx):
+                        if os.path.exists(path):
+                            files.append({
+                                "path": path,
+                                "filename": os.path.basename(path),
+                                "size": os.path.getsize(path),
+                            })
+                    self._sessions[session_id]["files"] = files
+                    self._save()
+
+            count = len(result.get("items") or [])
+            self._update(
+                session_id,
+                **{
+                    f"{prefix}_status": f"{prefix}_completed",
+                    f"{prefix}_error": None,
+                    f"{prefix}_count": count,
+                    f"{prefix}_progress_message": f"Разбор {label} завершён: извлечено записей - {count}",
+                },
+            )
+            logger.info(
+                f"Разбор {label} для сессии {session_id} завершён, "
+                f"записей: {count} -> {out_json}"
             )
         except Exception as e:
             import traceback
@@ -1297,6 +1567,42 @@ class SessionManager:
         logger.info(f"Карта материалов: {len(material_map)} элементов")
         return material_map
 
+    def _apply_material_code_overrides(self, df_filtered, 
+                                       overrides_by_pos: Dict[int, str]) -> None:
+        """Проставляет уточнённый пользователем полный МССК-код материала в DataFrame.
+
+        Заменяет в строках `filtered_elements`:
+          * колонку «Материал» — на имя группы материала из справочника
+            (напр. «Железобетон сборный» вместо неполного «Железобетон»);
+          * код материала в «Свойство::IfcMaterialLayer::Name» — на полный
+            (напр. «(СТ 00 15)» → «(СТ 00 15 01)»).
+
+        Без этого признак «сборный/монолитный» терялся: из `filtered_elements`
+        строится и подбор таблиц (`works_table_selector`), и подбор работ по
+        перечню (`perechen_pipeline`), и сборный ж/б обрабатывался как монолитный.
+        """
+        from src.services.materials_lookup import build_materials_lookup
+
+        lookup, _ = build_materials_lookup()
+        mat_col = "Материал" if "Материал" in df_filtered.columns else None
+        layer_cols = [c for c in df_filtered.columns if "IfcMaterialLayer::Name" in str(c)]
+
+        for pos, full_code in overrides_by_pos.items():
+            if pos not in df_filtered.index:
+                continue
+            code = str(full_code).strip()
+            info = lookup.get(code)
+            if mat_col and info:
+                df_filtered.at[pos, mat_col] = info["name"]
+            for col in layer_cols:
+                val = df_filtered.at[pos, col]
+                if isinstance(val, str) and val.strip():
+                    df_filtered.at[pos, col] = re.sub(r"\(СТ\s*[\d\s]+\)", f"({code})", val)
+        logger.info(
+            f"Уточнённый материал проставлен в filtered_elements: "
+            f"{len(overrides_by_pos)} строк"
+        )
+
     def new_run(self, session_id: str, row_indices: List[int], 
                 construction_types: Dict[int, str] = None,
                 construction_materials: Dict[int, str] = None,
@@ -1304,7 +1610,8 @@ class SessionManager:
                 grouped_data: Dict[str, Any] = None,
                 processing_type: str = "KR",
                 global_constants: Dict[str, str] = None,
-                floor_height: float = None) -> Dict[str, Any]:
+                floor_height: float = None,
+                material_code_overrides: Dict[int, str] = None) -> Dict[str, Any]:
         
         s = self.get(session_id)
         if not s:
@@ -1380,6 +1687,7 @@ class SessionManager:
             "floor_height": floor_height,
             "grouped_data": grouped_data or {},
             "global_constants": global_constants or {},
+            "material_code_overrides": material_code_overrides or {},
             "files": [],
             "created_at": datetime.utcnow().isoformat() + "Z",
             "final_json_status": None,
@@ -1402,7 +1710,8 @@ class SessionManager:
             target=self._run_processing_pipeline_in_run,
             args=(session_id, run_id, run_number, run_dir, run_excel_path, 
                 row_indices, construction_types or {}, construction_materials or {}, 
-                building_height, processing_type, global_constants or {}),
+                building_height, processing_type, global_constants or {},
+                material_code_overrides or {}),
             daemon=True,
             name=f"Pipeline-Run{run_number}-{session_id[:8]}"
         )
@@ -1464,7 +1773,8 @@ class SessionManager:
                     building_height: float = None, grouped_data: Dict[str, Any] = None,
                     processing_type: str = "KR",
                     global_constants: Dict[str, str] = None,
-                    floor_height: float = None) -> Dict[str, Any]:
+                    floor_height: float = None,
+                    material_code_overrides: Dict[int, str] = None) -> Dict[str, Any]:
         s = self.get(session_id)
         if not s:
             raise KeyError("Сессия не найдена")
@@ -1495,7 +1805,7 @@ class SessionManager:
             row_types or {}, row_materials or {},
             building_height, grouped_data or {},
             processing_type, global_constants or {},
-            floor_height
+            floor_height, material_code_overrides or {}
         )
     
     def _run_processing_pipeline_in_run(self, session_id: str, run_id: str, 
@@ -1505,7 +1815,8 @@ class SessionManager:
                                          construction_materials: Dict[int, str],
                                          building_height: float = None,
                                          processing_type: str = "KR",
-                                         global_constants: Dict[str, str] = None) -> None:
+                                         global_constants: Dict[str, str] = None,
+                                         material_code_overrides: Dict[int, str] = None) -> None:
         try:
             processing_type = processing_type.upper()
             if processing_type not in ("KR", "AR"):
@@ -1564,6 +1875,35 @@ class SessionManager:
                 except Exception as e:
                     logger.warning(f"Не удалось подмешать материалы слоёв ({processing_type}): {e}", exc_info=True)
 
+            # Уточнение неполных МССК-кодов материала, выбранное пользователем
+            # в превью (напр. «СТ 00 15» — «Железобетон» → «СТ 00 15 01»/
+            # «СТ 00 15 02» — сборный/монолитный). Карта приходит по исходным
+            # индексам строк Excel; пересчитываем её в позиции отфильтрованного
+            # DataFrame (df_filtered) — именно так индексирует строки группировка.
+            material_code_overrides_by_pos: Dict[int, str] = {}
+            if material_code_overrides:
+                orig_to_pos = {orig: pos for pos, orig in enumerate(unique_indices)}
+                for key, value in material_code_overrides.items():
+                    try:
+                        orig = int(key)
+                    except (TypeError, ValueError):
+                        continue
+                    pos = orig_to_pos.get(orig)
+                    if pos is not None and value and str(value).strip():
+                        material_code_overrides_by_pos[pos] = str(value).strip()
+                logger.info(
+                    f"Уточнения МССК-кодов материала: {len(material_code_overrides_by_pos)} строк"
+                )
+
+            # Уточнённый материал применяем не только к группировке, но и к
+            # самому filtered_elements.xlsx: из него строится подбор таблиц
+            # (works_table_selector) и подбор работ по перечню (perechen_pipeline).
+            # Без этого признак «сборный/монолитный» (напр. «Железобетон сборный»
+            # вместо неполного «Железобетон») терялся, и сборный ж/б подбирался
+            # как монолитный.
+            if material_code_overrides_by_pos:
+                self._apply_material_code_overrides(df_filtered, material_code_overrides_by_pos)
+
             filtered_path = os.path.join(run_dir, 'filtered_elements.xlsx')
             with pd.ExcelWriter(filtered_path, engine='openpyxl') as writer:
                 df_filtered.to_excel(writer, sheet_name='Данные', index=False)
@@ -1574,9 +1914,13 @@ class SessionManager:
             self._update_progress(session_id, 10, f"Запуск {run_number}: Группировка элементов ({processing_type})...")
             
             if processing_type == "AR":
-                group_result = process_ifc_excel_ar(filtered_path, run_dir)
+                group_result = process_ifc_excel_ar(
+                    filtered_path, run_dir,
+                    material_code_overrides=material_code_overrides_by_pos)
             else:
-                group_result = process_ifc_excel_mssk(filtered_path, run_dir)
+                group_result = process_ifc_excel_mssk(
+                    filtered_path, run_dir,
+                    material_code_overrides=material_code_overrides_by_pos)
             
             # Кешируем дерево проекта в original/
             session_dir = os.path.join(self.output_folder, session_id)
@@ -1875,6 +2219,20 @@ class SessionManager:
                         exc_info=True,
                     )
 
+                # АР: сравнение работ и объёмов ВОР заказчика (если ВОР загружен и
+                # разобран — ВОР_ведомость_объемов_работ.json) и сформированного
+                # перечня работ → Сравнение_ВОР_и_перечня.xlsx/.json в папке запуска.
+                # Шаг вспомогательный: ошибка не должна ломать запуск.
+                try:
+                    from src.services import vor_comparison
+
+                    vor_comparison.run(run_dir)
+                except Exception as exc:
+                    logger.error(
+                        f"Не удалось построить сравнение ВОР и перечня работ: {exc}",
+                        exc_info=True,
+                    )
+
                 self._update_progress(session_id, 95, f"Запуск {run_number}: Сохранение результатов...")
             
             # =====================================================================
@@ -2000,6 +2358,8 @@ class SessionManager:
                 # как результаты запуска
                 ar_final_files = {
                     'Финальный_перечень_работ.xlsx',
+                    # Сравнение работ/объёмов ВОР заказчика и перечня (если ВОР загружен)
+                    'Сравнение_ВОР_и_перечня.xlsx',
                 }
                 final_files = [f for f in final_files if f['filename'] in ar_final_files]
 

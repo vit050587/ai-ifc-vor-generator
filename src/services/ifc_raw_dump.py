@@ -1205,6 +1205,81 @@ def _compute_bbox_quantities(element):
 #     в принципе не содержит Perimeter/Depth (только Length/Volume).
 _FORMWORK_BBOX_CLASSES = ("IfcSlab", "IfcStairFlight")
 
+# Типы геометрии, для которых ручной обход вершин (без ядра
+# ifcopenshell.geom) даёт габариты bbox, совпадающие с триангуляцией ядра.
+# Это «простые» представления: экструзия, тесселяция, граненая B-Rep.
+_SIMPLE_GEOM_TYPES = {
+    "IfcExtrudedAreaSolid",
+    "IfcPolygonalFaceSet",
+    "IfcTriangulatedFaceSet",
+    "IfcFacetedBrep",
+}
+# Контейнеры, которые ручной обход раскрывает с трансформацией.
+_SIMPLE_GEOM_CONTAINERS = {"IfcMappedItem"}
+
+
+def _item_is_simple(item) -> bool:
+    """True, если геометрию примитива ручной обход строит без потери точности.
+
+    Простые типы (экструзия, тесселяция, граненая B-Rep без отверстий) и
+    ``IfcMappedItem``, ссылающийся только на простые примитивы. Для остальных
+    типов (boolean/CSG/swept/advanced brep и т.п.) ручной bbox не используется —
+    габариты считает ядро (поведение не меняется).
+    """
+    t = item.is_a()
+    if t == "IfcFacetedBrep":
+        # Отверстия (Voids) ручной обход игнорирует — не простой случай.
+        return not getattr(item, "Voids", None)
+    if t in _SIMPLE_GEOM_TYPES:
+        return True
+    if t in _SIMPLE_GEOM_CONTAINERS:
+        mrep = getattr(getattr(item, "MappingSource", None), "MappedRepresentation", None)
+        if mrep is None:
+            return False
+        return all(_item_is_simple(it) for it in mrep.Items)
+    return False
+
+
+def _geometry_is_simple(element) -> bool:
+    """True, если всё представление элемента покрыто ручным обходом вершин."""
+    rep = getattr(element, "Representation", None)
+    if not rep:
+        return False
+    seen = False
+    for r in getattr(rep, "Representations", []) or []:
+        rep_type = getattr(r, "RepresentationType", None) or ""
+        if rep_type in ("Curve2D", "Curve3D", "Point", "GeometricSet"):
+            continue
+        for item in getattr(r, "Items", []) or []:
+            seen = True
+            if not _item_is_simple(item):
+                return False
+    return seen
+
+
+def _fast_bbox_mm(element):
+    """Габариты (dx, dy, dz) в мировых координатах без ядра ifcopenshell.geom.
+
+    Использует ручной обход представления (``_collect_geom_from_item``) и
+    мировую матрицу размещения (``_local_placement_to_matrix``) — те же
+    вершины, что и триангуляция ядра, но без построения треугольников
+    (в сотни раз быстрее). Возвращает None, если вершины собрать не удалось.
+    """
+    parts = []
+    for r in getattr(getattr(element, "Representation", None), "Representations", []) or []:
+        rep_type = getattr(r, "RepresentationType", None) or ""
+        if rep_type in ("Curve2D", "Curve3D", "Point", "GeometricSet"):
+            continue
+        for item in getattr(r, "Items", []) or []:
+            _collect_geom_from_item(item, parts)
+    if not parts:
+        return None
+    verts = np.vstack([p[0] for p in parts])
+    matrix = _local_placement_to_matrix(getattr(element, "ObjectPlacement", None))
+    verts = _apply_transform(verts, matrix)
+    dims = verts.max(axis=0) - verts.min(axis=0)
+    return float(dims[0]), float(dims[1]), float(dims[2])
+
 
 def _compute_formwork_bbox_quantities(element):
     """Вычисляет периметр/толщину элемента из геометрии (bbox, режим КР).
@@ -1227,6 +1302,11 @@ def _compute_formwork_bbox_quantities(element):
 
     Оценка по bbox приближённая (периметр прямоугольного следа). Если
     геометрия недоступна — пустой словарь.
+
+    Производительность: для «простых» представлений (экструзия, тесселяция,
+    граненая B-Rep) габариты считаются ручным обходом вершин без ядра
+    ``ifcopenshell.geom`` (в сотни раз быстрее); для сложной геометрии
+    используется ядро — результат тот же.
     """
     result = {}
     try:
@@ -1234,23 +1314,32 @@ def _compute_formwork_bbox_quantities(element):
         if ifc_class not in _FORMWORK_BBOX_CLASSES:
             return result
 
-        settings = ifcopenshell.geom.settings()
-        settings.set(settings.USE_WORLD_COORDS, True)
-        # CONVERT_BACK_UNITS: значения возвращаются в единицах длины
-        # проекта (обычно мм) — как и в остальном конвейере, где
-        # координаты/габариты IFC считаются в миллиметрах.
-        settings.set(settings.CONVERT_BACK_UNITS, True)
-        shape = ifcopenshell.geom.create_shape(settings, element)
-        verts = shape.geometry.verts
-        if len(verts) < 3:
-            return result
+        # Быстрый путь: для «простых» представлений габариты берутся ручным
+        # обходом вершин (те же вершины, что и у ядра, но без триангуляции —
+        # на порядки быстрее). Для сложной геометрии (boolean/CSG/swept/…)
+        # используется ядро — поведение не меняется.
+        dims = None
+        if _geometry_is_simple(element):
+            dims = _fast_bbox_mm(element)
 
-        xs = verts[0::3]
-        ys = verts[1::3]
-        zs = verts[2::3]
-        dx = max(xs) - min(xs)
-        dy = max(ys) - min(ys)
-        dz = max(zs) - min(zs)
+        if dims is None:
+            settings = ifcopenshell.geom.settings()
+            settings.set(settings.USE_WORLD_COORDS, True)
+            # CONVERT_BACK_UNITS: значения возвращаются в единицах длины
+            # проекта (обычно мм) — как и в остальном конвейере, где
+            # координаты/габариты IFC считаются в миллиметрах.
+            settings.set(settings.CONVERT_BACK_UNITS, True)
+            shape = ifcopenshell.geom.create_shape(settings, element)
+            verts = shape.geometry.verts
+            if len(verts) < 3:
+                return result
+            dims = (
+                max(verts[0::3]) - min(verts[0::3]),
+                max(verts[1::3]) - min(verts[1::3]),
+                max(verts[2::3]) - min(verts[2::3]),
+            )
+
+        dx, dy, dz = dims
         if min(dx, dy, dz) <= 0:
             return result
 
@@ -1358,12 +1447,14 @@ def _collect_element_data(element, compute_bbox_qto=False):
 #  ГЛАВНАЯ ФУНКЦИЯ
 # =====================================================================
 
-def dump_ifc_elements_raw(ifc_file: str, output_folder: str) -> str:
+def dump_ifc_elements_raw(ifc_file: str, output_folder: str, model=None) -> str:
     """Сохраняет XLSX со всеми элементами IFC и их сырыми параметрами.
 
     Args:
         ifc_file: путь к IFC-файлу.
         output_folder: папка, куда сохранить результат (корень сессии).
+        model: необязательная уже открытая модель ifcopenshell — если задана,
+            повторное открытие файла не выполняется (экономия на больших IFC).
 
     Returns:
         Путь к созданному XLSX-файлу или пустая строка, если элементов нет.
@@ -1378,7 +1469,8 @@ def dump_ifc_elements_raw(ifc_file: str, output_folder: str) -> str:
         output_folder = os.getcwd()
     os.makedirs(output_folder, exist_ok=True)
 
-    model = ifcopenshell.open(ifc_file)
+    if model is None:
+        model = ifcopenshell.open(ifc_file)
 
     elements = model.by_type("IfcElement")
     logger.info(f"Найдено элементов IfcElement: {len(elements)}")

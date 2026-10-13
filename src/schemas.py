@@ -86,6 +86,11 @@ class SelectRowsRequest(CamelModel):
     all_rows: bool = False
     row_types: Dict[str, str] = {}
     row_materials: Dict[str, str] = {}
+    # Уточнение неполных МССК-кодов материала (ИИ и ЦС): {индекс строки: код}.
+    # Пример: строка с кодом «СТ 00 15» («Железобетон») уточняется до
+    # «СТ 00 15 01»/«СТ 00 15 02» (сборный/монолитный) — выбор пользователя
+    # в превью. Применяется при группировке по материалу на бэкенде.
+    row_material_codes: Dict[str, str] = {}
     building_height: Optional[float] = None
     # Высота этажа (АР): передаётся вместе с building_height в режиме АР
     floor_height: Optional[float] = None
@@ -337,6 +342,22 @@ class WorksConstantsResponse(CamelModel):
     pz_file_name: Optional[str] = None
     # Статус разбора ПЗ: pz_processing / pz_completed / pz_error
     pz_status: Optional[str] = None
+    # Разбор ВОР (ведомость объёмов работ) завершён
+    vor_ready: bool = False
+    # Имя загруженного файла ВОР
+    vor_file_name: Optional[str] = None
+    # Статус разбора ВОР: vor_processing / vor_completed / vor_error
+    vor_status: Optional[str] = None
+    # Число извлечённых из ВОР записей (работ)
+    vor_count: Optional[int] = None
+    # Разбор ПД (проектная документация) завершён
+    pd_ready: bool = False
+    # Имя загруженного файла ПД
+    pd_file_name: Optional[str] = None
+    # Статус разбора ПД: pd_processing / pd_completed / pd_error
+    pd_status: Optional[str] = None
+    # Число извлечённых из ПД записей (характеристик элементов)
+    pd_count: Optional[int] = None
 
 
 class PosUploadResponse(CamelModel):

@@ -154,6 +154,7 @@ ai-ifc-vor-generator/
 │       ├── works_table_selector.py  # АР: детерминированный подбор таблиц работ (8 шагов data/algorithm.md)
 │       ├── works_fetcher.py        # АР: работы из цифрового сборника (larix): период ТСН → period.json, работы таблиц → Подобранные_работы.json, детальные параметры позиций
 │       ├── works_final_selector.py # АР: финальный подбор работ через LLM (v13.2: по каждой таблице — ровно одна работа; предфильтрация/ранжирование, fallback — ближайшая) → Финальный_перечень_работ.json/.xlsx
+│       ├── vor_comparison.py        # АР: сравнение работ/объёмов ВОР заказчика и сформированного перечня → Сравнение_ВОР_и_перечня.xlsx/.json
 │       ├── ifc_json_builder.py      # Сборка финального JSON (final_result_AR.json / final_result_KR.json)
 │       ├── position_links.py  # Ссылки на позиции цифрового сборника (position_links.json, КР)
 │       ├── pd_parser.py       # Разбор PDF ПОС/ПЗ через LLM → ПОС/ПЗ_глобальные_константы.json (+ LLMClient для works_final_selector)
@@ -412,6 +413,8 @@ make clean     # остановить и удалить volumes (внимани�
     `building_parts.json`, `Подобранные_таблицы_работ.json`,
     `Подобранные_работы.json` (larix, в `run_<NNN>/`),
     `Финальный_перечень_работ.json/.xlsx` (итоговая выдача — только xlsx),
+    `Сравнение_ВОР_и_перечня.xlsx/.json` (сравнение работ/объёмов ВОР
+    заказчика и сформированного перечня; `vor_comparison.py`),
     `period.json` (корень сессии), `final_result_AR.json`,
     `ПОС_глобальные_константы.json`, `ПЗ_глобальные_константы.json`,
     `Параметры_подбора_элементов.json`). Имена файлов —

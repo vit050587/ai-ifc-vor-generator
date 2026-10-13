@@ -473,6 +473,24 @@ _COMPUTED = {
 #  ЗАПОЛНЕНИЕ ШАБЛОНА
 # =====================================================================
 
+def _resolve_constant_value(rule, constants):
+    """Значение параметра шаблона из констант проекта (``source == "constant"``).
+
+    Возвращает словарь ``{value, unit, origin, source_key}``: первая непустая
+    константа из ``constant_names`` (origin=constant) либо ``not_found``.
+    """
+    unit = rule.get("unit") or ""
+    for const_name in rule.get("constant_names", []):
+        if const_name in constants and not _is_empty(constants[const_name]):
+            return {
+                "value": constants[const_name],
+                "unit": unit,
+                "origin": "constant",
+                "source_key": const_name,
+            }
+    return {"value": None, "unit": unit, "origin": "not_found", "source_key": ""}
+
+
 def _fill_element_parameters(element, template_params, mapping, constants):
     """Заполняет шаблон параметров для одного элемента сырого дампа.
 
@@ -533,15 +551,7 @@ def _fill_element_parameters(element, template_params, mapping, constants):
 
         # 4. Константы проекта (UI → IFC → ПОС, собраны в constants).
         if filled is None and rule.get("source") == "constant":
-            for const_name in rule.get("constant_names", []):
-                if const_name in constants and not _is_empty(constants[const_name]):
-                    filled = {
-                        "value": constants[const_name],
-                        "unit": unit,
-                        "origin": "constant",
-                        "source_key": const_name,
-                    }
-                    break
+            filled = _resolve_constant_value(rule, constants)
 
         if filled is None:
             filled = {"value": None, "unit": unit, "origin": "not_found",
@@ -636,6 +646,82 @@ def build_selection_parameters(session_dir, output_path=None,
     logger.info(
         f"Сохранены заполненные шаблоны параметров подбора: {output_path} "
         f"(элементов: {len(filled_elements)}, "
+        f"размер: {os.path.getsize(output_path) / 1024:.0f} KB)"
+    )
+    return output_path
+
+
+def update_selection_parameters_constants(session_dir, output_path=None,
+                                          project_constants=None,
+                                          mapping_path=None, template_path=None):
+    """Точечно обновляет константы в существующем Параметры_подбора_элементов.json.
+
+    Вызывается после разбора ПОС/ПЗ: пересчитывает раздел ``constants`` и
+    параметры элементов, источник которых — константа (``source == "constant"``),
+    **не перечитывая сырой дамп** (63 МБ) и не пересобирая файл с нуля. Параметры
+    элементов из IFC (``element``/``computed``) не зависят от ПОС/ПЗ и остаются
+    без изменений.
+
+    Если файла ещё нет (или он повреждён) — выполняется полная сборка
+    (``build_selection_parameters``).
+
+    Returns:
+        Путь к обновлённому файлу или None, если файл не найден/не создан.
+    """
+    output_path = output_path or os.path.join(session_dir, OUTPUT_FILENAME)
+
+    def _full_build():
+        return build_selection_parameters(
+            session_dir, output_path=output_path,
+            project_constants=project_constants,
+            mapping_path=mapping_path, template_path=template_path,
+        )
+
+    if not os.path.isfile(output_path):
+        # Файла нет — полная сборка (штатный путь этапа 0 не отработал).
+        return _full_build()
+
+    try:
+        with open(output_path, encoding="utf-8") as f:
+            result = json.load(f)
+    except Exception as exc:
+        logger.warning(f"Не удалось прочитать {output_path} ({exc}) — полная пересборка")
+        return _full_build()
+
+    if not isinstance(result, dict) or not isinstance(result.get("elements"), list):
+        return _full_build()
+
+    mapping = load_mapping(mapping_path)
+    constants = _resolve_constants(session_dir, project_constants)
+    formatted_constants = _format_constants(constants, _load_constants_schema())
+
+    # Параметры, источник которых — константа: пересчитываются по новым
+    # значениям (появившимся из ПОС/ПЗ). Остальные не трогаем.
+    constant_params = {
+        name for name, rule in mapping.items()
+        if (rule or {}).get("source") == "constant"
+    }
+    updated_params = 0
+    if constant_params:
+        for entry in result["elements"]:
+            params = entry.get("parameters") if isinstance(entry, dict) else None
+            if not isinstance(params, dict):
+                continue
+            for name in constant_params:
+                if name in params:
+                    params[name] = _resolve_constant_value(mapping.get(name) or {}, constants)
+                    updated_params += 1
+
+    result["constants"] = formatted_constants
+    result["generated_at"] = datetime.now().isoformat(timespec="seconds")
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+
+    logger.info(
+        f"Обновлены константы шаблона параметров подбора: {output_path} "
+        f"(элементов: {len(result['elements'])}, "
+        f"параметров-констант пересчитано: {updated_params}, "
         f"размер: {os.path.getsize(output_path) / 1024:.0f} KB)"
     )
     return output_path

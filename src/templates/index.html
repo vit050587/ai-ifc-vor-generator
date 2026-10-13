@@ -827,6 +827,36 @@
                         <button class="btn btn-sm btn-danger" onclick="resetPzUpload()">✕</button>
                     </div>
                 </div>
+                <!-- Файл ВОР (режим ИИ): ведомость объёмов работ — из неё
+                     извлекаются группы элементов, объёмы работ и единицы измерения -->
+                <div id="vorUploadBlock" style="display:none;margin-top:12px;">
+                    <div class="upload-area" id="vorUploadArea" style="padding:14px 16px;">
+                        <input type="file" id="vorFileInput" accept=".pdf" hidden>
+                        <div class="icon" style="font-size:22px;">📊</div>
+                        <div class="text" style="font-size:14px;">Файл ВОР (PDF) — необязательно</div>
+                        <div class="hint" style="font-size:12px;">Ведомость объёмов работ: из неё будут извлечены группы элементов, объёмы работ и единицы измерения</div>
+                    </div>
+                    <div id="vorFileInfo" style="display:none;" class="file-info">
+                        <span>📊</span>
+                        <span class="name" id="vorFileName"></span>
+                        <button class="btn btn-sm btn-danger" onclick="resetVorUpload()">✕</button>
+                    </div>
+                </div>
+                <!-- Файл ПД (режим ИИ): проектная документация — разбирается только
+                     текстовая часть (без графических/альбомных страниц) -->
+                <div id="pdUploadBlock" style="display:none;margin-top:12px;">
+                    <div class="upload-area" id="pdUploadArea" style="padding:14px 16px;">
+                        <input type="file" id="pdFileInput" accept=".pdf" hidden>
+                        <div class="icon" style="font-size:22px;">📐</div>
+                        <div class="text" style="font-size:14px;">Файл ПД (PDF) — необязательно</div>
+                        <div class="hint" style="font-size:12px;">Проектная документация: из текстовой части будут извлечены характеристики бетона (класс, прочность, пластичность, морозостойкость, водонепроницаемость)</div>
+                    </div>
+                    <div id="pdFileInfo" style="display:none;" class="file-info">
+                        <span>📐</span>
+                        <span class="name" id="pdFileName"></span>
+                        <button class="btn btn-sm btn-danger" onclick="resetPdUpload()">✕</button>
+                    </div>
+                </div>
                 <div class="progress-wrap" id="uploadProgressWrap" style="display:none;">
                     <div class="progress-bar" id="uploadProgressBar"></div>
                 </div>
@@ -1132,6 +1162,10 @@ let selectedRows = new Set();
 let allRowIndices = [];
 let rowParts = {};
 let rowMaterials = {};
+// Уточнение неполных МССК-кодов материала, выбранное пользователем в превью:
+// {индекс строки: 'СТ 00 15 01'|'СТ 00 15 02'}. Отправляется в select_rows/new_run
+// (поле rowMaterialCodes) и учитывается при группировке на бэкенде.
+let rowMaterialCodes = {};
 // Фактические заголовки колонок превью (без чекбокса и селектов «Часть здания»/«Материал»).
 // Используется для рендера таблицы и colspan групповых строк.
 let previewColumnHeaders = [];
@@ -1378,28 +1412,31 @@ async function loadWorksConstants() {
             buildingInput.value = worksConstantsDetected.building_height_m;
         }
         renderArConstantsFields();
-        // Разбор ПОС/ПЗ может завершиться позже загрузки панели (панель
-        // рисуется сразу после обработки IFC) — следим за статусом и
-        // по завершении дозагружаем константы из документов.
-        trackPosConstants(data.posStatus, data.pzStatus);
+        // Разбор ПОС/ПЗ (константы) и ВОР/ПД (текст и таблицы) может
+        // завершиться позже загрузки панели (панель рисуется сразу после
+        // обработки IFC) — следим за статусами и по завершении дозагружаем
+        // константы из документов / показываем уведомления.
+        trackPosConstants(data.posStatus, data.pzStatus, data.vorStatus, data.pdStatus);
     } catch (e) { console.warn('Не удалось загрузить константы подбора работ:', e); }
 }
 
-// Слежение за фоновым разбором ПОС/ПЗ: панель констант рисуется сразу после
-// обработки IFC, а константы из документов (опалубка, краны, ковш, мощность
-// и т.д.) появляются позже. Пока posStatus === 'pos_processing' или
-// pzStatus === 'pz_processing', опрашиваем works_constants; по завершении
-// перезагружаем панель (ручной выбор пользователя сохраняется —
-// см. renderArConstantsFields).
-function trackPosConstants(posStatus, pzStatus) {
+// Слежение за фоновым разбором документов: панель констант рисуется сразу
+// после обработки IFC, а константы из ПОС/ПЗ (опалубка, краны, ковш, мощность
+// и т.д.) и результаты разбора ВОР/ПД появляются позже. Пока идёт любой из
+// разборов, опрашиваем works_constants; по завершении перезагружаем панель
+// (ручной выбор пользователя сохраняется — см. renderArConstantsFields).
+function trackPosConstants(posStatus, pzStatus, vorStatus, pdStatus) {
     if (_posConstantsPollTimer) { clearTimeout(_posConstantsPollTimer); _posConstantsPollTimer = null; }
-    if (posStatus !== 'pos_processing' && pzStatus !== 'pz_processing') return;
+    const busy = (s) => s === 'pos_processing' || s === 'pz_processing'
+        || s === 'vor_processing' || s === 'pd_processing';
+    if (!busy(posStatus) && !busy(pzStatus) && !busy(vorStatus) && !busy(pdStatus)) return;
     const poll = async () => {
         try {
             const response = await fetch(`${API_BASE}/session/${currentSessionId}/works_constants`);
             if (!response.ok) { _posConstantsPollTimer = setTimeout(poll, 3000); return; }
             const data = await response.json();
-            if (data.posStatus === 'pos_processing' || data.pzStatus === 'pz_processing') {
+            if (busy(data.posStatus) || busy(data.pzStatus)
+                || busy(data.vorStatus) || busy(data.pdStatus)) {
                 _posConstantsPollTimer = setTimeout(poll, 3000);
                 return;
             }
@@ -1419,8 +1456,18 @@ function trackPosConstants(posStatus, pzStatus) {
             } else if (data.pzStatus === 'pz_error') {
                 showToast('Ошибка разбора пояснительной записки: параметры из файла ПЗ не подставлены', 'warning');
             }
+            if (data.vorStatus === 'vor_completed') {
+                showToast(`Разбор ВОР завершён: извлечено записей — ${data.vorCount ?? 0}${data.vorFileName ? ` (${data.vorFileName})` : ''}`, 'success');
+            } else if (data.vorStatus === 'vor_error') {
+                showToast('Ошибка разбора ВОР: ведомость объёмов работ не разобрана', 'warning');
+            }
+            if (data.pdStatus === 'pd_completed') {
+                showToast(`Разбор ПД завершён: извлечено записей — ${data.pdCount ?? 0}${data.pdFileName ? ` (${data.pdFileName})` : ''}`, 'success');
+            } else if (data.pdStatus === 'pd_error') {
+                showToast('Ошибка разбора ПД: характеристики элементов не извлечены', 'warning');
+            }
         } catch (e) {
-            console.warn('Не удалось опросить статус разбора ПОС/ПЗ:', e);
+            console.warn('Не удалось опросить статус разбора документов:', e);
             _posConstantsPollTimer = setTimeout(poll, 3000);
         }
     };
@@ -2206,12 +2253,79 @@ function resetPzUpload() {
     pzFileInput.value = '';
 }
 
-// Показывает блоки загрузки ПОС и ПЗ только в режиме ИИ
+// ========== Файл ВОР (режим ИИ) ==========
+const vorUploadArea = document.getElementById('vorUploadArea');
+const vorFileInput = document.getElementById('vorFileInput');
+let vorSelectedFile = null;
+
+vorUploadArea.addEventListener('click', () => vorFileInput.click());
+vorUploadArea.addEventListener('dragover', (e) => { e.preventDefault(); vorUploadArea.classList.add('dragover'); });
+vorUploadArea.addEventListener('dragleave', () => vorUploadArea.classList.remove('dragover'));
+vorUploadArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    vorUploadArea.classList.remove('dragover');
+    if (e.dataTransfer.files.length) {
+        const file = e.dataTransfer.files[0];
+        if (file.name.toLowerCase().endsWith('.pdf')) handleVorFileSelect(file);
+        else showToast('Файл ВОР должен быть в формате PDF', 'error');
+    }
+});
+vorFileInput.addEventListener('change', (e) => { if (e.target.files.length) handleVorFileSelect(e.target.files[0]); });
+
+function handleVorFileSelect(file) {
+    vorSelectedFile = file;
+    document.getElementById('vorFileName').textContent = file.name;
+    document.getElementById('vorFileInfo').style.display = 'flex';
+}
+
+function resetVorUpload() {
+    vorSelectedFile = null;
+    document.getElementById('vorFileInfo').style.display = 'none';
+    vorFileInput.value = '';
+}
+
+// ========== Файл проектной документации ПД (режим ИИ) ==========
+const pdUploadArea = document.getElementById('pdUploadArea');
+const pdFileInput = document.getElementById('pdFileInput');
+let pdSelectedFile = null;
+
+pdUploadArea.addEventListener('click', () => pdFileInput.click());
+pdUploadArea.addEventListener('dragover', (e) => { e.preventDefault(); pdUploadArea.classList.add('dragover'); });
+pdUploadArea.addEventListener('dragleave', () => pdUploadArea.classList.remove('dragover'));
+pdUploadArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    pdUploadArea.classList.remove('dragover');
+    if (e.dataTransfer.files.length) {
+        const file = e.dataTransfer.files[0];
+        if (file.name.toLowerCase().endsWith('.pdf')) handlePdFileSelect(file);
+        else showToast('Файл ПД должен быть в формате PDF', 'error');
+    }
+});
+pdFileInput.addEventListener('change', (e) => { if (e.target.files.length) handlePdFileSelect(e.target.files[0]); });
+
+function handlePdFileSelect(file) {
+    pdSelectedFile = file;
+    document.getElementById('pdFileName').textContent = file.name;
+    document.getElementById('pdFileInfo').style.display = 'flex';
+}
+
+function resetPdUpload() {
+    pdSelectedFile = null;
+    document.getElementById('pdFileInfo').style.display = 'none';
+    pdFileInput.value = '';
+}
+
+// Показывает блоки загрузки ПОС, ПЗ, ВОР и ПД только в режиме ИИ
 function updatePosUploadVisibility() {
+    const isAI = isAIMode(currentProcessingType);
     const block = document.getElementById('posUploadBlock');
-    if (block) block.style.display = isAIMode(currentProcessingType) ? 'block' : 'none';
+    if (block) block.style.display = isAI ? 'block' : 'none';
     const pzBlock = document.getElementById('pzUploadBlock');
-    if (pzBlock) pzBlock.style.display = isAIMode(currentProcessingType) ? 'block' : 'none';
+    if (pzBlock) pzBlock.style.display = isAI ? 'block' : 'none';
+    const vorBlock = document.getElementById('vorUploadBlock');
+    if (vorBlock) vorBlock.style.display = isAI ? 'block' : 'none';
+    const pdBlock = document.getElementById('pdUploadBlock');
+    if (pdBlock) pdBlock.style.display = isAI ? 'block' : 'none';
 }
 
 function handleFileSelect(file) {
@@ -2273,6 +2387,12 @@ async function uploadFile() {
     if (isAIMode(currentProcessingType) && pzSelectedFile) {
         formData.append('pzFile', pzSelectedFile);
     }
+    if (isAIMode(currentProcessingType) && vorSelectedFile) {
+        formData.append('vorFile', vorSelectedFile);
+    }
+    if (isAIMode(currentProcessingType) && pdSelectedFile) {
+        formData.append('pdFile', pdSelectedFile);
+    }
     try {
         const response = await fetch(`${API_BASE}/upload_ifc`, { method: 'POST', body: formData });
         if (!response.ok) {
@@ -2293,6 +2413,8 @@ async function uploadFile() {
         showToast('Файл загружен, начата обработка', 'success');
         resetPosUpload();
         resetPzUpload();
+        resetVorUpload();
+        resetPdUpload();
         btn.innerHTML = '⏳ Обработка...';
     } catch (e) {
         showToast(e.message, 'error');
@@ -2450,6 +2572,7 @@ async function confirmRowSelection() {
     btn.innerHTML = '<span class="spinner"></span> Запуск...';
     const selectedRowParts = {};
     const selectedRowMaterials = {};
+    const selectedRowMaterialCodes = {};
     const allSelectedIndices = new Set();
     if (isGrouped) {
         Object.keys(leafGroups).forEach(groupId => {
@@ -2461,6 +2584,7 @@ async function confirmRowSelection() {
                     indices.forEach(idx => {
                         selectedRowParts[idx] = part;
                         selectedRowMaterials[idx] = rowMaterials[idx] || '-';
+                        if (rowMaterialCodes[idx]) selectedRowMaterialCodes[idx] = rowMaterialCodes[idx];
                         allSelectedIndices.add(idx);
                     });
                 }
@@ -2470,6 +2594,7 @@ async function confirmRowSelection() {
         selectedRows.forEach(index => {
             selectedRowParts[index] = rowParts[index] || 'Надземная';
             selectedRowMaterials[index] = rowMaterials[index] || '-';
+            if (rowMaterialCodes[index]) selectedRowMaterialCodes[index] = rowMaterialCodes[index];
             allSelectedIndices.add(index);
         });
     }
@@ -2487,6 +2612,7 @@ async function confirmRowSelection() {
         allRows: false,
         rowTypes: selectedRowParts,
         rowMaterials: selectedRowMaterials,
+        rowMaterialCodes: selectedRowMaterialCodes,
         buildingHeight: height,
         groupedData: null,
         processingType: currentProcessingType,
@@ -2820,6 +2946,7 @@ function renderPreview(data) {
     selectedRows.clear();
     rowParts = {};
     rowMaterials = {};
+    rowMaterialCodes = {};
     isGrouped = false;
     groupIndexMap = {}; groupChildren = {}; groupParent = {}; groupLevel = {}; leafGroups = {};
     data.rows.forEach((row, index) => {
@@ -3207,7 +3334,51 @@ function groupRowsCommon(mode) {
     groupLevel = {};
     leafGroups = {};
     selectedRows.clear();
+    rowMaterialCodes = {};
     isGrouped = true;
+
+    // Каскадная подсветка неполного материала: неполная группа материала
+    // подсвечивается, и вместе с ней — все строки-предки (код МССК, часть
+    // здания и т.д.). Подсветка предка снимается, когда уточнены ВСЕ неполные
+    // группы материала, входящие в него.
+    const incompleteMatIds = new Set();
+    const getAncestorIds = (groupId) => {
+        const ids = [];
+        let cur = groupParent[groupId];
+        while (cur) { ids.push(cur); cur = groupParent[cur]; }
+        return ids;
+    };
+    const setParentHighlight = (tr, on) => {
+        if (!tr) return;
+        if (on) {
+            if (tr.dataset.hlCss === undefined) tr.dataset.hlCss = tr.style.cssText;
+            tr.style.setProperty('background', '#fff2e0', 'important');
+            tr.style.setProperty('box-shadow', 'inset 4px 0 0 #dd6b20', 'important');
+            tr.classList.add('incomplete-parent');
+        } else if (tr.dataset.hlCss !== undefined) {
+            tr.style.cssText = tr.dataset.hlCss;
+            delete tr.dataset.hlCss;
+            tr.classList.remove('incomplete-parent');
+        }
+    };
+    const refreshIncompleteHighlight = () => {
+        body.querySelectorAll('tr.incomplete-parent').forEach(tr => setParentHighlight(tr, false));
+        const parents = new Set();
+        incompleteMatIds.forEach(matId => {
+            getAncestorIds(matId).forEach(id => parents.add(id));
+        });
+        parents.forEach(id => {
+            setParentHighlight(body.querySelector(`tr[data-group-id="${id}"]`), true);
+        });
+    };
+    // Подсветка самой строки группы материала (неполный код → оранжевый,
+    // уточнён → обычный зелёный).
+    const setMaterialGroupState = (tr, incomplete) => {
+        if (!tr) return;
+        tr.style.setProperty('background', incomplete ? '#fffaf0' : '#f0fff4', 'important');
+        if (incomplete) tr.style.setProperty('box-shadow', 'inset 3px 0 0 #dd6b20', 'important');
+        else tr.style.removeProperty('box-shadow');
+    };
 
     const typeRuIdx = data.headers.indexOf('Тип элемента');
     const nameIdx = data.headers.indexOf('Имя');
@@ -3360,6 +3531,45 @@ function groupRowsCommon(mode) {
         });
     };
 
+    // Неполный код МССК материала (напр. «СТ 00 15» — «Железобетон»):
+    // строка группы материала подсвечивается, пользователь уточняет
+    // материал (сборный/монолитный). Выбор сохраняется в rowMaterialCodes
+    // и отправляется на бэкенд (rowMaterialCodes), где учитывается при
+    // группировке по материалу.
+    const materialSelectHtml = (matId, matGroup) => {
+        if (!matGroup.incomplete || !(matGroup.options || []).length) return '';
+        const opts = matGroup.options.map(o =>
+            `<option value="${o.code}">${o.name}</option>`).join('');
+        return `<select class="material-code-select" data-group-id="${matId}" title="Код МССК материала неполный — уточните материал" style="margin-left:10px; padding:2px 4px; border:1px solid #dd6b20; border-radius:4px; background:#fff;">
+            <option value="">— выберите —</option>${opts}
+        </select>`;
+    };
+
+    const attachMaterialSelect = (matTr, matId) => {
+        const sel = matTr.querySelector('.material-code-select');
+        if (!sel) return;
+        sel.addEventListener('click', function(e) { e.stopPropagation(); });
+        sel.addEventListener('change', function(e) {
+            e.stopPropagation();
+            const code = this.value;
+            (groupIndexMap[matId] || []).forEach(idx => {
+                if (code) rowMaterialCodes[idx] = code;
+                else delete rowMaterialCodes[idx];
+            });
+            // Снимаем/возвращаем подсветку группы материала и её предков
+            // (подсветка предка гаснет, только если уточнены все её неполные
+            // группы-потомки).
+            if (code) {
+                incompleteMatIds.delete(matId);
+                setMaterialGroupState(matTr, false);
+            } else {
+                incompleteMatIds.add(matId);
+                setMaterialGroupState(matTr, true);
+            }
+            refreshIncompleteHighlight();
+        });
+    };
+
     // Группировка для ИИ: после кода МССК (L1) элементы группируются
     // по главному материалу (L2), затем по наименованию (L3).
     // Материал берётся из data.materialsGroupMap (GlobalId → {name, order, code}):
@@ -3376,7 +3586,14 @@ function groupRowsCommon(mode) {
             }
             const info = gid ? materialsGroupMap[gid] : null;
             if (!info || !info.name) return { name: 'Прочее', order: Infinity, code: '' };
-            return { name: info.name, order: typeof info.order === 'number' ? info.order : 0, code: info.code || '' };
+            return {
+                name: info.name,
+                order: typeof info.order === 'number' ? info.order : 0,
+                code: info.code || '',
+                // Неполный код МССК материала: варианты уточнения (сборный/монолитный)
+                incomplete: !!info.incomplete,
+                options: info.options || []
+            };
         };
 
         const matGroups = {};
@@ -3385,7 +3602,10 @@ function groupRowsCommon(mode) {
             rd.material = mat;
             // Ключ группы: имя + код, чтобы разные коды не смешивались
             const key = mat.code ? `${mat.name}__${mat.code}` : mat.name;
-            if (!matGroups[key]) matGroups[key] = { name: mat.name, code: mat.code, order: mat.order, rows: [] };
+            if (!matGroups[key]) matGroups[key] = {
+                name: mat.name, code: mat.code, order: mat.order,
+                incomplete: mat.incomplete, options: mat.options, rows: []
+            };
             matGroups[key].rows.push(rd);
         });
 
@@ -3413,11 +3633,16 @@ function groupRowsCommon(mode) {
             groupChildren[matId] = [];
             groupChildren[parentId].push(matId);
 
+            const isIncomplete = !!matGroup.incomplete && (matGroup.options || []).length > 0;
+            if (isIncomplete) incompleteMatIds.add(matId);
+
             const matTr = document.createElement('tr');
             matTr.className = 'group-row hidden-row';
             matTr.dataset.group = parentId;
             matTr.dataset.groupId = matId;
-            matTr.style.cssText = 'background:#f0fff4 !important; cursor:pointer;';
+            matTr.style.cssText = isIncomplete
+                ? 'background:#fffaf0 !important; cursor:pointer; box-shadow: inset 3px 0 0 #dd6b20;'
+                : 'background:#f0fff4 !important; cursor:pointer;';
             matTr.onclick = function(e) {
                 if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
                 toggleGroup(matId);
@@ -3433,9 +3658,11 @@ function groupRowsCommon(mode) {
                     ${matGroup.code ? `<span style="color:#718096; margin-left:8px;">(${matGroup.code})</span>` : ''}
                     <span class="group-badge">×${matRows.length}</span>
                     <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${matVolume.toFixed(2)} м³${fmtAreaSummary(matArea)}</span>
+                    ${materialSelectHtml(matId, matGroup)}
                 </td>
             `;
             body.appendChild(matTr);
+            attachMaterialSelect(matTr, matId);
 
             const matCb = matTr.querySelector('.group-checkbox');
             matCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(matId, this.checked); });
@@ -3652,7 +3879,14 @@ function groupRowsCommon(mode) {
             }
             const info = gid ? materialsGroupMap[gid] : null;
             if (!info || !info.name) return { name: 'Прочее', order: Infinity, code: '' };
-            return { name: info.name, order: typeof info.order === 'number' ? info.order : 0, code: info.code || '' };
+            return {
+                name: info.name,
+                order: typeof info.order === 'number' ? info.order : 0,
+                code: info.code || '',
+                // Неполный код МССК материала: варианты уточнения (сборный/монолитный)
+                incomplete: !!info.incomplete,
+                options: info.options || []
+            };
         };
 
         const matGroups = {};
@@ -3661,7 +3895,10 @@ function groupRowsCommon(mode) {
             rd.material = mat;
             // Ключ группы: имя + код, чтобы разные коды не смешивались
             const key = mat.code ? `${mat.name}__${mat.code}` : mat.name;
-            if (!matGroups[key]) matGroups[key] = { name: mat.name, code: mat.code, order: mat.order, rows: [] };
+            if (!matGroups[key]) matGroups[key] = {
+                name: mat.name, code: mat.code, order: mat.order,
+                incomplete: mat.incomplete, options: mat.options, rows: []
+            };
             matGroups[key].rows.push(rd);
         });
 
@@ -3689,11 +3926,16 @@ function groupRowsCommon(mode) {
             groupChildren[matId] = [];
             groupChildren[parentId].push(matId);
 
+            const isIncomplete = !!matGroup.incomplete && (matGroup.options || []).length > 0;
+            if (isIncomplete) incompleteMatIds.add(matId);
+
             const matTr = document.createElement('tr');
             matTr.className = 'group-row hidden-row';
             matTr.dataset.group = parentId;
             matTr.dataset.groupId = matId;
-            matTr.style.cssText = 'background:#f0fff4 !important; cursor:pointer;';
+            matTr.style.cssText = isIncomplete
+                ? 'background:#fffaf0 !important; cursor:pointer; box-shadow: inset 3px 0 0 #dd6b20;'
+                : 'background:#f0fff4 !important; cursor:pointer;';
             matTr.onclick = function(e) {
                 if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
                 toggleGroup(matId);
@@ -3709,9 +3951,11 @@ function groupRowsCommon(mode) {
                     ${matGroup.code ? `<span style="color:#718096; margin-left:8px;">(${matGroup.code})</span>` : ''}
                     <span class="group-badge">×${matRows.length}</span>
                     <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${matVolume.toFixed(2)} м³${fmtAreaSummary(matArea)}</span>
+                    ${materialSelectHtml(matId, matGroup)}
                 </td>
             `;
             body.appendChild(matTr);
+            attachMaterialSelect(matTr, matId);
 
             const matCb = matTr.querySelector('.group-checkbox');
             matCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(matId, this.checked); });
@@ -3833,6 +4077,7 @@ function groupRowsCommon(mode) {
         document.getElementById('autoGroupBtn').style.display = 'none';
         document.getElementById('ungroupBtn').style.display = 'inline-block';
         updateSelectionUI();
+        refreshIncompleteHighlight();
         showToast(`Сгруппировано (${mode}): ${Object.keys(groupIndexMap).length} групп`, 'info');
         return;
     }
@@ -3965,6 +4210,7 @@ function groupRowsCommon(mode) {
         document.getElementById('autoGroupBtn').style.display = 'none';
         document.getElementById('ungroupBtn').style.display = 'inline-block';
         updateSelectionUI();
+        refreshIncompleteHighlight();
         showToast(`Сгруппировано (PDF): ${Object.keys(groupIndexMap).length} групп`, 'info');
         return;
     }
@@ -4085,6 +4331,7 @@ function groupRowsCommon(mode) {
     document.getElementById('autoGroupBtn').style.display = 'none';
     document.getElementById('ungroupBtn').style.display = 'inline-block';
     updateSelectionUI();
+    refreshIncompleteHighlight();
     showToast(`Сгруппировано (${mode}): ${Object.keys(groupIndexMap).length} групп`, 'info');
 }
 
@@ -4779,7 +5026,8 @@ document.addEventListener('DOMContentLoaded', () => {
 (function(){
   let lastM=0;
   function esc(t){ return String(t).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-  const ICON={'Из ПОС':'📄','Из ПЗ':'📘','Из ПОС и ПЗ':'📄','Из сборников ТСН':'📚','Из модели и справочника цен':'🏗','Противоречия между документами':'❗'};
+  const ICON={'Из ПОС':'📄','Из ПЗ':'📘','Из ПОС и ПЗ':'📄','Из ВОР':'📗','Из ПД':'📐',
+    'Сверка с ВОР и ПД':'🧾','Из сборников ТСН':'📚','Из модели и справочника цен':'🏗','Противоречия между документами':'❗'};
   function card(){
     let c=document.getElementById('anCard'); if(c) return c;
     const anchor=document.getElementById('pdPanel') || document.getElementById('selectRowsBtn'); if(!anchor) return null;
@@ -4816,6 +5064,54 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       c.innerHTML=h;
     }catch(e){}
+  }
+  setInterval(load, 5000);
+})();
+</script>
+<script>
+/* DOCFACTS_V1 — блок «Всё найденное в ВОР и ПД» (тезисная сводка: объёмы работ
+   из ведомости объёмов работ и характеристики конструкций из ПД). Только режим ИИ. */
+(function(){
+  let lastSid=null, data=null;
+  const base=()=> (typeof API_BASE!=='undefined')?API_BASE:'';
+  function esc(t){ return String(t).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+  function card(){
+    let c=document.getElementById('docFactsCard'); if(c) return c;
+    const anchor=document.getElementById('pdPanel')||document.getElementById('selectRowsBtn'); if(!anchor) return null;
+    c=document.createElement('div'); c.id='docFactsCard';
+    c.style.cssText='border:1px solid #b7e4c7;background:#f6fff8;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:14px';
+    (anchor.id==='pdPanel'?anchor:anchor.parentElement).after(c);
+    return c;
+  }
+  function render(){
+    const c=card(); if(!c) return;
+    if(!data || data.status!=='ready'){ c.style.display='none'; c.innerHTML=''; return; }
+    c.style.display='';
+    if(!(data.items||[]).length){
+      c.innerHTML='<b>📑 Всё найденное в ВОР и ПД</b> <span style="color:#888">— документы ВОР/ПД в этой сессии не найдены.</span>';
+      return;
+    }
+    let h='<b>📑 Всё найденное в ВОР и ПД</b> <span style="color:#666">('
+      +(data.vor||0)+' записей ВОР, '+(data.pd||0)+' ПД; наведите мышь на значение — цитата из документа)</span>';
+    h+='<table style="margin-top:6px;border-collapse:collapse;width:100%">';
+    let g=null;
+    data.items.forEach(r=>{
+      if(r.group!==g){ g=r.group; h+='<tr><td colspan="3" style="padding:8px 0 2px;font-weight:600;color:#1e7e34">'+esc(g)+'</td></tr>'; }
+      const badge = r.use==='calc' ? '<span style="color:#198754">✓ учтено в подборе</span>' : '<span style="color:#888">справочно</span>';
+      const cnt = (r.count && r.count>1) ? ', '+r.count+' поз.' : '';
+      h+='<tr style="border-top:1px solid #e2f0e6"><td style="padding:3px 12px 3px 0;color:#444;width:46%;vertical-align:top">'+esc(r.title)+'</td>'
+        +'<td style="padding:3px 12px 3px 0;vertical-align:top" title="'+esc(r.quote||'')+'"><b>'+esc(r.value)+'</b> '
+        +'<span style="color:#888">('+esc(r.src||'')+(r.page?', стр. '+r.page:'')+cnt+')</span></td>'
+        +'<td style="padding:3px 0;vertical-align:top;width:20%;font-size:13px">'+badge+'</td></tr>';
+    });
+    h+='</table>';
+    c.innerHTML=h;
+  }
+  async function load(){
+    const sid=(typeof currentSessionId!=='undefined')?currentSessionId:null;
+    if(!sid || (typeof isAIMode==='function' && !isAIMode(currentProcessingType))) return;
+    if(sid!==lastSid){ lastSid=sid; data=null; render(); }
+    try{ data=await (await fetch(base()+'/session/'+sid+'/doc_facts')).json(); render(); }catch(e){}
   }
   setInterval(load, 5000);
 })();

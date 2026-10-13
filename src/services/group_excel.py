@@ -911,7 +911,8 @@ def group_elements_new(rows: List[Dict[str, Any]], headers: List[str]) -> List[D
     return group_elements(rows, headers, use_new_grouping=True)
 
 
-def group_elements_mssk(rows: List[Dict[str, Any]], headers: List[str]) -> List[Dict[str, Any]]:
+def group_elements_mssk(rows: List[Dict[str, Any]], headers: List[str],
+                        material_code_overrides: Dict[int, str] = None) -> List[Dict[str, Any]]:
     """Группировка элементов (для КР) по иерархии:
 
         Часть здания (L1)
@@ -934,6 +935,12 @@ def group_elements_mssk(rows: List[Dict[str, Any]], headers: List[str]) -> List[
 
     Геометрическая группировка и материал/бетон переиспользуют _add_geometry_groups
     со сдвигом уровней level_offset=0 (с учётом дополнительного уровня материала L3).
+
+    material_code_overrides — необязательное уточнение неполных МССК-кодов
+    материала, выбранное пользователем в превью: ``{позиция_строки: код}``
+    (напр. ``{5: 'СТ 00 15 01'}``). Для таких строк группа материала
+    определяется по указанному полному коду, а не по значению из параметров
+    элемента («СТ 00 15» — «Железобетон» без указания сборный/монолитный).
     """
     # Импорт внутри функции, чтобы избежать циклической зависимости
     from src.services.mssk_lookup import build_mssk_lookup, OTHER_LABEL
@@ -945,6 +952,8 @@ def group_elements_mssk(rows: List[Dict[str, Any]], headers: List[str]) -> List[
     )
     lookup, _ = build_mssk_lookup()
     materials_lookup, _ = build_materials_lookup()
+
+    material_code_overrides = material_code_overrides or {}
 
     volume_col = None
     for h in headers:
@@ -969,19 +978,28 @@ def group_elements_mssk(rows: List[Dict[str, Any]], headers: List[str]) -> List[
 
     has_mssk_col = 'Код мсск' in headers
 
-    def _get_material_group(row) -> Tuple[str, float]:
+    def _get_material_group(row, override_code: str = None) -> Tuple[str, float]:
         """Определяет группу материала элемента по коду МССК из параметров.
 
         Ищет код материала вида «СТ 00 15 01» в параметрах элемента
         (колонки ExpCheck_*::MGE_MaterialCode, IfcMaterialLayer::Name и т.п.)
         через extract_material_value/resolve_material_group_with_code.
 
+        override_code — уточнённый пользователем полный код МССК материала
+        (напр. «СТ 00 15 01» вместо неполного «СТ 00 15»): группа
+        определяется напрямую по нему.
+
         Возвращает (имя_группы, порядок_сортировки):
           * код найден     → «Железобетон сборный (СТ 00 15 01)» и порядок из справочника;
           * код не найден  → «Прочее» и бесконечность.
         """
-        mat_val = extract_material_value(row)
-        name, order, code = resolve_material_group_with_code(mat_val, materials_lookup)
+        if override_code:
+            name, order, code = resolve_material_group_with_code(
+                f'({override_code})', materials_lookup
+            )
+        else:
+            mat_val = extract_material_value(row)
+            name, order, code = resolve_material_group_with_code(mat_val, materials_lookup)
         if code:
             return f'{name} ({code})', order
         return MATERIALS_OTHER_LABEL, float('inf')
@@ -1042,7 +1060,9 @@ def group_elements_mssk(rows: List[Dict[str, Any]], headers: List[str]) -> List[
             mat_groups = defaultdict(list)
             mat_meta = {}  # имя группы → порядок сортировки
             for idx in indices:
-                mat_key, mat_order = _get_material_group(rows[idx])
+                mat_key, mat_order = _get_material_group(
+                    rows[idx], material_code_overrides.get(int(idx))
+                )
                 mat_groups[mat_key].append(idx)
                 mat_meta[mat_key] = mat_order
 
@@ -1652,11 +1672,15 @@ def create_excel_report(groups: List[Dict], headers: List[str], rows: List[Dict]
 # ========== Кеширование на диске ==========
 
 def _get_cached_or_compute(input_excel_path: str, output_dir: str, 
-                           processing_type: str, group_func, suffix: str) -> Dict[str, str]:
+                           processing_type: str, group_func, suffix: str,
+                           force_recompute: bool = False) -> Dict[str, str]:
     """
     Проверяет, существует ли уже результат группировки на диске.
     Если да и входной файл не изменился — возвращает готовые пути.
     Если нет — вычисляет группировку.
+
+    force_recompute=True — игнорировать кеш (например, при уточнении
+    МССК-кодов материала, влияющем на результат группировки).
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1666,7 +1690,7 @@ def _get_cached_or_compute(input_excel_path: str, output_dir: str,
     excel_output = output_dir / f"{base_name}_grouped{suffix}.xlsx"
     json_output = output_dir / f"{base_name}_grouped{suffix}.json"
     
-    if os.path.exists(str(excel_output)) and os.path.exists(str(json_output)):
+    if not force_recompute and os.path.exists(str(excel_output)) and os.path.exists(str(json_output)):
         input_mtime = os.path.getmtime(str(input_path))
         output_mtime = os.path.getmtime(str(excel_output))
         
@@ -1722,26 +1746,38 @@ def process_ifc_excel(input_excel_path: str, output_dir: str = None) -> Dict[str
     )
 
 
-def process_ifc_excel_ar(input_excel_path: str, output_dir: str = None) -> Dict[str, str]:
+def process_ifc_excel_ar(input_excel_path: str, output_dir: str = None,
+                         material_code_overrides: Dict[int, str] = None) -> Dict[str, str]:
     """Process IFC Excel file and create grouped output (для АР).
 
     Группировка идентична КР (group_elements_mssk) — чтобы дерево в
     финальном перечне АР совпадало с КР (деление по IFC-типу, геометрии
     и бетону, а не только по наименованию элемента). Имя файла остаётся
     *_AR — контракт с works_final_selector не меняется.
+
+    material_code_overrides — уточнение неполных МССК-кодов материала
+    ({позиция_строки: код}); при его наличии кеш игнорируется.
     """
     input_path = Path(input_excel_path)
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_excel_path}")
     
     output_dir = output_dir or str(input_path.parent)
-    
+
+    if material_code_overrides:
+        group_func = lambda rows, headers: group_elements_mssk(
+            rows, headers, material_code_overrides=material_code_overrides
+        )
+    else:
+        group_func = group_elements_mssk
+
     return _get_cached_or_compute(
         input_excel_path=input_excel_path,
         output_dir=output_dir,
         processing_type='AR',
-        group_func=group_elements_mssk,
-        suffix='_AR'
+        group_func=group_func,
+        suffix='_AR',
+        force_recompute=bool(material_code_overrides),
     )
 
 
@@ -1763,22 +1799,35 @@ def process_ifc_excel_new(input_excel_path: str, output_dir: str = None) -> Dict
     )
 
 
-def process_ifc_excel_mssk(input_excel_path: str, output_dir: str = None) -> Dict[str, str]:
+def process_ifc_excel_mssk(input_excel_path: str, output_dir: str = None,
+                           material_code_overrides: Dict[int, str] = None) -> Dict[str, str]:
     """Process IFC Excel file и создать grouped output (для КР) с группировкой
     по кодам МССК: Часть здания → Код МССК → Геометрия → Материал/Бетон.
-    С кешированием на диске."""
+    С кешированием на диске.
+
+    material_code_overrides — уточнение неполных МССК-кодов материала
+    ({позиция_строки: код}); при его наличии кеш игнорируется.
+    """
     input_path = Path(input_excel_path)
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_excel_path}")
     
     output_dir = output_dir or str(input_path.parent)
-    
+
+    if material_code_overrides:
+        group_func = lambda rows, headers: group_elements_mssk(
+            rows, headers, material_code_overrides=material_code_overrides
+        )
+    else:
+        group_func = group_elements_mssk
+
     return _get_cached_or_compute(
         input_excel_path=input_excel_path,
         output_dir=output_dir,
         processing_type='KR',
-        group_func=group_elements_mssk,
-        suffix='_mssk'
+        group_func=group_func,
+        suffix='_mssk',
+        force_recompute=bool(material_code_overrides),
     )
 
 
