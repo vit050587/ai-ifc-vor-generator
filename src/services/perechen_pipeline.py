@@ -1900,6 +1900,56 @@ def _rebar_class(el):
     return m.group(0) if m else ""
 
 
+def _rebar_title(pressmark):
+    """Полное наименование ресурса арматурной стали из справочника ресурсов."""
+    try:
+        from src.services import local_resources as _lr
+        info = _lr.load().get(str(pressmark)) or {}
+        if info.get("title"):
+            return info["title"]
+    except Exception:
+        pass
+    return f"Арматурные заготовки, арматурная сталь ({pressmark})"
+
+
+def _rebar_vor_rows(q):
+    """Строки арматурной стали по диаметрам из ВОР (масса разложена `_doc_fill_rebar`).
+
+    Каждому классу и диаметру ВОР сопоставляется работа перечня (1.3-4-21 … 1.3-4-27,
+    «Арматурные заготовки … диаметр от 12 до 14 мм» и т. д.); работы одного
+    диаметра (напр. Ø25 и Ø28 → 1.3-4-25) объединяются в одну строку.
+    """
+    items = q.get("rebar_by_diameter") if isinstance(q, dict) else None
+    if not items:
+        return []
+    agg: Dict[str, Dict[str, Any]] = {}
+    for it in items:
+        try:
+            kg = float(it.get("kg") or 0.0)
+            d = int(it.get("diameter"))
+        except (TypeError, ValueError):
+            continue
+        pm = kb.rebar_pressmark(str(it.get("cls") or ""), d)
+        if not pm or kg <= 0:
+            continue
+        a = agg.setdefault(pm, {"mass": 0.0, "d": []})
+        a["mass"] += kg / 1000.0
+        a["d"].append(d)
+    rows = []
+    for pm, a in agg.items():
+        mass = round(a["mass"], 4)
+        if mass <= 0:
+            continue
+        _, _, mr, total = _costs({"pressmark": pm, "is_resource": True}, mass)
+        diam = ", ".join(f"Ø{d}" for d in sorted(set(a["d"])))
+        rows.append({"pressmark": pm, "title": _rebar_title(pm), "unit": "т", "volume": mass,
+                     "zp": 0, "em": 0, "mr": mr, "total": total, "is_resource": True,
+                     "work": f"Арматурная сталь ({diam}) — объём по ВОР",
+                     "diameter_mm": sorted(set(a["d"]))})
+    rows.sort(key=lambda r: r["pressmark"])
+    return rows
+
+
 # встраиваемся ПОД проверку материалов, чтобы она уже видела добавленную сталь
 _fin_before_rebar = _fin_before_mat
 
@@ -1923,9 +1973,21 @@ def _finalize_with_rebar(el, q, works, subs):
         if not _REBAR_OK_CLASS.search(cls):
             _REBAR_ADDED.append({"el": str(el.get("name") or ""), "t": 0, "cls": cls, "skipped": True})
             return rows
+        t = round(float(vol) * _unit_mult(work.get("unit")), 4)
+
+        # Масса арматуры из ВОР разложена по классам и диаметрам (`_doc_fill_rebar`)
+        # — подбираем работу перечня нужного диаметра и ставим её объём.
+        vor_rows = _rebar_vor_rows(q)
+        if vor_rows:
+            rows[idx + 1:idx + 1] = vor_rows
+            _REBAR_ADDED.append({"el": str(el.get("name") or ""), "t": t, "cls": cls,
+                                 "from_vor": True,
+                                 "priced": all(r.get("total") is not None for r in vor_rows),
+                                 "diameters": {r["pressmark"]: r["volume"] for r in vor_rows}})
+            return rows
+
         info = _rebar_price_info()
         price = info.get("price")
-        t = round(float(vol) * _unit_mult(work.get("unit")), 4)
         title = (f"Арматура {cls} (А-III), сталь периодического профиля — не учтена в расценке установки "
                  f"(диаметр по проекту; цена принята для Ø12–14 мм, уточнить по спецификации КР)")
         row = {"pressmark": _REBAR_DEFAULT, "title": title, "unit": "т", "volume": t,
@@ -1951,10 +2013,10 @@ def _an_build(run_dir):
     skipped = [x for x in _REBAR_ADDED if x.get("skipped")]
     if not added and not skipped:
         return res
+    vor = [x for x in added if x.get("from_vor")]
+    plain = [x for x in added if not x.get("from_vor")]
     g = res.setdefault("groups", {})
     fmt = lambda x: f"{x:,.1f}".replace(",", " ").replace(".", ",")
-    tot = sum(x["t"] for x in added)
-    classes = sorted({x["cls"] for x in added})
 
     def put(sect, src, text):
         tgt = next((x for x in g.setdefault(sect, []) if x.get("src") == src), None)
@@ -1962,13 +2024,29 @@ def _an_build(run_dir):
             tgt = {"src": src, "items": []}
             g[sect].append(tgt)
         tgt["items"].append(text)
-    if added:
+    if vor:
+        by_pm: Dict[str, float] = {}
+        for x in vor:
+            for pm, v in (x.get("diameters") or {}).items():
+                by_pm[pm] = round(by_pm.get(pm, 0.0) + float(v), 4)
+        tot_vor = sum(by_pm.values())
+        det = "; ".join(f"{pm} — {fmt(v)} т" for pm, v in sorted(by_pm.items()))
+        put("ok", "Из ВОР",
+            f"Арматурная сталь взята из ВОР по диаметрам (с учётом разбивки ведомости по "
+            f"разделам, блокам/захваткам и секциям/этажам) и сопоставлена с работами "
+            f"перечня по диаметру: {fmt(tot_vor)} т ({len(vor)} эл.) — {det}.")
         put("ok", "Из сборников ТСН",
-            f"Арматурная сталь добавлена в перечень отдельными строками: {fmt(tot)} т ({len(added)} эл.), класс по модели "
-            f"{', '.join(classes)} — по сборнику сталь не входит в расценки установки арматуры.")
+            f"Арматурная сталь добавлена в перечень отдельными строками по диаметрам "
+            f"(1.3-4-21 … 1.3-4-27) — по сборнику сталь не входит в расценки установки арматуры.")
+    if plain:
+        tot_p = sum(x["t"] for x in plain)
+        put("ok", "Из сборников ТСН",
+            f"Арматурная сталь добавлена в перечень отдельными строками: {fmt(tot_p)} т "
+            f"({len(plain)} эл.), класс по модели "
+            f"{', '.join(sorted({x['cls'] for x in plain}))} — по сборнику сталь не входит в расценки установки арматуры.")
         put("doubt", "Из модели и справочника цен",
-            f"Диаметры арматуры в модели не указаны — цена стали ({fmt(tot)} т) принята для Ø12–14 мм (1.3-4-22). "
-            f"Уточните по спецификации КР: цена зависит от диаметра.")
+            f"Диаметры арматуры в ВОР не определены — цена стали ({fmt(tot_p)} т) принята "
+            f"для Ø12–14 мм (1.3-4-22). Уточните по спецификации КР: цена зависит от диаметра.")
     if skipped:
         put("doubt", "Из модели и справочника цен",
             f"Арматура класса {', '.join(sorted({x['cls'] for x in skipped}))} — сталь не добавлена автоматически "
@@ -2225,6 +2303,10 @@ DOC_SRC = "Сверка с ВОР и ПД"
 # арматуры конструкции делится на суммарный объём бетона этой конструкции в
 # модели — так объёмы групп складываются ровно в расход по ВОР.
 _DOC_REBAR_NORM: Dict[str, float] = {}
+# Удельный расход арматуры (т/м3) по видам конструкций **и диаметрам** из ВОР:
+# {(класс, диаметр_мм): т/м3}. Раскладка массы ВОР по группам перечня —
+# пропорционально объёму бетона конструкции (как и `_DOC_REBAR_NORM`).
+_DOC_REBAR_BY_D: Dict[str, Dict[Any, float]] = {}
 _DOC_REBAR_SRC: Dict[str, Dict[str, Any]] = {}
 # Суммарный объём бетона конструкций каждого вида (м3) — знаменатель для
 # раскладки объёмов из ВОР по группам перечня (объём ВОР относится к
@@ -2240,6 +2322,7 @@ def _docs_load(run_dir):
     try:
         from src.services import doc_facts
         doc_facts.reset()
+        doc_facts.reset_vor_rebar()
         DOC = doc_facts.load(run_dir)
     except Exception as e:
         logger.warning(f"документы ВОР/ПД: {e}")
@@ -2252,13 +2335,16 @@ def _docs_load(run_dir):
 def _doc_prepare_rebar(tables_json_path, run_dir):
     """Считает удельный расход арматуры (т/м3) по видам конструкций из ВОР.
 
-    В ВОР расход арматуры привязан к конструкциям (цитата «Уточнение объемов
-    арматуры ФП и …», «… ж/б плит перекрытия»), а не к отдельным элементам.
-    Поэтому масса из ВОР раскладывается по группам перечня пропорционально
-    объёму бетона конструкции в модели.
+    В ВОР арматура привязана к конструкциям (разделы «Монолитные ж/б
+    конструкции. Фундаменты / Стены … / Плиты перекрытия …»), причём внутри
+    раздела она разбита по блокам/захваткам и секциям/этажам, а по каждому
+    элементу — по диаметрам («D12», «D20», …). Поэтому масса из ВОР
+    раскладывается по группам перечня пропорционально объёму бетона конструкции
+    в модели — **отдельно по каждому классу и диаметру** (`_DOC_REBAR_BY_D`),
+    чтобы подобрать работу нужного диаметра (1.3-4-21 … 1.3-4-27).
     """
-    global _DOC_REBAR_NORM, _DOC_REBAR_SRC, _DOC_KIND_VOL
-    _DOC_REBAR_NORM, _DOC_REBAR_SRC, _DOC_KIND_VOL = {}, {}, {}
+    global _DOC_REBAR_NORM, _DOC_REBAR_BY_D, _DOC_REBAR_SRC, _DOC_KIND_VOL
+    _DOC_REBAR_NORM, _DOC_REBAR_BY_D, _DOC_REBAR_SRC, _DOC_KIND_VOL = {}, {}, {}, {}
     if DOC is None:
         return
     try:
@@ -2271,6 +2357,8 @@ def _doc_prepare_rebar(tables_json_path, run_dir):
             if i >= len(per_el):
                 break
             el = entry.get("element") or {}
+            if kb.is_precast(el):
+                continue          # сборный ж/б армируется на заводе — монолитной арматуры нет
             kind = doc_facts.primary_kind(doc_facts.el_text(el))
             if not kind:
                 continue
@@ -2279,7 +2367,21 @@ def _doc_prepare_rebar(tables_json_path, run_dir):
         for kind, vol in vol_by_kind.items():
             if vol <= 0:
                 continue
-            mass = DOC.rebar_mass(kind)
+            by_d = DOC.rebar_by_diameter(kind)          # {(класс, диаметр): масса т} из ВОР
+            if by_d:
+                _DOC_REBAR_BY_D[kind] = {k: v / vol for k, v in by_d.items()}
+                mass = round(sum(by_d.values()), 4)
+                _DOC_REBAR_NORM[kind] = mass / vol
+                _DOC_REBAR_SRC[kind] = {"mass": mass, "volume": round(vol, 2),
+                                        "diameters": {f"{c} D{d}": round(v, 2)
+                                                      for (c, d), v in sorted(by_d.items(),
+                                                                             key=lambda x: x[0][1])}}
+                logger.info(f"арматура по ВОР: {kind} — {mass} т на {round(vol, 1)} м3 "
+                            f"({round(mass / vol * 1000, 1)} кг/м3), диаметры: "
+                            + ", ".join(f"{c} D{d} {round(v, 1)}т"
+                                        for (c, d), v in sorted(by_d.items())))
+                continue
+            mass = DOC.rebar_mass(kind)                 # резерв: LLM-разбор ВОР (без диаметров)
             if not mass:
                 continue
             _DOC_REBAR_NORM[kind] = mass / vol
@@ -2291,10 +2393,17 @@ def _doc_prepare_rebar(tables_json_path, run_dir):
 
 
 def _doc_fill_rebar(el, q):
-    """Масса арматуры элемента — по удельному расходу из ВОР (если он известен)."""
+    """Масса арматуры элемента — по удельному расходу из ВОР (если он известен).
+
+    Если по ВОР известна разбивка по диаметрам, в ``q["rebar_by_diameter"]``
+    кладётся масса (кг) по каждому классу и диаметру — из неё блок REBAR_STEEL
+    формирует отдельные работы нужного диаметра.
+    """
     if DOC is None or not _DOC_REBAR_NORM:
         return
     from src.services import doc_facts
+    if kb.is_precast(el):
+        return
     kind = doc_facts.primary_kind(doc_facts.el_text(el))
     norm = _DOC_REBAR_NORM.get(kind)
     if not norm:
@@ -2302,10 +2411,19 @@ def _doc_fill_rebar(el, q):
     vol = float(q.get("volume") or 0.0)
     if vol <= 0:
         return
-    q["rebar_kg"] = round(vol * norm * 1000, 2)
+    by_d = _DOC_REBAR_BY_D.get(kind)
+    if by_d:
+        # Список (а не словарь с кортежными ключами) — `q` попадает в JSON перечня.
+        items = [{"cls": c, "diameter": int(d), "kg": round(vol * n * 1000, 2)}
+                 for (c, d), n in sorted(by_d.items(), key=lambda x: (x[0][1], str(x[0][0])))]
+        q["rebar_by_diameter"] = items
+        q["rebar_kg"] = round(sum(x["kg"] for x in items), 2)
+    else:
+        q["rebar_kg"] = round(vol * norm * 1000, 2)
     _DOC_STATS["rebar"] = _DOC_STATS.get("rebar", 0) + 1
     logger.info(f"арматура по ВОР: {_an_short(el.get('name'))} — "
-                f"{round(q['rebar_kg'] / 1000, 2)} т (по {round(norm * 1000, 1)} кг/м3)")
+                f"{round(q['rebar_kg'] / 1000, 2)} т (по {round(norm * 1000, 1)} кг/м3)"
+                + (f", диаметров {len(by_d)}" if by_d else ""))
 
 
 # --- (1) класс бетона: если в модели его нет — берём по конструкции из ВОР/ПД ---
@@ -2556,9 +2674,13 @@ def _an_build(run_dir):
     if _DOC_REBAR_SRC:
         parts = []
         for kind, src in _DOC_REBAR_SRC.items():
-            parts.append(f"{_KIND_RU.get(kind, kind)} — {_num_ru(src['mass'])} т "
-                         f"({_num_ru(round(src['mass'] / src['volume'] * 1000, 1))} кг/м³ "
-                         f"на {_num_ru(src['volume'])} м³ бетона)")
+            line = (f"{_KIND_RU.get(kind, kind)} — {_num_ru(src['mass'])} т "
+                    f"({_num_ru(round(src['mass'] / src['volume'] * 1000, 1))} кг/м³ "
+                    f"на {_num_ru(src['volume'])} м³ бетона)")
+            if src.get("diameters"):
+                line += ": " + ", ".join(f"{k} — {_num_ru(v)} т"
+                                         for k, v in src["diameters"].items())
+            parts.append(line)
         vor_items.append("Расход арматуры по ВОР: " + "; ".join(parts) + ".")
     if _DOC_STATS["volumes"]:
         vor_items.append(f"Объёмы работ, которых нет в модели (гидрошпонка, "

@@ -77,7 +77,7 @@ _PRIMARY = (
     ("foundation_slab", r"фундаментн\w*\s+плит|плит\w*\s+фундамент|базисн"),
     ("pile", r"сва[ийя]|буронабивн"),
     ("footing", r"фундамент|ростверк|подошв"),
-    ("stair", r"лестничн|марш|сход|косоур"),
+    ("stair", r"лестничн|лестниц|марш|сход|косоур|площадк"),
     ("wall", r"стен|парапет|вертикальн"),
     ("column", r"колонн|пилон"),
     ("beam", r"балк|ригел|обвязочн"),
@@ -316,6 +316,110 @@ def _num(value: Any) -> Optional[float]:
     text = str(value).replace("\u00a0", " ").replace(" ", "").replace(",", ".")
     m = re.search(r"-?\d+(?:\.\d+)?", text)
     return float(m.group(0)) if m else None
+
+
+# =====================================================================
+#  Арматура из ВОР: масса по классу и диаметру (разделы/блоки/секции)
+# =====================================================================
+# Детерминированный разбор PDF ВОР (`doc_pdf_parser.extract_vor_rows`) даёт
+# подпозиции-диаметры арматуры («D12», «D20», …) с массой (т) и родительскую
+# позицию с классом («Арматура класса А500С» / «… А240»). Ведомость разбита на
+# разделы (вид конструкции), блоки/захватки и секции/этажи — масса подпозиций
+# суммируется по всем блокам раздела (см. `Facts.rebar_by_diameter`).
+VOR_PDF_PATTERNS = ("vor_*.pdf", "*ВОР*.pdf", "*вор*.pdf")
+_DET_D_RX = re.compile(r"^[Dd]\s?-?\s?(\d{1,3})$")
+_vor_det_cache: Dict[str, List[Dict[str, Any]]] = {}
+
+
+def _find_vor_pdf(session_dir: str) -> Optional[str]:
+    """Ищет загруженный PDF ВОР в каталоге сессии/запуска (и в ``original/``)."""
+    import glob
+    p = os.path.abspath(session_dir)
+    for _ in range(4):
+        for directory in (p, os.path.join(p, "original")):
+            for pattern in VOR_PDF_PATTERNS:
+                hits = sorted(glob.glob(os.path.join(directory, pattern)))
+                if hits:
+                    return hits[0]
+        parent = os.path.dirname(p)
+        if parent == p:
+            break
+        p = parent
+    return None
+
+
+def _section_part(text: Any) -> Optional[str]:
+    """Часть здания по названию раздела ВОР (Подземная / Цоколь / Надземная)."""
+    t = str(text or "").lower()
+    if "подзем" in t or "подвал" in t:
+        return "Подземная"
+    if "цокол" in t:
+        return "Цоколь"
+    if any(k in t for k in ("надзем", "этаж", "парапет", "кровл", "покрыт")):
+        return "Надземная"
+    if "фундамент" in t:
+        return "Подземная"
+    return None
+
+
+def _rebar_kind_match(a: Optional[str], b: Optional[str]) -> bool:
+    """Совпадают ли виды конструкций для раскладки арматуры (жёстко, без «плита↔балка»)."""
+    if a is None or b is None:
+        return False
+    if a == b:
+        return True
+    return {a, b} == {"footing", "foundation_slab"}
+
+
+def vor_rebar_rows(session_dir: str) -> List[Dict[str, Any]]:
+    """Строки арматуры ВОР: класс, диаметр (мм), масса (т), вид и часть конструкции.
+
+    Класс берётся из родительской позиции («Арматура класса А500С»), вид
+    конструкции — из раздела ведомости (раздел назван по конструкции: «Стены
+    1го этажа», «Плиты перекрытия этажей», …), часть здания — из раздела.
+    Записи БК/МАФ/благоустройства исключаются. Кешируется по каталогу.
+    """
+    key = os.path.abspath(session_dir)
+    if key in _vor_det_cache:
+        return _vor_det_cache[key]
+    out: List[Dict[str, Any]] = []
+    rows: List[dict] = []
+    try:
+        from src.services import doc_pdf_parser
+        pdf = _find_vor_pdf(key)
+        if pdf:
+            rows = doc_pdf_parser.extract_vor_rows(pdf)
+    except Exception as exc:
+        logger.warning(f"doc_facts: арматура ВОР не разобрана ({exc})")
+    idx = {(r.get("section"), r.get("block"), str(r.get("pos") or "")): str(r.get("name") or "")
+           for r in rows}
+    for r in rows:
+        m = _DET_D_RX.match(str(r.get("name") or "").strip())
+        if not m or norm_unit(r.get("unit")) != "т":
+            continue
+        section = str(r.get("section") or "")
+        if _NOISE_RX.search(section) or _BK_RX.search(section):
+            continue
+        vol = _num(r.get("volume_now"))
+        if vol is None:
+            vol = _num(r.get("volume_was"))
+        if not vol:
+            continue
+        pos = str(r.get("pos") or "")
+        parent = idx.get((r.get("section"), r.get("block"), pos.rsplit(".", 1)[0])) if "." in pos else ""
+        classes = rebar_classes(f"{parent} {section}")
+        cls = "A240" if any("240" in c for c in classes) else "A500"
+        out.append({"cls": cls, "diameter": int(m.group(1)), "volume": float(vol),
+                    "kind": primary_kind(section), "part": _section_part(section),
+                    "section": section})
+    _vor_det_cache[key] = out
+    logger.info(f"doc_facts: арматура ВОР — {len(out)} подпозиций по диаметрам")
+    return out
+
+
+def reset_vor_rebar() -> None:
+    """Сбрасывает кеш детерминированного разбора арматуры ВОР."""
+    _vor_det_cache.clear()
 
 
 # =====================================================================
@@ -617,6 +721,26 @@ class Facts:
         logger.info(f"doc_facts: арматура по ВОР для «{kind}» — {round(total, 2)} т "
                     f"({hits} поз., стр. {', '.join(str(x) for x in pages[:5])})")
         return round(total, 4)
+
+    def rebar_by_diameter(self, kind: Optional[str], part: Optional[str] = None
+                          ) -> Dict[Tuple[str, int], float]:
+        """Масса арматуры (т) из ВОР по классу и диаметру для вида конструкции.
+
+        ``{(класс, диаметр_мм): масса_т}``. ВОР разбита по разделам (вид
+        конструкции), блокам/захваткам и секциям/этажам — массы подпозиций
+        суммируются по всем блокам раздела. ``part`` (Подземная / Цоколь /
+        Надземная) ограничивает выборку частью здания, если она определена и в
+        разделе, и в запросе; при неопределённой части фильтр не применяется.
+        """
+        out: Dict[Tuple[str, int], float] = {}
+        for r in vor_rebar_rows(self.session_dir):
+            if not _rebar_kind_match(kind, r.get("kind")):
+                continue
+            if part and r.get("part") and r["part"] != part:
+                continue
+            key = (r["cls"], int(r["diameter"]))
+            out[key] = round(out.get(key, 0.0) + float(r["volume"]), 4)
+        return out
 
     def summary_items(self) -> List[Dict[str, Any]]:
         """Тезисная сводка фактов ВОР/ПД для веб-интерфейса.

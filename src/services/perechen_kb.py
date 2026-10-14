@@ -25,7 +25,7 @@ import os
 import re
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -151,6 +151,87 @@ def _groups(sub: Dict[str, Any]) -> List[str]:
 
 def _is_rebar_diameter(w: Dict[str, Any]) -> bool:
     return w["name"].lower().startswith("арматура ")
+
+
+# =====================================================================
+#  АРМАТУРА: «класс + диаметр → шифр ресурса» из перечня
+# =====================================================================
+# Строки «Арматура d=… А500С/А240» перечня покрывают диапазоны диаметров
+# (колонка «Параметризация»: «12<=Ф<=14», «Ф = 10», …), которым соответствует
+# ресурс арматурной стали (1.3-4-22 — Ø12–14 мм, 1.3-4-23 — Ø16–18 мм и т. д.).
+# Карта нужна, чтобы разложить массу арматуры из ВОР по диаметрам на отдельные
+# работы (см. `perechen_pipeline`, блок REBAR_STEEL).
+_REBAR_RANGE_RX = re.compile(r"(\d{1,3})\s*<=\s*[ФF]\s*<=\s*(\d{1,3})")
+_REBAR_EQ_RX = re.compile(r"[ФF]\s*=\s*(\d{1,3})")
+_REBAR_TITLE_RANGE_RX = re.compile(r"от\s+(\d{1,3})\s+до\s+(\d{1,3})\s*мм")
+_REBAR_TITLE_ONE_RX = re.compile(r"диаметр\s+(\d{1,3})\s*мм")
+_rebar_map: Optional[Dict[Tuple[str, int], str]] = None
+
+
+def _rebar_class_key(param: str, title: str) -> str:
+    """Класс арматуры строки перечня: ``A500`` (А-III) или ``A240`` (А-I)."""
+    t = f"{param} {title}"
+    if re.search(r"A240|А240|А-I(?!I)|A-I(?!I)", t):
+        return "A240"
+    if re.search(r"A500|А500|III", t):
+        return "A500"
+    return ""
+
+
+def _rebar_diameter_range(param: str, title: str) -> Optional[Tuple[int, int]]:
+    """Диапазон диаметров (мм) арматуры из параметризации/наименования расценки."""
+    m = _REBAR_RANGE_RX.search(str(param or "")) or _REBAR_TITLE_RANGE_RX.search(str(title or ""))
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m = _REBAR_EQ_RX.search(str(param or "")) or _REBAR_TITLE_ONE_RX.search(str(title or ""))
+    if m:
+        return int(m.group(1)), int(m.group(1))
+    return None
+
+
+def rebar_diameter_map() -> Dict[Tuple[str, int], str]:
+    """``{(класс, диаметр мм): шифр ресурса арматуры}`` из перечня сметчиков.
+
+    В перечне встречаются дубликаты с разными шифрами (напр. Ø12 мм — и
+    1.3-4-22, и 1.3-4-24) — для каждого диаметра берётся наиболее частый шифр.
+    """
+    global _rebar_map
+    if _rebar_map is None:
+        votes: Dict[Tuple[str, int], Dict[str, int]] = {}
+        try:
+            subs = load_perechen()
+        except Exception as exc:
+            logger.warning(f"арматура: перечень недоступен ({exc})")
+            subs = []
+        for sub in subs:
+            for w in sub["works"]:
+                if not _is_rebar_diameter(w):
+                    continue
+                for r in w["rates"]:
+                    pm = str(r.get("pressmark") or "")
+                    if not re.match(r"1\.3-4-\d+", pm):
+                        continue
+                    cls = _rebar_class_key(w.get("param") or "", r.get("title") or "")
+                    rng = _rebar_diameter_range(w.get("param") or "", r.get("title") or "")
+                    if not cls or not rng:
+                        continue
+                    for d in range(rng[0], rng[1] + 1):
+                        votes.setdefault((cls, d), {})
+                        votes[(cls, d)][pm] = votes[(cls, d)].get(pm, 0) + 1
+        _rebar_map = {k: max(v, key=v.get) for k, v in votes.items()}
+        logger.info(f"арматура: карта «класс+диаметр → шифр» — {len(_rebar_map)} позиций")
+    return _rebar_map
+
+
+def rebar_pressmark(cls: str, diameter: int) -> Optional[str]:
+    """Шифр ресурса арматуры по классу («А500С»/«А240») и диаметру (мм)."""
+    try:
+        d = int(diameter)
+    except (TypeError, ValueError):
+        return None
+    m = rebar_diameter_map()
+    key = "A240" if "240" in str(cls) else ("A500" if re.search(r"500|III", str(cls), re.I) else "")
+    return (m.get((key, d)) if key else None) or m.get(("A500", d)) or m.get(("A240", d))
 
 
 # =====================================================================
