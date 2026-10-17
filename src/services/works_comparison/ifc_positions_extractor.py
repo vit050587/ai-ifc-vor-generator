@@ -36,8 +36,10 @@ class IfcPositionsExtractor:
                         "element": element,
                         "properties": properties,
                     }
+                    if position.get("_sourceGroupId") or group.get("sourceGroupId"):
+                        record["_sourceGroupId"] = position.get("_sourceGroupId") or group["sourceGroupId"]
+                    if "_sourceQuantity" in position:
+                        record["_sourceQuantity"] = position["_sourceQuantity"]
                     positions.append(record)
 
         return positions
-
-        

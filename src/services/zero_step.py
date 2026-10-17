@@ -1998,8 +1998,10 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
     def _get_element_code(row):
         for col in element_code_cols:
             val = row[col]
-            if val is not None and str(val).strip() and str(val) != '-':
-                return str(val)
+            # MaterialElementCode / DescriptionElementCode may precede the
+            # actual ElementCode. Only an element MSSK code is eligible.
+            if val is not None and str(val).strip().startswith('ЭЛ'):
+                return str(val).strip()
         return '-'
 
     if element_code_cols:

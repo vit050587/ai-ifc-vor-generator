@@ -92,6 +92,7 @@ class ValidationResultFormer:
             positions_with_validation,
         )
         report = {
+            "comparison": comparison,
             "comparisonStatistics": {
                 "totalGroups": len(comparison),
                 "matchingKeyGroups": matching_key_groups,

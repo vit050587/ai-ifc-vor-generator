@@ -37,7 +37,11 @@ def group_positions(prefix, merge_keys, positions) -> tuple[list[dict], list[str
 def add_normalized_keys(prefix, merge_keys, positions: list[dict]):
     for position in positions:
         for key_object in merge_keys:
-            position[prefix + key_object["name"]] = key_object["norm_func"](position[key_object["name"]])
+            value = key_object["norm_func"](position.get(key_object["name"]))
+            if key_object["name"] == "code" and not value:
+                identity = {k:position.get(k) for k in ("sourceFiles","sourceLocation","estimateNumber","sectionName","positionNumber","rowNumber","workAndCostName")}
+                value = "__uncoded__:" + json.dumps(identity, ensure_ascii=False, sort_keys=True)
+            position[prefix + key_object["name"]] = value
 
 
 def sum_positions_quantity(positions: list[dict[str, Any]]):

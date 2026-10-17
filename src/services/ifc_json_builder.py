@@ -80,6 +80,29 @@ def find_file_by_pattern(folder_path: Path, patterns: List[str]) -> Optional[Pat
     return None
 
 
+def enrich_group_levels(payload, folder):
+    """Restore complete storey coverage for cached groups using their exact GUIDs."""
+    source = Path(folder) / 'filtered_elements.xlsx'
+    if not source.is_file():
+        return payload
+    with pd.ExcelFile(source) as workbook:
+        sheet = 'Данные' if 'Данные' in workbook.sheet_names else workbook.sheet_names[0]
+        frame = pd.read_excel(workbook, sheet_name=sheet, usecols=lambda c:c in ('GlobalId','Этаж'))
+    if not {'GlobalId','Этаж'} <= set(frame.columns):
+        return payload
+    by_guid = {str(row['GlobalId']):str(row['Этаж']) for row in frame.to_dict('records')
+               if pd.notna(row['GlobalId']) and pd.notna(row['Этаж']) and str(row['Этаж']) not in ('','-')}
+    for group in payload.get('elementGroups', []):
+        element = group.get('element') or {}
+        guids = element.get('guids') or []
+        if not guids or not any(str(guid) in by_guid for guid in guids):
+            continue
+        levels = list(dict.fromkeys(by_guid[str(guid)] for guid in guids if str(guid) in by_guid))
+        element['levels'] = levels
+        element['level'] = '; '.join(levels) if all(str(guid) in by_guid for guid in guids) else None
+    return payload
+
+
 def clean_element_name(name: str) -> str:
     """
     Очищает имя элемента от ID и суффиксов в конце.
@@ -218,6 +241,26 @@ class ARBuilder:
         
         print(f"  Загружено элементов: {len(self.data['elements_df'])}")
         
+        # Current selector identifies groups by their full path and writes the
+        # presentation header in the name column, without an IfcXXX marker.
+        selected_file = self.folder / "Финальный_перечень_работ.json"
+        self.data["selected_headers"] = {}
+        self.data["headers_with_works"] = set()
+        if selected_file.is_file():
+            selected = load_json_file(selected_file) or {}
+            if isinstance(selected.get("groups"), list):
+                self.data["perechen_groups"] = selected["groups"]
+            for entry in selected.get("elements", []):
+                path = " > ".join(entry.get("group_path") or [])
+                header = entry.get("group_header")
+                if path and header:
+                    self.data["selected_headers"][path] = header
+                    if entry.get("selected_works"):
+                        self.data["headers_with_works"].add(header)
+
+        if "perechen_groups" in self.data:
+            return True
+
         # 3. Общий Excel с работами
         works_excel = find_file_by_pattern(
             self.folder, 
@@ -278,6 +321,19 @@ class ARBuilder:
         for idx, row in df.iterrows():
             first_col_val = str(row.get(cols[0], "")).strip() if cols else ""
             
+            header_value = str(row.get(name_col, "")).strip()
+            if header_value in set(self.data.get("selected_headers", {}).values()):
+                if current_element_name and current_works:
+                    result[current_element_name] = current_works
+                current_element_name = header_value
+                current_works = []
+                current_param_lines = []
+                last_code = None
+                continue
+            # Section headings and totals must not become material positions.
+            if self.data.get("selected_headers") and str(row.get(code_col, "")).strip() in ("", "nan", "-") and str(row.get(unit_col, "")).strip() in ("", "nan", "-"):
+                continue
+
             # Если в первой колонке есть IfcXXX - это заголовок новой группы
             if first_col_val and ifc_pattern.search(first_col_val):
                 if current_element_name and current_works:
@@ -315,7 +371,7 @@ class ARBuilder:
             param_val = str(row.get(param_col, "")).strip() if param_col else ""
             code_val = str(row.get(code_col, "")).strip() if code_col else ""
             unit_val = str(row.get(unit_col, "")).strip() if unit_col else ""
-            volume_val = safe_float(row.get(volume_col)) if volume_col else 0.0
+            volume_val = safe_float(row.get(volume_col), default=None) if volume_col else None
             
             if param_val and param_val != "nan" and param_val != "-":
                 current_param_lines.append(param_val)
@@ -422,12 +478,66 @@ class ARBuilder:
         
         return properties
     
+    def _build_perechen(self, source_file, discipline, output_filename):
+        import math
+        groups = []
+        frame = self.data['elements_df']
+        leaves = {g['full_name']:g for g in extract_leaf_groups(self.data['groups'])}
+        for index, selected in enumerate(self.data['perechen_groups'], 1):
+            indices = selected.get('indices')
+            if indices is None:
+                # Older saved outputs did not carry row indices. Restrict the
+                # fallback to this exact tree path and this exact element type.
+                leaf = leaves.get(' > '.join(selected.get('path') or []), {})
+                expected = clean_element_name((selected.get('el') or {}).get('name') or selected.get('element'))
+                indices = [i for i in leaf.get('indices', []) if 0 <= i < len(frame)
+                           and clean_element_name(str(frame.iloc[i].get('Имя') or '')) == expected]
+            indices = [i for i in indices if type(i) is int and 0 <= i < len(frame)]
+            first = frame.iloc[indices[0]] if indices else pd.Series(dtype=object)
+            properties = self._extract_properties(first)
+            if selected.get('material'):
+                properties['material'] = selected['material']
+            properties['location'] = str(selected.get('part') or '') + ' часть'
+            properties['groupQuantity'] = selected.get('quantity') or {}
+            path = selected.get('path') or []
+            el = selected.get('el') or {}
+            levels = list(dict.fromkeys(str(frame.iloc[i].get('Этаж')) for i in indices
+                                       if pd.notna(frame.iloc[i].get('Этаж')) and str(frame.iloc[i].get('Этаж')) not in ('', '-')))
+            element = {'ifcClass':el.get('ifc_class') or first.get('Тип элемента', ''),
+                       'category':path[1] if len(path)>1 else selected.get('element', ''),
+                       'typeName':selected.get('element') or clean_element_name(el.get('name')),
+                       'level':'; '.join(levels) or None, 'levelType':selected.get('part'),
+                       'count':len(indices) if indices else selected.get('count', 0),
+                       'guids':self._collect_guids(indices)}
+            positions = []
+            for row in selected.get('rows') or []:
+                if not row.get('pressmark'):
+                    continue
+                quantity = safe_float(row.get('volume'), default=None)
+                if quantity is not None and not math.isfinite(quantity):
+                    quantity = None
+                positions.append({'positionType':'material' if row.get('is_resource') else 'work',
+                                  'code':row['pressmark'], 'name':row.get('title') or row.get('work') or '',
+                                  'unit':row.get('unit') or None, 'quantity':quantity,
+                                  'quantityStatus':'calculated' if quantity is not None else 'missing_data',
+                                  'selectionParameters':{'work':row.get('work'), 'subsection':selected.get('subsection'), 'tsnCoefficients':row.get('tsn_coeffs', [])},
+                                  'quantityCalculation':row.get('volume_source') or row.get('reason')})
+            groups.append({'groupId':f'group-{index:04d}', 'element':element,
+                           'properties':properties, 'positions':positions})
+        result = {'schemaVersion':'1.0', 'sourceFile':source_file, 'discipline':discipline,
+                  'elementGroups':groups}
+        with open(self.folder / output_filename, 'w', encoding='utf-8') as stream:
+            json.dump(result, stream, ensure_ascii=False, indent=2)
+        return result
+
     def build(self, source_file: str, discipline: str = "АР", output_filename: str = "final_result_AR.json") -> Dict:
         """Основной метод сборки."""
         
         if not self.load_all_files():
             return {}
-        
+        if 'perechen_groups' in self.data:
+            return self._build_perechen(source_file, discipline, output_filename)
+
         element_groups = []
         
         # Извлекаем все конечные (листовые) группы
@@ -457,7 +567,15 @@ class ARBuilder:
             
             # Ищем работы в Excel по имени элемента
             works_from_excel = []
-            if element_name_clean in self.data["excel_works"]:
+            selected_header = self.data.get("selected_headers", {}).get(full_name)
+            if selected_header:
+                works_from_excel = self.data["excel_works"].get(selected_header, [])
+                if not works_from_excel and selected_header in self.data.get("headers_with_works", set()):
+                    raise ValueError(f"Подобранные работы группы не найдены в Excel: {selected_header}")
+            elif self.data.get("selected_headers"):
+                # A different thickness/area group of the same type is not a fallback.
+                works_from_excel = []
+            elif element_name_clean in self.data["excel_works"]:
                 works_from_excel = self.data["excel_works"][element_name_clean]
                 print(f"    Найдены работы: {len(works_from_excel)}")
             else:
@@ -488,8 +606,8 @@ class ARBuilder:
                     "code": work.get("code", ""),
                     "name": work.get("name", ""),
                     "unit": work.get("unit", "") if work.get("unit") else None,
-                    "quantity": work.get("volume", None) if work.get("volume", 0) > 0 else None,
-                    "quantityStatus": "calculated" if work.get("volume", 0) > 0 else "missing_data",
+                    "quantity": work.get("volume"),
+                    "quantityStatus": "calculated" if work.get("volume") is not None else "missing_data",
                     "selectionParameters": {}
                 }
                 
@@ -525,7 +643,7 @@ class ARBuilder:
                 "ifcClass": first_row.get("Тип элемента", ""),  # IfcWall
                 "category": category,  # Перегородка
                 "typeName": type_name,  # Базовая стена:KRST_Вн_Зашивка_ГКЛВО25+УТ50 (75)
-                "level": first_row.get("Этаж", None),
+                "level": "; ".join(dict.fromkeys(str(self.data["elements_df"].iloc[i].get("Этаж")) for i in indices if i < len(self.data["elements_df"]) and pd.notna(self.data["elements_df"].iloc[i].get("Этаж")))) or None,
                 "levelType": first_row.get("Тип_этажа", None),
                 "count": len(indices),
                 "guids": guids
@@ -1167,6 +1285,10 @@ class KRBuilder:
             print("ОШИБКА: не удалось загрузить файлы")
             return {}
         
+        from .cs_final_reader import read_final_works
+        final_works = read_final_works(self.folder, self.data["selected_groups"])
+        if final_works is None:
+            raise ValueError("Не найден финальный перечень ЦС. Сначала сформируйте ОБЩИЙ_Финальный_перечень_работ.xlsx")
         element_groups = []
         for idx, group in enumerate(self.data["selected_groups"], 1):
             element_data = self._extract_element_data(group)
@@ -1176,7 +1298,7 @@ class KRBuilder:
             
             # Теперь _build_properties получит правильный first_element
             properties = self._build_properties(group)
-            positions = self._build_positions_from_api(group)
+            positions = final_works[idx-1]
             
             element_groups.append({
                 "groupId": f"group-{idx:04d}",
@@ -1202,6 +1324,8 @@ class KRBuilder:
             "elementGroups": element_groups
         }
         
+        from .cs_model_members import exact_members, apply_members
+        apply_members(result, exact_members(self.folder,self.data["selected_groups"]))
         output_path = self.folder / output_filename
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)

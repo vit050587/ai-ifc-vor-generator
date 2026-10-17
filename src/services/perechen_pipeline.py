@@ -423,7 +423,7 @@ def build_final_from_perechen(tables_json_path: str, run_dir: str) -> str:
             rows = finalize_rows(el, q, res["works"], subs)
             results.append({"part": part, "element": tkey, "material": material,
                             "el": {k: el.get(k) for k in ("name", "ifc_class", "mssk_code", "material", "predefined_type")},
-                            "count": len(ids), "path": list(path), "quantity": q,
+                            "count": len(ids), "indices": list(ids), "path": list(path), "quantity": q,
                             "status": res["status"],
                             "subsection": (res["subsection"] or {}).get("title"),
                             "reason": res["reason"], "rows": rows})
@@ -782,6 +782,8 @@ _KINDS = ["фундаментн", "ростверк", "ленточн", "сте�
 
 
 def _pd_load(run_dir):
+    if not _pd_mode_on(run_dir):
+        return {}
     p = os.path.abspath(run_dir)
     for _ in range(4):
         fp = os.path.join(p, "pd_full.json")
@@ -821,7 +823,7 @@ def _table_title(code):
     if _TREE_TITLES is None:
         _TREE_TITLES = {}
         try:
-            d = json.load(open("/app/data/tree_work_compact.json", encoding="utf-8"))
+            d = json.load(open(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "tree_work_compact.json"), encoding="utf-8"))
             def walk(o):
                 if isinstance(o, dict):
                     for k, v in o.items():
@@ -1402,7 +1404,7 @@ def _an_build(run_dir):
 # ==== CONFLICTS: противоречия между ПОС, ПЗ, сборниками ТСН, моделью и расценками перечня ====
 import hashlib, re, os, json
 CONFLICT_SRC = "Противоречия между документами"
-_CONF_CACHE = "/app/data/tsn_conflicts_cache.json"
+_CONF_CACHE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "tsn_conflicts_cache.json")
 
 
 def _model_facts():
@@ -2119,7 +2121,7 @@ def _build_base(tables_json_path, run_dir):
             if added:
                 logger.info(f"ПОС: подставлены на сервере {added}")
         else:
-            PROJECT_CONSTANTS = {}          # режим «без учёта ПОС и ПЗ»
+            # Explicit IFC/manual parameters remain valid when document fallback is off.
             logger.info("ПОС и ПЗ не учитываются (режим на странице)")
     except Exception as e:
         logger.warning(f"ПОС на сервере: {e}")
@@ -2129,7 +2131,7 @@ def _build_base(tables_json_path, run_dir):
 # ==== RATE_FIX: расценка из «чужого» сборника — проверка qwen и замена на подходящую ====
 import re, os, json, hashlib, collections
 _RATE_FIX = []
-_RATE_FIX_CACHE = "/app/data/rate_fix_cache.json"
+_RATE_FIX_CACHE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "rate_fix_cache.json")
 
 
 def _coll(pm):
@@ -2878,3 +2880,26 @@ def build_final_from_perechen(tables_json_path, run_dir):
     except Exception:
         pass
     return _build_before_cond(tables_json_path, run_dir)
+
+
+# The selector keeps document and project context in module globals. Serialize
+# this stage across sessions so concurrent comparisons cannot exchange context.
+import threading as _threading
+from functools import wraps as _wraps
+_PERECHEN_RUN_LOCK = _threading.RLock()
+_build_with_document_context = build_final_from_perechen
+
+@_wraps(_build_with_document_context)
+def build_final_from_perechen(tables_json_path, run_dir):
+    with _PERECHEN_RUN_LOCK:
+        return _build_with_document_context(tables_json_path, run_dir)
+
+
+_analytics_before_document_mode = _an_build
+
+def _an_build(run_dir):
+    result = _analytics_before_document_mode(run_dir)
+    result['with_pd'] = bool(result.get('with_pd')) and _pd_mode_on(run_dir)
+    with open(os.path.join(run_dir, 'analytic.json'), 'w', encoding='utf-8') as stream:
+        json.dump(result, stream, ensure_ascii=False, indent=1)
+    return result

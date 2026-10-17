@@ -1,3 +1,4 @@
+from .units import normalize_positions
 from .utils import group_positions, sum_positions_quantity
 
 from .config import settings
@@ -15,6 +16,7 @@ class IfcPositionsProcessor:
 
         
     def run(self, positions: list):
+        positions = normalize_positions(positions)
         positions = self.filter_no_code(positions)
 
         list_result, normalized_merge_keys = group_positions(self.prefix, self.merge_keys, positions)

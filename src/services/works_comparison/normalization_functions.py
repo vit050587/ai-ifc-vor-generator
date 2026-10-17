@@ -2,9 +2,8 @@ import re
 
 
 def unit_text_normalize(text: str | None) -> str:
-    text = text_normalize(text)
-    text = re.sub(r"^1 ", "", text)
-    return text
+    from .units import unit_and_factor
+    return unit_and_factor(text)[0]
 
 def text_normalize(text: str | None) -> str:
     if text is None:

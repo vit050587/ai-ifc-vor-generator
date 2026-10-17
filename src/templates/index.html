@@ -618,6 +618,13 @@
         }
         .reference-status.error { border-color: #feb2b2; background: #fff5f5; }
         .reference-status.completed { border-color: #9ae6b4; background: #f0fff4; }
+        /* Компактный список этапов формирования ВОР */
+        .vor-stage-list { display: flex; flex-direction: column; gap: 4px; }
+        .vor-stage-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #a0aec0; }
+        .vor-stage-item .vor-stage-mark { width: 16px; text-align: center; font-weight: 700; }
+        .vor-stage-item.done { color: #2f855a; }
+        .vor-stage-item.active { color: #2b6cb0; font-weight: 600; }
+        .vor-stage-item.final { margin-top: 6px; font-size: 14px; font-weight: 700; }
         .reference-meta {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -713,7 +720,7 @@
             .legend-item { flex-wrap: wrap; }
             .legend-item input[type="file"] { flex: 1 1 100%; }
         }
-    
+
         /* ===== Окно просмотра результата: полный текст без обрезки ===== */
         #previewModal .modal { max-width: 96vw !important; width: 96vw; }
         #previewModal .table-wrap td {
@@ -731,6 +738,28 @@
         #previewModal tr.pv-part td { background: #cbd5e0 !important; font-weight: 700; }
         #previewModal tr.pv-group td { background: #edf2f7 !important; font-weight: 600; }
         #previewModal tr.pv-total td { font-weight: 700; border-top: 2px solid #a0aec0; }
+            #comparisonStages .stage-row { margin: 16px 0; }
+        #comparisonStages .stage-heading { display:flex; justify-content:space-between; gap:12px; color:#2d3748; font-size:14px; font-weight:600; }
+        #comparisonStages .progress-wrap { margin:8px 0; }
+        #comparisonStages .stage-detail { color:#718096; font-size:13px; overflow-wrap:anywhere; }
+        #comparisonStages .waiting .progress-bar { animation:none; background:#cbd5e0; }
+        #comparisonStages .busy .progress-bar { min-width:8%; }
+        #comparisonStages .indeterminate .progress-bar { width:32% !important; animation:comparisonWaiting 1.5s ease-in-out infinite alternate; }
+        @keyframes comparisonWaiting { from { transform:translateX(0); } to { transform:translateX(210%); } }
+            .comparison-stat-card { padding:14px 16px;background:#f7fafc;border:1px solid #e2e8f0;border-radius:10px; }
+        .comparison-stat-card strong {display:block;font-size:26px;margin-top:6px;color:#2b6cb0;}
+
+        #comparisonReportTable {height:650px;max-height:650px;overflow:auto;scrollbar-gutter:stable;overflow-anchor:none;}
+        #comparisonReportTable > table {table-layout:fixed;width:2200px;min-width:2200px;}
+        #comparisonReportTable th:nth-child(1), #comparisonReportTable th:nth-child(3) {width:320px;}
+        #comparisonReportTable th:nth-child(2), #comparisonReportTable th:nth-child(4), #comparisonReportTable th:nth-child(5) {width:140px;}
+        #comparisonReportTable th:nth-child(6), #comparisonReportTable th:nth-child(8) {width:360px;}
+        #comparisonReportTable th:nth-child(7) {width:200px;}
+        #comparisonReportTable td, #comparisonReportTable td:hover, #comparisonReportTable td:first-child:hover {white-space:normal!important;overflow:hidden!important;max-width:none!important;word-break:normal;overflow-wrap:anywhere;box-shadow:none!important;z-index:auto!important;position:static;}
+        #comparisonReportTable td {white-space:normal;max-width:480px;vertical-align:top;}
+        #comparisonReportTable details {min-width:220px;}
+        #comparisonReportTable details table {margin:12px 0;}
+            .vor-group-heading td {background:#e8f0f7;color:#244a73;font-weight:600;padding:14px !important;}
     </style>
 </head>
 <body>
@@ -741,6 +770,8 @@
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('process')">🔄 Обработка</button>
             <button class="tab-btn" onclick="switchTab('reference')">🧪 JSON-справочники</button>
+            <button class="tab-btn" onclick="switchTab('comparison')">Сравнение ведомостей объёмов работ</button>
+            <button class="tab-btn" onclick="switchTab('vor')">📋 Формирование ВОР</button>
             <button class="tab-btn" onclick="switchTab('history')">📚 История</button>
         </div>
 
@@ -966,6 +997,139 @@
             </div>
         </div>
 
+        <div class="tab-content" id="comparisonTab">
+            <div class="card">
+                <div class="step-title"><span class="step-number">1</span> Загрузка моделей или чертежей</div>
+                <div class="processing-type-selector" id="comparisonTypeSelector">
+                    <label class="processing-type-label active"><input type="radio" name="comparisonMode" value="CS" checked onchange="updateComparisonMode()"><span class="pt-icon">🏗️</span><span class="pt-text">ЦС</span><span class="pt-badge">Цифровой сборник</span></label>
+                    <label class="processing-type-label"><input type="radio" name="comparisonMode" value="AI" onchange="updateComparisonMode()"><span class="pt-icon">🏛️</span><span class="pt-text">ИИ</span><span class="pt-badge">Искусственный интеллект</span></label>
+                </div>
+                <div class="upload-area" id="comparisonModelsArea" role="button" tabindex="0" aria-label="Выбрать модели или чертежи">
+                    <input id="comparisonModels" type="file" accept=".ifc,.pdf" multiple hidden aria-label="Модели или чертежи">
+                    <div class="icon">📁</div><div class="text">Нажмите или перетащите файлы</div>
+                    <div class="hint">Несколько IFC-моделей или PDF-чертежей · все элементы выбираются автоматически</div>
+                </div>
+                <div id="comparisonModelsList" class="mt-12"></div>
+                <div id="comparisonDocumentsUpload" hidden>
+                    <p class="progress-text mt-12">ПОС и ПЗ — необязательно. Добавьте документы перед запуском: найденные параметры будут применены ко всем моделям. ВОР и ПД можно добавить ниже, как на вкладке обработки. Приоритет: IFC → ПОС → ПЗ → значения по умолчанию.</p>
+                    <div class="upload-area mt-12" id="comparisonPosArea" role="button" tabindex="0" aria-label="Выбрать ПОС" style="padding:16px">
+                        <input id="comparisonPos" type="file" accept=".pdf" hidden aria-label="ПОС">
+                        <div class="icon" style="font-size:26px">📄</div><div class="text">Проект организации строительства (ПОС)</div><div class="hint">Нажмите или перетащите PDF</div>
+                    </div><div id="comparisonPosList" class="mt-12"></div>
+                    <div class="upload-area mt-12" id="comparisonPzArea" role="button" tabindex="0" aria-label="Выбрать ПЗ" style="padding:16px">
+                        <input id="comparisonPz" type="file" accept=".pdf" hidden aria-label="ПЗ">
+                        <div class="icon" style="font-size:26px">📄</div><div class="text">Пояснительная записка (ПЗ)</div><div class="hint">Нажмите или перетащите PDF</div>
+                    </div><div id="comparisonPzList" class="mt-12"></div>
+                    <div class="upload-area mt-12" id="comparisonVorArea" role="button" tabindex="0" aria-label="Выбрать ВОР" style="padding:16px">
+                        <input id="comparisonVor" type="file" accept=".pdf" hidden aria-label="ВОР для подбора работ">
+                        <div class="icon" style="font-size:26px">📗</div><div class="text">Ведомость объёмов работ (ВОР)</div><div class="hint">PDF · характеристики конструкций и объёмы работ, отсутствующих в модели</div>
+                    </div><div id="comparisonVorList" class="mt-12"></div>
+                    <div class="upload-area mt-12" id="comparisonPdArea" role="button" tabindex="0" aria-label="Выбрать ПД" style="padding:16px">
+                        <input id="comparisonPd" type="file" accept=".pdf" hidden aria-label="Проектная документация">
+                        <div class="icon" style="font-size:26px">📐</div><div class="text">Проектная документация (ПД)</div><div class="hint">PDF · класс бетона, прочность, морозостойкость и водонепроницаемость</div>
+                    </div><div id="comparisonPdList" class="mt-12"></div>
+                </div>
+                <button class="btn btn-primary mt-12" id="comparisonCreateBtn" onclick="createComparison()" disabled>🚀 Загрузить и обработать</button>
+            </div>
+            <div class="card">
+                <div class="flex-between"><div class="step-title" style="margin-bottom:0"><span class="step-number">📚</span> Сохранённые сравнения</div><button class="btn btn-sm btn-secondary" onclick="loadComparisons()">🔄 Обновить</button></div>
+                <div class="run-selector mt-12"><select id="comparisonJobs" aria-label="Сохранённые сравнения" onchange="openComparison(this.value)"><option value="">Выберите сравнение</option></select></div>
+                <div class="reference-status" id="comparisonStatusBox" style="display:block">
+                    <div class="reference-meta"><div>Статус: <strong id="comparisonStatusLabel">Ожидание</strong></div><div id="comparisonSources">Файлы ещё не загружены</div></div>
+                    <div class="progress-wrap"><div class="progress-bar" id="comparisonProgress" role="progressbar" aria-label="Ход сравнения" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
+                    <div id="comparisonStages" class="mt-12"></div>
+                    <div id="comparisonInputWarnings" class="progress-text mt-12" role="status"></div>
+                    <div id="comparisonQuantityChoice" class="mt-12" hidden><label>Столбец объёма <select id="comparisonQuantityColumn" aria-label="Столбец объёма"></select></label><p id="comparisonQuantityFile" class="progress-text"></p></div>
+                    <a id="comparisonDiagnostics" class="btn btn-sm btn-secondary mt-12" hidden>Скачать диагностику сопоставления</a>
+                    <button id="comparisonRetryBtn" class="btn btn-primary mt-12" hidden onclick="retryComparison()">🔄 Повторить по сохранённым файлам</button>
+                    <div class="progress-text" id="comparisonMessage" role="status" aria-live="polite">Создайте сравнение или выберите сохранённое.</div>
+                </div>
+            </div>
+            <div class="card" id="comparisonDocumentResults" hidden>
+                <div class="step-title"><span class="step-number">📑</span> Параметры и сведения из документов</div>
+                <p class="progress-text">Проверьте параметры перед расчётом. Можно изменить их вручную или отключить учёт ПОС и ПЗ.</p>
+                <div id="comparisonDocumentContent" class="mt-12"></div>
+            </div>
+            <div class="card disabled" id="comparisonEstimatesPanel">
+                <div class="step-title"><span class="step-number">2</span> Загрузка ВОР заказчика и сравнение</div>
+                <p class="progress-text" id="comparisonEstimatesHint" style="margin:0 0 16px">Сначала сформируйте ВОР моделей. Затем загрузите ВОР заказчика для сравнения.</p>
+                <div class="upload-area" id="comparisonEstimatesArea" role="button" tabindex="0" aria-label="Выбрать ВОР заказчика">
+                    <input id="comparisonEstimates" type="file" multiple accept=".pdf,.xlsx,.xls,.xml,.zip,.gsfx,.gge" hidden disabled aria-label="ВОР заказчика">
+                    <div class="icon">📑</div><div class="text">Нажмите или перетащите ВОР заказчика</div><div class="hint">Можно выбрать несколько файлов · PDF, Excel, XML, ZIP, GSFX, GGE</div>
+                </div>
+                <div id="comparisonEstimatesList" class="mt-12"></div>
+                <button class="btn btn-secondary mt-12" id="comparisonSavedVorBtn" hidden onclick="compareSavedVor()">⚖️ Сравнить с загруженным ВОР</button>
+                <button class="btn btn-primary mt-12" id="comparisonStartBtn" onclick="compareEstimates()" disabled>⚖️ Разобрать ВОР заказчика и сравнить</button>
+            </div>
+            <div class="card" id="comparisonInputExports" hidden>
+                <div class="step-title">ВОР для проверки исходных данных</div>
+                <div class="flex" id="comparisonInputExportLinks"></div>
+            </div>
+            <div class="card" id="comparisonResults" hidden>
+                <div class="flex-between"><div class="step-title" style="margin-bottom:0"><span class="step-number done">✓</span> Результаты сравнения</div><div class="flex"><a id="comparisonExcelDownload" class="btn btn-sm btn-success">📥 Скачать Excel</a><a id="comparisonDownload" class="btn btn-sm btn-secondary">JSON</a></div></div>
+                <div class="reference-meta mt-12" id="comparisonStatistics"></div>
+                <p id="comparisonMatchingInfo" class="progress-text mt-12"></p>
+                <p class="progress-text">Расхождение = ВОР заказчика − сформированный ВОР. Процент — относительно сформированного ВОР. Плюс: заказчик завысил, минус: занизил. Единицы приведены без множителей. Уверенность ИИ относится к подбору работы; для нескольких позиций показана минимальная оценка.</p>
+                <div class="flex mt-12">
+                    <select id="comparisonReportView" aria-label="Раздел отчёта" onchange="changeComparisonReportView()"><option value="vor">ВОР по группам элементов</option><option value="volumes">Сравнение по кодам</option><option value="positions">Позиции и обоснования ИИ</option><option value="groups">Группы элементов</option></select>
+                    <select id="comparisonReportFilter" aria-label="Фильтр статуса" onchange="comparisonReportChanged()"></select>
+                    <input id="comparisonReportSearch" type="search" placeholder="Поиск по коду, работе, модели или группе" aria-label="Поиск по отчёту" oninput="comparisonReportChanged()" style="flex:1;min-width:240px">
+                </div>
+                <div class="table-wrap mt-12" id="comparisonReportTable" style="max-height:650px"></div>
+                <div class="flex-between mt-12"><span class="progress-text" id="comparisonReportCount"></span><div class="flex"><button class="btn btn-sm btn-secondary" id="comparisonReportPrev" onclick="comparisonReportPage--;renderComparisonReportRows()">← Назад</button><button class="btn btn-sm btn-secondary" id="comparisonReportNext" onclick="comparisonReportPage++;renderComparisonReportRows()">Далее →</button></div></div>
+                <details class="reference-json-panel mt-12"><summary class="reference-json-header">Исходные данные отчёта (JSON)</summary><pre id="comparisonValidation" style="white-space:pre-wrap"></pre></details>
+            </div>
+        </div>
+
+        <!-- Вкладка формирования ВОР -->
+        <div class="tab-content" id="vorTab">
+            <div class="card">
+                <div class="step-title"><span class="step-number">1</span> Загрузка модели и документов</div>
+                <div class="upload-area" id="vorIfcArea" role="button" tabindex="0" aria-label="Выбрать модель IFC">
+                    <input id="vorIfc" type="file" accept=".ifc" hidden aria-label="Модель IFC">
+                    <div class="icon">🏗️</div><div class="text">Цифровая модель здания (IFC)</div><div class="hint">Обязательно · файл .ifc</div>
+                </div>
+                <div id="vorIfcList" class="mt-12"></div>
+                <div class="upload-area mt-12" id="vorVorArea" role="button" tabindex="0" aria-label="Выбрать ВОР застройщика" style="padding:16px">
+                    <input id="vorVor" type="file" accept=".pdf,.xlsx,.xls" hidden aria-label="ВОР застройщика">
+                    <div class="icon" style="font-size:26px">📗</div><div class="text">Ведомость объёмов работ (ВОР) от застройщика</div><div class="hint">PDF или Excel · источник объёмов арматуры и отсутствующих в модели работ</div>
+                </div>
+                <div id="vorVorList" class="mt-12"></div>
+                <div class="upload-area mt-12" id="vorPosArea" role="button" tabindex="0" aria-label="Выбрать ПОС" style="padding:16px">
+                    <input id="vorPos" type="file" accept=".pdf,.xlsx,.xls" hidden aria-label="ПОС">
+                    <div class="icon" style="font-size:26px">📄</div><div class="text">Проект организации строительства (ПОС)</div><div class="hint">Необязательно · PDF или Excel</div>
+                </div>
+                <div id="vorPosList" class="mt-12"></div>
+                <div class="upload-area mt-12" id="vorPzArea" role="button" tabindex="0" aria-label="Выбрать ПЗ" style="padding:16px">
+                    <input id="vorPz" type="file" accept=".pdf,.xlsx,.xls" hidden aria-label="ПЗ">
+                    <div class="icon" style="font-size:26px">📄</div><div class="text">Пояснительная записка (ПЗ)</div><div class="hint">Необязательно · PDF или Excel</div>
+                </div>
+                <div id="vorPzList" class="mt-12"></div>
+                <div class="upload-area mt-12" id="vorPdArea" role="button" tabindex="0" aria-label="Выбрать ПД" style="padding:16px">
+                    <input id="vorPd" type="file" accept=".pdf,.xlsx,.xls" hidden aria-label="Проектная документация">
+                    <div class="icon" style="font-size:26px">📐</div><div class="text">Проектная документация (ПД)</div><div class="hint">Необязательно · PDF или Excel</div>
+                </div>
+                <div id="vorPdList" class="mt-12"></div>
+                <div class="flex mt-12">
+                    <button class="btn btn-primary" id="vorCreateBtn" onclick="createVorGeneration()" disabled>🚀 Сформировать ВОР</button>
+                    <button class="btn btn-secondary" id="vorResetBtn" onclick="resetVorGenerationForm()">🆕 Новая задача</button>
+                </div>
+            </div>
+            <div class="card">
+                <div class="step-title"><span class="step-number">2</span> Статус</div>
+                <div class="reference-status" id="vorStatusBox" style="display:block">
+                    <div class="reference-meta"><div>Статус: <strong id="vorStatusLabel">Ожидание</strong></div><div id="vorSources">Файлы ещё не загружены</div></div>
+                    <div class="progress-wrap"><div class="progress-bar" id="vorProgress" role="progressbar" aria-label="Ход формирования ВОР" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
+                    <div id="vorStages" class="mt-12"></div>
+                    <div class="progress-text" id="vorMessage" role="status" aria-live="polite">Загрузите модель IFC и документы и нажмите «Сформировать ВОР».</div>
+                </div>
+            </div>
+            <div class="card" id="vorResults" hidden>
+                <div class="step-title"><span class="step-number done">✓</span> Сформированный ВОР</div>
+                <div id="vorResultFiles" class="mt-12"></div>
+            </div>
+        </div>
+
         <!-- Вкладка JSON-справочников -->
         <div class="tab-content" id="referenceTab">
             <div class="card">
@@ -1154,6 +1318,779 @@
     <div class="toast-container" id="toastContainer"></div>
 
 <script>
+function renderComparisonStages(job) {
+    const container = document.getElementById('comparisonStages'); container.replaceChildren();
+    const stages = job.stages || {};
+    const active = ['models_processing', 'comparing'].includes(job.status);
+    [...(Object.keys(job.documents||{}).length ? [['documents','Разбор ПОС, ПЗ, ВОР и ПД']] : []),['models','Модели и формирование ВОР'],['estimates','Разбор ВОР заказчика'],['comparison','Сравнение и проверка ИИ']].forEach(([key,label]) => {
+        let stage = stages[key];
+        if (!stage && key === 'models') stage = {progress:job.status === 'models_processing' ? job.progress : job.status === 'parameters_required' ? 40 : job.status === 'error' ? 0 : 100, active:job.status === 'models_processing', message:job.status === 'models_processing' ? job.message : ''};
+        stage = stage || {progress:0, message:'Ожидание'};
+        const busy = active && stage.active;
+        const unknown = busy && (stage.progress == null || stage.indeterminate);
+        const row = document.createElement('div'); row.className = 'stage-row' + (busy ? ' busy' : ' waiting') + (unknown ? ' indeterminate' : '');
+        const heading = document.createElement('div'); heading.className = 'stage-heading';
+        const title = document.createElement('span'); title.textContent = label;
+        const percent = document.createElement('span'); percent.textContent = unknown ? 'Выполняется…' : `${stage.progress || 0}%`;
+        heading.append(title, percent);
+        const wrap = document.createElement('div'); wrap.className = 'progress-wrap';
+        const bar = document.createElement('div'); bar.className = 'progress-bar'; bar.style.width = `${stage.progress || 0}%`;
+        bar.setAttribute('role','progressbar'); bar.setAttribute('aria-label',label); bar.setAttribute('aria-valuemin','0'); bar.setAttribute('aria-valuemax','100');
+        if (!unknown) bar.setAttribute('aria-valuenow',stage.progress || 0);
+        wrap.appendChild(bar);
+        const detail = document.createElement('div'); detail.className = 'stage-detail'; detail.textContent = stage.message || (stage.progress === 100 ? 'Готово' : 'Ожидание');
+        row.append(heading, wrap, detail); container.appendChild(row);
+    });
+}
+function comparisonUpload(path, form) {
+    document.getElementById('comparisonStatusBox').className = 'reference-status';
+    document.getElementById('comparisonStatusLabel').textContent = 'Загрузка файлов';
+    document.getElementById('comparisonStages').replaceChildren();
+    updateComparisonProgress(0);
+    document.getElementById('comparisonMessage').textContent = 'Отправка файлов на сервер…';
+    return new Promise((resolve,reject) => {
+        const xhr = new XMLHttpRequest(); xhr.open('POST', `${API_BASE}/comparisons${path}`);
+        xhr.upload.onprogress = event => {
+            if (event.lengthComputable) {
+                const value = Math.round(event.loaded / event.total * 100); updateComparisonProgress(value);
+                document.getElementById('comparisonMessage').textContent = value === 100 ? 'Файлы переданы. Сервер подготавливает обработку…' : `Загрузка файлов: ${value}%`;
+            }
+        };
+        xhr.onload = () => {
+            try { const data = JSON.parse(xhr.responseText); if (xhr.status < 200 || xhr.status >= 300) throw new Error(data.detail || 'Ошибка загрузки'); resolve(data); }
+            catch(error) { reject(error); }
+        };
+        xhr.onerror = () => reject(new Error('Соединение с сервером прервано'));
+        xhr.send(form);
+    });
+}
+
+let comparisonParameterState = {id:null, overrides:{}, useDocuments:true, editing:false, signature:null};
+function renderComparisonDocuments(job) {
+    const panel=document.getElementById('comparisonDocumentResults');
+    panel.hidden=job.mode!=='AR'&&!(job.parameter_preview||[]).some(m=>(m.material_choices||[]).length);
+    if(panel.hidden)return;
+    if(comparisonParameterState.id!==job.id) comparisonParameterState={id:job.id,overrides:{...(job.parameter_overrides||{})},useDocuments:job.use_documents!==false,editing:false,materials:JSON.parse(JSON.stringify(job.material_choices_selected||{})),useTsn:job.use_tsn!==false,signature:null};
+    const state=comparisonParameterState;
+    const signature=JSON.stringify([job.status,job.documents,job.parameter_preview,job.applied_constants,state.overrides,state.useDocuments,state.editing,state.materials,state.useTsn,job.document_facts,job.pd_full,job.model_analytics,job.document_warnings]);
+    if(signature===state.signature)return;
+    state.signature=signature;
+    const target=document.getElementById('comparisonDocumentContent');target.replaceChildren();
+    const editable=['parameters_required','models_ready','completed','error'].includes(job.status)&&(!!job.parameter_schema?.length||(job.parameter_preview||[]).some(m=>(m.material_choices||[]).length));
+    (job.model_analytics||[]).forEach(model=>{
+        const data=model.data||{};const card=document.createElement('details');card.className='mt-12';card.open=true;card.style.cssText='border:1px solid #ffda6a;background:#fffbea;border-radius:8px;padding:12px 16px;margin-bottom:12px';
+        const title=document.createElement('summary');title.textContent=`📋 Справка по расчёту: ${model.source_file} (${data.elements||0} типов, ${data.rows||0} позиций)`;card.appendChild(title);
+        const groups=data.groups||{ok:[{src:'Учтено',items:data.ok||[]}],doubt:[{src:'Проверить',items:(data.doubt||[]).map(x=>x.text||x)}]};
+        [['ok','✓ Учтено в перечне'],['doubt','⚠ Проверить'],['info','ℹ Не входит в перечень']].forEach(([key,label])=>{
+            if(!(groups[key]||[]).length)return;const heading=document.createElement('h4');heading.textContent=label;card.appendChild(heading);
+            groups[key].forEach(group=>{const heading=document.createElement('b');heading.textContent=group.src;card.appendChild(heading);const list=document.createElement('ul');(group.items||[]).forEach(text=>{const li=document.createElement('li');li.textContent=text;list.appendChild(li);});card.appendChild(list);});
+        });
+        (data.info||[]).forEach(text=>{const p=document.createElement('p');p.textContent=text;card.appendChild(p);});target.appendChild(card);
+    });
+    const box=document.createElement('div');box.style.cssText='border:1px solid #9ec5fe;background:#f4f8ff;border-radius:8px;padding:12px 16px;font-size:14px';target.appendChild(box);
+    const heading=document.createElement('b');heading.textContent='📄 Параметры для расчёта — применяются ко всем элементам';box.appendChild(heading);
+    const models=(editable?job.parameter_preview:(job.applied_constants?.length?job.applied_constants:job.parameter_preview))||[];
+    if(!models.length){const p=document.createElement('p');p.textContent='Подготавливаем параметры модели и документов…';box.appendChild(p);}
+    models.forEach(model=>{
+        const title=document.createElement('p');title.textContent=model.source_file;title.style.fontWeight='600';box.appendChild(title);
+        const rows=editable&&!state.useDocuments?(model.model_constants||model.constants):model.constants;
+        rows.forEach(item=>{
+            const manual=editable&&Object.hasOwn(state.overrides,item.name);
+            const row=document.createElement('div');row.style.cssText='display:grid;grid-template-columns:minmax(180px,1.2fr) minmax(160px,1fr) minmax(100px,.6fr);gap:12px;padding:3px 0';
+            const label=document.createElement('span');label.textContent=item.title;label.style.color='#526581';
+            const value=document.createElement('b');value.textContent=(manual?state.overrides[item.name]:item.value)||'Не определено';
+            const source=document.createElement('span');source.textContent=manual?'✎ вручную':item.source;source.style.color=manual?'#0a58ca':item.source==='По умолчанию'?'#888':'#198754';source.title=[item.page?'Страница '+item.page:'',item.quote].filter(Boolean).join(' · ');
+            row.append(label,value,source);box.appendChild(row);
+        });
+    });
+    const docs=document.createElement('details');docs.hidden=job.mode!=='AR';docs.className='mt-12';const summary=document.createElement('summary');summary.textContent='📄 Источники и параметры документов';docs.appendChild(summary);box.appendChild(docs);
+    Object.entries(job.documents||{}).forEach(([kind,doc])=>{
+        const title=document.createElement('p');title.textContent=`${({pos:'ПОС',pz:'ПЗ',vor:'ВОР',pd:'ПД'})[kind]}: ${doc.name}`;docs.appendChild(title);
+        Object.entries(doc.result?.constants||{}).forEach(([name,item])=>{
+            const p=document.createElement('p');p.textContent=`${item.title||name}: ${item.value??'Не найдено'}${item.page?' · стр. '+item.page:''}`;p.title=item.quote||'';docs.appendChild(p);
+        });
+        (doc.result?.warnings||[]).forEach(warning=>{const p=document.createElement('p');p.className='progress-text';p.textContent=String(warning);docs.appendChild(p);});
+        if(doc.error){const p=document.createElement('p');p.textContent=doc.error;docs.appendChild(p);}
+    });
+    if(!Object.keys(job.documents||{}).length){const p=document.createElement('p');p.textContent='ПОС и ПЗ не загружены. Используются модель и значения по умолчанию.';docs.appendChild(p);}
+    const full=document.createElement('details');full.hidden=job.mode!=='AR';full.className='mt-12';const fullTitle=document.createElement('summary');fullTitle.textContent=`📑 Всё найденное в ПОС и ПЗ — ${(job.pd_full||[]).filter(r=>r.value).length} из ${(job.pd_full||[]).length} параметров`;full.appendChild(fullTitle);
+    (job.pd_full||[]).forEach(item=>{if(!item.value)return;const p=document.createElement('p');p.textContent=`${item.title}: ${item.value} (${item.src||''}${item.page?', стр. '+item.page:''})`;p.title=item.quote||'';full.appendChild(p);});box.appendChild(full);
+    (job.document_warnings||[]).forEach(warning=>{const p=document.createElement('p');p.textContent=warning;box.appendChild(p);});
+    const facts=job.document_facts||{};
+    const factsBox=document.createElement('details');factsBox.hidden=job.mode!=='AR';factsBox.open=true;factsBox.className='mt-12';const factsTitle=document.createElement('summary');factsTitle.textContent=`📑 Всё найденное в ВОР и ПД — ${facts.vor||0} записей ВОР, ${facts.pd||0} ПД`;factsBox.appendChild(factsTitle);
+    (facts.items||[]).forEach(item=>{const p=document.createElement('p');p.textContent=`${item.group}: ${item.title} — ${item.value} (${item.src||''}${item.page?', стр. '+item.page:''})`;p.title=item.quote||'';factsBox.appendChild(p);});box.appendChild(factsBox);
+    if(editable){
+        (job.parameter_preview||[]).forEach(model=>{
+            if(!(model.material_choices||[]).length)return;
+            const title=document.createElement('h4');title.textContent='Уточните материал: '+model.source_file;box.appendChild(title);
+            model.material_choices.forEach(material=>{
+                const choiceId=material.id||material.code;
+                const context=[material.object_type,material.part].filter(Boolean).join(' · ');
+                const label=document.createElement('label');label.style.cssText='display:block;margin:10px 0;background:#fffaf0;padding:8px;border-left:3px solid #dd6b20';label.textContent=`${context?context+' — ':''}${material.name} (${material.code}) · ${material.rows.length} элементов `;
+                const select=document.createElement('select');select.setAttribute('aria-label',`Материал ${material.name}, ${model.source_file}`);const empty=document.createElement('option');empty.value='';empty.textContent='— выберите уточнение —';select.appendChild(empty);
+                material.options.forEach(option=>{const o=document.createElement('option');o.value=option.code;o.textContent=`${option.name} (${option.code})`;select.appendChild(o);});select.value=state.materials[model.session_id]?.[choiceId]||'';
+                select.onchange=()=>{state.materials[model.session_id]??={};if(select.value)state.materials[model.session_id][choiceId]=select.value;else delete state.materials[model.session_id][choiceId];};label.appendChild(select);box.appendChild(label);
+            });
+        });
+        const tsn=document.createElement('label');tsn.hidden=job.mode!=='AR';tsn.style.cssText='display:block;margin:12px 0';const check=document.createElement('input');check.type='checkbox';check.checked=state.useTsn;check.onchange=()=>{state.useTsn=check.checked;};tsn.append(check,document.createTextNode(' Учитывать поправки из сборников ТСН'));box.appendChild(tsn);
+        const controls=document.createElement('div');controls.hidden=job.mode!=='AR';controls.style.cssText='margin-top:12px;padding-top:12px;border-top:1px solid #d6e4ff';box.appendChild(controls);
+        const label=document.createElement('b');label.textContent='Как считать: ';controls.appendChild(label);
+        [[true,'с учётом ПОС и ПЗ'],[false,'без учёта (только модель)']].forEach(([on,text])=>{
+            const label=document.createElement('label');label.style.marginRight='14px';const radio=document.createElement('input');radio.type='radio';radio.name='comparisonPdMode';radio.checked=state.useDocuments===on;
+            radio.onchange=()=>{state.useDocuments=on;renderComparisonDocuments(job);};label.append(radio,document.createTextNode(' '+text));controls.appendChild(label);
+        });
+        const edit=document.createElement('button');edit.className='btn btn-sm btn-secondary';edit.textContent='✎ изменить вручную';edit.onclick=()=>{state.editing=!state.editing;renderComparisonDocuments(job);};controls.appendChild(edit);
+        const fields=document.createElement('div');fields.hidden=!state.editing;fields.className='mt-12';box.appendChild(fields);
+        (job.parameter_schema||[]).forEach(def=>{
+            const label=document.createElement('label');label.style.cssText='display:block;margin:10px 0';label.textContent=def.title+' ';
+            const select=document.createElement('select');select.dataset.constName=def.name;select.setAttribute('aria-label',def.title);const auto=document.createElement('option');auto.value='';auto.textContent='Автоматически: модель → ПОС → ПЗ → по умолчанию';select.appendChild(auto);
+            (def.values||[]).forEach(value=>{const option=document.createElement('option');option.value=value;option.textContent=value;select.appendChild(option);});select.value=state.overrides[def.name]||'';
+            select.onchange=()=>{if(select.value)state.overrides[def.name]=select.value;else delete state.overrides[def.name];renderComparisonDocuments(job);};label.appendChild(select);fields.appendChild(label);
+        });
+        const start=document.createElement('button');start.className='btn btn-success mt-12';start.textContent=job.status==='parameters_required'?'✅ Рассчитать все элементы':'🔄 Пересчитать ВОР с этими параметрами';start.onclick=async()=>{
+            start.disabled=true;
+            try{await comparisonRequest(`/${job.id}/parameters`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({overrides:state.overrides,use_documents:state.useDocuments,material_codes:state.materials,use_tsn:state.useTsn})});await pollComparison(job.id);}
+            catch(error){showToast(error.message,'error');start.disabled=false;}
+        };target.appendChild(start);
+    }
+}
+
+function updateComparisonMode() {
+    document.getElementById('comparisonDocumentsUpload').hidden = document.querySelector('input[name="comparisonMode"]:checked').value !== 'AI';
+    document.querySelectorAll('#comparisonTypeSelector .processing-type-label').forEach(label => label.classList.toggle('active', label.querySelector('input').checked));
+}
+function updateComparisonProgress(value) {
+    const bar = document.getElementById('comparisonProgress');
+    bar.style.width = `${value}%`;
+    bar.setAttribute('aria-valuenow', value);
+}
+let comparisonUploadsReady = false;
+function setupComparisonUploads() {
+    if (comparisonUploadsReady) return;
+    comparisonUploadsReady = true;
+    ['Models', 'Estimates', 'Pos', 'Pz', 'Vor', 'Pd'].forEach(kind => {
+        const input = document.getElementById('comparison' + kind);
+        const area = document.getElementById('comparison' + kind + 'Area');
+        const list = document.getElementById('comparison' + kind + 'List');
+        const refresh = () => {
+            list.replaceChildren();
+            Array.from(input.files).forEach((file, index) => {
+                const row = document.createElement('div'); row.className = 'file-info';
+                const icon = document.createElement('span'); icon.textContent = '📄';
+                const name = document.createElement('span'); name.className = 'name'; name.textContent = file.name;
+                const size = document.createElement('span'); size.className = 'progress-text'; size.textContent = (file.size / 1024 / 1024).toFixed(1) + ' МБ';
+                const remove = document.createElement('button'); remove.className = 'btn btn-sm btn-danger'; remove.textContent = '✕'; remove.setAttribute('aria-label', 'Убрать ' + file.name);
+                remove.onclick = () => {
+                    const transfer = new DataTransfer();
+                    Array.from(input.files).forEach((f, i) => { if (i !== index) transfer.items.add(f); });
+                    input.files = transfer.files; refresh();
+                };
+                row.append(icon, name, size, remove); list.appendChild(row);
+            });
+            if (kind === 'Models' || kind === 'Estimates') document.getElementById(kind === 'Models' ? 'comparisonCreateBtn' : 'comparisonStartBtn').disabled = !input.files.length;
+        };
+        area.onclick = event => { if (event.target !== input) input.click(); };
+        area.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); input.click(); } };
+        input.onchange = refresh;
+        area.ondragover = event => { event.preventDefault(); area.classList.add('dragover'); };
+        area.ondragleave = () => area.classList.remove('dragover');
+        area.ondrop = event => {
+            event.preventDefault(); area.classList.remove('dragover');
+            const allowed = input.accept.split(',');
+            const files = Array.from(event.dataTransfer.files);
+            if (!input.multiple && files.length > 1) return showToast('Выберите один PDF-документ', 'error');
+            if (files.some(f => !allowed.some(ext => f.name.toLowerCase().endsWith(ext)))) return showToast('Неподдерживаемый формат файла', 'error');
+            const transfer = new DataTransfer(); files.forEach(f => transfer.items.add(f)); input.files = transfer.files; refresh();
+        };
+    });
+}
+
+// Comparison sessions use the shared session registry and restore into this tab.
+let comparisonId = null;
+let comparisonTimer = null;
+let comparisonPollGeneration = 0;
+let comparisonPendingInput = null;
+const comparisonLabels = {operation_linked:'Связь установлена через общую операцию',empty_group:'Группа без подобранных работ',quantity_allocation_required:'Общий объём не распределён по работам',matching_unresolved:'Требуется сопоставление по наименованию',unit_unresolved:'Требуется проверка единицы',matched:'Расхождение в пределах допуска',quantity_mismatch:'Объёмы различаются',ifc_quantity_incomplete:'Неполный объём сформированного ВОР',project_quantity_incomplete:'Неполный объём ВОР заказчика',only_project:'Только в ВОР заказчика',only_ifc:'Только в сформированном ВОР'};
+async function comparisonRequest(path, options) {
+    const response = await fetch(`${API_BASE}/comparisons${path}`, {...options, signal: AbortSignal.timeout(15000)});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Ошибка запроса');
+    return data;
+}
+async function loadComparisons() {
+    try {
+        const jobs = await comparisonRequest('');
+        const select = document.getElementById('comparisonJobs');
+        select.replaceChildren(new Option('Выберите сравнение', ''));
+        jobs.forEach(job => select.add(new Option(`${job.sources.map(s => s.name).join(', ')} — ${job.message}`, job.id)));
+        select.value = comparisonId || '';
+    } catch (error) { showToast(error.message, 'error'); }
+}
+async function compareSavedVor() {
+    const id=comparisonId;if(!id)return;
+    const button=document.getElementById('comparisonSavedVorBtn');button.disabled=true;
+    try {await comparisonRequest(`/${id}/saved-vor`,{method:'POST'});await pollComparison(id);}
+    catch(error){showToast(error.message,'error');button.disabled=false;}
+}
+async function createComparison() {
+    const files = Array.from(document.getElementById('comparisonModels').files);
+    if (!files.length) return showToast('Выберите модели или чертежи', 'error');
+    const form = new FormData();
+    files.forEach(file => form.append('files', file));
+    const mode = document.querySelector('input[name="comparisonMode"]:checked').value;
+    form.append('processing_type', mode);
+    if (mode === 'AI') ['Pos','Pz','Vor','Pd'].forEach(kind => { const file = document.getElementById('comparison'+kind).files[0]; if(file) form.append(kind.toLowerCase(), file); });
+    const button = document.getElementById('comparisonCreateBtn');
+    button.disabled = true;
+    try {
+        clearTimeout(comparisonTimer);
+        const job = await comparisonUpload('', form);
+        await openComparison(job.id);
+        await loadComparisons();
+    } catch (error) { showToast(error.message, 'error'); }
+    finally { button.disabled = !document.getElementById('comparisonModels').files.length; }
+}
+async function openComparison(id) {
+    const generation = ++comparisonPollGeneration;
+    clearTimeout(comparisonTimer);
+    comparisonId = id || null;
+    document.getElementById('comparisonResults').hidden = true;
+    document.getElementById('comparisonDocumentResults').hidden = true;
+    document.getElementById('comparisonEstimatesPanel').classList.add('disabled');
+    document.getElementById('comparisonEstimates').disabled = true;
+    if (id) {
+        localStorage.setItem('vorComparisonId', id);
+        await pollComparison(id, generation, true);
+    } else {
+        localStorage.removeItem('vorComparisonId');
+        document.getElementById('comparisonMessage').textContent = 'Выберите сравнение';
+        document.getElementById('comparisonSources').textContent = '';
+        updateComparisonProgress(0);
+        document.getElementById('comparisonStages').replaceChildren();
+        document.getElementById('comparisonStatusLabel').textContent = 'Ожидание';
+        document.getElementById('comparisonStatusBox').className = 'reference-status';
+    }
+}
+function renderComparisonInputExports(job,id) {
+    const panel=document.getElementById('comparisonInputExports'), links=document.getElementById('comparisonInputExportLinks');
+    const labels={'customer_vor_parsed.xlsx':'ВОР заказчика — до объединения','customer_vor_grouped.xlsx':'ВОР заказчика — после объединения','generated_vor.xlsx':'Сформированный ВОР'};
+    links.replaceChildren();
+    (job.input_exports||[]).forEach(name=>{if(!labels[name])return;const link=document.createElement('a');link.className='btn btn-sm btn-secondary';link.textContent=labels[name];link.href=`${API_BASE}/comparisons/${id}/files/${name}?download=1`;links.appendChild(link);});
+    panel.hidden=!links.children.length;
+}
+async function pollComparison(id, generation = comparisonPollGeneration, restoreMode = false) {
+    try {
+        const job = await comparisonRequest(`/${id}`);
+        if (comparisonId !== id || generation !== comparisonPollGeneration) return;
+        if (restoreMode) { const radio = document.querySelector(`input[name="comparisonMode"][value="${job.mode === 'AR' ? 'AI' : 'CS'}"]`); if(radio)radio.checked = true; updateComparisonMode(); }
+        document.getElementById('comparisonSources').textContent = `Источники: ${job.sources.map(s => s.name).join(', ')}${job.estimates.length ? '. ВОР заказчика: ' + job.estimates.map(s => s.name).join(', ') : ''}`;
+        document.getElementById('comparisonMessage').textContent = job.message + (job.error ? ': ' + job.error : '');
+        updateComparisonProgress(job.progress);
+        renderComparisonStages(job);
+        renderComparisonDocuments(job);
+        renderComparisonInputExports(job,id);
+        const diagnostics=document.getElementById('comparisonDiagnostics');diagnostics.hidden=!job.has_matching_diagnostics;diagnostics.href=`${API_BASE}/comparisons/${id}/files/semantic_match_diagnostics.jsonl?download=1`;
+        document.getElementById('comparisonInputWarnings').textContent = (job.estimates || []).map(file => [
+            file.validationWarning ? `${file.name}: ${file.validationWarning}` : '',
+            file.parser?.startsWith('local_vor_') ? `${file.name}: локальный разбор, строк ${file.parsedRows ?? '—'}. Замечаний: ${file.parseDiagnostics?.length || 0}.` : ''
+        ].filter(Boolean).join(' ')).join(' ');
+        comparisonPendingInput = job.pending_input || null;
+        document.getElementById('comparisonQuantityChoice').hidden = job.status !== 'input_required';
+        if(job.status === 'input_required' && comparisonPendingInput) {
+            const select = document.getElementById('comparisonQuantityColumn');
+            const current = select.value; select.replaceChildren();
+            comparisonPendingInput.choices.forEach(value => select.add(new Option(value,value)));
+            if(comparisonPendingInput.choices.includes(current))select.value=current;
+            document.getElementById('comparisonQuantityFile').textContent = comparisonPendingInput.filename;
+        }
+        document.getElementById('comparisonRetryBtn').textContent = job.status === 'input_required' ? 'Продолжить с выбранным столбцом' : '🔄 Повторить по сохранённым файлам';
+        document.getElementById('comparisonRetryBtn').hidden = !(['error','input_required'].includes(job.status) && job.can_retry);
+        document.getElementById('comparisonStatusLabel').textContent = ({models_processing:'Обработка моделей',models_ready:'ВОР готовы',parameters_required:'Проверьте параметры расчёта',comparing:'Сравнение',input_required:'Выберите столбец объёма',completed:'Завершено',error:'Ошибка'})[job.status] || job.status;
+        document.getElementById('comparisonStatusBox').className = 'reference-status' + (job.status === 'error' ? ' error' : job.status === 'completed' ? ' completed' : '');
+        const savedVorBtn=document.getElementById('comparisonSavedVorBtn');savedVorBtn.hidden=!job.documents?.vor;
+        savedVorBtn.disabled=!['models_ready','completed'].includes(job.status);
+        const ready = ['models_ready','completed'].includes(job.status) || (job.status === 'error' && job.estimates.length > 0);
+        document.getElementById('comparisonEstimatesPanel').classList.toggle('disabled', !ready);
+        document.getElementById('comparisonEstimates').disabled = !ready;
+        document.getElementById('comparisonEstimatesHint').textContent = ready ? 'Загрузите ВОР заказчика: сервис разберёт их и сравнит с общим ВОР моделей.' : job.status === 'comparing' ? 'ВОР заказчика обрабатываются. Ход обработки отображается выше.' : 'Загрузка ВОР заказчика станет доступна после завершения обработки моделей.';
+        document.getElementById('comparisonStartBtn').disabled = !ready || !document.getElementById('comparisonEstimates').files.length;
+        if (job.status === 'completed') await renderComparison(id);
+        if (['models_processing','comparing'].includes(job.status)) comparisonTimer = setTimeout(() => pollComparison(id, generation), 2500);
+    } catch (error) {
+        if (comparisonId !== id || generation !== comparisonPollGeneration) return;
+        document.getElementById('comparisonMessage').textContent = (error.name === 'TimeoutError' ? 'Сервер занят: ответ о прогрессе пока не получен' : error.message) + '. Повторное подключение…';
+        comparisonTimer = setTimeout(() => pollComparison(id, generation), 5000);
+    }
+}
+async function retryComparison() {
+    const id = comparisonId;
+    if (!id) return;
+    const button = document.getElementById('comparisonRetryBtn'); button.disabled = true;
+    try {
+        clearTimeout(comparisonTimer);
+        const selection = comparisonPendingInput ? {sourceIndex:comparisonPendingInput.sourceIndex,quantityColumn:document.getElementById('comparisonQuantityColumn').value} : {};
+        await comparisonRequest(`/${id}/retry`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(selection)});
+        await openComparison(id);
+    } catch (error) { showToast(error.message, 'error'); }
+    finally { button.disabled = false; }
+}
+async function compareEstimates() {
+    if (!comparisonId) return;
+    const files = Array.from(document.getElementById('comparisonEstimates').files);
+    if (!files.length) return showToast('Выберите ВОР заказчика', 'error');
+    const form = new FormData(); files.forEach(file => form.append('files', file));
+    const button = document.getElementById('comparisonStartBtn'); button.disabled = true;
+    try {
+        clearTimeout(comparisonTimer);
+        document.getElementById('comparisonResults').hidden = true;
+        await comparisonUpload(`/${comparisonId}/estimates`, form);
+        await openComparison(comparisonId);
+    } catch (error) { showToast(error.message, 'error'); button.disabled = false; }
+}
+// ========== Формирование ВОР ==========
+let vorJobId = null, vorTimer = null, vorPollGeneration = 0, vorUploadsReady = false;
+const vorFileKinds = ['Ifc', 'Vor', 'Pos', 'Pz', 'Pd'];
+const vorStatusLabels = {processing:'Обработка', completed:'Завершено', error:'Ошибка'};
+const vorStages = [
+    ['Выгрузка параметров элементов модели IFC', 5],
+    ['Разбор загруженных документов', 35],
+    ['Приведение ВОР заказчика к типовому виду', 55],
+    ['Формирование ВОР по типовому шаблону', 70],
+    ['Запись файла ВОР', 100]
+];
+
+function setupVorGenerationUploads() {
+    if (vorUploadsReady) return;
+    vorUploadsReady = true;
+    vorFileKinds.forEach(kind => {
+        const input = document.getElementById('vor' + kind);
+        const area = document.getElementById('vor' + kind + 'Area');
+        const list = document.getElementById('vor' + kind + 'List');
+        const refresh = () => {
+            list.replaceChildren();
+            Array.from(input.files).forEach(file => {
+                const row = document.createElement('div'); row.className = 'file-info';
+                const icon = document.createElement('span'); icon.textContent = '📄';
+                const name = document.createElement('span'); name.className = 'name'; name.textContent = file.name;
+                const size = document.createElement('span'); size.className = 'progress-text'; size.textContent = (file.size / 1024 / 1024).toFixed(1) + ' МБ';
+                const remove = document.createElement('button'); remove.className = 'btn btn-sm btn-danger'; remove.textContent = '✕'; remove.setAttribute('aria-label', 'Убрать ' + file.name);
+                remove.onclick = () => { input.value = ''; refresh(); };
+                row.append(icon, name, size, remove); list.appendChild(row);
+            });
+            if (kind === 'Ifc') document.getElementById('vorCreateBtn').disabled = !input.files.length;
+        };
+        area.onclick = event => { if (event.target !== input) input.click(); };
+        area.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); input.click(); } };
+        input.onchange = refresh;
+        area.ondragover = event => { event.preventDefault(); area.classList.add('dragover'); };
+        area.ondragleave = () => area.classList.remove('dragover');
+        area.ondrop = event => {
+            event.preventDefault(); area.classList.remove('dragover');
+            const allowed = input.accept.split(',');
+            const file = Array.from(event.dataTransfer.files)[0];
+            if (!file) return;
+            if (!allowed.some(ext => file.name.toLowerCase().endsWith(ext))) return showToast('Неподдерживаемый формат файла', 'error');
+            const transfer = new DataTransfer(); transfer.items.add(file); input.files = transfer.files; refresh();
+        };
+    });
+}
+
+async function vorRequest(path, options) {
+    const response = await fetch(`${API_BASE}/vor-generation${path}`, options);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Ошибка запроса');
+    return data;
+}
+
+function vorUpload(form) {
+    document.getElementById('vorStatusBox').className = 'reference-status';
+    document.getElementById('vorStatusLabel').textContent = 'Загрузка файлов';
+    document.getElementById('vorStages').replaceChildren();
+    updateVorProgress(0);
+    document.getElementById('vorMessage').textContent = 'Отправка файлов на сервер…';
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest(); xhr.open('POST', `${API_BASE}/vor-generation`);
+        xhr.upload.onprogress = event => {
+            if (event.lengthComputable) {
+                const value = Math.round(event.loaded / event.total * 100); updateVorProgress(value);
+                document.getElementById('vorMessage').textContent = value === 100 ? 'Файлы переданы. Сервер приступил к обработке…' : `Загрузка файлов: ${value}%`;
+            }
+        };
+        xhr.onload = () => {
+            try { const data = JSON.parse(xhr.responseText); if (xhr.status < 200 || xhr.status >= 300) throw new Error(data.detail || 'Ошибка загрузки'); resolve(data); }
+            catch (error) { reject(error); }
+        };
+        xhr.onerror = () => reject(new Error('Соединение с сервером прервано'));
+        xhr.send(form);
+    });
+}
+
+function updateVorProgress(value) {
+    const bar = document.getElementById('vorProgress');
+    bar.style.width = `${value}%`;
+    bar.setAttribute('aria-valuenow', value);
+}
+
+async function loadVorGenerationJobs() {
+    // Блок «Сохранённые задачи» удалён из интерфейса — список задач больше не отображается.
+    // Задачи открываются из общего списка сессий (кнопка «Открыть ВОР»).
+    const select = document.getElementById('vorJobs');
+    if (!select) return;
+    try {
+        const jobs = await vorRequest('');
+        select.replaceChildren(new Option('Выберите задачу', ''));
+        jobs.forEach(job => select.add(new Option(`${(job.ifc && job.ifc.name) || 'модель'} — ${job.message}`, job.id)));
+        select.value = vorJobId || '';
+    } catch (error) { showToast(error.message, 'error'); }
+}
+
+async function createVorGeneration() {
+    const ifc = document.getElementById('vorIfc').files[0];
+    if (!ifc) return showToast('Выберите модель IFC', 'error');
+    const form = new FormData();
+    form.append('ifc', ifc);
+    [['Vor', 'vor'], ['Pos', 'pos'], ['Pz', 'pz'], ['Pd', 'pd']].forEach(([kind, field]) => {
+        const file = document.getElementById('vor' + kind).files[0];
+        if (file) form.append(field, file);
+    });
+    const button = document.getElementById('vorCreateBtn'); button.disabled = true;
+    try {
+        clearTimeout(vorTimer);
+        const job = await vorUpload(form);
+        await openVorGeneration(job.id);
+        await loadVorGenerationJobs();
+    } catch (error) { showToast(error.message, 'error'); }
+    finally { button.disabled = !document.getElementById('vorIfc').files.length; }
+}
+
+// Сброс формы: очищает выбранные файлы и статус, чтобы начать новую задачу
+function resetVorGenerationForm() {
+    clearTimeout(vorTimer);
+    vorPollGeneration++;
+    vorJobId = null;
+    localStorage.removeItem('vorGenerationJobId');
+    vorFileKinds.forEach(kind => {
+        const input = document.getElementById('vor' + kind);
+        if (!input) return;
+        input.value = '';
+        input.dispatchEvent(new Event('change'));
+    });
+    document.getElementById('vorCreateBtn').disabled = true;
+    document.getElementById('vorResults').hidden = true;
+    const jobsSelect = document.getElementById('vorJobs');
+    if (jobsSelect) jobsSelect.value = '';
+    document.getElementById('vorSources').textContent = 'Файлы ещё не загружены';
+    document.getElementById('vorStatusLabel').textContent = 'Ожидание';
+    document.getElementById('vorStatusBox').className = 'reference-status';
+    document.getElementById('vorStages').replaceChildren();
+    document.getElementById('vorMessage').textContent = 'Загрузите модель IFC и документы и нажмите «Сформировать ВОР».';
+    updateVorProgress(0);
+    showToast('Форма очищена — можно начать новую задачу', 'success');
+}
+
+function restoreVorGeneration(id) {
+    vorJobId = id || null;
+    switchTab('vor');
+    openVorGeneration(id);
+    loadVorGenerationJobs();
+}
+
+async function openVorGeneration(id) {    const generation = ++vorPollGeneration;
+    clearTimeout(vorTimer);
+    vorJobId = id || null;
+    document.getElementById('vorResults').hidden = true;
+    if (id) {
+        localStorage.setItem('vorGenerationJobId', id);
+        await pollVorGeneration(id, generation);
+    } else {
+        localStorage.removeItem('vorGenerationJobId');
+        document.getElementById('vorSources').textContent = 'Файлы ещё не загружены';
+        document.getElementById('vorMessage').textContent = 'Выберите задачу';
+        document.getElementById('vorStatusLabel').textContent = 'Ожидание';
+        document.getElementById('vorStatusBox').className = 'reference-status';
+        document.getElementById('vorStages').replaceChildren();
+        updateVorProgress(0);
+    }
+}
+
+async function pollVorGeneration(id, generation = vorPollGeneration) {
+    try {
+        const job = await vorRequest(`/${id}`);
+        if (vorJobId !== id || generation !== vorPollGeneration) return;
+        const docNames = Object.values(job.documents || {}).map(doc => doc.name);
+        document.getElementById('vorSources').textContent = `Модель: ${(job.ifc && job.ifc.name) || '—'}${docNames.length ? '. Документы: ' + docNames.join(', ') : ''}`;
+        document.getElementById('vorMessage').textContent = job.message + (job.error ? ': ' + job.error : '');
+        updateVorProgress(job.progress || 0);
+        document.getElementById('vorStatusLabel').textContent = vorStatusLabels[job.status] || job.status;
+        document.getElementById('vorStatusBox').className = 'reference-status' + (job.status === 'error' ? ' error' : job.status === 'completed' ? ' completed' : '');
+        renderVorStages(job);
+        if (job.status === 'completed') {
+            document.getElementById('vorResults').hidden = false;
+            renderVorResults(id, job);
+        }
+        if (job.status === 'processing') vorTimer = setTimeout(() => pollVorGeneration(id, generation), 3000);
+    } catch (error) {
+        if (vorJobId !== id || generation !== vorPollGeneration) return;
+        document.getElementById('vorMessage').textContent = (error.name === 'TimeoutError' ? 'Сервер занят: ответ о прогрессе пока не получен' : error.message) + '. Повторное подключение…';
+        vorTimer = setTimeout(() => pollVorGeneration(id, generation), 5000);
+    }
+}
+
+// Компактный список этапов: этапы появляются поочерёдно по мере выполнения
+// (будущие не показываются), под статусбаром; по завершении добавляется
+// итоговая строка «ВОР сформирован».
+function renderVorStages(job) {
+    const container = document.getElementById('vorStages');
+    container.replaceChildren();
+    const progress = job.progress || 0;
+    const completed = job.status === 'completed';
+    const processing = job.status === 'processing';
+    const list = document.createElement('div');
+    list.className = 'vor-stage-list';
+    vorStages.forEach(([label, threshold]) => {
+        const done = completed || progress >= threshold;
+        const active = processing && !done && progress >= threshold - 30;
+        if (!done && !active) return;
+        const row = document.createElement('div');
+        row.className = 'vor-stage-item' + (done ? ' done' : ' active');
+        const mark = document.createElement('span');
+        mark.className = 'vor-stage-mark';
+        mark.textContent = done ? '✓' : '◔';
+        const title = document.createElement('span');
+        title.className = 'vor-stage-title';
+        title.textContent = label;
+        row.append(mark, title);
+        list.appendChild(row);
+    });
+    if (completed) {
+        const finalRow = document.createElement('div');
+        finalRow.className = 'vor-stage-item done final';
+        finalRow.textContent = '✓ ВОР сформирован';
+        list.appendChild(finalRow);
+    }
+    container.appendChild(list);
+}
+
+// Отрисовка итоговых файлов ВОР: «Сформированный ВОР» и «ВОР заказчика»
+// (просмотр в модальном окне + скачивание), по образцу финальной выдачи.
+function renderVorResults(id, job) {
+    const container = document.getElementById('vorResultFiles');
+    if (!container) return;
+    container.replaceChildren();
+    const files = [{ filename: 'Сформированный_ВОР.xlsx', label: 'Сформированный ВОР', icon: '📗' }];
+    if (job.has_customer_vor) files.push({ filename: 'ВОР_заказчика.xlsx', label: 'ВОР заказчика', icon: '📘' });
+    files.forEach(f => {
+        const row = document.createElement('div'); row.className = 'file-info';
+        const icon = document.createElement('span'); icon.textContent = f.icon;
+        const name = document.createElement('span'); name.className = 'name'; name.textContent = f.label;
+        const preview = document.createElement('button');
+        preview.className = 'btn btn-sm btn-secondary'; preview.textContent = '👁️ Просмотр';
+        preview.onclick = () => previewVorFile(id, f.filename, f.label);
+        const download = document.createElement('a');
+        download.className = 'btn btn-sm btn-primary'; download.textContent = 'Скачать';
+        download.href = `${API_BASE}/vor-generation/${id}/files/${encodeURIComponent(f.filename)}?download=1`;
+        download.setAttribute('download', '');
+        row.append(icon, name, preview, download);
+        container.appendChild(row);
+    });
+}
+
+// Просмотр файла задачи формирования ВОР в модальном окне (с возможностью скачивания)
+function previewVorFile(id, filename, label) {
+    const overlay = document.getElementById('previewModal');
+    currentViewFilename = filename;
+    currentViewDownloadUrl = `${API_BASE}/vor-generation/${id}/files/${encodeURIComponent(filename)}?download=1`;
+    document.getElementById('previewModalTitle').textContent = label || filename;
+    const info = document.getElementById('previewModalInfo');
+    info.textContent = 'Загрузка...'; info.style.color = '#718096';
+    document.getElementById('previewModalHead').innerHTML = '';
+    document.getElementById('previewModalBody').innerHTML = '';
+    overlay.classList.add('active');
+    fetch(`${API_BASE}/vor-generation/${id}/preview/${encodeURIComponent(filename)}`)
+        .then(r => r.ok ? r.json() : Promise.reject(r))
+        .then(data => {
+            info.innerHTML = data.isPreview
+                ? `Показаны первые ${data.previewRows} строк из ${data.totalRows} <span class="preview-badge">Предпросмотр</span>`
+                : `Всего строк: ${data.totalRows}`;
+            document.getElementById('previewModalHead').innerHTML = '<tr>' + data.headers.map(h => `<th>${h}</th>`).join('') + '</tr>';
+            document.getElementById('previewModalBody').innerHTML = data.rows.map(row =>
+                '<tr>' + row.map(cell => `<td title="${cell}">${cell}</td>`).join('') + '</tr>'
+            ).join('');
+        })
+        .catch(() => { info.textContent = 'Ошибка загрузки'; info.style.color = '#fc8181'; });
+}
+
+const verdictLabels = {correct:'Подтверждено',incorrect:'Ошибка подбора',uncertain:'Неоднозначно',insufficient_data:'Недостаточно данных',error:'Ошибка проверки',not_checked:'Не проверялось'};
+let comparisonReport = null;
+let comparisonReportPage = 0;
+function reportText(value) {
+    if (value == null || value === '') return '—';
+    if(typeof value==='string' && value.startsWith('__uncoded__:'))return 'Без шифра';
+    if (Array.isArray(value)) return value.map(reportText).join('; ');
+    if (typeof value === 'object') return Object.entries(value).map(([key,val]) => `${key}: ${reportText(val)}`).join('; ');
+    return String(value);
+}
+function reportTable(headers, rows) {
+    const table = document.createElement('table');
+    const head = document.createElement('thead'), tr = document.createElement('tr');
+    headers.forEach(title => {const th = document.createElement('th'); th.textContent = title; tr.appendChild(th);}); head.appendChild(tr); table.appendChild(head);
+    const body = document.createElement('tbody');
+    rows.forEach(values => {const row = document.createElement('tr'); values.forEach(value => {const cell = document.createElement('td'); if (value instanceof Node) cell.appendChild(value); else cell.textContent = reportText(value); row.appendChild(cell);}); body.appendChild(row);});
+    table.appendChild(body); return table;
+}
+function positionDetails(position, estimate=false) {
+    const element = position.element || {}, props = position.properties || {}, validation = position.validation_result || {};
+    const details = document.createElement('details');
+    const summary = document.createElement('summary'); summary.textContent = position.name || position.workAndCostName || 'Позиция'; details.appendChild(summary);
+    const rows = estimate ? [
+        ['ВОР заказчика',position.sourceFiles],['Номер ВОР заказчика',position.estimateNumber],['Раздел',position.sectionName],['Конструкция заказчика',position._construction?.name],['Позиция / строка',`${position.positionNumber ?? '—'} / ${position.rowNumber ?? '—'}`],['Примечание',position.note],['Страница / лист / строка',position.sourceLocation],['Столбец объёма',position.sourceQuantityColumn],['Основание сопоставления',position.matchBasis]
+    ] : [
+        ['Модель',position.sourceFile],['Группа',position.groupId],['IFC-класс',element.ifcClass],['Категория',element.category],['Тип элемента',element.typeName],['Уровень',element.level],['Количество элементов',element.count],['Материал',props.material],['Слой материала',props.materialLayer],['Параметры подбора',position.selectionParameters],['Расчёт объёма',position.quantityCalculation],['Вердикт ИИ',verdictLabels[validation.verdict] || 'Не проверялось'],['Обоснование',validation.reason],['Недостающие данные',validation.missingData],['Предупреждения',validation.warnings]
+    ];
+    details.appendChild(reportTable(['Параметр','Значение'],rows)); return details;
+}
+function groupDetails(group) {
+    const details = document.createElement('details'), summary = document.createElement('summary');
+    const model = group.ifcGroup?.positions || [], estimates = group.projectGroup?.positions || [];
+    summary.textContent = `Позиции: ${model.length} в моделях, ${estimates.length} в ВОР заказчика`; details.appendChild(summary);
+    details.addEventListener('toggle',()=>{
+    if(!details.open||details.dataset.loaded)return;details.dataset.loaded='1';
+    [['Модели',model,false],['ВОР заказчика',estimates,true]].forEach(([label,positions,isEstimate]) => {
+        const title = document.createElement('h4'); title.textContent=label; details.appendChild(title);
+        if (!positions.length) {const empty=document.createElement('p');empty.textContent='Позиции отсутствуют';details.appendChild(empty);return;}
+        details.appendChild(reportTable(['Работа / материал','Объём','Источник'],positions.map(p => [positionDetails(p,isEstimate),p.quantity,isEstimate?p.sourceFiles:p.sourceFile])));
+    });
+    }); return details;
+}
+function comparisonReportChanged() { comparisonReportPage=0; renderComparisonReportRows(); }
+function renderCompactVor() {
+    if (!comparisonReport) return;
+    const filter=document.getElementById('comparisonReportFilter').value;
+    const query=document.getElementById('comparisonReportSearch').value.toLocaleLowerCase().trim();
+    const rows=[...(comparisonReport.vorRows||[])].filter(row=>(!filter||row.status===filter)&&(!query||[row.work,row.code,row.elementGroup,row.part,row.section,row.subsection].join(' ').toLocaleLowerCase().includes(query)));
+    const pages=Math.max(1,Math.ceil(rows.length/50));comparisonReportPage=Math.min(comparisonReportPage,pages-1);
+    const table=reportTable(['Наименование работы из сформированного ВОР','Объём из сформированного ВОР','Наименование работы из ВОР заказчика','Объём из ВОР заказчика','Различие','Обоснование модели','Степень уверенности','Комментарии'],[]);
+    const body=table.querySelector('tbody');let previous='';
+    rows.slice(comparisonReportPage*50,(comparisonReportPage+1)*50).forEach(row=>{
+        const hierarchy=[row.part,row.section,row.subsection,row.elementGroup].filter(Boolean).join(' → ');
+        if(hierarchy!==previous){const tr=document.createElement('tr');tr.className='vor-group-heading';const td=document.createElement('td');td.colSpan=8;td.textContent=hierarchy.length>260?hierarchy.slice(0,260)+'…':hierarchy;td.title=hierarchy;tr.appendChild(td);body.appendChild(tr);previous=hierarchy;}
+        const tr=document.createElement('tr');
+        const generated=row.detail?.ifcGroup?.positions||[], customer=row.detail?.projectGroup?.positions||[];
+        const generatedName=row.generatedWork===undefined?[...new Set(generated.map(p=>p.name||p.workAndCostName))].join('; '):row.generatedWork;
+        const customerName=row.customerWork===undefined?[...new Set(customer.map(p=>p.workAndCostName||p.name))].join('; '):row.customerWork;
+        const refs=[...new Set(customer.map(p=>p.positionNumber||p.rowNumber).filter(v=>v!=null))];
+        const groups=[...new Set(generated.map(p=>p.groupId).filter(Boolean))];
+        const comments=[row.comments||'',groups.length?'Группы модели: '+groups.join(', '):'',refs.length?'Строки заказчика: '+refs.join(', '):''].filter(Boolean).join('. ');
+        const quantity=value=>value==null?'':`${value} ${row.unit||''}`.trim();
+        const difference=row.difference==null?'':`${row.difference>0?'+':''}${Number(row.difference.toFixed(3))}${row.differencePercent==null?'':` (${row.differencePercent>0?'+':''}${row.differencePercent.toFixed(2)}%)`}`;
+        [generatedName,quantity(row.generatedQuantity),customerName,quantity(row.customerQuantity),difference,row.modelReason||row.reason||'',row.comparisonConfidence||'',comments].forEach(value=>{const td=document.createElement('td');td.textContent=value==null?'':String(value);td.title=td.textContent;tr.appendChild(td);});
+        body.appendChild(tr);
+    });
+    document.getElementById('comparisonReportTable').replaceChildren(table);
+    document.getElementById('comparisonReportCount').textContent=`Работ: ${rows.filter(row=>!row.isEmptyGroup).length} · Пустых групп: ${rows.filter(row=>row.isEmptyGroup).length} · Страница ${comparisonReportPage+1} из ${pages}`;
+    document.getElementById('comparisonReportPrev').disabled=comparisonReportPage===0;
+    document.getElementById('comparisonReportNext').disabled=comparisonReportPage===pages-1;
+}
+
+function renderComparisonReportRows() {
+    if (!comparisonReport) return;
+    const view=document.getElementById('comparisonReportView').value;
+    if(view==='vor')return renderCompactVor();
+    const filter=document.getElementById('comparisonReportFilter').value;
+    const search=document.getElementById('comparisonReportSearch').value.trim().toLocaleLowerCase();
+    let headers, rows=[];
+    if (view==='volumes') {
+        headers=['Шифр','Ед. изм.','Статус','Сформированный ВОР','ВОР заказчика','Разница','Отклонение, %','Подробности'];
+        (comparisonReport.comparison || []).forEach(group => {
+            if (filter && group.status!==filter) return;
+            if (search && !JSON.stringify(group).toLocaleLowerCase().includes(search)) return;
+            rows.push([group.normalized_code,group.normalized_unit,comparisonLabels[group.status]||group.status,group.ifcGroup?.totalQuantity,group.projectGroup?.totalQuantity,group.difference,group.percentageDifference==null?null:(group.percentageDifference*100).toFixed(2),()=>groupDetails(group)]);
+        });
+    } else if (view==='positions') {
+        headers=['Вердикт ИИ','Шифр','Ед. изм.','Работа / материал','Объём','Модель / группа','Обоснование','Недостающие данные / предупреждения'];
+        const ordered=['incorrect','uncertain','insufficient_data','error','correct'];
+        ordered.forEach(verdict => (comparisonReport.positionsByVerdict?.[verdict] || []).forEach(record => {
+            if (filter && verdict!==filter) return;
+            if (search && !JSON.stringify(record).toLocaleLowerCase().includes(search)) return;
+            const p=record.position||{}, validation=record.validationResult||{};
+            rows.push([verdictLabels[verdict],record.groupKey?.code,record.groupKey?.unit,()=>positionDetails({...p,validation_result:validation}),p.quantity,`${p.sourceFile||'—'} / ${p.groupId||'—'}`,validation.reason,[validation.missingData,validation.warnings].filter(v=>v?.length).map(reportText).join('; ')]);
+        }));
+    } else {
+        headers=['Модель','Группа','Категория','Тип элемента','Уровень','Проверено позиций','Ошибки подбора','Неоднозначно','Недостаточно данных','Ошибки проверки'];
+        (comparisonReport.groupStatistics?.byGroup||[]).forEach(group=>{
+            if (search && !JSON.stringify(group).toLocaleLowerCase().includes(search)) return;
+            rows.push([group.sourceFile,group.groupId,group.element?.category,group.element?.typeName,group.element?.level,group.validatedPositions,group.byVerdict?.incorrect,group.byVerdict?.uncertain,group.byVerdict?.insufficient_data,group.byVerdict?.error]);
+        });
+    }
+    const pages=Math.max(1,Math.ceil(rows.length/50));comparisonReportPage=Math.min(comparisonReportPage,pages-1);
+    const slice=rows.slice(comparisonReportPage*50,(comparisonReportPage+1)*50).map(row=>row.map(value=>typeof value==='function'?value():value));
+    const target=document.getElementById('comparisonReportTable'); target.replaceChildren(reportTable(headers,slice));
+    if (!rows.length) { const empty=document.createElement('p');empty.className='progress-text';empty.textContent='Нет позиций по выбранным условиям';target.appendChild(empty); }
+    document.getElementById('comparisonReportCount').textContent=`Строк: ${rows.length} · Страница ${comparisonReportPage+1} из ${pages}`;
+    document.getElementById('comparisonReportPrev').disabled=comparisonReportPage===0;
+    document.getElementById('comparisonReportNext').disabled=comparisonReportPage===pages-1;
+}
+function changeComparisonReportView() {
+    const view=document.getElementById('comparisonReportView').value, select=document.getElementById('comparisonReportFilter');
+    select.replaceChildren(new Option('Все статусы',''));
+    Object.entries((view==='volumes'||view==='vor')?comparisonLabels:view==='positions'?verdictLabels:{}).forEach(([key,label])=>select.add(new Option(label,key)));
+    select.disabled=view==='groups';comparisonReportChanged();
+}
+function comparisonCounts(report) {
+    const generated=new Map(),paired=new Set(),customerRows=new Set(),customerGroups=new Set(),pairedGroups=new Set();
+    const key=p=>JSON.stringify([p.sourceFile,p.groupId,p.code,p.unit,p.name||p.workAndCostName]);
+    const trace=p=>{customerRows.add(JSON.stringify([p.sourceFiles,p.sourceLocation,p.rowNumber,p.sectionName,p.positionNumber,p.workAndCostName]));['sourceDetailRows','sourceContextRows'].forEach(field=>(p[field]||[]).forEach(trace));};
+    (report.comparison||[]).forEach((entry,index)=>{
+        const cp=entry.projectGroup?.positions||[], gp=entry.ifcGroup?.positions||[], id=entry._comparison_group_id??String(index);
+        gp.forEach(p=>generated.set(key(p),p));cp.forEach(trace);
+        if(cp.length)customerGroups.add(id);
+        const confirmed=cp.length&&gp.length&&(!entry.semanticMatch||entry.semanticMatch.confirmed);
+        if(confirmed){pairedGroups.add(id);gp.forEach(p=>paired.add(key(p)));}
+    });
+    const input={...report.inputStatistics},display={...report.displayStatistics};
+    input.generatedWorks=Math.max(Number(input.generatedWorks)||0,[...generated.values()].filter(p=>p.positionType!=='material').length);
+    input.generatedPositions=Math.max(Number(input.generatedPositions)||0,generated.size);
+    input.customerParsedPositions=Math.max(Number(input.customerParsedPositions)||0,customerRows.size);
+    display.customerWorkGroups=input.customerGrouping?.totalGroups??Math.max(Number(display.customerWorkGroups)||0,customerGroups.size);
+    display.matchedWorkGroups=report.displayStatistics?.matchedWorkGroups??pairedGroups.size;
+    display.generatedUnpairedPositions=report.displayStatistics?.generatedUnpairedPositions??generated.size-paired.size;
+    display.customerUnpairedGroups=report.displayStatistics?.customerUnpairedGroups??customerGroups.size-pairedGroups.size;
+    display.quantityMismatches=report.displayStatistics?.quantityMismatches??(report.vorRows||[]).filter(r=>r.status==='quantity_mismatch').length;
+    return {input,display};
+}
+async function renderComparison(id) {
+    const response=await fetch(`${API_BASE}/comparisons/${id}/files/result.json?report_version=16`,{cache:'no-store'});
+    if (!response.ok) throw new Error('Не удалось загрузить отчёт');
+    const report=await response.json(); if (id!==comparisonId) return;
+    comparisonReport=report;
+    const matching=report.matchingStatistics||{};
+    document.getElementById('comparisonMatchingInfo').textContent=matching.customerRows==null?'':`Сопоставление: ${matching.customerRows} строк → ${matching.customerGroups} групп; по правилам: ${matching.rules}; из кэша: ${matching.cacheHits}; пакетов ИИ: ${matching.llmRequests}.`;
+    if(matching.reportReconciled)document.getElementById('comparisonMatchingInfo').textContent=`Группировка ВОР заказчика не зависит от режима обработки. Сопоставлено групп заказчика: ${report.displayStatistics?.matchedWorkGroups ?? '—'} из ${report.displayStatistics?.customerWorkGroups ?? '—'}.`;
+    const unresolved=(report.vorRows||[]).filter(row=>row.status==='matching_unresolved').length;
+    if(unresolved)document.getElementById('comparisonMatchingInfo').textContent+=` Не сопоставлено строк: ${unresolved}. Строки следуют порядку сформированного ВОР; работы без пары сохранены.`;
+    const stats=report.comparisonStatistics||{}, validation=report.validationStatistics||{}, groups=report.groupStatistics||{};
+    const cards=document.getElementById('comparisonStatistics');cards.replaceChildren();
+    const {input,display}=comparisonCounts(report);
+    if(input.generatedPositions!=null&&display.generatedVisiblePositions!=null)document.getElementById('comparisonMatchingInfo').textContent+=` Контроль полноты: ${display.generatedVisiblePositions} из ${input.generatedPositions} сформированных позиций в таблице; ${display.customerRepresentedSourceRows ?? '—'} из ${input.customerParsedPositions ?? '—'} исходных строк заказчика в подробностях.`;
+    [['Работ в сформированном ВОР',input.generatedWorks],['Работ в ВОР заказчика до группировки',input.customerParsedPositions],['Работ в ВОР заказчика после группировки',display.customerWorkGroups],['Сопоставлено групп работ',display.matchedWorkGroups],['Без пары в сформированном ВОР',display.generatedUnpairedPositions],['Без пары в ВОР заказчика',display.customerUnpairedGroups],['Расхождения объёмов',display.quantityMismatches]].forEach(([label,value])=>{
+        const card=document.createElement('div');card.className='comparison-stat-card';const caption=document.createElement('div');caption.textContent=label;const number=document.createElement('strong');number.textContent=value??'—';card.append(caption,number);cards.appendChild(card);
+    });
+    const similarity=report.compositionSimilarity;
+    if(similarity){
+        [['Сходство состава работ',similarity.score],['Сформированный ВОР: найдено у заказчика',similarity.generatedCoverage],['ВОР заказчика: найдено в сформированном',similarity.customerCoverage]].forEach(([label,value])=>{
+            const card=document.createElement('div');card.className='comparison-stat-card';card.title=similarity.explanation;
+            const caption=document.createElement('div');caption.textContent=label;const number=document.createElement('strong');number.textContent=value==null?'—':`${value}%`;card.append(caption,number);cards.appendChild(card);
+        });
+        const note=document.createElement('div');note.className='progress-text';note.textContent=similarity.explanation;cards.appendChild(note);
+    }
+    document.getElementById('comparisonDownload').href=`${API_BASE}/comparisons/${id}/files/result.json?download=1`;
+    document.getElementById('comparisonExcelDownload').href=`${API_BASE}/comparisons/${id}/files/result.xlsx?download=1`;
+    document.getElementById('comparisonReportView').value=(report.vorRows||[]).length?'vor':'positions';
+    changeComparisonReportView();
+    document.getElementById('comparisonValidation').textContent='Полный отчёт доступен по кнопке JSON. Объёмные исходные данные не загружаются в текстовую панель.';
+    document.getElementById('comparisonResults').hidden=false;
+}
+
 // ========== Глобальные переменные ==========
 let currentSessionId = null;
 let currentRunId = null;
@@ -1181,6 +2118,7 @@ let isNewRunMode = false;
 let autoGroupEnabled = true;
 let currentProcessingType = 'CS';
 let currentViewFilename = null;
+let currentViewDownloadUrl = null;
 let _previewLoadInFlight = false;
 
 // ========== Ссылки на позиции цифрового сборника (иконка «внешняя ссылка») ==========
@@ -1798,6 +2736,8 @@ function switchTab(tab) {
     document.querySelector(`.tab-btn[onclick*="${tab}"]`)?.classList.add('active');
     document.getElementById(tab + 'Tab').classList.add('active');
     if (tab === 'history') loadHistory();
+    if (tab === 'comparison') { setupComparisonUploads(); loadComparisons(); if (!comparisonId) openComparison(localStorage.getItem('vorComparisonId')); }
+    if (tab === 'vor') { setupVorGenerationUploads(); loadVorGenerationJobs(); if (!vorJobId) openVorGeneration(localStorage.getItem('vorGenerationJobId')); }
 }
 
 function showToast(message, type = 'info') {
@@ -4756,15 +5696,19 @@ async function loadHistory() {
             return;
         }
         container.innerHTML = data.sessions.map(s => {
-            const cls = {ifc_processing:'status-processing',ifc_processed:'status-waiting',selecting_rows:'status-waiting',processing:'status-processing',completed:'status-completed',error:'status-error',reference_processing:'status-processing'}[s.status]||'status-waiting';
-            const txt = {ifc_processing:'Обработка IFC...',ifc_processed:'IFC обработан',selecting_rows:'Выбор строк',processing:'Обработка...',completed:'✅ Завершена',error:'❌ Ошибка',reference_processing:'JSON-справочники...'}[s.status]||s.status;
+            const cls = {ifc_processing:'status-processing',ifc_processed:'status-waiting',selecting_rows:'status-waiting',processing:'status-processing',completed:'status-completed',error:'status-error',reference_processing:'status-processing',models_processing:'status-processing',comparing:'status-processing',models_ready:'status-waiting',parameters_required:'status-waiting'}[s.status]||'status-waiting';
+            const txt = {ifc_processing:'Обработка IFC...',ifc_processed:'IFC обработан',selecting_rows:'Выбор строк',processing:'Обработка...',completed:'✅ Завершена',error:'❌ Ошибка',reference_processing:'JSON-справочники...',models_processing:'Обработка моделей...',models_ready:'ВОР готовы — загрузите ВОР заказчика',parameters_required:'Проверьте параметры расчёта',comparing:'Сравнение...'}[s.status]||s.status;
             const ptLabel = normalizeProcessingType(s.processingType || s.processing_type);
             const ptIcon = ptLabel === 'AI' ? '🏛️' : '🏗️';
+            const isComparison = s.sessionType === 'comparison';
+            const isVorGeneration = s.sessionType === 'vor_generation';
             const isReference = s.isReferenceSession;
-            const primaryAction = isReference
-                ? `<button class="btn btn-sm btn-primary" onclick="openReferenceSession('${s.sessionId}')">Открыть JSON</button>`
-                : `<button class="btn btn-sm btn-primary" onclick="restoreSession('${s.sessionId}')">Восстановить</button>`;
-            return `<div class="session-item"><div class="top"><span class="id">${s.sessionId.substring(0,8)}…</span><span class="status ${cls}">${txt}</span></div><div class="info"><span>📅 ${new Date(s.createdAt).toLocaleString('ru-RU')}</span>${s.ifcFileName?` · 📄 ${s.ifcFileName}`:''}${s.buildingHeight?` · 📏 ${s.buildingHeight}м`:''}${(s.files||[]).length?` · 📦 ${s.files.length} файлов`:''} · ${ptIcon} ${ptLabel}${isReference?' · 🧪 Справочник':''}</div><div class="actions">${primaryAction}${(s.files||[]).length?`<button class="btn btn-sm btn-success" onclick="downloadAllFiles('${s.sessionId}')">Скачать всё</button>`:''}<button class="btn btn-sm btn-danger" onclick="deleteSession('${s.sessionId}')">Удалить</button></div></div>`;
+            const primaryAction = isVorGeneration
+                ? `<button class="btn btn-sm btn-primary" onclick="restoreVorGeneration('${s.sessionId}')">Открыть ВОР</button>`
+                : isReference
+                    ? `<button class="btn btn-sm btn-primary" onclick="openReferenceSession('${s.sessionId}')">Открыть JSON</button>`
+                    : `<button class="btn btn-sm btn-primary" onclick="restoreSession('${s.sessionId}')">Восстановить</button>`;
+            return `<div class="session-item"><div class="top"><span class="id">${s.sessionId.substring(0,8)}…</span><span class="status ${cls}">${txt}</span></div><div class="info"><span>📅 ${new Date(s.createdAt).toLocaleString('ru-RU')}</span>${s.ifcFileName?` · 📄 ${s.ifcFileName}`:''}${s.buildingHeight?` · 📏 ${s.buildingHeight}м`:''}${(s.files||[]).length?` · 📦 ${s.files.length} файлов`:''} · ${ptIcon} ${ptLabel}${isComparison?' · ⚖️ Сравнение':isReference?' · 🧪 Справочник':''}</div><div class="actions">${primaryAction}${(s.files||[]).length?`<button class="btn btn-sm btn-success" onclick="downloadAllFiles('${s.sessionId}')">Скачать всё</button>`:''}<button class="btn btn-sm btn-danger" onclick="deleteSession('${s.sessionId}')">Удалить</button></div></div>`;
         }).join('');
     } catch (e) { container.innerHTML = `<p style="color:#fc8181;">Ошибка: ${e.message}</p>`; }
 }
@@ -4776,6 +5720,14 @@ async function restoreSession(sessionId) {
         const response = await fetch(`${API_BASE}/session/${sessionId}/restore`, { method: 'POST' });
         if (!response.ok) { const error = await response.json(); throw new Error(error.detail || 'Ошибка'); }
         const data = await response.json();
+        if (data.sessionType === 'comparison' || data.sourceType === 'comparison') {
+            comparisonId = sessionId;
+            switchTab('comparison');
+            await openComparison(sessionId);
+            await loadComparisons();
+            showToast('Сессия сравнения восстановлена', 'success');
+            return;
+        }
         currentSessionId = sessionId;
         currentRunId = data.current_run_id || null;
         if (data.processingType || data.processing_type) {
@@ -4860,7 +5812,24 @@ document.addEventListener('DOMContentLoaded', () => {
 (function(){
   let mode='on', lastSid=null, pos={}, posFile='', full=null, fullStatus='', fullSid=null;
   const origCollect = window.collectArConstants;
-  window.collectArConstants = function(){ if(mode==='off') return {}; const r=origCollect(); for(const n in pos){ const v=pos[n]; if(v!==undefined && v!==null && v!=='' && !r[n]) r[n]=v; } return r; };
+  window.collectArConstants = function(){
+    const r=origCollect();
+    if(mode==='off') {
+      const savedPos=worksConstantsPosDetected, savedPz=worksConstantsPzDetected;
+      try {
+        worksConstantsPosDetected={};worksConstantsPzDetected={};
+        const result={};
+        worksConstantsSchema.forEach(c=>{
+          const manual=r[c.name]&&r[c.name]!==_lastAutoConstants[c.name];
+          const value=manual?r[c.name]:autoSelectConstant(c).value;
+          if(value)result[c.name]=value;
+        });
+        return result;
+      } finally {worksConstantsPosDetected=savedPos;worksConstantsPzDetected=savedPz;}
+    }
+    for(const n in pos){ const v=pos[n]; if(v!==undefined && v!==null && v!=='' && !r[n]) r[n]=v; }
+    return r;
+  };
   function esc(t){ return String(t).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
   function norm(t){ return String(t||'').toLowerCase().replace(/\s+/g,' ').trim(); }
   function label(sel){
@@ -4882,7 +5851,15 @@ document.addEventListener('DOMContentLoaded', () => {
         +'&nbsp;&nbsp; <label><input type="radio" name="pdMode" value="off"> без учёта (только модель)</label>'
         +'&nbsp;&nbsp;&nbsp; <a href="#" id="pdEdit">✎ изменить вручную</a></div>';
       btn.parentElement.before(c);
-      c.querySelectorAll('input[name=pdMode]').forEach(r=>r.onchange=()=>{ mode=r.value; render(); });
+      c.querySelectorAll('input[name=pdMode]').forEach(r=>r.onchange=()=>{
+        mode=r.value;
+        const savedPos=worksConstantsPosDetected,savedPz=worksConstantsPzDetected;
+        try {
+          if(mode==='off'){worksConstantsPosDetected={};worksConstantsPzDetected={};}
+          renderArConstantsFields();
+        } finally {worksConstantsPosDetected=savedPos;worksConstantsPzDetected=savedPz;}
+        render();
+      });
       c.querySelector('#pdEdit').onclick=e=>{ e.preventDefault(); const f=fields(); if(f){ f.style.display = f.style.display==='none' ? '' : 'none'; if(f.style.display!=='none') f.scrollIntoView({behavior:'smooth',block:'center'}); } };
       const all=document.createElement('button');
       all.className='btn btn-success'; all.id='pdAllBtn'; all.style.marginLeft='8px';

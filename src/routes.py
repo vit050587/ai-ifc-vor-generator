@@ -1,5 +1,6 @@
 # routes.py
 import io
+import threading
 import os
 import zipfile
 import json
@@ -167,7 +168,10 @@ def _err(schema_instance, status: int) -> Response:
 
 @bp.route("/", methods=["GET"])
 def index():
-    return render_template("index.html")
+    from flask import make_response
+    response = make_response(render_template("index.html"))
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 # ------- API -------
@@ -671,6 +675,7 @@ def list_sessions():
             type: string
     """
     try:
+        _get_comparison_manager()  # Import legacy comparison sessions before listing history.
         raw = _get_manager().list_sessions()
         # processing_type сессий и запусков приводим к публичным кодам CS/AI
         sessions = [SessionFull(**public_session(s)) for s in raw]
@@ -888,6 +893,7 @@ def restore_session(session_id: str):
         current_files = s.get("files", [])
 
     return _ok(RestoreResponse(
+        session_type=s.get("session_type", "reference" if s.get("is_reference_session") else "processing"),
         session_id=s["session_id"],
         status=s["status"],
         progress=s.get("progress", 0),
@@ -3087,3 +3093,235 @@ def pd_mode(session_id: str):
         except Exception:
             pass
     return _pd_jsonify({"mode": mode})
+
+# ---------- Сравнение ведомостей объёмов работ ----------
+_comparison_manager = None
+_comparison_init_lock = threading.Lock()
+
+
+def _get_comparison_manager():
+    global _comparison_manager
+    with _comparison_init_lock:
+        if _comparison_manager is None:
+            from src.services.comparison_manager import ComparisonManager
+            _comparison_manager = ComparisonManager(_get_manager())
+    return _comparison_manager
+
+
+@bp.route('/api/comparisons', methods=['GET', 'POST'])
+def comparisons():
+    manager = _get_comparison_manager()
+    if request.method == 'GET':
+        return jsonify(manager.list())
+    try:
+        mode = to_pipeline_type(request.form.get('processing_type', 'CS'))
+        job = manager.create(request.files.getlist('files'), mode, documents={kind: request.files.get(kind) for kind in ('pos', 'pz', 'vor', 'pd')})
+        return jsonify(job), 202
+    except ValueError as exc:
+        return jsonify({'detail': str(exc)}), 400
+
+
+@bp.route('/api/comparisons/<job_id>', methods=['GET'])
+def comparison_status(job_id):
+    try:
+        return jsonify(_get_comparison_manager().get(job_id))
+    except KeyError:
+        return jsonify({'detail': 'Сравнение не найдено'}), 404
+
+
+@bp.route('/api/comparisons/<job_id>/estimates', methods=['POST'])
+def comparison_estimates(job_id):
+    try:
+        return jsonify(_get_comparison_manager().compare(job_id, request.files.getlist('files'))), 202
+    except KeyError:
+        return jsonify({'detail': 'Сравнение не найдено'}), 404
+    except ValueError as exc:
+        return jsonify({'detail': str(exc)}), 400
+
+
+@bp.route('/api/comparisons/<job_id>/files/<filename>', methods=['GET'])
+def comparison_download(job_id, filename):
+    try:
+        path = _get_comparison_manager().artifact(job_id, filename)
+        return send_file(path, as_attachment=request.args.get('download') == '1', download_name=filename)
+    except KeyError:
+        return jsonify({'detail': 'Файл не найден'}), 404
+    except ValueError as exc:
+        return jsonify({'detail': str(exc)}), 409
+
+
+@bp.route('/api/comparisons/<job_id>/retry', methods=['POST'])
+def comparison_retry(job_id):
+    try:
+        data = request.get_json(silent=True) or {}
+        return jsonify(_get_comparison_manager().retry(job_id, source_index=data.get('sourceIndex'), quantity_column=data.get('quantityColumn'))), 202
+    except KeyError:
+        return jsonify({'detail': 'Сравнение не найдено'}), 404
+    except ValueError as exc:
+        return jsonify({'detail': str(exc)}), 400
+
+
+@bp.route('/api/comparisons/<job_id>/parameters', methods=['POST'])
+def comparison_parameters(job_id):
+    try:
+        data = request.get_json(silent=True) or {}
+        return jsonify(_get_comparison_manager().confirm_parameters(job_id, data.get('overrides', {}), data.get('use_documents', True), data.get('material_codes'), data.get('use_tsn', True))), 202
+    except KeyError:
+        return jsonify({'detail': 'Сравнение не найдено'}), 404
+    except ValueError as exc:
+        return jsonify({'detail': str(exc)}), 400
+
+
+@bp.route('/api/comparisons/<job_id>/saved-vor', methods=['POST'])
+def comparison_saved_vor(job_id):
+    try:
+        return jsonify(_get_comparison_manager().compare_saved_vor(job_id)), 202
+    except KeyError:
+        return jsonify({'detail':'Сравнение не найдено'}), 404
+    except ValueError as exc:
+        return jsonify({'detail':str(exc)}), 400
+
+
+# ---------- Формирование ВОР (типовой шаблон) ----------
+_vor_generation_manager = None
+_vor_generation_init_lock = threading.Lock()
+
+
+def _get_vor_generation_manager():
+    global _vor_generation_manager
+    with _vor_generation_init_lock:
+        if _vor_generation_manager is None:
+            from src.services.vor_generation import VorGenerationManager
+            _vor_generation_manager = VorGenerationManager(_get_manager())
+    return _vor_generation_manager
+
+
+@bp.route('/api/vor-generation', methods=['GET', 'POST'])
+def vor_generation():
+    """Формирование ВОР по типовому шаблону.
+
+    ``GET`` — список задач формирования ВОР. ``POST`` (multipart/form-data) —
+    создание задачи: обязательное поле ``ifc`` (модель IFC), необязательные
+    ``pos`` (ПОС), ``vor`` (ВОР застройщика), ``pz`` (ПЗ), ``pd`` (ПД).
+    Возвращает запись задачи (``202``); результат — файл «Сформированный_ВОР.xlsx»
+    (а при загруженном PDF ВОР застройщика — ещё и «ВОР_заказчика.xlsx»:
+    ВОР заказчика, приведённый к структуре типового ВОР).
+    ---
+    tags:
+      - vor-generation
+    consumes:
+      - multipart/form-data
+    parameters:
+      - name: ifc
+        in: formData
+        type: file
+        required: true
+        description: Модель IFC (.ifc)
+      - name: vor
+        in: formData
+        type: file
+        required: false
+        description: ВОР застройщика (PDF/XLSX)
+      - name: pos
+        in: formData
+        type: file
+        required: false
+        description: ПОС (PDF/XLSX)
+      - name: pz
+        in: formData
+        type: file
+        required: false
+        description: ПЗ (PDF/XLSX)
+      - name: pd
+        in: formData
+        type: file
+        required: false
+        description: ПД (PDF/XLSX)
+    responses:
+      200:
+        description: Список задач формирования ВОР
+      202:
+        description: Задача создана, обработка выполняется в фоне
+      400:
+        description: Некорректные входные файлы
+    """
+    manager = _get_vor_generation_manager()
+    if request.method == 'GET':
+        return jsonify(manager.list())
+    files = {kind: request.files.get(kind) for kind in ('ifc', 'pos', 'vor', 'pz', 'pd')}
+    try:
+        return jsonify(manager.create(files)), 202
+    except ValueError as exc:
+        return jsonify({'detail': str(exc)}), 400
+
+
+@bp.route('/api/vor-generation/<job_id>', methods=['GET'])
+def vor_generation_status(job_id):
+    """Статус задачи формирования ВОР (поля ``status``, ``progress``, ``message``,
+    ``result``, ``has_result``, ``has_customer_vor``)."""
+    try:
+        return jsonify(_get_vor_generation_manager().get(job_id))
+    except KeyError:
+        return jsonify({'detail': 'Задача формирования ВОР не найдена'}), 404
+
+
+@bp.route('/api/vor-generation/<job_id>/files/<filename>', methods=['GET'])
+def vor_generation_download(job_id, filename):
+    """Скачивание файла задачи формирования ВОР (``Сформированный_ВОР.xlsx``,
+    ``ВОР_заказчика.xlsx``, ``vor_generation.json``, ``IFC_исходные_параметры.json``)."""
+    try:
+        path = _get_vor_generation_manager().artifact(job_id, filename)
+        return send_file(path, as_attachment=request.args.get('download') == '1',
+                         download_name=filename)
+    except KeyError:
+        return jsonify({'detail': 'Файл не найден'}), 404
+    except ValueError as exc:
+        return jsonify({'detail': str(exc)}), 409
+
+
+@bp.route('/api/vor-generation/<job_id>/preview/<filename>', methods=['GET'])
+def vor_generation_preview(job_id, filename):
+    """Предпросмотр файла задачи формирования ВОР (``Сформированный_ВОР.xlsx``,
+    ``ВОР_заказчика.xlsx``) — таблица до 100 строк для модального окна."""
+    try:
+        path = _get_vor_generation_manager().artifact(job_id, filename)
+    except KeyError:
+        return _err(ErrorResponse(detail="Файл не найден"), 404)
+    except ValueError as exc:
+        return _err(ErrorResponse(detail=str(exc)), 409)
+
+    if not str(path).endswith(".xlsx"):
+        return _err(ErrorResponse(detail="Предпросмотр недоступен для этого типа файла"), 400)
+
+    try:
+        MAX_PREVIEW = 100
+        # Файлы ВОР — лист «ВОР КР_ЖС» типового шаблона (на первом листе
+        # служебная сводка), заголовок колонок — во второй строке листа.
+        from src.services.vor_generation.template import DEFAULT_SHEET
+        try:
+            raw = pd.read_excel(path, sheet_name=DEFAULT_SHEET, header=None)
+        except ValueError:
+            raw = pd.read_excel(path, header=None)
+        # Строка заголовка колонок — та, что содержит «Наименование работ».
+        header_idx = 1 if len(raw) > 1 else 0
+        for i in range(min(len(raw), 10)):
+            if any("Наименование работ" in str(v) for v in raw.iloc[i].tolist()):
+                header_idx = i
+                break
+        df = raw.iloc[header_idx + 1:].reset_index(drop=True)
+        df.columns = [
+            str(v) if str(v) != "nan" else f"Колонка {j + 1}"
+            for j, v in enumerate(raw.iloc[header_idx].tolist())
+        ]
+        headers = df.columns.tolist()
+        rows = df.fillna("-").astype(str).values.tolist()
+        return _ok(PreviewResponse(
+            headers=headers,
+            rows=rows[:MAX_PREVIEW],
+            total_rows=len(df),
+            preview_rows=min(len(rows), MAX_PREVIEW),
+            is_preview=len(rows) > MAX_PREVIEW,
+        ))
+    except Exception as exc:
+        logger.exception("Не удалось подготовить предпросмотр ВОР: %s", exc)
+        return _err(ErrorResponse(detail="Ошибка чтения файла"), 500)

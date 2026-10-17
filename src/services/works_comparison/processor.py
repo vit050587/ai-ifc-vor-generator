@@ -18,7 +18,7 @@ from src.core.logger import setup_logger
 logger = setup_logger(__name__)
 
 class Processor:
-    def __init__(self, ifc_result: Path | list, project_result: Path | list) -> None:
+    def __init__(self, ifc_result: Path | list, project_result: Path | list, output_path: Path | None = None) -> None:
 
         if isinstance(project_result, Path):
             with open(project_result, "r", encoding="utf-8") as f:
@@ -41,13 +41,20 @@ class Processor:
         self.ifc_positions_processor = IfcPositionsProcessor()
         self.ollama_service = OllamaService(settings.OLLAMA_PROMPTS_PATH)
         self.work_group_validator = WorkGroupValidator(self.ollama_service)
-        self.validation_result_former = ValidationResultFormer(settings.VALIDATION_RESULT_PATH)
+        self.validation_result_former = ValidationResultFormer(output_path or settings.VALIDATION_RESULT_PATH)
 
-    def run(self):
+    def run(self, on_progress=None):
         logger.info("=== Обработка смет проекта ===")
         positions = self.positions_extractor.run()
         logger.info(f"Позиций смет найдено {len(positions)}")
 
+        from .name_matching import match_customer_names
+        ifc_positions = self.ifc_positions_extractor.run()
+        if not ifc_positions:
+            raise ValueError("Сформированный ВОР пуст: в моделях нет работ. Необходимо повторить формирование ВОР перед сравнением.")
+        uncoded = any(not str(p.get("code") or "").strip() for p in positions)
+        if not uncoded:
+            positions = match_customer_names(positions, ifc_positions)
         grouped_positions, normalized_merge_keys = self.positions_processor.run(positions)
         separated_groups = self.separate_ka_positions(grouped_positions)
 
@@ -57,17 +64,20 @@ class Processor:
 
         logger.info("=== Обработка ifc результата ===")
 
-        ifc_positions = self.ifc_positions_extractor.run()
         logger.info(f"Позиций ifc найдено {len(ifc_positions)}")
 
         grouped_ifc_positions, normalized_merge_keys = self.ifc_positions_processor.run(ifc_positions)
         logger.info(f"Групп ifc позиций: {len(grouped_ifc_positions)}")
 
-        self.compare_position_groups = ComparePositionsGroups(separated_groups["positions"], grouped_ifc_positions)
+        self.compare_position_groups = ComparePositionsGroups(grouped_positions, grouped_ifc_positions)
         compared_groups = self.compare_position_groups.compare(normalized_merge_keys)
+        if uncoded:
+            from .semantic_matching import semantic_compare
+            compared_groups = semantic_compare(positions, ifc_positions, self.ollama_service.llm, cache_path=self.validation_result_former.output_path.with_name('semantic_match_cache.json'), progress=(lambda d, t: on_progress(round(d / max(t, 1) * 600), 1000)) if on_progress else None)
         self._log_compare_results(compared_groups)
 
-        validation_statistics = self.work_group_validator.validate(compared_groups)
+        validation_progress = (lambda d, t: on_progress(600 + round(d / max(t, 1) * 400), 1000)) if uncoded and on_progress else on_progress
+        validation_statistics = self.work_group_validator.validate(compared_groups, on_progress=validation_progress)
         result = self.validation_result_former.form_and_save(
             compared_groups,
             validation_statistics,

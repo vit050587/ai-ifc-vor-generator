@@ -1641,14 +1641,26 @@ discipline="AR", output_filename="final_result_AR.json")` — сопоставл
 | 11з | `doc_facts.py` | этап 1 (`WORKS_SELECTOR=perechen`) | Факты из ВОР/ПД (§5.8.1): класс бетона B/W/F по конструкциям (когда в модели его нет), класс арматуры, **масса арматуры по конструкции, классу и диаметру** из ВОР (`vor_rebar_rows`/`Facts.rebar_by_diameter`, установка + сталь по диаметрам), объёмы работ «по проекту» из ВОР (раскладка по группам), сверка объёмов модель ↔ ВОР и тезисы «Из ВОР»/«Из ПД» → `analytic.json`; сводка для UI — `GET /api/session/<id>/doc_facts`; кеш LLM-решений `data/doc_facts_cache.json`; подтверждение условных работ «не моделируется» (`_corpus`/`confirm_keys`, §5.8.2) |
 | 11и | `perechen_pipeline.py` (`CONDITIONAL_WORKS`) | этап 1 (`WORKS_SELECTOR=perechen`) | Работы «не моделируется» (гидрошпонка, штуцер инъекционный, набухающий профиль, уплотнители швов, закладные) остаются только при подтверждении документом сессии (IFC/ПОС/ВОР/ПД), иначе строка и её ресурсы удаляются (§5.8.2) |
 | 11к | `vor_comparison.py` | этап 1 (если ВОР загружен) | Сравнение работ и объёмов ВОР заказчика и сформированного перечня (`Финальный_перечень_работ.json`): детерминированный разбор PDF ВОР (`doc_pdf_parser.extract_vor_rows`: разделы, блоки/захватки, объёмы «стало»; fallback — `ВОР_ведомость_объемов_работ.json`), приведение единиц к базовым, **сравнение по каждой группе элементов и каждой работе** (группа — канонический вид конструкции `element_group`; ВОР разбит по секциям/этажам — приводится к части здания; отдельные листы по группам, видам конструкций и ресурсам; арматура не сравнивается — «взято из ВОР»), агрегация объёмов по листовым позициям, подсветка расхождений → `Сравнение_ВОР_и_перечня.xlsx/.json` (в `run_<NNN>/`); эндпоинт `GET /api/session/<id>/compare_vor` (§5.13) |
-| 12 | `ifc_json_builder.py` | этап 1 | Финальный `final_result_AR.json` |
+| 12 | `ifc_json_builder.py` | этап 1 | Финальный `final_result_AR.json`; `enrich_group_levels` — восстановление этажей групп по GUID из `filtered_elements.xlsx` (используется сравнением ВОР, §11) |
+| 13 | `comparison_manager.py` | режим «Сравнение ВОР» | Оркестратор comparison-сессий (`session_type='comparison'`): обработка нескольких моделей/чертежей (ЦС/ИИ), разбор документов, параметры, разбор ВОР заказчика и сравнение → `models.json`/`estimates.json`/`result.json`/`result.xlsx` (§11) |
+| 14 | `comparison_documents.py` | режим «Сравнение ВОР» | Общие константы сравнения: `DOC_FILENAMES`, `resolve_constants` (приоритет IFC → ПОС → ПЗ → по умолчанию + ручные переопределения), `material_choices` (уточнение неполных МССК-кодов материалов) (§11) |
+| 15 | `vor_parser.py` | режим «Сравнение ВОР» | Локальный парсер ВОР заказчика (PDF с текстовым слоем / XLSX) по заголовкам колонок: позиции, единицы, объём («стало»/«после корректировки»/«по проекту»), разделы, выбор столбца объёма при неоднозначности (`QuantityColumnRequired`) (§11) |
+| 16 | `works_comparison/` | режим «Сравнение ВОР» | Пакет сравнения позиций (извлечение, нормализация единиц, группировка, сопоставление по шифру/семантике/конструкциям, LLM-валидация, формирование отчёта) — подключён к конвейеру через `comparison_manager` (§11) |
+| 17 | `comparison_vor.py` | режим «Сравнение ВОР» | Компактный отчёт сравнения (`prepare_report`, `reportVersion=3`): `vorRows` (иерархия часть → раздел → подраздел → группа/работа), `vorSummary`, `matchingStatistics`, `comparisonStatistics` (§11) |
 | — | `api_works_lookup.py`, `works_cost.py`, `serializer.py` | вне АР-подбора | КР (API ТСН), расчёт/форматирование стоимости перечня (КР), 3D-GLB по запросу |
 
 Примечание: прежний 4-этапный LLM-пайплайн АР (`first_etap.py`, `second_etap.py`,
 `third_etap.py`, `fourth_etap.py`, `base_knowledge.py`, `geometry_filter.py`,
 `validation_processor.py`, промпт `prompts/element_analyze.txt`, справочник
-`data/perechen_ar.xlsx` и переменная `AR_DOCUMENTS_PATH`) **удалён** — подбор
-работ в АР полностью заменён детерминированным `works_table_selector`.
+`data/perechen_ar.xlsx` и переменная `AR_DOCUMENTS_PATH`) **выведен из пайплайна**
+(файлы-модули сохранены как legacy и нигде не импортируются) — подбор работ в АР
+полностью заменён детерминированным `works_table_selector`.
+
+Примечание: пакет [`src/services/works_comparison/`](./src/services/works_comparison/)
+(LLM-валидация и сравнение позиций, промпты `prompts/validate_material.txt`,
+`prompts/validate_work.txt`) **подключён к сервису** через режим «Сравнение
+ведомостей объёмов работ» (`comparison_manager`, §11); ранее запускался только
+вручную.
 
 ---
 
@@ -1672,6 +1684,7 @@ discipline="AR", output_filename="final_result_AR.json")` — сопоставл
 | `tsn/*.json` (`tsn_3_6_full.json`, `tsn_3_7_full.json`, `tsn_3_15_full.json`, …) | `tsn_coeffs` | Разобранные сборники ТСН (коэффициенты §3, техническая часть, состав норм, ссылки) для поправочных коэффициентов (§5.9); пополняются через `tsn_add.sh` (§10) |
 | `kb_cache.json`, `tsn_decisions_cache.json`, `pd_full_cache_v2.json`, `doc_facts_cache.json` | `perechen_kb` / `tsn_coeffs` / `pd_full` / `doc_facts` | Кеши LLM-решений подбора по перечню, поправок ТСН, полного разбора ПОС/ПЗ и сопоставления фактов ВОР/ПД с конструкциями (§5.8.1) |
 | `etalon.xlsx` | `kb_etalon` | Эталон для проверки качества подбора (вспомогательный инструмент) |
+| `comparison_vor_template.xlsx` | `comparison_vor.prepare_report` | Шаблон стандартной иерархии ВОР (часть здания → раздел → подраздел → работа → шифр) — по нему отчёт сравнения (§11) относит работы к разделам и раскрывает компактный вид `vorRows` |
 | `perechen_kr*.xlsx`, `ifc_to_collections.json` (КР-часть), `elements_mssk*.xlsx` | КР / вспомогательно | Используются в режиме КР; `elements_mssk.xlsx` — исходник nested-JSON |
 
 Все файлы `data/` — **только чтение**; результаты пишутся в `outputs/<session_id>/`.
@@ -1726,6 +1739,10 @@ discipline="AR", output_filename="final_result_AR.json")` — сопоставл
 остальные файлы списка выше — рабочие артефакты конвейера, они остаются в
 `run_<NNN>/` на диске, но в список файлов запуска не включаются.
 
+**Отдельный режим «Сравнение ведомостей объёмов работ»** (несколько моделей +
+ВОР заказчика) использует собственный каталог `outputs/<comparison_id>/` и файлы
+`models.json` / `estimates.json` / `result.json` / `result.xlsx` — см. §11.
+
 ---
 
 ## 9. Ключевые отличия от режима КР
@@ -1775,3 +1792,167 @@ discipline="AR", output_filename="final_result_AR.json")` — сопоставл
 `bash tsn_add.sh "uploads/tsn/<файл>.pdf"` (парсер `src/tools/tsn/`) →
 `data/tsn/tsn_3_<N>_full.json`; после этого достаточно перезапросить
 `GET /api/tsn/docs` (список сборников в UI обновится).
+
+---
+
+## 11. Сравнение ведомостей объёмов работ (comparison-сессии)
+
+Отдельный режим сервиса (вкладка веб-интерфейса «**Сравнение ведомостей объёмов
+работ**», эндпоинты `/api/comparisons*`): пользователь загружает **несколько
+моделей или чертежей** (IFC или PDF — в одном сравнении только один формат) и
+**ВОР заказчика** (PDF, XLSX, XLS, XML, ZIP, GSFX, GGE); сервис формирует ВОР по
+каждой модели тем же конвейером, что и обычная сессия (режим **ЦС** или **ИИ**),
+разбирает ВОР заказчика и сопоставляет работы и объёмы обеих сторон.
+
+Оркестратор — [`src/services/comparison_manager.py`](./src/services/comparison_manager.py)
+(`ComparisonManager`). Состояние сравнения хранится в общем реестре сессий
+`outputs/sessions.json` (запись с `session_type='comparison'`), файлы — в
+`outputs/<comparison_id>/`. Дочерние сессии моделей ссылаются на сравнение полем
+`parent_session_id`. Сравнения, созданные старой версией (каталог
+`outputs/comparisons/<id>/state.json`), импортируются при первом обращении к
+менеджеру (ID и пути отчётов сохраняются).
+
+### 11.1. Создание и этапы (`POST /api/comparisons`)
+
+Тело — `multipart/form-data`: несколько полей `files` (модели/чертежи) + поле
+`processing_type` (`CS`/`AI`; легаси `KR`/`AR` принимаются); в режиме **ИИ**
+дополнительно `pos`, `pz`, `vor`, `pd` (PDF ПОС/ПЗ/ВОР/ПД). Валидация: режим —
+`CS`/`AI`, файлы — только `.ifc`/`.pdf` и одного формата, документы — только для
+режима ИИ и только PDF.
+
+Фоновая обработка (`_models`) проходит стадии (отдаются в `stages`):
+
+1. **`documents`** — разбор загруженных ПОС/ПЗ/ВОР/ПД (только ИИ): тот же
+   пайплайн, что в обычной сессии (`pd_parser.parse_pos_constants` для ПОС/ПЗ,
+   `doc_pdf_parser.parse_vor`/`parse_pd` для ВОР/ПД, `pd_full.extract` для
+   полного разбора ПОС/ПЗ, `doc_facts.Facts` для фактов ВОР/ПД). Результаты —
+   `ПОС_глобальные_константы.json`, `ПЗ_глобальные_константы.json`,
+   `ВОР_ведомость_объемов_работ.json/.xlsx`, `ПД_характеристики_элементов.json/.xlsx`,
+   `pd_full.json` в каталоге сравнения.
+2. **`models`** — по каждой модели создаётся обычная сессия (`process_ifc` /
+   `process_pdf`) и запускается полный пайплайн (`select_rows(all_rows=True)`).
+   В режиме ИИ сначала формируется превью параметров (`_prepare_parameters`,
+   `comparison_documents.resolve_constants` + `material_choices`) и статус
+   переходит в **`parameters_required`** — пользователь проверяет/переопределяет
+   константы, уточняет неполные МССК-коды материалов и выбирает «с учётом ПОС/ПЗ
+   / без учёта» и «учитывать поправки ТСН» (`POST /api/comparisons/<id>/parameters`),
+   после чего обработка моделей продолжается. Для ЦС параметры не запрашиваются.
+   По завершении модели — `models.json` (объединённые `final_result_*` со полем
+   `sourceFile`) и статус **`models_ready`**; `analytic.json` каждого запуска
+   складывается в `model_analytics.json`.
+3. **`estimates`** — разбор ВОР заказчика (см. §11.2).
+4. **`comparison`** — сравнение и LLM-проверка (см. §11.3).
+
+Статусы сравнения: `models_processing` → (`parameters_required`) → `models_ready`
+→ `comparing` → `completed`; при неоднозначности столбца объёма —
+`input_required`; при ошибке — `error`. Активные статусы
+(`models_processing`, `comparing`) при перезапуске сервиса переводятся в `error`
+(обработку нужно запустить заново).
+
+### 11.2. Разбор ВОР заказчика
+
+ВОР заказчика загружается после готовности моделей
+(`POST /api/comparisons/<id>/estimates`; в режиме ИИ уже загруженный PDF ВОР
+можно переиспользовать — `POST /api/comparisons/<id>/saved-vor`).
+
+- **PDF с текстовым слоем и XLSX** разбираются **локально**
+  ([`src/services/vor_parser.py`](./src/services/vor_parser.py),
+  `parse_vor`): структура определяется **по заголовкам колонок**, а не по
+  фиксированным номерам. Распознаются наименование, единица измерения
+  (`works_comparison.units.unit_and_factor`), шифр, раздел/позиция/строка и
+  объём. Приоритет отдаётся колонкам «стало / после корректировки / по проекту»
+  (объём с учётом корректировки ПД); если таких нет, берётся обычная колонка
+  объёма. Если подходящих столбцов объёма несколько — поднимается
+  `QuantityColumnRequired`, статус переходит в `input_required`, а пользователь
+  выбирает столбец (`POST /api/comparisons/<id>/retry` с `quantityColumn`).
+  Результат сохраняется в формате `local_vor_v3` (`parser='local_vor_v3'`,
+  совместим с разбором внешнего сервиса; именно эта версия кешируется в
+  `estimate_<N>_parsed.json` и переиспользуется при повторном запуске).
+- **Прочие форматы** (`.xml`, `.zip`, `.gsfx`, `.gge`) отправляются во внешний
+  сервис разбора смет
+  ([`src/services/estimate_tasks_client.py`](./src/services/estimate_tasks_client.py),
+  `EstimateTasksClient`, эндпоинты `/smeta/v2/tasks/{validate,upload,{id}/status,{id}/result}`):
+  предварительная проверка (`validate`), загрузка (`upload`; при конфликте
+  `taskId` запрос повторяется с суффиксом `(1)…(10)`) и ожидание результата с
+  прогрессом (`wait_for_result` → `get_status` / `get_result`). Адрес сервиса —
+  переменная окружения `ESTIMATE_TASKS_BASE_URL` (по умолчанию
+  `http://82.202.138.45`; суффикс `/smeta` добавляется автоматически).
+  Клиент импортируется **лениво** (через `ComparisonManager._estimate_tasks_client`)
+  — только при разборе этих форматов, поэтому недоступность модуля не влияет на
+  разбор PDF/XLSX (ранее импорт на входе `_compare` ронял сравнение даже для
+  локально разбираемых файлов с `ModuleNotFoundError`). Если модуль недоступен,
+  для `.xml/.zip/.gsfx/.gge` возвращается понятная ошибка вместо `ImportError`.
+
+Разобранные ВОР заказчика сохраняются в `estimates.json`
+(`[{sourceFile, result, parser, parseDiagnostics, parsedRows, ...}]`).
+
+### 11.3. Сравнение и отчёт (`works_comparison/` + `comparison_vor.py`)
+
+Сравнение выполняет пакет [`src/services/works_comparison/`](./src/services/works_comparison/)
+(`processor.Processor`, теперь **подключён к конвейеру** через
+`comparison_manager`; ранее запускался только вручную):
+
+- извлечение позиций смет заказчика и сформированного ВОР
+  (`positions_extractor.py`, `ifc_positions_extractor.py`);
+- нормализация единиц измерения (`units.py` — `unit_and_factor`,
+  `normalize_positions`: «100 м2» → «м²» с множителем, алиасы «куб.м», «пог.м»,
+  «шт» и т.п.);
+- группировка позиций по «нормализованному шифру + единице»
+  (`positions_processor.py` / `ifc_positions_processor.py`, `utils.group_positions`);
+- сопоставление групп (`compare_positions_groups.py`), при **отсутствии шифров**
+  у заказчика — **семантическое сопоставление по наименованию**
+  (`semantic_matching.py`, LLM) и сопоставление по конструкциям
+  (`construction_matching.py`); диагностика — `semantic_match_diagnostics.jsonl`;
+- LLM-валидация подобранных работ (`work_group_validator.py` +
+  `ollama_service.py`, модель `OLLAMA_MODEL`; кеш ответов);
+- формирование отчёта (`validation_result_former.py`) → `result.json`.
+
+Затем [`src/services/comparison_vor.py`](./src/services/comparison_vor.py)
+(`prepare_report`) строит **компактный отчёт** (`reportVersion = 3`) по шаблону
+стандартной иерархии `data/comparison_vor_template.xlsx`:
+
+- `vorRows` — строки «часть здания → раздел → подраздел → группа/работа»:
+  работа и код сформированного ВОР, объём сформированного ВОР и объём ВОР
+  заказчика, расхождение и `%`, наличие (`В обоих ВОР` / `Только в …`),
+  статус, вердикт и уверенность ИИ, метод сопоставления, группы заказчика;
+- `vorSummary` (сводка по наличию), `matchingStatistics`, `comparisonStatistics`,
+  `validationStatistics`, `groupStatistics`, `positionsByVerdict`, `comparison`.
+
+Отчёт сохраняется в `result.json` и Excel `result.xlsx` (сборка —
+`comparison_report.build_comparison_excel`).
+
+### 11.4. Артефакты и API
+
+Файлы сравнения (`outputs/<comparison_id>/`): `models.json`, `estimates.json`,
+`model_analytics.json`, `semantic_match_diagnostics.jsonl`, `result.json`,
+`result.xlsx`; в режиме ИИ — документы ПОС/ПЗ/ВОР/ПД (`*_глобальные_константы.json`,
+`ВОР_ведомость_объемов_работ.json/.xlsx`, `ПД_характеристики_элементов.json/.xlsx`,
+`pd_full.json`); по каждому разобранному ВОР заказчика — кеши
+`estimate_<N>_parsed.json`, `estimate_<N>_upload.json`, `estimate_<N>_status.json`,
+`estimate_<N>_validation.json`.
+
+Excel-отчёт `result.xlsx` собирается модулем `src/services/comparison_report.py`
+(`build_comparison_excel`); если модуль отсутствует в сборке, сравнение всё равно
+завершается (`completed`) и сохраняется `result.json` — в лог пишется
+предупреждение, а скачивание `result.xlsx` возвращает 409 с пояснением.
+
+Эндпоинты (все — JSON, требуют авторизации):
+
+| Метод | Путь | Описание |
+|---|---|---|
+| GET | `/api/comparisons` | Список сравнений (новые сверху) |
+| POST | `/api/comparisons` | Создать сравнение (модели/чертежи + `processing_type`; ИИ — `pos`/`pz`/`vor`/`pd`), 202 |
+| GET | `/api/comparisons/<id>` | Состояние сравнения (статус, стадии, документы, параметры, предупреждения) |
+| POST | `/api/comparisons/<id>/estimates` | Загрузить ВОР заказчика и запустить сравнение, 202 |
+| POST | `/api/comparisons/<id>/parameters` | Подтвердить параметры расчёта (ИИ): `overrides`, `use_documents`, `material_codes`, `use_tsn` |
+| POST | `/api/comparisons/<id>/saved-vor` | Переиспользовать уже загруженный PDF ВОР заказчика, 202 |
+| POST | `/api/comparisons/<id>/retry` | Повторить разбор/сравнение (`sourceIndex`, `quantityColumn`), 202 |
+| GET | `/api/comparisons/<id>/files/<filename>` | Скачать артефакт (`result.json`, `result.xlsx`, `models.json`, `estimates.json`, `semantic_match_diagnostics.jsonl`); `?download=1` |
+
+Веб-интерфейс (вкладка «Сравнение ведомостей объёмов работ»): выбор режима
+ЦС/ИИ, загрузка моделей (и документов в ИИ), список сохранённых сравнений,
+индикаторы стадий, панель параметров расчёта (константы, уточнение материалов,
+переключатели ПОС/ПЗ и сборников ТСН, справка по расчёту и найденному в
+документах), загрузка ВОР заказчика, выбор столбца объёма, отчёт с видами
+«Сравнение ВОР» (`vorRows`), «Объёмы», «Позиции по вердикту ИИ», «Статистика по
+группам» и скачиванием JSON/XLSX.

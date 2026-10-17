@@ -3,10 +3,13 @@ CLI: python -u -m src.services.pd_full [ПОС.pdf] [ПЗ.pdf]
 """
 import os, re, sys, json, hashlib, time
 import fitz, requests
+from pathlib import Path
+from src.core.config import load_config
+_cfg = load_config()
 
-LLM_URL = os.getenv("LLM_BASE_URL", "http://ollama:11434").rstrip("/")
-LLM_MODEL = os.getenv("LLM_MODEL", "qwen3.8:27b")
-CACHE = os.getenv("PD_FULL_CACHE_PATH", "/app/data/pd_full_cache_v2.json")
+LLM_URL = os.getenv("LLM_BASE_URL", _cfg.ollama_url).rstrip("/")
+LLM_MODEL = os.getenv("LLM_MODEL", _cfg.model_ollama)
+CACHE = os.getenv("PD_FULL_CACHE_PATH", str(Path(__file__).resolve().parents[2] / "data" / "pd_full_cache_v2.json"))
 
 # group: (документы, [(id, название, ключевые слова regex)])
 PARAMS = {
@@ -120,9 +123,12 @@ def extract(pos_path=None, pz_path=None, log=print):
     docs = {}
     if pos_path and os.path.isfile(pos_path): docs["ПОС"] = pages(pos_path)
     if pz_path and os.path.isfile(pz_path): docs["ПЗ"] = pages(pz_path)
-    key = hashlib.md5("|".join(f"{k}:{sum(map(len, v))}" for k, v in docs.items()).encode()).hexdigest()
-    try: cache = json.load(open(CACHE, encoding="utf-8"))
-    except Exception: cache = {}
+    key = "content-v1:" + hashlib.sha256(json.dumps({"docs":docs,"model":LLM_MODEL,"params":PARAMS}, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    try:
+        with open(CACHE, encoding="utf-8") as stream:
+            cache = json.load(stream)
+    except (OSError, ValueError):
+        cache = {}
     if key in cache:
         return cache[key]
     result = []
@@ -159,8 +165,16 @@ def extract(pos_path=None, pz_path=None, log=print):
                            "page": a.get("page"), "quote": str(a.get("quote") or "")[:200], "use": USE.get(pid, "info")})
         log(f"  {group}: {sum(1 for p,_ in todo if (ans.get(p) or {}).get('value'))}/{len(items)} найдено, {time.time()-t0:.0f} с")
     cache[key] = result
-    try: json.dump(cache, open(CACHE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-    except Exception: pass
+    try:
+        import tempfile
+        destination = Path(CACHE)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=destination.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(cache, stream, ensure_ascii=False, indent=1)
+        os.replace(temporary, destination)
+    except OSError:
+        pass
     return result
 
 

@@ -884,13 +884,15 @@ def _corpus(session_dir: str) -> List[Tuple[str, Any, str]]:
         for it in _load_json(pd).get("items") or []:
             corpus.append(("ПД", it.get("page"),
                            f"{it.get('element') or ''} {it.get('quote') or ''}"))
-    for fname, src in (("ПОС_глобальные_константы.json", "ПОС"),
-                       ("ПЗ_глобальные_константы.json", "ПЗ")):
+    mode_file = _find(key_dir, "pd_mode.json")
+    include_pos_pz = not mode_file or _load_json(mode_file).get("mode", "on") != "off"
+    for fname, src in ((("ПОС_глобальные_константы.json", "ПОС"),
+                       ("ПЗ_глобальные_константы.json", "ПЗ")) if include_pos_pz else ()):
         fp = _find(key_dir, fname)
         if fp:
             for k, v in _load_json(fp).items():
                 corpus.append((src, None, f"{k} {json.dumps(v, ensure_ascii=False)}"))
-    fp = _find(key_dir, "pd_full.json")
+    fp = _find(key_dir, "pd_full.json") if include_pos_pz else None
     if fp:
         data = _load_json(fp)
         rows = data.values() if isinstance(data, dict) else data

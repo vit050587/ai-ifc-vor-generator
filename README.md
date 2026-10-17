@@ -51,6 +51,10 @@
 - **3D-модель (GLB)** из IFC — формируется по запросу (`/api/session/<id>/3d_model`).
 - **Множественные запуски** (runs) в рамках одной сессии — можно повторно обрабатывать
   выбранные строки, переключаться между запусками и их результатами.
+- **Сравнение ведомостей объёмов работ** (comparison-сессии): загрузка нескольких моделей
+  или чертежей (ЦС/ИИ) и ВОР заказчика (PDF/XLSX/XLS/XML/ZIP/GSFX/GGE), разбор ВОР заказчика,
+  сопоставление работ и объёмов сформированного ВОР и ВОР заказчика (по шифру/семантике/
+  конструкциям + LLM-валидация), отчёт в JSON/Excel.
 - **Авторизация** (flask-login) + защита API.
 
 ---
@@ -83,17 +87,43 @@ ai-ifc-vor-generator/
 │       ├── zero_step.py       # Извлечение элементов из IFC (КР/АР), нормализация
 │       ├── ifc_raw_dump.py    # «Сырой» дамп свойств/QTO/материалов + расчёт по bbox
 │       ├── ifc_reference_builder.py # Построение JSON-справочников из IFC/PDF (КР)
-│       ├── works_table_selector.py  # АР: детерминированный подбор таблиц работ
-│       ├── ifc_json_builder.py      # Сборка финального JSON
+│       ├── selection_template_builder.py # Шаблон параметров подбора по элементам (АР)
+│       ├── works_table_selector.py  # АР: детерминированный подбор таблиц работ (8 шагов)
+│       ├── works_fetcher.py   # АР: работы таблиц из цифрового сборника (larix)
+│       ├── works_final_selector.py  # АР: финальный подбор работ через LLM (WORKS_SELECTOR=llm)
+│       ├── perechen_kb.py     # АР: база знаний перечня сметчиков (perechen_kr.xlsx)
+│       ├── perechen_pipeline.py     # АР: подбор по перечню (WORKS_SELECTOR=perechen)
+│       ├── local_works.py / local_resources.py # АР: локальный справочник расценок/ресурсов
+│       ├── tsn_coeffs.py      # АР: поправочные коэффициенты сборников ТСН (data/tsn)
+│       ├── pd_full.py         # АР: полный разбор ПОС/ПЗ (≈40 параметров)
+│       ├── ifc_features.py    # АР: признаки геометрии IFC (криволинейность, наклон и др.)
+│       ├── doc_facts.py       # АР: факты из ВОР/ПД (класс бетона/арматуры, объёмы, сверка)
+│       ├── ifc_json_builder.py      # Сборка финального JSON (ARBuilder/KRBuilder)
 │       ├── position_links.py  # Ссылки на позиции цифрового сборника (КР)
+│       ├── vor_comparison.py  # АР: сравнение ВОР заказчика и сформированного перечня
 │       ├── works_cost.py      # Расчёт/форматирование стоимости перечня (КР)
 │       ├── group_excel.py     # Группировка элементов (КР и АР), правила группировки
 │       ├── api_works_lookup.py# Подбор работ через API справочника ТСН (КР)
 │       ├── materials_lookup.py# Карта МССК-кодов материалов (АР)
 │       ├── mssk_lookup.py     # Карта МССК-кодов элементов
-│       ├── pd_parser.py       # Разбор PDF ПОС через LLM (АР)
+│       ├── pd_parser.py       # Разбор PDF ПОС/ПЗ через LLM (АР)
+│       ├── doc_pdf_parser.py  # Разбор PDF ВОР/ПД через LLM (АР)
 │       ├── pdf_processor.py   # Обёртка пайплайна обработки PDF
+│       ├── kb_inspect.py / kb_model.py / kb_etalon.py # Вспомогательные инструменты базы знаний
+│       ├── comparison_manager.py   # Сравнение ВОР: оркестратор comparison-сессий
+│       ├── comparison_documents.py # Сравнение ВОР: константы и уточнение материалов
+│       ├── comparison_vor.py       # Сравнение ВОР: компактный отчёт сравнения
+│       ├── vor_parser.py           # Сравнение ВОР: локальный парсер ВОР заказчика (PDF/XLSX)
+│       ├── works_comparison/  # Пакет сравнения позиций (LLM-валидация) — см. ниже
 │       └── serializer.py      # Экспорт IFC → GLB (3D модель)
+│
+│   # src/services/works_comparison/ — сравнение позиций смет заказчика и IFC
+│   #   (подключён к сервису через comparison_manager, режим «Сравнение ВОР»):
+│   #   processor.py, positions_extractor.py, ifc_positions_extractor.py,
+│   #   positions_processor.py, ifc_positions_processor.py, compare_positions_groups.py,
+│   #   semantic_matching.py, construction_matching.py, work_group_validator.py,
+│   #   validation_result_former.py, ollama_service.py, units.py,
+│   #   normalization_functions.py, utils.py, config.py
 │
 ├── ai-blueprint-to-ifc/       # Пайплайн машинного зрения для PDF-чертежей
 │   ├── config.py              # Настройки (модели, параметры, пороги)
@@ -121,18 +151,25 @@ ai-ifc-vor-generator/
 │       ├── get_scale.txt
 │       └── get_text_from_image.txt
 │
-├── prompts/                   # Промпты пайплайна (сейчас пусто — промпты встроены в модули)
-├── data/                      # Справочники и входные данные
-│   ├── perechen_kr.xlsx, perechen_kr_1.xlsx  # Перечни работ (КР)
-│   ├── koefs.xlsx                            # Нормы расхода (корректировка объёма, КР)
-│   ├── price_cost.xlsx                       # Стоимость расценок (КР)
+├── prompts/                   # Промпты LLM (validate_material.txt, validate_work.txt —
+│                              #   пакет works_comparison; element_analyze.txt — legacy)
+├── data/                      # Справочники и входные данные (только чтение)
+│   ├── perechen_kr.xlsx, perechen_kr_1.xlsx  # Перечни работ (КР; perechen_kr — база знаний АР)
+│   ├── koefs.xlsx                            # Нормы расхода (корректировка объёма, КР и АР)
+│   ├── price_cost.xlsx                       # Стоимость расценок (КР; локальный справочник АР)
 │   ├── ifc_to_collections.json               # Правила IfcClass → сборники (АР)
 │   ├── msck_elements_compact.json            # Дерево МССК-элементов (АР)
 │   ├── tree_work_compact.json                # Дерево сборников ГЭСН/ТСН-2001 (АР)
-│   ├── works_classification.json             # Классификация сборников + 7 констант (АР)
-│   ├── params_registry.json                  # Реестр параметров ПОС (АР)
+│   ├── works_classification.json             # Классификация сборников + 10 констант (АР)
+│   ├── params_registry.json                  # Реестр параметров ПОС/ПЗ (АР)
+│   ├── selection_parameters.json / selection_parameters_mapping.json # Шаблон и карта параметров подбора (АР)
+│   ├── tsn/                                  # Разобранные сборники ТСН (поправки, АР)
+│   ├── comparison_vor_template.xlsx          # Шаблон иерархии ВОР (сравнение ВОР)
 │   ├── elements_mssk.xlsx / elements_mssk_nested.json  # Справочник МССК элементов
-│   └── materials_mssk.xlsx / materials_mssk_nested.json # Справочник МССК материалов
+│   ├── materials_mssk.xlsx / materials_mssk_nested.json # Справочник МССК материалов
+│   └── *.json                                # Кеши LLM-решений (kb_cache, tsn_decisions_cache,
+│                                             #   pd_full_cache_v2, doc_facts_cache) и кеши расценок
+│                                             #   (local_works, local_resources, local_norms)
 │
 ├── uploads/                   # Загруженные файлы (по сессиям)
 └── outputs/                   # Результаты обработки
@@ -154,7 +191,8 @@ ai-ifc-vor-generator/
 | `yolo_legend_layout.pt` | Ultralytics YOLO | Детекция таблиц легенды |
 | `dino_hatching.pt` | DINO (TorchScript) | Анализ штриховок, сравнение символов легенды |
 | `hf.co/unsloth/Qwen3-VL-8B-Instruct-GGUF` (`OLLAMA_MODEL_NAME`) | Ollama / VLM | Обработка чертежей PDF: распознавание материалов/штриховок по изображению |
-| `yandex/YandexGPT-5-Lite-8B-instruct-GGUF` (`NORMS_LLM_MODEL` / `model_ollama`) | Ollama | Этап 1 (нормализация элемента), этап 3 (LLM-проверка высоты), этап 4 (выбор работ) — режим ИИ (АР) |
+| `yandex/YandexGPT-5-Lite-8B-instruct-GGUF` (`NORMS_LLM_MODEL` / `model_ollama`, `LLM_MODEL`, `KB_LLM_MODEL`) | Ollama | Режим ИИ (АР): разбор ПОС/ПЗ/ВОР/ПД (`pd_parser`, `doc_pdf_parser`, `pd_full`), подбор работ по перечню (`perechen_kb`/`perechen_pipeline`), поправки ТСН (`tsn_coeffs`) |
+| `OLLAMA_MODEL` (`works_comparison`) | Ollama | Сравнение ВОР: семантическое сопоставление позиций и LLM-валидация подобранных работ |
 | `GreenMap/qwen3-vl-4b-ru-blueprint-extractor` (`TG_MODEL_DIR`) | transformers (HF) | Извлечение данных с чертежа/легенды (VLM через `transformer_service`) |
 | **ifcopenshell** | C++/Python | Парсинг и геометрия IFC, экспорт в GLB (не ML) |
 
@@ -207,6 +245,17 @@ ai-ifc-vor-generator/
 - **Сборка финального JSON по запросу**: для каждого запуска доступна отдельная сборка
   (`build_final_json` / `final_json/status` / `final_json/result`) со статусами и ошибками
   (`finalJsonStatus` / `finalJsonError` в `RunInfo`).
+- **Сравнение ведомостей объёмов работ** (comparison-сессии, `comparison_manager.py`):
+  загрузка нескольких моделей/чертежей (ЦС/ИИ) и ВОР заказчика (PDF/XLSX/XLS/XML/ZIP/GSFX/GGE);
+  по каждой модели формируется ВОР тем же конвейером, затем ВОР заказчика разбирается
+  (PDF/XLSX — локальным парсером `vor_parser`, остальные — внешним сервисом) и сравнивается
+  с сформированным ВОР пакетом `works_comparison/` (группировка по шифру+единице,
+  семантическое сопоставление, LLM-валидация) → `result.json`/`result.xlsx`.
+- **Разбор ВОР/ПД и подбор по перечню сметчиков** (режим ИИ): `doc_pdf_parser` (ВОР/ПД),
+  `pd_full` (≈40 параметров ПОС/ПЗ), `perechen_kb`/`perechen_pipeline` (подбор по
+  `perechen_kr.xlsx` + локальный справочник `price_cost.xlsx`), `tsn_coeffs`
+  (поправочные коэффициенты сборников ТСН), `doc_facts` (факты ВОР/ПД), `vor_comparison`
+  (сравнение ВОР заказчика и сформированного перечня).
 
 ---
 
@@ -220,6 +269,10 @@ ai-ifc-vor-generator/
 | `data/ifc_to_collections.json`, `msck_elements_compact.json`, `tree_work_compact.json`, `works_classification.json`, `params_registry.json` | Справочники детерминированного подбора работ (АР) |
 | `data/elements_mssk.xlsx`, `elements_mssk_nested.json` | МССК-справочник строительных элементов (иерархия категория→назначение→класс→подкласс) |
 | `data/materials_mssk.xlsx`, `materials_mssk_nested.json` | МССК-справочник материалов (для группировки АР элементов по слоям) |
+| `data/selection_parameters.json`, `selection_parameters_mapping.json` | Шаблон параметров подбора и карта соответствия (сырой дамп IFC → параметры) — режим АР |
+| `data/tsn/*.json` | Разобранные сборники ТСН (поправочные коэффициенты, состав норм) — режим АР |
+| `data/comparison_vor_template.xlsx` | Шаблон стандартной иерархии ВОР для отчёта сравнения |
+| `data/*.json` (кеши) | `kb_cache.json`, `tsn_decisions_cache.json`, `pd_full_cache_v2.json`, `doc_facts_cache.json`, `local_works.json`, `local_resources.json`, `local_norms.json` — кеши LLM-решений и локальных расценок |
 
 Новые/изменённые файлы-результаты в `outputs/<session_id>/`:
 
@@ -234,6 +287,16 @@ ai-ifc-vor-generator/
 - `blueprint_painted.png`, `materials_colors.md` — размеченный чертёж и условные обозначения (PDF);
 - `api_works_response.json` — сырые ответы API подбора работ (КР).
 
+Файлы режима ИИ (АР): `Подобранные_таблицы_работ.json`, `Подобранные_работы.json`,
+`Финальный_перечень_работ.xlsx` (+ `.json`), `analytic.json`, `period.json`,
+`ПОС_глобальные_константы.json`, `ПЗ_глобальные_константы.json`,
+`ВОР_ведомость_объемов_работ.json/.xlsx`, `ПД_характеристики_элементов.json/.xlsx`,
+`pd_full.json`, `Параметры_подбора_элементов.json`, `Сравнение_ВОР_и_перечня.xlsx/.json`.
+
+Файлы сравнения ведомостей (каталог `outputs/<comparison_id>/`): `models.json`,
+`estimates.json`, `model_analytics.json`, `result.json`, `result.xlsx`,
+`semantic_match_diagnostics.jsonl`.
+
 ---
 
 ## База данных
@@ -242,9 +305,10 @@ ai-ifc-vor-generator/
 
 - **Состояние сессий** — JSON-файл `outputs/sessions.json` (потокобезопасно, с атомарной записью,
   резервным копированием при повреждении). Хранит метаданные сессий, запусков, списки файлов,
-  прогресс.
+  прогресс, а также **сравнения** (записи с `session_type='comparison'`).
 - **Результаты и файлы сессий** — файловая система: `outputs/<session_id>/` (+ `original/`,
-  `run_<NNN>/`), загрузки — `uploads/<session_id>/`.
+  `run_<NNN>/`), загрузки — `uploads/<session_id>/`. Сравнения хранятся в
+  `outputs/<comparison_id>/` (`models.json`, `estimates.json`, `result.json`, `result.xlsx`).
 - **Справочные данные** — статические Excel/JSON-файлы в `data/` (перечни, коэффициенты, цены,
   МССК).
 - **Внешние системы (по сети)**:
@@ -299,12 +363,21 @@ ai-ifc-vor-generator/
 Статусы сессии: `ifc_processing` / `pdf_processing` / `selecting_rows` / `processing` /
 `completed` / `error` (маппинг в краткий `status`: `processing`, `selecting_rows`, ...).
 
-### Константы подбора работ и ПОС (режим ИИ)
+### Константы подбора работ и документы (режим ИИ)
 | Метод | Путь | Описание |
 |-------|------|----------|
-| GET | `/ifc-vor/api/session/<id>/works_constants` | Схема констант подбора работ (`works_classification.json`) + значения, определённые из IFC и ПОС (`constants`, `detected`, `posDetected`, `posReady`, `posStatus`) |
+| GET | `/ifc-vor/api/session/<id>/works_constants` | Схема констант подбора работ (`works_classification.json`) + значения из IFC/ПОС/ПЗ (`constants`, `detected`, `posDetected`, `pzDetected`, `vorStatus`, `pdStatus`, `vorCount`, `pdCount`) |
 | POST | `/ifc-vor/api/session/<id>/upload_pos` | Загрузка PDF ПОС: фоновый разбор через LLM → `ПОС_глобальные_константы.json` |
-| GET | `/ifc-vor/api/session/<id>/position_links` | Ссылки на позиции цифрового сборника по группам элементов (`position_links.json`) |
+| POST | `/ifc-vor/api/session/<id>/upload_pz` | Загрузка PDF пояснительной записки → `ПЗ_глобальные_константы.json` |
+| POST | `/ifc-vor/api/session/<id>/upload_vor` | Загрузка PDF ВОР заказчика → `ВОР_ведомость_объемов_работ.json/.xlsx` |
+| POST | `/ifc-vor/api/session/<id>/upload_pd` | Загрузка PDF проектной документации → `ПД_характеристики_элементов.json/.xlsx` |
+| GET | `/ifc-vor/api/session/<id>/pd_full` | Полный разбор ПОС/ПЗ (≈40 параметров, ленивый фоновый запуск) → `pd_full.json` |
+| GET | `/ifc-vor/api/session/<id>/doc_facts` | Тезисная сводка фактов ВОР/ПД (`doc_facts.facts_items`) |
+| GET | `/ifc-vor/api/session/<id>/analytic` | Аналитическая справка по расчёту (`analytic.json`) |
+| GET | `/ifc-vor/api/session/<id>/compare_vor` | Сравнение ВОР заказчика и сформированного перечня (`Сравнение_ВОР_и_перечня.xlsx/.json`; `?rebuild=1`) |
+| GET | `/ifc-vor/api/session/<id>/tsn_mode` / `/pd_mode` | Переключатели «поправки ТСН: вкл/выкл» и «с учётом ПОС/ПЗ» (`?set=on|off`) |
+| GET | `/ifc-vor/api/tsn/docs` | Список загруженных сборников ТСН |
+| GET | `/ifc-vor/api/session/<id>/position_links` | Ссылки на позиции цифрового сборника по группам элементов (`position_links.json`, только ЦС) |
 
 ### Финальный JSON
 | Метод | Путь | Описание |
@@ -324,6 +397,21 @@ ai-ifc-vor-generator/
 | GET | `/ifc-vor/api/session/<id>/download_all` | Скачать все файлы сессии ZIP-архивом |
 | POST | `/ifc-vor/api/session/<id>/3d_model` | Создать 3D-модель (GLB) по запросу (только IFC) |
 | GET | `/ifc-vor/api/session/<id>/3d_model/status` | Статус генерации 3D-модели (`none/creating/ready/error`) |
+
+### Сравнение ведомостей объёмов работ
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | `/ifc-vor/api/comparisons` | Список сохранённых сравнений (новые сверху) |
+| POST | `/ifc-vor/api/comparisons` | Создать сравнение (multipart: несколько `files` — модели/чертежи одного формата, `processing_type` CS/AI; в ИИ — `pos`/`pz`/`vor`/`pd`), 202 |
+| GET | `/ifc-vor/api/comparisons/<id>` | Состояние сравнения (статус, стадии, документы, параметры, предупреждения) |
+| POST | `/ifc-vor/api/comparisons/<id>/estimates` | Загрузить ВОР заказчика (PDF/XLSX/XLS/XML/ZIP/GSFX/GGE) и запустить сравнение, 202 |
+| POST | `/ifc-vor/api/comparisons/<id>/parameters` | Подтвердить параметры расчёта (ИИ): `overrides`, `use_documents`, `material_codes`, `use_tsn`, 202 |
+| POST | `/ifc-vor/api/comparisons/<id>/saved-vor` | Переиспользовать уже загруженный PDF ВОР заказчика, 202 |
+| POST | `/ifc-vor/api/comparisons/<id>/retry` | Повторить разбор/сравнение (`sourceIndex`, `quantityColumn`), 202 |
+| GET | `/ifc-vor/api/comparisons/<id>/files/<filename>` | Скачать артефакт (`result.json`, `result.xlsx`, `models.json`, `estimates.json`, `semantic_match_diagnostics.jsonl`); `?download=1` |
+
+Статусы сравнения: `models_processing` / `parameters_required` (ИИ) / `models_ready` /
+`comparing` / `input_required` / `completed` / `error`.
 
 ### Форматы ответа
 Все ответы — JSON в **camelCase** (Pydantic `CamelModel`). Ошибки — `{"detail": "..."}`
@@ -379,6 +467,19 @@ ai-ifc-vor-generator/
 Пользователь просматривает статус, доступные файлы, может **скачать** их по отдельности или
 архивом, а для IFC — запросить **3D-модель (GLB)**. При необходимости — запустить **новый запуск**
 с другой выборкой строк или **переключиться** между запусками.
+
+### 6. Сравнение ведомостей объёмов работ (отдельная вкладка)
+1. Пользователь выбирает режим (ЦС/ИИ) и загружает **несколько моделей/чертежей** одного
+   формата (в ИИ — дополнительно ПОС/ПЗ/ВОР/ПД). По каждой модели формируется ВОР тем же
+   конвейером (в ИИ — с проверкой параметров расчёта).
+2. После готовности ВОР загружается **ВОР заказчика** (PDF/XLSX/XLS/XML/ZIP/GSFX/GGE).
+   PDF/XLSX разбираются локальным парсером, остальные — внешним сервисом.
+3. Сервис сопоставляет работы и объёмы сформированного ВОР и ВОР заказчика
+   (по шифру+единице, при отсутствии шифров — семантически и по конструкциям, с LLM-валидацией)
+   и формирует отчёт `result.json` / `result.xlsx` (иерархия часть здания → раздел → подраздел
+   → группа/работа; расхождения объёмов, наличие в одном из документов, оценка ИИ).
+4. Результат отображается в интерфейсе (виды «Сравнение ВОР», «Объёмы», «Позиции по вердикту ИИ»,
+   «Статистика по группам») и доступен для скачивания.
 
 ---
 

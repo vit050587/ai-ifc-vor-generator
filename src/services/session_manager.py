@@ -194,7 +194,7 @@ class SessionManager:
     
     def list_sessions(self) -> List[Dict[str, Any]]:
         with self._state_lock:
-            items = [dict(s) for s in self._sessions.values()]
+            items = [dict(s) for s in self._sessions.values() if not s.get("parent_session_id")]
         
         items.sort(key=lambda s: s.get("created_at", ""), reverse=True)
         
@@ -210,7 +210,10 @@ class SessionManager:
             s = self._sessions.pop(session_id, None)
             if not s:
                 return False
+            children = [sid for sid, child in self._sessions.items() if child.get("parent_session_id") == session_id]
             self._save()
+        for child_id in children:
+            self.delete(child_id)
         
         session_dir = os.path.join(self.output_folder, session_id)
         if os.path.isdir(session_dir):
@@ -1567,7 +1570,7 @@ class SessionManager:
         logger.info(f"Карта материалов: {len(material_map)} элементов")
         return material_map
 
-    def _apply_material_code_overrides(self, df_filtered, 
+    def _apply_material_code_overrides(self, df_filtered,
                                        overrides_by_pos: Dict[int, str]) -> None:
         """Проставляет уточнённый пользователем полный МССК-код материала в DataFrame.
 
@@ -1795,7 +1798,11 @@ class SessionManager:
             if not excel_path or not os.path.exists(excel_path):
                 raise RuntimeError("Excel файл не найден")
             try:
-                df = pd.read_excel(excel_path)
+                with pd.ExcelFile(excel_path) as workbook:
+                    sheet = 'Данные' if 'Данные' in workbook.sheet_names else workbook.sheet_names[0]
+                    df = pd.read_excel(workbook, sheet_name=sheet)
+                if df.empty:
+                    raise ValueError('В таблице «Данные» нет элементов для обработки. Для IFC проверьте коды МССК: текущий фильтр оставляет только коды, начинающиеся с «ЭЛ».')
                 row_indices = list(range(len(df)))
             except Exception as e:
                 raise RuntimeError(f"Ошибка чтения Excel файла: {str(e)}")

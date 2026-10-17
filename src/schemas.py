@@ -31,6 +31,7 @@ class SessionFull(CamelModel):
     session_id: str
     created_at: str
     status: str
+    session_type: str = "processing"
     source_type: Optional[str] = None
     processing_type: str = "CS"
     ifc_file_name: Optional[str] = None
@@ -147,6 +148,7 @@ class PreviewResponse(CamelModel):
 
 
 class RestoreResponse(CamelModel):
+    session_type: str = "processing"
     session_id: str
     status: str
     progress: int = 0

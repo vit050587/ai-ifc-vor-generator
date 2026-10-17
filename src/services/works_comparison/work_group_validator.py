@@ -13,19 +13,19 @@ class WorkGroupValidator:
     def __init__(self, ollama_service: OllamaService) -> None:
         self.ollama_service = ollama_service
 
-    def validate(self, comparison: list[dict]):
+    def validate(self, comparison: list[dict], on_progress=None):
         """К каждой проверенной позиции дописывает объект "validation_result" содержащий информацию о результатах валидации моделью"""
         selected_entries = [
             entry
             for entry in comparison
-            if entry["status"] in settings.STATUSES_TO_VALIDATE
+            if entry.get("ifcGroup") and entry["status"] in [*settings.STATUSES_TO_VALIDATE, "matching_unresolved"]
         ]
         selected_positions = sum(
             len(entry["ifcGroup"]["positions"])
             for entry in selected_entries
         )
         cache_before = self.ollama_service._get_tg_model_answer_cached.cache_info()
-        self._validate_only_ifc(comparison)
+        self._validate_only_ifc(comparison, on_progress=on_progress)
         cache_after = self.ollama_service._get_tg_model_answer_cached.cache_info()
         return {
             "groupsSelectedForValidation": len(selected_entries),
@@ -34,15 +34,17 @@ class WorkGroupValidator:
             "cacheHits": cache_after.hits - cache_before.hits,
         }
 
-    def _validate_only_ifc(self, comparison: list[dict]):
-        groups_to_validate = [entry for entry in comparison if entry["status"] in settings.STATUSES_TO_VALIDATE]
+    def _validate_only_ifc(self, comparison: list[dict], on_progress=None):
+        groups_to_validate = [entry for entry in comparison if entry.get("ifcGroup") and entry["status"] in [*settings.STATUSES_TO_VALIDATE, "matching_unresolved"]]
         positions_to_validate = [
             position
             for group in groups_to_validate
             for position in group["ifcGroup"]["positions"]
         ]
         
-        for position in tqdm(positions_to_validate, desc="Валидация", unit="position"):
+        if on_progress:
+            on_progress(0, len(positions_to_validate))
+        for done, position in enumerate(tqdm(positions_to_validate, desc="Валидация", unit="position"), 1):
             payload = self._compose_position_payload(position)
 
             if position.get("positionType") == "material":
@@ -80,6 +82,8 @@ class WorkGroupValidator:
                     },
                 )
             position["validation_result"] = result
+            if on_progress:
+                on_progress(done, len(positions_to_validate))
 
     def _compose_position_payload(self, position: dict):
         properties_keys_to_delete = ["areaM2", "volumeM3", "lengthMm"]

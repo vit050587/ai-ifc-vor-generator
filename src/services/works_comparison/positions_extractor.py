@@ -46,6 +46,9 @@ class PositionsExtractor:
                                 "workAndCostName": row.get("workAndCostName"),
                                 "unit": row.get("unit"),
                                 "quantity": row.get("quantity"),
+                                "sourceLocation": row.get("sourceLocation"),
+                                "sourceQuantityColumn": row.get("sourceQuantityColumn"),
+                                "sourceRawQuantity": row.get("sourceRawQuantity"),
                             }
                             positions.append(record)
 
@@ -72,6 +75,9 @@ class PositionsExtractor:
 
         for position in positions:
             key = tuple(position.get(field) for field in unique_fields)
+            if position.get("sourceLocation"):
+                import json
+                key += (json.dumps(position["sourceLocation"], sort_keys=True), tuple(position.get("sourceFiles", [])))
 
             existing_position = positions_by_key.get(key)
             if existing_position is not None:

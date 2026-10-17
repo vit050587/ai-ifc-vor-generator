@@ -394,7 +394,9 @@ def extract_vor_rows(pdf_source: Union[str, Path, bytes, bytearray]) -> List[dic
     «было»/«стало» (для сравнения берётся **«стало»** — объём с учётом
     корректировки ПД).
     """
+    from .vor_parser import quantity_kind, choose_quantity, heading
     rows: List[dict] = []
+    quantity_col = was_col = None
     section: Optional[str] = None
     block: Optional[str] = None
     with _open_pdf(pdf_source) as pdf:
@@ -409,7 +411,12 @@ def extract_vor_rows(pdf_source: Union[str, Path, bytes, bytearray]) -> List[dic
                     cells = [_vor_cell(c) for c in (raw_row or [])]
                     if not any(cells):
                         continue
-                    if "наименование работ" in " ".join(cells).lower():
+                    candidates = [(i, cell, quantity_kind(cell)) for i, cell in enumerate(cells) if i >= 3 and quantity_kind(cell)]
+                    is_header = any("наименование" in cell.lower() for cell in cells) or (not (len(cells) > 2 and _is_vor_unit(cells[2])) and bool(candidates))
+                    if is_header:
+                        if candidates:
+                            quantity_col = choose_quantity(candidates, None)[0]
+                        was_col = next((i for i, cell in enumerate(cells) if heading(cell) == 'было'), was_col)
                         continue
                     filled = [c for c in cells if c]
                     # строка-шапка «1 2 3 4 5 6 7» — пропускаем
@@ -419,6 +426,7 @@ def extract_vor_rows(pdf_source: Union[str, Path, bytes, bytearray]) -> List[dic
                     if (len(cells) >= 3 and cells[1]
                             and not _VOR_FURNITURE_RX.search(cells[1])
                             and _is_vor_unit(cells[2])):
+                        current_col = quantity_col if quantity_col is not None else (4 if len(cells) > 4 else 3)
                         rows.append({
                             "page": page_no,
                             "section": section,
@@ -426,8 +434,9 @@ def extract_vor_rows(pdf_source: Union[str, Path, bytes, bytearray]) -> List[dic
                             "pos": cells[0] if _VOR_POS_RX.match(cells[0]) else "",
                             "name": cells[1],
                             "unit": cells[2],
-                            "volume_was": _vor_num(cells[3]) if len(cells) > 3 else None,
-                            "volume_now": _vor_num(cells[4]) if len(cells) > 4 else None,
+                            "volume_was": _vor_num(cells[was_col]) if was_col is not None and was_col < len(cells) else None,
+                            "volume_now": _vor_num(cells[current_col]) if current_col < len(cells) else None,
+                            "quantity_column": current_col,
                         })
                         continue
                     # заголовок раздела / блока — единственная текстовая ячейка
