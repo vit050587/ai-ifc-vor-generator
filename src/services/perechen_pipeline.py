@@ -81,7 +81,7 @@ def _leaf_area(node: Dict[str, Any]) -> float:
 
 # ---------------------------------------------------------------- объёмы по элементам
 
-def _element_quantities(run_dir: str, filename: str = "filtered_elements.xlsx") -> List[Dict[str, float]]:
+def _element_quantities(run_dir: str, filename: str = "filtered_elements.xlsx", frame=None) -> List[Dict[str, float]]:
     """Объём, площадь, площадь опалубки и расход арматуры каждой строки Excel.
 
     Площадь опалубки считается ровно так же, как в режиме ЦС (КР) — той же
@@ -93,10 +93,13 @@ def _element_quantities(run_dir: str, filename: str = "filtered_elements.xlsx") 
     import pandas as pd
     path = os.path.join(run_dir, filename)
     try:
-        try:
-            df = pd.read_excel(path, sheet_name="Данные")
-        except Exception:
-            df = pd.read_excel(path)
+        if frame is not None:
+            df = frame
+        else:
+            try:
+                df = pd.read_excel(path, sheet_name="Данные")
+            except Exception:
+                df = pd.read_excel(path)
     except Exception as exc:
         logger.warning(f"Нет поэлементных объёмов ({path}): {exc}")
         return []
@@ -113,7 +116,7 @@ def _element_quantities(run_dir: str, filename: str = "filtered_elements.xlsx") 
                 and "литр" not in c.lower()]
     vol_cols.sort(key=lambda c: 0 if "netvolume" in c.lower() else 1 if "объём, м3" in c.lower() else 2)
     area_main = "Площадь, м2" if "Площадь, м2" in cols else None
-    area_cols = [c for c in cols if "площад" in c.lower() and "м2" in c]
+    area_cols = [c for c in cols if "площад" in c.lower() and "м2" in c and not c.startswith('Геометрия_')]
     rebar_col = next((c for c in cols if "reinforcementvolumeratio" in c.lower()), None)
     perim_cols, depth_cols = _find_formwork_columns(cols)
 
@@ -143,7 +146,10 @@ def _element_quantities(run_dir: str, filename: str = "filtered_elements.xlsx") 
         if not area and area_cols:
             area = max(num(r, c) for c in area_cols)
         fw = _element_formwork_area_m2(r.to_dict(), perim_cols, depth_cols)
+        name = str(r.get("Имя") or "").lower()
+        formwork_known = fw > 0 or (str(r.get("Тип элемента") or "") != "IfcBeam" and not re.search(r"балк|ригел|плит|перекрыт", name) and area > 0)
         out.append({"volume": vol, "area": area, "fw_hint": fw,
+                    "area_missing": int(area <= 0), "formwork_missing": int(not formwork_known),
                     "rebar_kg": rebar_ratio(r, rebar_col) * vol if rebar_col else 0.0})
     return out
 
@@ -179,8 +185,10 @@ def _formwork_area(el: Dict[str, Any], q: Dict[str, float]) -> float:
       * плиты с данными периметра/толщины (фундаментные плиты, перекрытия,
         приямки, лестничные площадки) — периметр × толщина, для перекрытий
         дополнительно площадь плиты (`q["fw_hint"]`, сумма по элементам);
-      * стены, балки и прочие элементы (периметра/толщины нет) —
+      * стены и прочие элементы (периметра/толщины нет) —
         «Площадь, м2» группы (`q["area"]`);
+      * балки — только явно заданная площадь контакта с опалубкой;
+        полная поверхность балки не используется;
       * плитные группы (плита/перекрытие) без рассчитанной площади опалубки —
         объём не считается: площадь плиты не является площадью опалубки.
     """
@@ -188,7 +196,7 @@ def _formwork_area(el: Dict[str, Any], q: Dict[str, float]) -> float:
     if fw > 0:
         return fw
     name = str(el.get("name") or "").lower()
-    if "плит" in name or "перекрыт" in name:
+    if "плит" in name or "перекрыт" in name or re.search(r"балк|ригел", name) or el.get("ifc_class") == "IfcBeam":
         return 0.0
     return float(q.get("area") or 0.0)
 
@@ -259,17 +267,17 @@ def _costs(rate: Dict[str, Any], vol: Optional[float]):
             price = resource_price(rate["pressmark"])
         except Exception:
             price = None
-        if not price:
+        if price is None:
             return None, None, None, None
         mr = round(price * vol, 2)
         return None, None, mr, mr
     w = _local_rate(rate["pressmark"])
     if not w:
         return None, None, None, None
-    zp = (w.get("curSalary") or 0) * vol
-    em = (w.get("curOperationOfMachines") or 0) * vol
-    mr = (w.get("curCostOfMaterialResources") or 0) * vol
-    return round(zp, 2), round(em, 2), round(mr, 2), round(zp + em + mr, 2)
+    values = [w.get(key) for key in ("curSalary","curOperationOfMachines","curCostOfMaterialResources")]
+    components = [round(value * vol, 2) if value is not None else None for value in values]
+    total = round(sum(components), 2) if all(value is not None for value in components) else None
+    return (*components, total)
 
 
 _conc_res: Optional[Dict[str, Dict[str, Any]]] = None
@@ -326,7 +334,9 @@ def _row(rate: Dict[str, Any], el: Dict[str, Any], q: Dict[str, float], work: st
     zp, em, mr, total = _costs(rate, vol)
     return {"pressmark": rate["pressmark"], "title": kb._full_title(rate), "unit": rate["unit"],
             "volume": vol, "zp": zp, "em": em, "mr": mr, "total": total,
-            "is_resource": rate["is_resource"], "work": work}
+            "is_resource": rate["is_resource"], "work": work,
+            **({"reason": "Неполные данные: показана известная часть площади опалубки.", "quantityStatus": "partial_data"}
+               if "опалуб" in kb._full_title(rate).lower() and q.get("formwork_missing", 0) > 0 else {})}
 
 
 def finalize_rows(el: Dict[str, Any], q: Dict[str, float], works, subs) -> List[Dict[str, Any]]:
@@ -372,19 +382,46 @@ def finalize_rows(el: Dict[str, Any], q: Dict[str, float], works, subs) -> List[
 
 # ---------------------------------------------------------------- основной шаг
 
-def build_final_from_perechen(tables_json_path: str, run_dir: str) -> str:
-    data = json.load(open(tables_json_path, encoding="utf-8"))
+def build_final_from_perechen(tables_json_path: str, run_dir: str, progress=None) -> str:
+    # Callback belongs to this run, including its worker threads.
+    if progress is None:
+        progress = _PERECHEN_PROGRESS.get()
+    def _progress(message, fraction=None):
+        if progress:
+            try:
+                progress(message, fraction)
+            except Exception:
+                logger.exception("Не удалось обновить прогресс подбора")
+
+    with open(tables_json_path, encoding="utf-8") as stream:
+        data = json.load(stream)
     elements = data.get("elements") or []
-    groups = json.load(open(os.path.join(run_dir, "filtered_elements_grouped_AR.json"),
-                            encoding="utf-8"))
+    with open(os.path.join(run_dir, "filtered_elements_grouped_AR.json"), encoding="utf-8") as stream:
+        groups = json.load(stream)
     height = kb.building_height_for_run(tables_json_path, data)
     subs = kb.load_perechen()
-    per_el = _element_quantities(run_dir)
+    from . import work_height
+    import pandas as pd
+    try:
+        height_frame = pd.read_excel(os.path.join(run_dir, 'filtered_elements.xlsx'), sheet_name='Данные')
+        height_rows = height_frame.to_dict('records')
+        per_el = _element_quantities(run_dir, frame=height_frame)
+    except Exception:
+        height_rows = []
+        per_el = _element_quantities(run_dir)
     logger.info(f"Подбор по перечню: высота {height} м, подразделов {len(subs)}, "
                 f"элементов {len(elements)}, объёмов по элементам {len(per_el)}")
 
     results: List[Dict[str, Any]] = []
-    for node, path in _leaves(groups if isinstance(groups, list) else [groups]):
+    # Сначала собираем задания (типы элементов), потом подбираем работы
+    # (параллельно, если KB_WORKERS > 1), затем собираем строки в исходном порядке.
+    leaves = list(_leaves(groups if isinstance(groups, list) else [groups]))
+    limit = int(os.getenv("PERECHEN_LIMIT_GROUPS", "0") or 0)
+    if limit > 0:
+        leaves = leaves[:limit]
+        logger.info(f"Подбор по перечню: ПРОВЕРОЧНЫЙ режим — только первые {limit} групп")
+    tasks = []
+    for node, path in leaves:
         idx = sorted(i for i in (node.get("indices") or [])
                      if isinstance(i, int) and 0 <= i < len(elements))
         if not idx:
@@ -400,11 +437,11 @@ def build_final_from_perechen(tables_json_path: str, run_dir: str) -> str:
 
         for (tkey, material), ids in buckets.items():
             el = elements[ids[0]].get("element", {})
-            q = {"volume": 0.0, "area": 0.0, "rebar_kg": 0.0, "fw_hint": 0.0, "count": len(ids)}
+            q = {"volume": 0.0, "area": 0.0, "rebar_kg": 0.0, "fw_hint": 0.0, "area_missing": 0, "formwork_missing": 0, "count": len(ids)}
             if per_el:
                 for i in ids:
                     if i < len(per_el):
-                        for k in ("volume", "area", "rebar_kg", "fw_hint"):
+                        for k in ("volume", "area", "rebar_kg", "fw_hint", "area_missing", "formwork_missing"):
                             q[k] += per_el[i].get(k, 0.0)
             if single:  # итоги группировки надёжнее, если группа однородна
                 leaf = {"volume": float(node.get("total_volume") or 0), "area": _leaf_area(node),
@@ -413,22 +450,62 @@ def build_final_from_perechen(tables_json_path: str, run_dir: str) -> str:
                     if v > 0:
                         q[k] = v
             q = {k: round(v, 4) if isinstance(v, float) else v for k, v in q.items()}
+            tasks.append((part, tkey, material, ids, el, q, path))
 
-            try:
-                res = kb.pick_for_element(el, part, subs, height)
-            except Exception as exc:
-                logger.error(f"Подбор по перечню не удался ({tkey}): {exc}", exc_info=True)
-                res = {"status": "error", "subsection": None, "works": [], "reason": str(exc)}
+    total = len(tasks)
+    logger.info(f"Подбор по перечню: типов элементов {total}")
+    done = [0]
+    import threading as _th, time as _time
+    _t0 = _time.time()
+    _lock = _th.Lock()
 
-            rows = finalize_rows(el, q, res["works"], subs)
+    def _pick(task):
+        part, tkey, material, ids, el, q, path = task
+        try:
+            res = kb.pick_for_element(el, part, subs, height)
+        except Exception as exc:
+            logger.error(f"Подбор по перечню не удался ({tkey}): {exc}", exc_info=True)
+            res = {"status": "error", "subsection": None, "works": [], "reason": str(exc)}
+        with _lock:
+            done[0] += 1
+            n = done[0]
+        left = (total - n) * (_time.time() - _t0) / n / 60
+        eta = (f", осталось ≈ {left:.0f} мин" if left >= 1 else ", осталось меньше минуты") if n >= 5 and n < total else ""
+        _progress(f"Подбор работ: тип {n} из {total}{eta} — {tkey[:50]}", n / max(1, total))
+        logger.info(f"Подбор {n}/{total}: [{part}] {tkey} — {res['status']}")
+        return res
+
+    workers = max(1, int(os.getenv("KB_WORKERS", "2") or 1))
+    if workers > 1 and total > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            picked = list(pool.map(_pick, tasks))
+    else:
+        picked = [_pick(t) for t in tasks]
+
+    for _fi, ((part, tkey, material, ids, el, q, path), res) in enumerate(zip(tasks, picked), 1):
+        _progress(f"Сборка перечня и проверки расценок: тип {_fi} из {total} — {tkey[:50]}", 1.0)
+        # Reuse the selected work type; height-band separation adds no model/API calls.
+        aligned = height_rows and all(i < len(height_rows) and
+            str(height_rows[i].get('GlobalId') or '') == str((elements[i].get('element') or {}).get('global_id') or '') for i in ids)
+        floor_groups = work_height.partitions(ids, height_rows) if aligned and per_el else [ids]
+        for floor_ids in floor_groups:
+            floor_q = q
+            if len(floor_groups) > 1:
+                floor_q = {key:sum(per_el[i].get(key,0) for i in floor_ids) for key in q if key != 'count'}
+                floor_q['count'] = len(floor_ids)
+            ctx = work_height.context([height_rows[i] for i in floor_ids]) if aligned else None
+            rows = finalize_rows(dict(el,height_context=ctx), floor_q, res["works"], subs)
             results.append({"part": part, "element": tkey, "material": material,
                             "el": {k: el.get(k) for k in ("name", "ifc_class", "mssk_code", "material", "predefined_type")},
-                            "count": len(ids), "indices": list(ids), "path": list(path), "quantity": q,
+                            "count": len(floor_ids), "indices": list(floor_ids), "path": list(path), "quantity": floor_q,
+                            "height_context": ctx,
                             "status": res["status"],
                             "subsection": (res["subsection"] or {}).get("title"),
                             "reason": res["reason"], "rows": rows})
-            logger.info(f"[{part}] {tkey} ×{len(ids)}: {res['status']}, строк {len(rows)}")
+        logger.info(f"[{part}] {tkey} ×{len(ids)}: {res['status']}, строк {len(rows)}")
 
+    _progress("Справка: проверка документов и противоречий", 1.0)
     results.sort(key=lambda g: PART_ORDER.index(g["part"]) if g["part"] in PART_ORDER else 9)
     with open(os.path.join(run_dir, FINAL_JSON), "w", encoding="utf-8") as fh:
         json.dump({"source": "perechen_kr", "building_height_m": height, "groups": results},
@@ -471,6 +548,9 @@ def _write_xlsx(results: List[Dict[str, Any]], path: str) -> None:
             head = g["element"] + (f" ({g['material']})" if g["material"] else "") + f"  Кол-во: {g['count']}"
             if g["subsection"]:
                 head += f"  [{g['subsection']}]"
+            if g.get('height_context'):
+                from .work_height import label
+                head += '  [' + label(g['height_context']) + ']'
             styled(["", head, "", "", "", "", "", ""], group_fill, True)
             if not g["rows"]:
                 ws.append(["", f"Работы не подобраны: {str(g['reason'])[:250]}"])
@@ -2560,6 +2640,11 @@ def _doc_fill_volumes(el, q, rows):
             if not vol:
                 last_work = None
                 continue
+            if not any(float(q.get(key) or 0) > 0 for key in ("volume", "area")) and re.search(r"м\s?[23]", str(r.get("unit") or "")):
+                # у группы в модели нет ни объёма, ни площади: долю объёма ВОР посчитать не из чего,
+                # а весь объём ВОР по такой работе — это вся конструкция здания. Не подставляем.
+                last_work = None
+                continue
             vol = _doc_share(el, q, vol)
             v = round(vol / _divisor(r.get("unit") or ""), 4)
             r["volume"] = v
@@ -2889,10 +2974,18 @@ from functools import wraps as _wraps
 _PERECHEN_RUN_LOCK = _threading.RLock()
 _build_with_document_context = build_final_from_perechen
 
+from contextvars import ContextVar
+_PERECHEN_PROGRESS = ContextVar("perechen_progress", default=None)
+
+
 @_wraps(_build_with_document_context)
-def build_final_from_perechen(tables_json_path, run_dir):
+def build_final_from_perechen(tables_json_path, run_dir, progress=None):
     with _PERECHEN_RUN_LOCK:
-        return _build_with_document_context(tables_json_path, run_dir)
+        token = _PERECHEN_PROGRESS.set(progress)
+        try:
+            return _build_with_document_context(tables_json_path, run_dir)
+        finally:
+            _PERECHEN_PROGRESS.reset(token)
 
 
 _analytics_before_document_mode = _an_build

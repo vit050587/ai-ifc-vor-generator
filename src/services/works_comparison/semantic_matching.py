@@ -6,14 +6,17 @@ import logging
 import math
 import re
 from collections import defaultdict
+from langchain_ollama import OllamaLLM
 from datetime import datetime, timezone
 from pathlib import Path
 from .units import normalize_positions
 from .utils import sum_positions_quantity
 from .matching_rules import operation, object_scope, compatible, norm, work_name, rule_match, object_identity
+from src.core.cache_manager import CacheManager
 
 logger = logging.getLogger(__name__)
-VERSION = 'section-constructions-v7'
+VERSION = 'section-constructions-v8'
+memory = CacheManager.memory
 
 
 def is_reinforcement(p):
@@ -78,12 +81,24 @@ def _invoke(llm, payload, schema, validator=None):
     target = llm.bind(format=schema, reasoning=False, options={
         'temperature':0, 'num_ctx':settings.OLLAMA_NUM_CTX,
         'num_predict':min(4096, max(768, 256 * len(payload.get('groups', [None]))))})
+    # Persist only clients with known, serializable generation settings.
+    parameters_for_cache = None
+    if isinstance(llm, OllamaLLM):
+        parameters_for_cache = {
+            key: getattr(llm, key, None)
+            for key in ('base_url', 'model', 'top_k', 'top_p', 'seed', 'repeat_penalty',
+                        'repeat_last_n', 'tfs_z', 'mirostat', 'mirostat_eta', 'mirostat_tau')
+        }
+        parameters_for_cache['bound_kwargs'] = target.kwargs
     prompt = INSTRUCTION + json.dumps(payload, ensure_ascii=False,separators=(',',':'))
     errors = []
     for attempt in range(2):
         raw = None
         try:
-            raw = target.invoke(prompt + ('\nПовтори ответ: нужен полный JSON строго по схеме.' if attempt else ''))
+            if parameters_for_cache is None:
+                raw = target.invoke(prompt + ('\nПовтори ответ: нужен полный JSON строго по схеме.' if attempt else ''))
+            else:
+                raw = _get_answer_cached(target, prompt, attempt, parameters_for_cache, validator)
             answer = parse_response(raw)
             return validator(answer) if validator else answer
         except Exception as exc:
@@ -91,6 +106,15 @@ def _invoke(llm, payload, schema, validator=None):
     failure = ValueError(errors[-1]['error'])
     failure.diagnostics = errors
     raise failure
+
+@memory.cache(ignore=["target", "_validator"])
+def _get_answer_cached(target, prompt, attempt, parameters_for_cache, _validator=None):
+    raw = target.invoke(prompt + ('\nПовтори ответ: нужен полный JSON строго по схеме.' if attempt else ''))
+    # A malformed or rejected answer must remain retryable on the next run.
+    answer = parse_response(raw)
+    if _validator:
+        _validator(answer)
+    return raw
 
 
 def propose(llm, customer, candidates):
@@ -237,31 +261,72 @@ def _overlapping_scopes(a,b):
     return True
 
 
+def collapse_rebar_details(positions):
+    """Preserve the authoritative parent total; retain children as source details.
+
+    Numbered children belong only to their own parent and source section. For
+    unnumbered input, use the adjacent diameter rows as in the original parser.
+    Missing parent totals leave children countable, with the parent as context.
+    """
+    def boundary(row):
+        return (tuple(row.get('sourceFiles') or [row.get('sourceFile')]),
+                row.get('estimateNumber'), row.get('sectionName'), row.get('unit'))
+
+
+    def diameter(row):
+        return bool(re.match(r'^[dдøф⌀]\s*\d+', norm(work_name(row))))
+
+
+    def number(row):
+        value = str(row.get('positionNumber') or '').strip().rstrip('.')
+        return value if re.fullmatch(r'\d+(?:\.\d+)*', value) else None
+
+
+    rows = copy.deepcopy(positions)
+    parents = {}
+    for index, row in enumerate(rows):
+        if operation(row) == 'reinforcement' and not diameter(row):
+            if number(row):
+                parents[(boundary(row), number(row))] = index
+    children = {}
+    active = None
+    for index, row in enumerate(rows):
+        if not diameter(row):
+            active = index if operation(row) == 'reinforcement' else None
+            continue
+        parent_index = None
+        child_number = number(row)
+        if child_number and '.' in child_number:
+            parent_index = parents.get((boundary(row), child_number.rsplit('.', 1)[0]))
+        elif active is not None and boundary(rows[active]) == boundary(row):
+            # Do not attach an explicitly numbered sibling to another total.
+            if not child_number or not number(rows[active]):
+                parent_index = active
+        if parent_index is not None:
+            children.setdefault(parent_index, []).append(index)
+    hidden = set()
+    for index, child_indices in children.items():
+        parent = rows[index]
+        if parent.get('quantity') is not None:
+            details = parent.setdefault('sourceDetailRows', [])
+            for child_index in child_indices:
+                child = rows[child_index]
+                if child not in details:
+                    details.append(child)
+                hidden.add(child_index)
+        else:
+            hidden.add(index)
+            for child_index in child_indices:
+                child = rows[child_index]
+                child.setdefault('sourceContextRows', []).append(copy.deepcopy(parent))
+                child['_rebar_class'] = object_scope(parent).get('rebarClass')
+    return [row for index, row in enumerate(rows) if index not in hidden]
+
+
 def _customer_groups(positions, generated=None):
     from .construction_matching import main_section
     groups = {}
-    contextual = []
-    parent = None
-    for index,p in enumerate(positions):
-        next_row = positions[index+1] if index+1<len(positions) else {}
-        same_section = next_row.get('sectionName') == p.get('sectionName') and next_row.get('sourceFiles') == p.get('sourceFiles')
-        diameter = lambda row: bool(re.search(r'(?:^|\s)[dдøф⌀]\s*\d+',norm(work_name(row))))
-        if operation(p)=='reinforcement' and re.match(r'^арматура(?:\s|$)',norm(work_name(p))) and same_section and diameter(next_row):
-            parent = copy.deepcopy(p)
-            if parent.get('quantity') is not None:
-                parent['sourceDetailRows'] = []
-                contextual.append(parent)
-            continue
-        if parent and diameter(p) and p.get('sectionName') == parent.get('sectionName') and p.get('sourceFiles') == parent.get('sourceFiles'):
-            if parent.get('quantity') is not None:
-                parent['sourceDetailRows'].append(copy.deepcopy(p))
-                continue
-            p = copy.deepcopy(p)
-            p['sourceContextRows'] = [copy.deepcopy(parent)]
-            p['_rebar_class'] = object_scope(parent).get('rebarClass')
-        else:
-            parent = None
-        contextual.append(p)
+    contextual = collapse_rebar_details(positions)
     seen_scopes = {}
     for index,p in enumerate(contextual):
         original_scope, op = object_scope(p), operation(p)
@@ -484,7 +549,7 @@ def semantic_compare(customer, generated, llm, progress=None, cache_path=None):
                 quantity = quantities['totalQuantity'] if not quantities['positionsWithoutQuantity'] else None
                 entry['operationComparisons'].append({'operation':labels.get(op_name,op_name),'generatedQuantity':quantity,
                     'customerQuantity':customer_group['totalQuantity'],'unit':p['unit']})
-            answer['reason'] += ' Отдельные объёмы сформированного ВОР: '+ '; '.join(
+            answer['reason'] += ' Отдельные объёмы сформированной ВОР: '+ '; '.join(
                 f"{op['operation']}: {op['generatedQuantity'] if op['generatedQuantity'] is not None else 'не определён'} {op['unit']}"
                 for op in entry['operationComparisons'])+'. Общая площадь комплекса не суммируется.'
         entry['semanticMatch'] = answer

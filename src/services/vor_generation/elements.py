@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from src.core.logger import setup_logger
+from . import mapping
 
 logger = setup_logger(__name__)
 
@@ -33,12 +34,14 @@ _QUANTITY_KEYS = {
         "QTO::Qto_SlabBaseQuantities::NetVolume",
         "QTO::Qto_BeamBaseQuantities::NetVolume",
         "QTO::Qto_StairFlightBaseQuantities::NetVolume",
+        "QTO::Qto_ColumnBaseQuantities::NetVolume",
     ),
     "gross_volume": (
         "QTO::Qto_WallBaseQuantities::GrossVolume",
         "QTO::Qto_SlabBaseQuantities::GrossVolume",
         "QTO::Qto_BeamBaseQuantities::GrossVolume",
         "QTO::Qto_StairFlightBaseQuantities::GrossVolume",
+        "QTO::Qto_ColumnBaseQuantities::GrossVolume",
     ),
     "area": (
         "QTO::Qto_SlabBaseQuantities::NetArea",
@@ -47,18 +50,29 @@ _QUANTITY_KEYS = {
         "QTO::Qto_CoveringBaseQuantities::GrossArea",
     ),
     "side_area": (
-        "QTO::Qto_WallBaseQuantities::NetSideArea",
         "QTO::Qto_WallBaseQuantities::GrossSideArea",
+        "QTO::Qto_WallBaseQuantities::NetSideArea",
     ),
     # Высота стены (мм) — используется для отделения парапетов (низкие стены
     # кровли) от стен кровельных технических помещений.
     "height": (
         "QTO::Qto_WallBaseQuantities::Height",
     ),
+    "formwork_area": (
+        "QTO_geom::Площадь_опалубки_м2",
+        "QTO::Qto_BeamBaseQuantities::FormworkArea",
+        "QTO::Qto_ColumnBaseQuantities::FormworkArea",
+        "Свойство::Formwork::Area",
+    ),
+    "underside_area": ("QTO_geom::Площадь_низа_м2",),
+    "edge_area": ("QTO_geom::Площадь_торцов_м2",),
     "surface_area": (
         "QTO::Qto_BeamBaseQuantities::NetSurfaceArea",
         "QTO::Qto_BeamBaseQuantities::GrossSurfaceArea",
         "QTO::Qto_BeamBaseQuantities::OuterSurfaceArea",
+        "QTO::Qto_ColumnBaseQuantities::OuterSurfaceArea",
+        "QTO::Qto_ColumnBaseQuantities::NetSurfaceArea",
+        "QTO::Qto_ColumnBaseQuantities::GrossSurfaceArea",
     ),
     "length": (
         "QTO::Qto_BeamBaseQuantities::Length",
@@ -71,6 +85,7 @@ _QUANTITY_KEYS = {
     # формирования ВОР (колонка ``QTO_bbox::Периметр_мм``).
     "perimeter": (
         "QTO::Qto_SlabBaseQuantities::Perimeter",
+        "QTO_geom::Внешний_периметр_мм",
         "QTO_bbox::Периметр_мм",
     ),
 }
@@ -91,7 +106,7 @@ _GROUP_THICKNESS_RE = re.compile(r"(\d{2,4})\s*мм")
 
 # Типы конструкций, для которых толщина берётся из наименования группы
 # элементов, если количественные характеристики её не содержат.
-_THICKNESS_KINDS = ("wall", "slab", "foundation_slab", "parapet")
+_THICKNESS_KINDS = ("wall", "slab", "foundation_slab", "crane_foundation", "parapet")
 
 # Максимальная высота стены (мм), считающейся парапетом: стены на кровле ниже
 # этого значения относятся к парапетам, более высокие — к стенам кровельных
@@ -155,6 +170,7 @@ class Element:
     group_name: str = ""           # наименование группы элементов (ObjectType)
     concrete_spec: str = ""        # марка бетона с показателями («В30, W8, F150»)
     component: str = ""            # подтип лестницы: flight (марш)|landing (площадка)
+    quantity_sources: Dict[str, str] = field(default_factory=dict)
 
     def quantity(self, name: str) -> float:
         return float(self.quantities.get(name) or 0.0)
@@ -199,6 +215,8 @@ def _element_kind(ifc_class: str, mge_name: str, name: str = "",
     n = (mge_name or "").lower()
     name_low = f"{(name or '').lower()} {(group_name or '').lower()}"
     text = f"{n} {name_low}"
+    if mapping.detect_kind(text) == "crane_foundation":
+        return "crane_foundation"
     if ifc_class in ("IfcWall", "IfcWallStandardCase"):
         if "парапет" in text:
             return "parapet"
@@ -224,9 +242,9 @@ def _element_kind(ifc_class: str, mge_name: str, name: str = "",
         # «Монолитная площадка» и наименованием родительской лестницы
         # («Монолитная лестница:Лестница:<номер> Landing N»); относится к
         # подразделу лестниц, а не к плитам перекрытий.
-        if "площадк" in name_low and ("лестниц" in name_low
-                                      or re.search(r"\blanding\b", name_low)):
-            return "stair"
+        if (re.search(r'лестничн\w*\s+площад|\blanding\b', text)
+                or 'площадк' in name_low and ('перекрыт' in name_low or 'лестниц' in name_low)):
+            return "precast" if "сборн" in text else "stair"
         return "slab"
     if ifc_class == "IfcCovering":
         if "термовкладыш" in name_low:
@@ -244,7 +262,7 @@ def _element_component(ifc_class: str, name: str, group_name: str) -> str:
     элементов возвращается пустая строка.
     """
     text = f"{(name or '').lower()} {(group_name or '').lower()}"
-    if re.search(r"площад[ко]", text):
+    if re.search(r"площад[ко]|\blanding\b", text):
         return "landing"
     if "марш" in text or re.search(r"\brun\b", text):
         return "flight"
@@ -322,12 +340,19 @@ class ElementIndex:
 
         elements: List[Element] = []
         stair_parents = _stair_parent_storeys(raw)
+        assemblies = set()
+        for row in raw:
+            match = re.fullmatch(r'(.+:\d+)\s+(?:Run|Landing)(?:\s+\d+)?', _text(row.get('Name')), re.I)
+            if match:
+                assemblies.add(match.group(1))
         for row in raw:
             if not isinstance(row, dict):
                 continue
             ifc_class = _text(row.get("IfcClass"))
             mge_name = _first_key(row, "MGE_Name")
             name = _text(row.get("Name"))
+            if ifc_class == 'IfcStair' and name in assemblies:
+                continue  # Parent storey was retained; quantities belong to its children.
             group_name = _text(row.get("ObjectType")) or re.sub(r":\d+$", "", name)
             storey = _text(row.get("Этаж"))
             elevation = _text(row.get("Отметка_этажа"))
@@ -351,18 +376,20 @@ class ElementIndex:
                 continue
 
             quantities: Dict[str, float] = {}
+            quantity_sources = {}
             for qname, keys in _QUANTITY_KEYS.items():
                 for key in keys:
                     value = _num(row.get(key))
-                    if value is not None:
+                    if value is not None and (qname != 'perimeter' or value > 0):
                         quantities[qname] = value
+                        quantity_sources[qname] = key
                         break
 
             geometry: Dict[str, float] = {}
             for gname, keys in _GEOMETRY_KEYS.items():
                 for key in keys:
                     value = _num(row.get(key))
-                    if value is not None:
+                    if value is not None and value > 0:
                         geometry[gname] = value
                         break
             if kind == "column" or kind == "beam":
@@ -400,6 +427,7 @@ class ElementIndex:
                 material_code=_first_key(row, "MGE_MaterialCode"),
                 concrete_grade=grade,
                 quantities=quantities,
+                quantity_sources=quantity_sources,
                 geometry=geometry,
                 name=name,
                 group_name=group_name,
@@ -463,6 +491,48 @@ class ElementIndex:
         return self.group_names_by_geometry(ignore_part=True).get((kind or "", "", label))
 
     # -----------------------------------------------------------------
+    def apply_vor_foundation_changes(self, rows):
+        """Remove superseded crane plates by thickness AND footprint, not thickness alone."""
+        active, removed = [], []
+        for row in rows:
+            name = str(row.get('name') or '')
+            context = ' '.join(str(row.get(key) or '') for key in ('section', 'block', 'name'))
+            if mapping.detect_kind(context) != 'crane_foundation' or not re.search(r'плит|фундамент', name, re.I):
+                continue
+            thicknesses = mapping.thickness_values(name)
+            pairs = re.findall(r'(\d+(?:[.,]\d+)?)\s*[*xх×]\s*(\d+(?:[.,]\d+)?)', name)
+            footprints = []
+            for a, b in pairs:
+                a, b = float(a.replace(',', '.')), float(b.replace(',', '.'))
+                if max(a, b) > 100:
+                    a, b = a / 1000, b / 1000
+                footprints.append((a * b, 2 * (a + b)))
+            if not thicknesses or not footprints:
+                continue
+            current, previous = row.get('volume_now'), row.get('volume_was')
+            if current is not None and current > 0:
+                active.append((thicknesses, footprints))
+            elif current == 0 and previous is not None and previous > 0:
+                removed.append((thicknesses, footprints))
+
+        def matches(element, specifications):
+            depth = element.geometry.get('thickness') or 0
+            area, perimeter = element.quantity('area'), element.quantity('perimeter') / 1000
+            return any(any(abs(depth - t) < 1 for t in thicknesses)
+                       and any(abs(area - a) < .02 and abs(perimeter - p) < .02 for a, p in footprints)
+                       for thicknesses, footprints in specifications)
+
+        kept = []
+        for element in self.elements:
+            if element.kind in ('foundation_slab', 'crane_foundation'):
+                if matches(element, active):
+                    element.kind = 'crane_foundation'
+                elif matches(element, removed):
+                    continue
+            kept.append(element)
+        self.elements = kept
+        self._names_cache.clear()
+
     def select(self, kind: Optional[str], part: Optional[str] = None) -> List[Element]:
         """Выбирает элементы по типу конструкции и части здания."""
         result = []

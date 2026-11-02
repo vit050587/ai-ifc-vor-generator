@@ -383,7 +383,24 @@ def _is_vor_unit(cell: str) -> bool:
     return bool(cell) and len(cell) < 20 and bool(_VOR_UNIT_RX.search(cell))
 
 
+from src.core.cache_manager import CacheManager
+
+
+@CacheManager.memory.cache
+def _cached_vor_rows(source_path: str, contents: bytes, parser_version: int):
+    # Parse the exact immutable bytes used for the cache key.
+    return _extract_vor_rows(contents)
+
+
 def extract_vor_rows(pdf_source: Union[str, Path, bytes, bytearray]) -> List[dict]:
+    """Reuse deterministic table extraction, invalidating on changed PDF contents."""
+    if isinstance(pdf_source, (str, Path)) and Path(pdf_source).is_file():
+        path = Path(pdf_source).resolve()
+        return _cached_vor_rows(str(path), path.read_bytes(), 1)
+    return _extract_vor_rows(pdf_source)
+
+
+def _extract_vor_rows(pdf_source: Union[str, Path, bytes, bytearray]) -> List[dict]:
     """Детерминированно разбирает таблицы ВОР: строки с разделами и блоками.
 
     Возвращает список записей
@@ -411,8 +428,13 @@ def extract_vor_rows(pdf_source: Union[str, Path, bytes, bytearray]) -> List[dic
                     cells = [_vor_cell(c) for c in (raw_row or [])]
                     if not any(cells):
                         continue
-                    candidates = [(i, cell, quantity_kind(cell)) for i, cell in enumerate(cells) if i >= 3 and quantity_kind(cell)]
-                    is_header = any("наименование" in cell.lower() for cell in cells) or (not (len(cells) > 2 and _is_vor_unit(cells[2])) and bool(candidates))
+                    # Only short column labels may change the carried quantity schema.
+                    # A merged page cell or a note such as «Уточнение объемов» is data,
+                    # even though quantity_kind recognizes the word «объем» within it.
+                    candidates = [(i, cell, quantity_kind(cell)) for i, cell in enumerate(cells)
+                                  if i >= 3 and quantity_kind(cell) and
+                                  re.fullmatch(r"(?:стало|послекорректировки|попроекту|проектныйоб[ъь]ем|актуальныйоб[ъь]ем|об[ъь]ем(?:работ)?|количество(?:работ)?|колво)", heading(cell))]
+                    is_header = any(heading(cell).startswith("наименование") and len(cell) < 80 for cell in cells) or (not (len(cells) > 2 and _is_vor_unit(cells[2])) and bool(candidates))
                     if is_header:
                         if candidates:
                             quantity_col = choose_quantity(candidates, None)[0]
@@ -463,7 +485,8 @@ def parse_vor(pdf_source: Union[str, Path, bytes, bytearray],
     каждая запись — ``{name, unit, volume, page, quote}``.
     """
     config = config or pd_parser.Config()
-    cached = pd_parser.doc_cache_load("vor", pdf_source, config, use_llm)
+    # разбор таблиц быстрый — кеш нужен только для разбора ИИ
+    cached = pd_parser.doc_cache_load("vor", pdf_source, config, use_llm) if os.getenv("VOR_LLM", "0") == "1" else None
     if cached is not None:
         _say(progress, "ВОР: результат разбора взят из кэша")
         return cached
@@ -481,7 +504,30 @@ def parse_vor(pdf_source: Union[str, Path, bytes, bytearray],
         return result
 
     raw_items: List[dict] = []
-    if use_llm:
+    det: List[dict] = []
+    if os.getenv("VOR_LLM", "0") != "1":
+        try:
+            _say(progress, "ВОР: разбор таблиц (без ИИ)")
+            det = extract_vor_rows(pdf_source)
+        except Exception as exc:
+            logger.warning(f"ВОР: разбор таблиц не удался: {exc}")
+    if len(det) >= 20:
+        parent = {}
+        for r in det:
+            vol = r.get("volume_now") if r.get("volume_now") is not None else r.get("volume_was")
+            # подпозиция («1.1 Опалубка») получает в наименование свою конструкцию («1 Лестничные марши …»),
+            # иначе «Опалубка» из всех разделов ВОР склеивается в одну сумму
+            key, pos, nm = (r.get("section"), r.get("block")), str(r.get("pos") or ""), str(r.get("name") or "")
+            if re.fullmatch(r"\d+", pos):
+                parent[key] = nm
+            elif "." in pos and parent.get(key) and parent[key] not in nm:
+                nm = f"{nm} ({parent[key][:90]})"
+            it = _normalize_vor_item({"name": nm, "unit": r.get("unit"), "volume": vol, "page": r.get("page"),
+                                      "quote": " / ".join(str(x) for x in (r.get("section"), r.get("block"), r.get("pos")) if x)})
+            if it:
+                raw_items.append(it)
+        result["warnings"].append("ВОР разобран по таблицам, без ИИ")
+    elif use_llm:
         llm = pd_parser.LLMClient(config)
         batches = _batch_pages(text_pages)
         raw_items = _parse_batches(
@@ -630,6 +676,10 @@ def _regex_pd_items(pages: List[Page]) -> List[dict]:
     return items
 
 
+# Страницы ПД, где могут быть характеристики бетона (класс, марки W/F, подвижность).
+_PD_RELEVANT_RX = re.compile(r"бетон|[ВB]\s?\d{2}(?:[.,]\d)?\b|\bW\s?\d|\bF\s?\d{2,3}|морозост|водонепрониц|подвижност|\bП[1-5]\b", re.I)
+
+
 def parse_pd(pdf_source: Union[str, Path, bytes, bytearray],
              use_llm: bool = True,
              config: Optional["pd_parser.Config"] = None,
@@ -667,7 +717,11 @@ def parse_pd(pdf_source: Union[str, Path, bytes, bytearray],
     raw_items: List[dict] = []
     if use_llm:
         llm = pd_parser.LLMClient(config)
-        batches = _batch_pages(text_pages)
+        rel = [p for p in text_pages if _PD_RELEVANT_RX.search(p.text or "")] or text_pages
+        if len(rel) < len(text_pages):
+            result["warnings"].append(f"ПД: ИИ прочитал только страницы с характеристиками бетона — {len(rel)} из {len(text_pages)}")
+            _say(progress, f"ПД: страниц с характеристиками бетона {len(rel)} из {len(text_pages)}")
+        batches = _batch_pages(rel)
         raw_items = _parse_batches(
             batches, lambda ctx: _extract_pd_batch(llm, ctx), "ПД", progress)
     else:

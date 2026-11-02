@@ -22,7 +22,7 @@
 import copy
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Tuple
 
 from openpyxl import load_workbook
@@ -30,6 +30,7 @@ from openpyxl.utils import get_column_letter
 
 from src.core.logger import setup_logger
 from . import mapping
+from .quantity import Quantity, source_summary
 
 logger = setup_logger(__name__)
 
@@ -60,6 +61,10 @@ def resolve_template_path(data_dir: str = None, filename: str = TEMPLATE_FILENAM
                 return os.path.join(data_dir, name)
     except FileNotFoundError:
         pass
+    if filename == TEMPLATE_FILENAME:
+        bundled = os.path.join(data_dir, "comparison_vor_template.xlsx")
+        if os.path.isfile(bundled):
+            return bundled
     return os.path.join(data_dir, filename)
 
 
@@ -213,6 +218,21 @@ class OutputRow:
     extra: Dict[int, object] = field(default_factory=dict)
 
 
+def with_release_work(rows, buckets):
+    """Give starter bars their own work instead of folding them into cages."""
+    if not buckets.get('releases') or any(mapping.rebar_bucket(r.name) == 'releases' for r in rows if r.kind == 'work'):
+        return rows
+    sample = next((r for r in rows if r.kind == 'work' and mapping.classify_work(r.name) == 'rebar'), None)
+    if sample is None:
+        return rows
+    number = max(int(r.number) for r in rows if r.kind == 'work') + 1
+    return [*rows, replace(sample, number=str(number), name='Устройство арматурных выпусков', unit='т')]
+
+
+def with_kind(rows, kind):
+    return [replace(row, element_kind=kind) for row in rows]
+
+
 def render_template(output_rows: List[OutputRow], path: str = None,
                     sheet_name: str = DEFAULT_SHEET, output_path: str = None) -> str:
     """Записывает заполненный ВОР в копию шаблона.
@@ -228,10 +248,23 @@ def render_template(output_rows: List[OutputRow], path: str = None,
 
     # Шаблон-источник стилей/текстов (только чтение).
     src = load_workbook(path, data_only=False)
-    src_ws = src[sheet_name]
-
-    out = load_workbook(path, data_only=False)
+    out = src
     ws = out[sheet_name]
+    src_ws = out.copy_worksheet(ws)
+
+    def write_text(target, column, value):
+        if len(value) <= 30000:
+            ws.cell(target, column).value = value
+            return
+        title = 'Расчёты объёмов'
+        details = out[title] if title in out.sheetnames else out.create_sheet(title)
+        if details.max_row == 1 and details.cell(1, 1).value is None:
+            details.append(['Строка ВОР', 'Поле', 'Продолжение расчёта / источников'])
+            details.column_dimensions['C'].width = 100
+        start = details.max_row + 1
+        for offset in range(0, len(value), 30000):
+            details.append([target, 'Расчёт' if column == 5 else 'Источник', value[offset:offset + 30000]])
+        ws.cell(target, column).value = f'{title}, строки {start}–{details.max_row}'
 
     max_row = ws.max_row
     if max_row >= FIRST_DATA_ROW:
@@ -260,14 +293,19 @@ def render_template(output_rows: List[OutputRow], path: str = None,
             ws.cell(row=target, column=2).value = row.name_override
         if row.volume is not None:
             cell = ws.cell(row=target, column=4)
-            cell.value = row.volume
+            cell.value = float(row.volume)
             cell.number_format = "0.00"
         if row.justification is not None:
             ws.cell(row=target, column=6).value = row.justification
+        if isinstance(row.volume, Quantity):
+            write_text(target, 5, row.volume.calculation)
+            write_text(target, 6, source_summary(row.justification, row.volume.sources))
         for col, value in row.extra.items():
             ws.cell(row=target, column=col).value = value
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
+    out.remove(src_ws)
     out.save(output_path)
+    out.close()
     logger.info("ВОР сохранён: %s (строк %d)", output_path, len(output_rows))
     return output_path

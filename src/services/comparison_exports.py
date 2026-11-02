@@ -43,7 +43,7 @@ def build_comparison_exports(folder, models=None, projects=None):
     folder=Path(folder)
     generated=normalize_positions(IfcPositionsExtractor(models).run()) if models is not None else []
     if models is not None:
-        workbook=Workbook();sheet=workbook.active;sheet.title='Сформированный ВОР'
+        workbook=Workbook();sheet=workbook.active;sheet.title='Сформированная ВОР'
         sheet.append(['Модель','Группа','Тип элемента','Расположение / этажи','Материал','Код работы','Наименование работы','Ед. изм.','Объём','Статус объёма','Исходная единица','Исходный объём'])
         by_group={}
         for p in generated:by_group.setdefault((p.get('sourceFile'),p.get('groupId')),[]).append(p)

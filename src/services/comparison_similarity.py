@@ -17,7 +17,7 @@ def composition_similarity(rows):
             if work(p)=='formwork':family[-1]='formwork'
             return json.dumps(family,ensure_ascii=False)
         identity=work(p)
-        if identity!='formwork':identity=(p.get('code'),p.get('name') or p.get('workAndCostName'))
+        if identity not in ('formwork','reinforcement'):identity=(p.get('code'),p.get('name') or p.get('workAndCostName'))
         return json.dumps([p.get('sourceFile'),p.get('groupId'),p.get('unit'),identity],ensure_ascii=False,sort_keys=True)
 
     def customer_key(p):
@@ -28,7 +28,7 @@ def composition_similarity(rows):
     for row in rows:
         if row.get('isEmptyGroup'):continue
         detail=row.get('detail') or {}
-        gp=[p for p in (detail.get('ifcGroup') or {}).get('positions',[]) if p.get('positionType')!='material'] if row.get('generatedWork') else []
+        gp=[p for p in (detail.get('ifcGroup') or {}).get('positions',[]) if p.get('positionType')!='material' or operation(p)=='reinforcement'] if row.get('generatedWork') else []
         cp=(detail.get('projectGroup') or {}).get('positions',[]) if row.get('customerWork') else []
         gkeys={generated_key(p) for p in gp};ckeys={customer_key(p) for p in cp}
         generated.update(gkeys);customer.update(ckeys)
@@ -45,4 +45,52 @@ def composition_similarity(rows):
             'generatedMatched':len(matched_generated),'generatedTotal':len(generated),
             'customerMatched':len(matched_customer),'customerTotal':len(customer),
             'method':'harmonic_work_coverage',
-            'explanation':'Оценка состава работ по установленным связям. Итог — гармоническое среднее долей сопоставленных групп работ двух ВОР. Монтаж и демонтаж одной опалубки считаются одной группой работ. Пустые группы, объёмы и уверенность модели в оценку не входят.'}
+            'explanation':'Оценка состава работ по установленным связям. Итог — гармоническое среднее долей сопоставленных групп работ двух ВОР. Монтаж и демонтаж одной опалубки считаются одной группой работ. Арматура, включая позиции материалов, входит в оценку. Пустые группы, объёмы и уверенность модели в оценку не входят.'}
+
+
+def typical_composition_similarity(rows):
+    """Coverage of active template works and reinforcement specifications.
+
+    Diameter/class lines replace their reinforcement total in this metric;
+    quantities of works and resources are never added together.
+    """
+    from .comparison_typical import scope, identity, norm
+    def is_rebar(row):
+        return operation({'name': row.get('work'), 'unit': row.get('unit')}) == 'reinforcement'
+    detailed = set()
+    for row in rows:
+        if row.get('kind') == 'resource' and is_rebar(row) and any(row.get(k) is not None for k in ('generatedQuantity','customerQuantity')):
+            detailed.add((scope(row), norm(row.get('parentWork'))))
+    generated=set();customer=set();matched_g=set();matched_c=set();rebar_g=set();rebar_c=set()
+    for row in rows:
+        if row.get('isSeparator') or row.get('isEmptyGroup'):
+            continue
+        rebar = is_rebar(row)
+        if row.get('kind') == 'resource' and not rebar:
+            continue
+        if row.get('kind') == 'work' and rebar and (scope(row), norm(row.get('work'))) in detailed:
+            continue
+        # Empty template placeholders do not describe a measured work.
+        g = row.get('generatedWork') and row.get('generatedQuantity') is not None
+        c = row.get('customerWork') and row.get('customerQuantity') is not None
+        key = (scope(row), identity(row))
+        if g:
+            generated.add(key)
+            if rebar: rebar_g.add(key)
+        if c:
+            customer.add(key)
+            if rebar: rebar_c.add(key)
+        if g and c:
+            matched_g.add(key);matched_c.add(key)
+    gc = len(matched_g) / len(generated) if generated else None
+    cc = len(matched_c) / len(customer) if customer else None
+    score = None if not generated and not customer else 2*gc*cc/(gc+cc) if gc and cc else 0
+    return {'score': None if score is None else round(score*100,1),
+            'generatedCoverage': None if gc is None else round(gc*100,1),
+            'customerCoverage': None if cc is None else round(cc*100,1),
+            'generatedMatched':len(matched_g),'generatedTotal':len(generated),
+            'customerMatched':len(matched_c),'customerTotal':len(customer),
+            'reinforcementGenerated':len(rebar_g),'reinforcementCustomer':len(rebar_c),
+            'reinforcementMatched':len(rebar_g & rebar_c),
+            'method':'harmonic_template_coverage_with_reinforcement',
+            'explanation':'Состав типового ВОР с учётом арматуры. При наличии расшифровки арматура учитывается по классу и диаметру внутри своей работы; общая масса повторно не учитывается. Пустые объёмы исключены. Показатель отражает наличие соответствующих позиций, а не точность объёмов. Арматура сформированной ВОР может быть взята из ВОР заказчика — её совпадение не является независимой проверкой модели.'}

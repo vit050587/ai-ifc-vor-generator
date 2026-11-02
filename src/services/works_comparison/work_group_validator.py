@@ -24,14 +24,10 @@ class WorkGroupValidator:
             len(entry["ifcGroup"]["positions"])
             for entry in selected_entries
         )
-        cache_before = self.ollama_service._get_tg_model_answer_cached.cache_info()
         self._validate_only_ifc(comparison, on_progress=on_progress)
-        cache_after = self.ollama_service._get_tg_model_answer_cached.cache_info()
         return {
             "groupsSelectedForValidation": len(selected_entries),
             "positionsSelectedForValidation": selected_positions,
-            "uniqueModelRequests": cache_after.misses - cache_before.misses,
-            "cacheHits": cache_after.hits - cache_before.hits,
         }
 
     def _validate_only_ifc(self, comparison: list[dict], on_progress=None):
@@ -48,7 +44,7 @@ class WorkGroupValidator:
             payload = self._compose_position_payload(position)
 
             if position.get("positionType") == "material":
-                result, _ = self.ollama_service.get_tg_model_answer(
+                result = self.ollama_service.get_tg_model_answer(
                     "validate_material",
                     {
                         "data": json.dumps(
@@ -59,7 +55,7 @@ class WorkGroupValidator:
                     },
                 )
             elif position.get("positionType") == "work":
-                result, _ = self.ollama_service.get_tg_model_answer(
+                result = self.ollama_service.get_tg_model_answer(
                     "validate_work",
                     {
                         "data": json.dumps(
@@ -71,7 +67,7 @@ class WorkGroupValidator:
                 )
             else:
                 logger.warning("positionType was not specified")
-                result, _ = self.ollama_service.get_tg_model_answer(
+                result = self.ollama_service.get_tg_model_answer(
                     "validate_work",
                     {
                         "data": json.dumps(

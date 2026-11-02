@@ -10,6 +10,7 @@ class Config:
     model_ollama: str
     KOEFS_PATH: str
     PRICE_COST_PATH: str
+    CACHE_PATH: str
     # API справочника работ ТСН (для режима КР)
     WORKS_API_URL: str
     # Эндпоинт стоимости работ ТСН (curAll — цена за единицу измерения)
@@ -35,6 +36,7 @@ def load_config() -> Config:
         MSSK_EXCEL_PATH=os.getenv("MSSK_EXCEL_PATH", "data/elements_mssk.xlsx"),
         KOEFS_PATH=os.getenv("KOEFS_PATH", "data/koefs.xlsx"),
         PRICE_COST_PATH=os.getenv("PRICE_COST_PATH", "data/price_cost.xlsx"),
+        CACHE_PATH=os.getenv("CACHE_PATH", "cache"),
         model_ollama=os.getenv("NORMS_LLM_MODEL", "yandex/YandexGPT-5-Lite-8B-instruct-GGUF:latest"),
         WORKS_API_URL=os.getenv(
             "WORKS_API_URL",

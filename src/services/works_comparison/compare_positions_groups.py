@@ -46,9 +46,9 @@ class ComparePositionsGroups:
                 record["status"] = "only_project"
             elif project_group is None:
                 record["status"] = "only_ifc"
-            elif ifc_group["positionsWithoutQuantity"] > 0:
+            elif ifc_group["positionsWithoutQuantity"] > 0 or any(p.get("quantityStatus") == "partial_data" for p in ifc_group["positions"]):
                 record["status"] = "ifc_quantity_incomplete"
-            elif project_group["positionsWithoutQuantity"] > 0:
+            elif project_group["positionsWithoutQuantity"] > 0 or any(p.get("quantityStatus") == "partial_data" for p in project_group["positions"]):
                 record["status"] = "project_quantity_incomplete"
             else:
                 ifc_quantity = ifc_group["totalQuantity"]

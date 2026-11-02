@@ -41,6 +41,8 @@ KIND_RULES = (
     ("precast_parapet", (r"сборн\w*[^.;]*парапет", r"парапет\w*[^.;]*сборн")),
     ("precast_shaft", (r"сборн\w*[^.;]*шахт", r"шахт\w*[^.;]*сборн")),
     ("precast_vent", (r"сборн\w*[^.;]*вентблок", r"вентблок\w*[^.;]*сборн")),
+    ("crane_foundation", (r"башенн\w*\s+кран", r"кранов\w*\s+фундамент",
+                          r"(?:фундамент|плит|фп)[^.;]*[\s_-]бк(?:[\s_:-]|$)")),
     ("equipment_foundation", (r"фундамент\w*\s+под\s+(инженерн|оборудован)",)),
     ("pile", (r"\bсва[йияе]",)),
     ("parapet", (r"парапет",)),
@@ -117,11 +119,19 @@ def parse_thickness(text: Optional[str]) -> Optional[int]:
     Понимает «толщиной 200мм», «t=100 мм», «t-50мм». Значения вне диапазона
     30…3000 мм игнорируются (защита от случайных чисел в наименовании).
     """
+    values = thickness_values(text)
+    return values[0] if len(values) == 1 else None
+
+
+def thickness_values(text: Optional[str]) -> tuple:
+    mixed = re.search(r'толщин\w*[^\d]{0,12}(\d{2,4})\s*\(\s*(\d{2,4})\s*\)', text or '', re.I)
+    if mixed:
+        return tuple(dict.fromkeys(int(v) for v in mixed.groups() if 30 <= int(v) <= 3000))
     m = _THICKNESS_RX.search(text or "") or _T_MM_RX.search(text or "")
     if not m:
-        return None
+        return ()
     value = int(m.group(1))
-    return value if 30 <= value <= 3000 else None
+    return (value,) if 30 <= value <= 3000 else ()
 
 
 def detect_geometry(text: Optional[str]) -> Optional[str]:
@@ -188,7 +198,7 @@ def classify_work(name: Optional[str]) -> str:
         return "other"
     if "опалубк" in s:
         return "formwork"
-    if "арматурн" in s and ("стержн" in s or "каркас" in s):
+    if "арматурн" in s and ("стержн" in s or "каркас" in s or "выпуск" in s):
         return "rebar"
     if "закладн" in s:
         return "embedded"
@@ -226,10 +236,6 @@ _F_RE = re.compile(r"\bF\s*(\d+)", re.IGNORECASE)
 _REBAR_DIAMETER_RE = re.compile(r"(?:d|D|Ø|Д)\s*=?\s*(\d+(?:[.,]\d+)?)")
 _REBAR_CLASS_RE = re.compile(r"(А\d{3}[СсC]?|A\d{3}[СсC]?|Вр-?1|Bp-?1|В500[СсC]?|B500[СсC]?)")
 _REBAR_WORD_RE = re.compile(r"арматур|арм-?ра|стержн|каркас", re.IGNORECASE)
-
-# Слова-признаки «каркасов»/выпусков арматуры (в отличие от продольной арматуры).
-_REBAR_FRAME_WORDS = ("выпуск", "каркас")
-
 
 def parse_concrete_grade(text: Optional[str]) -> Optional[str]:
     """Извлекает марку бетона (``B30``) из наименования ресурса."""
@@ -285,11 +291,13 @@ def is_rebar_text(text: Optional[str]) -> bool:
 def rebar_bucket(name: Optional[str]) -> str:
     """Категория арматуры по наименованию строки.
 
-    ``frames`` — арматурные выпуски/каркасы («Арматурные выпуски класса А500С»),
+    ``frames`` — каркасы, ``releases`` — арматурные выпуски,
     ``bars`` — продольная и поперечная арматура («Арматура класса А500С»).
     """
     low = (name or "").lower()
-    return "frames" if any(w in low for w in _REBAR_FRAME_WORDS) else "bars"
+    if "выпуск" in low:
+        return "releases"
+    return "frames" if "каркас" in low else "bars"
 
 
 # Соответствие ресурса источнику: 'concrete' (марка бетона),
@@ -334,9 +342,9 @@ def vor_section_matches(section: Optional[str], kind: Optional[str],
     if kind == "equipment_foundation":
         return has("оборудован") or has("маф")
     if kind == "foundation_slab":
-        # Фундаментные плиты: включая плиты фундаментов башенных кранов
-        # (у заказчика объёмы плит толщиной 1400 мм приведены в этом разделе).
-        return has("фундамент") and not has("сва", "маф")
+        return has("фундамент") and not has("сва", "маф", "кран")
+    if kind == "crane_foundation":
+        return has("кран") and has("фундамент", "плит")
     if kind == "wall":
         if part == "underground":
             return has("стен") and underground

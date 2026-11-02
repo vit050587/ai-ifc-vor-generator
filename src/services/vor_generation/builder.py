@@ -34,6 +34,7 @@ from src.core.logger import setup_logger
 from . import documents, mapping, template
 from .documents import Documents
 from .elements import Element, ElementIndex, aggregate
+from .quantity import Quantity
 
 logger = setup_logger(__name__)
 
@@ -128,40 +129,77 @@ def _group_header(elements: List[Element], param: Optional[str], label: Optional
 #  Расчёт объёмов
 # =====================================================================
 
-def _foundation_formwork_area(elements: List[Element]) -> float:
+def _model_quantity(el, value, expression=None):
+    source = ', '.join(filter(None, [el.name or el.group_name or el.mge_name, el.storey]))
+    return Quantity(value, f'{expression or f"{value:g}"} [{source}]', (source,))
+
+
+def _foundation_formwork_area(elements: List[Element]) -> Optional[float]:
     """Площадь опалубки фундаментной плиты — только торцы (периметр × толщина).
 
     Фундаментная плита бетонируется на бетонную подготовку, поэтому опалубка
     устраивается только по боковой поверхности (торцам): периметр контура ×
     толщину плиты. Площади нижней и верхней поверхностей в опалубку не входят.
-    Периметр берётся из QTO, а при его отсутствии — из bbox-оценки сырого дампа
-    (``QTO_bbox::Периметр_мм``); толщина — из QTO или наименования группы.
+    Периметр берётся из QTO или внешнего контура IFC; bbox остаётся явно
+    обозначенной оценкой, если геометрию контура получить не удалось.
     """
-    total = 0.0
+    values = []
     for el in elements:
         perimeter = el.quantity("perimeter")       # мм
         thickness = el.geometry.get("thickness")   # мм
-        if perimeter and thickness:
-            total += (perimeter / 1000.0) * (thickness / 1000.0)
-    return total
+        if perimeter > 0 and thickness and thickness > 0:
+            values.append(_model_quantity(el, perimeter * thickness / 1e6,
+                          f'({perimeter:g} / 1000 × {thickness:g} / 1000)'))
+    return sum(values) if values else None
 
 
 def _formwork_area(kind: Optional[str], agg: Dict[str, object],
-                   elements: List[Element]) -> float:
+                   elements: List[Element]) -> Optional[float]:
     """Площадь опалубки по агрегатам группы элементов."""
-    if kind == "foundation_slab":
+    if kind in ("foundation_slab", "crane_foundation"):
         # Опалубка фундаментной плиты — только торцы (периметр × толщина).
         return _foundation_formwork_area(elements)
-    side = float(agg.get("side_area") or 0.0)
-    area = float(agg.get("area") or 0.0)
-    surface = float(agg.get("surface_area") or 0.0)
-    if kind == "wall":
-        return side or surface
-    if kind in ("slab", "stair"):
-        return area or surface
-    if kind in ("beam", "column"):
-        return surface or side
-    return side or surface or area
+    def measured(el):
+        if 'formwork_area' in el.quantities and not (kind in ('wall', 'parapet') and el.quantity_sources.get('formwork_area') == 'QTO_geom::Площадь_опалубки_м2'):
+            return el.quantity('formwork_area')
+        if kind == "stair" and el.component in ("flight", "landing"):
+            # Identical to the element pipeline: slab edges / flight bbox estimate.
+            perimeter = el.quantity("perimeter")
+            depth = el.geometry.get("thickness") or 0
+            if perimeter <= 0 or depth <= 0:
+                return None
+            if el.component == 'landing':
+                return el.quantity('area') + perimeter * depth / 1e6 if 'area' in el.quantities else None
+            return perimeter * depth / 1e6
+        side, area, surface = (el.quantity(key) for key in ('side_area', 'area', 'surface_area'))
+        if kind in ("wall", "parapet"):
+            if side or surface:
+                return side or surface
+            if "side_area" in el.quantities:
+                return side
+            depth = el.geometry.get("thickness") or 0
+            volume = el.quantity("volume")
+            # Same one-face area fallback as zero_step for a wall without area QTO.
+            return volume / (depth / 1000) if volume > 0 and depth > 0 else None
+        if kind == 'slab':
+            perimeter = el.quantity('perimeter')
+            depth = el.geometry.get('thickness') or 0
+            return area + perimeter * depth / 1e6 if 'area' in el.quantities and perimeter > 0 and depth > 0 else None
+        if kind == "stair":
+            return area or surface if any(key in el.quantities for key in ("area", "surface_area")) else None
+        if kind == "beam":
+            return el.quantity('formwork_area') if 'formwork_area' in el.quantities else None
+        if kind == "column":
+            return surface or side if any(key in el.quantities for key in ("side_area", "surface_area")) else None
+        return side or surface or area if any(key in el.quantities for key in ("side_area", "surface_area", "area")) else None
+    values = [measured(el) for el in elements]
+    known = [_model_quantity(el, value,
+              (f'{el.quantity("underside_area"):g} + {el.quantity("edge_area"):g}'
+               if 'underside_area' in el.quantities and 'edge_area' in el.quantities else
+               f'{value:g} ({", ".join(el.quantity_sources.values())})'))
+             for el, value in zip(elements, values) if value is not None and value >= 0]
+    return sum(known) if known else None
+
 
 
 def _norm_grade(grade: Optional[str]) -> Optional[str]:
@@ -179,8 +217,8 @@ def _concrete_volume(elements: List[Element], grade: Optional[str]) -> Optional[
         matched = [el for el in elements if _norm_grade(el.concrete_grade) == target]
         if not matched:
             return None
-        return sum(el.quantity("volume") for el in matched)
-    return sum(el.quantity("volume") for el in elements)
+        return sum(_model_quantity(el, el.quantity('volume')) for el in matched)
+    return sum(_model_quantity(el, el.quantity('volume')) for el in elements)
 
 
 _THERMO_THICKNESS_RE = re.compile(r"(\d{2,3})\s*мм")
@@ -252,8 +290,24 @@ def _fill_work(row: template.TemplateRow, elements: List[Element],
     if elements:
         if qk == "formwork":
             area = _formwork_area(row.element_kind, agg, elements)
-            if area > 0:
-                result = (round(area, 2), ctx.ref_ifc)
+            missing = sum(_formwork_area(row.element_kind, aggregate([el]), [el]) is None for el in elements)
+            if missing:
+                note = 'Показана известная часть площади.' if area is not None else 'Площадь не рассчитана.'
+                return (round(area, 2) if area is not None else None), f"{ctx.ref_ifc}. Неполные данные: нет площади у {missing} из {len(elements)} элементов. {note}"
+            if area is not None and area >= 0:
+                estimated = sum('formwork_area' not in el.quantities and not (el.quantity("side_area") or el.quantity("surface_area")) for el in elements) if row.element_kind == "wall" else 0
+                wall_note = f". Для {estimated} элементов без площади QTO применено объём / толщина (одна сторона стены), как в расчёте по элементам." if estimated else ""
+                foundation_note = ''
+                if row.element_kind in ('foundation_slab', 'crane_foundation'):
+                    if any(el.quantity_sources.get('perimeter', '').startswith('QTO_bbox') for el in elements):
+                        foundation_note = '. Периметр оценён по габаритам IFC (bbox); площадь опалубки является оценкой.'
+                    elif any(el.quantity_sources.get('perimeter', '').startswith('QTO_geom') for el in elements):
+                        foundation_note = '. По внешнему контуру плит × толщина.'
+                geometry_note = ''
+                if row.element_kind not in ('wall', 'parapet') and any(el.quantity_sources.get('formwork_area') == 'QTO_geom::Площадь_опалубки_м2' for el in elements):
+                    geometry_note = '. По граням IFC: стороны, торцы, откосы и низ перемычек; основание исключено.' if row.element_kind in ('wall', 'parapet') else '. По вертикальным граням IFC.' if row.element_kind == 'column' else '. По геометрии IFC: нижняя поверхность и вертикальные торцы.'
+                stair_note = '. Оценка по габаритам марша; грани опалубки не определены.' if row.element_kind == 'stair' and any(el.component == 'flight' and 'formwork_area' not in el.quantities for el in elements) else ''
+                result = (round(area, 2), ctx.ref_ifc + wall_note + foundation_note + geometry_note + stair_note)
         elif qk == "concrete":
             volume = _concrete_volume(elements, None)
             if volume:
@@ -351,9 +405,8 @@ def _concrete_specs(elements: List[Element]) -> List[Tuple[str, float]]:
     """
     totals: Dict[str, float] = {}
     for el in elements:
-        if not el.concrete_spec:
-            continue
-        totals[el.concrete_spec] = totals.get(el.concrete_spec, 0.0) + el.quantity("volume")
+        spec = el.concrete_spec or '(марка в IFC не указана)'
+        totals[spec] = totals.get(spec, 0.0) + _model_quantity(el, el.quantity('volume'))
     return sorted(((spec, volume) for spec, volume in totals.items() if volume > 0),
                   key=lambda item: -item[1])
 
@@ -387,7 +440,7 @@ def _fill_rows(rows: List[template.TemplateRow], elements: List[Element],
     Строки-работы арматуры («…стержней» / «…каркасов») и бетонирования получают
     **динамические** строки-ресурсы по фактическим данным: арматура — диаметры и
     классы из ВОР застройщика («Арматура класса …» → стержни, «Арматурные
-    выпуски …» → каркасы), бетон — марки из модели IFC. Статические строки
+    выпуски …» → отдельная работа выпусков), бетон — марки из модели IFC. Статические строки
     шаблона под этими работами заменяются; остальные строки заполняются как
     прежде (модель IFC → документы).
 
@@ -401,6 +454,14 @@ def _fill_rows(rows: List[template.TemplateRow], elements: List[Element],
     """
     agg = aggregate(elements)
     buckets = documents.rebar_buckets(ctx.docs.rebar, kind, part, thickness, share)
+    rows = template.with_release_work(rows, buckets)
+    if kind in ('insulation', 'seam') and ctx.docs.vor_rows:
+        from . import customer_vor
+        source = [r for r in documents.customer_rows(ctx.docs)
+                  if customer_vor._in_scope(r, kind, part)]
+        return customer_vor._fill_rows(rows, source, [],
+                                      customer_vor._Context(ctx.docs.rebar, ctx.ref_vor),
+                                      kind, part, 1.0, thickness)
 
     # Подтип лестницы для каждой строки блока (с наследованием в пределах блока).
     row_component: Dict[int, str] = {}
@@ -445,8 +506,8 @@ def _fill_rows(rows: List[template.TemplateRow], elements: List[Element],
                                           thickness, component)
 
     # Бетон — только из модели: объём марки заполняется в первую строку этой
-    # марки, повторные строки той же марки остаются с прочерком. Если ни одна
-    # марка не совпала — весь объём бетона группы в первую строку бетона.
+    # марки, повторные строки той же марки остаются с прочерком.
+    # Неизвестная марка не подставляется под произвольный бетон шаблона.
     concrete_rows = [r for r in rows
                      if r.kind == "resource" and mapping.classify_resource(r.name) == "concrete"]
     used_grades = set()
@@ -464,16 +525,6 @@ def _fill_rows(rows: List[template.TemplateRow], elements: List[Element],
             any_filled = True
         else:
             fills[r.index] = (None, None)
-    for r in concrete_rows:
-        if fills[r.index][0]:
-            continue
-        sub_elements, sub_agg = subset(component_of(r))
-        total_concrete = float(sub_agg.get("volume") or 0.0)
-        # Марки бетона в модели не указаны — показываем объём в первой строке,
-        # чтобы объём бетона не потерялся (иначе — прочерк).
-        if total_concrete > 0 and not any(_norm_grade(el.concrete_grade) for el in sub_elements):
-            fills[r.index] = (round(total_concrete, 2), ctx.ref_ifc)
-            break
 
     # Арматура: целочисленная строка = полный тоннаж раздела из ВОР
     # застройщика (в доле группы при разбивке по геометрии); если разрез
@@ -520,7 +571,7 @@ def _fill_rows(rows: List[template.TemplateRow], elements: List[Element],
             component = component_of(row)
             row_buckets = documents.rebar_buckets(ctx.docs.rebar, kind, part, thickness,
                                                   share, component) if component else buckets
-            if qk == "rebar" and (row_buckets.get("bars") or row_buckets.get("frames")):
+            if qk == "rebar" and any(row_buckets.values()):
                 items = documents.rebar_work_items(row_buckets, row.name,
                                                    has_bars_work, has_frames_work)
                 category = "rebar"
@@ -539,6 +590,8 @@ def _fill_rows(rows: List[template.TemplateRow], elements: List[Element],
 
         ref = ctx.ref_vor if category == "rebar" else ctx.ref_ifc
         output.append(template.OutputRow(src_index=row.index,
+                                         label=row.number if mapping.rebar_bucket(row.name) == 'releases' else None,
+                                         name_override=row.name if mapping.rebar_bucket(row.name) == 'releases' else None,
                                          volume=round(sum(items.values()), 2) if items else None,
                                          justification=ref if items else None))
         sample = _resource_sample(children, category) or row.index
@@ -595,7 +648,8 @@ def _geometry_groups(elements: List[Element], param: str,
 
 def build_vor(elements_json_path: str, docs: Documents, output_path: str,
               template_path: str = None, sheet_name: str = template.DEFAULT_SHEET,
-              ifc_name: str = "", progress: Progress = None) -> Dict[str, object]:
+              ifc_name: str = "", progress: Progress = None,
+              prepared_index=None, prepared_template=None) -> Dict[str, object]:
     """Собирает заполненный ВОР по типовому шаблону.
 
     Возвращает словарь со статистикой сборки (число строк, заполненных объёмов
@@ -603,9 +657,12 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
     """
     template_path = template_path or template.DEFAULT_TEMPLATE_PATH
     _say(progress, "Разбор типового шаблона ВОР")
-    rows = template.parse_template(template_path, sheet_name)
+    rows = prepared_template if prepared_template is not None else template.parse_template(template_path, sheet_name)
     _say(progress, "Индексация элементов модели IFC")
-    index = ElementIndex.from_raw_dump(elements_json_path)
+    index = prepared_index
+    if index is None:
+        index = ElementIndex.from_raw_dump(elements_json_path)
+        index.apply_vor_foundation_changes(docs.vor_rows)
     ctx = _Context(index, docs, ifc_name)
 
     by_index = {r.index: r for r in rows}
@@ -675,6 +732,21 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
                     if out_row.volume is not None:
                         filled += 1
                     output.append(out_row)
+            if row.element_kind == 'foundation_slab':
+                crane_elements = index.select('crane_foundation', part)
+                crane_groups = _geometry_groups(crane_elements, 'thickness', index)
+                total = sum(el.quantity('volume') for el in crane_elements)
+                for label, members in crane_groups:
+                    heading = _group_header(members, 'thickness', label, 'Фундамент под башенный кран толщиной … мм')
+                    if 'кран' not in heading.lower():
+                        heading = 'Фундамент башенного крана: ' + heading
+                    output.append(template.OutputRow(src_index=row.index,
+                        label=heading))
+                    share = sum(el.quantity('volume') for el in members) / total if total else 1.0
+                    added = _fill_rows(template.with_kind(children, 'crane_foundation'), members, ctx,
+                                       'crane_foundation', part, share, _geometry_int(label))
+                    filled += sum(r.volume is not None for r in added)
+                    output.extend(added)
             i = pos_by_index[block_end[row.index]] + 1
             continue
 

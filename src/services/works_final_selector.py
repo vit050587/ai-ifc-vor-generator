@@ -1575,6 +1575,8 @@ def _enrich_selected_works_with_costs(result_elements, period_id):
             detail = details.get(w.get("work_id"))
             if not detail:
                 continue
+            w["_price_detail"] = detail
+            w["_price_period_id"] = period_num
             for src, dst in field_map.items():
                 v = detail.get(src)
                 if v is not None:
@@ -1733,6 +1735,59 @@ def _select_works_for_element(
 # ======================================================================
 #  Главная функция
 # ======================================================================
+
+def _split_final_entries_by_height(entries, rows, payloads, params_by_id):
+    """Select a type once, then aggregate quantities by height-coefficient band."""
+    import copy
+    from . import work_height
+    from .ifc_reference_builder import _recompute_group_aggregates, _find_volume_columns
+    if not rows:
+        return entries
+    headers = list(rows[0])
+    volumes = _find_volume_columns(headers)
+    result = []
+    for entry in entries:
+        ids = entry.get('source_indices') or []
+        # Index order is shared with the table selector. Verify identity before use.
+        if not ids or any(i < 0 or i >= len(rows) or i >= len(payloads) or
+            str(rows[i].get('GlobalId') or '') != str((payloads[i].get('element') or {}).get('global_id') or '')
+            for i in ids):
+            result.append(entry)
+            continue
+        groups = work_height.partitions(ids, rows)
+        for indices in groups:
+            sub = copy.deepcopy(entry)
+            raw = [rows[i] for i in indices]
+            ctx = work_height.context(raw)
+            sub['height_context'] = ctx
+            sub['source_indices'] = list(indices)
+            sub['element'] = copy.deepcopy(payloads[indices[0]].get('element') or {})
+            sub['element']['row'] = dict(sub['element'].get('row') or {}, **raw[0])
+            if len(groups) > 1:
+                group = _recompute_group_aggregates(raw, headers, volumes, precision=8)
+                group['count'] = len(indices)
+                quantity = _group_quantity_from_aggregates(group, _sum_group_quantities([payloads[i] for i in indices]))
+                formwork = group['formwork_area']
+                joint = _sum_joint_length([payloads[i] for i in indices], params_by_id)
+                sub.update(group_quantity=quantity, group_formwork_area_m2=formwork,
+                           group_joint_length_m=joint, group_rebar_mass_kg=group['total_reinforcement'])
+                if sub.get('group'):
+                    sub['group']['element_count'] = len(indices)
+                header = re.sub(r'Кол-во:\s*\d+', f'Кол-во: {len(indices)}',
+                                entry.get('group_header') or _element_header(sub))
+                for work in sub.get('selected_works') or []:
+                    q = _enrich_quantity(dict(quantity), sub['element'])
+                    if _is_formwork_work(work):
+                        q['area_m2'] = formwork
+                    if _is_joint_work(work):
+                        q['joint_length_m'] = joint
+                    work['quantity'] = q
+            else:
+                header = entry.get('group_header') or _element_header(sub)
+            sub['group_header'] = header + '  [' + work_height.label(ctx) + ']'
+            result.append(sub)
+    return result
+
 
 def select_final_works(tables_json_path, works_json_path, run_dir,
                         llm_config=None):
@@ -1908,8 +1963,13 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
             entry["group_header"] = header
             entry["group_base_name"] = group_base_name
             entry["group_rebar_mass_kg"] = group_rebar_kg
+        entry['source_indices'] = [i for i in group['indices'] if 0 <= i < len(elements_payload)] if group else [next(
+            i for i,p in enumerate(elements_payload) if p is element_payload)]
         result_elements.append(entry)
 
+    result_elements = _split_final_entries_by_height(
+        result_elements, elements_rows, elements_payload, params_by_id)
+    total_selected = sum(len(entry.get('selected_works') or []) for entry in result_elements)
     _enrich_selected_works_with_costs(result_elements, works_payload.get("period_id"))
 
     payload = {
@@ -2327,11 +2387,10 @@ def build_final_works_xlsx(result_elements, xlsx_path):
         "_is_grand_total",
     ]
 
-    def _cost(work, cur_key, base_key, vol):
-        unit = safe_float(work.get(cur_key), default=0.0)
-        if unit <= 0:
-            unit = safe_float(work.get(base_key), default=0.0)
-        if unit > 0 and vol > 0:
+    def _cost(work, cur_key, vol):
+        # Current-price columns must not silently fall back to base-period prices.
+        unit = safe_float(work.get(cur_key), default=None)
+        if unit is not None and vol is not None:
             return round(unit * vol, 2)
         return None
 
@@ -2420,9 +2479,10 @@ def build_final_works_xlsx(result_elements, xlsx_path):
     # работ в порядке групп, стоимость считается по скорректированным
     # объёмам.
     flat_records = []
-    for block in element_blocks:
+    for group_index, block in enumerate(element_blocks):
         for r in block["rows"]:
             flat_records.append({
+                "_norm_group": group_index,
                 "Шифр ТСН": r["Шифр ТСН"],
                 "Наименование расценки/ресурса": r["Наименование расценки/ресурса"],
                 "Объём работ": r["Объём работ"],
@@ -2448,15 +2508,13 @@ def build_final_works_xlsx(result_elements, xlsx_path):
     # Стоимость — по (скорректированным) объёмам.
     for block in element_blocks:
         for r in block["rows"]:
-            vol_num = safe_float(r["Объём работ"], default=0.0)
+            vol_num = safe_float(r["Объём работ"], default=None)
             work = r.get("_work") or {}
-            zp = _cost(work, "cur_salary", "salary", vol_num)
-            em = _cost(work, "cur_operation_of_machines",
-                       "operation_of_machines", vol_num)
-            mr = _cost(work, "cur_cost_of_material_resources",
-                       "cost_of_material_resources", vol_num)
+            zp = _cost(work, "cur_salary", vol_num)
+            em = _cost(work, "cur_operation_of_machines", vol_num)
+            mr = _cost(work, "cur_cost_of_material_resources", vol_num)
             parts = [v for v in (zp, em, mr) if v is not None]
-            cost = round(sum(parts), 2) if parts else ""
+            cost = round(sum(parts), 2) if len(parts) == 3 else ""
             r["ЗП"] = zp if zp is not None else ""
             r["ЭМ"] = em if em is not None else ""
             r["МР"] = mr if mr is not None else ""
@@ -2472,7 +2530,7 @@ def build_final_works_xlsx(result_elements, xlsx_path):
     for block in element_blocks:
         for r in block["rows"]:
             for col in ("ЗП", "ЭМ", "МР", "Стоимость"):
-                r[col] = format_money(r[col])
+                r[col] = "0.00" if isinstance(r[col], (int, float)) and r[col] == 0 else format_money(r[col])
 
     final_rows: List[Dict[str, Any]] = []
     all_work_rows: List[Dict[str, Any]] = []

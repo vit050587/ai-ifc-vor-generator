@@ -10,8 +10,12 @@ from pathlib import Path
 
 from src.core.logger import setup_logger
 from src.services.ifc_raw_dump import (
+    find_storey,
     _compute_bbox_quantities,
-    _compute_formwork_bbox_quantities,
+    _compute_formwork_quantities,
+    _compute_surface_formwork_quantities,
+    _surface_formwork_kind,
+    warm_formwork_surface_cache,
 )
 
 logger = setup_logger("zero_step")
@@ -459,27 +463,17 @@ def get_element_storey(element, processing_type: str = "KR"):
     }
     
     try:
-        if hasattr(element, 'ContainedInStructure'):
-            for rel in element.ContainedInStructure:
-                if rel.is_a('IfcRelContainedInSpatialStructure'):
-                    container = rel.RelatingStructure
-                    if container and container.is_a('IfcBuildingStorey'):
-                        storey_info['Этаж'] = safe_get_attr(container, 'Name')
-                        
-                        if hasattr(container, 'Elevation'):
-                            elevation = safe_get_attr(container, 'Elevation')
-                            if elevation != '-':
-                                
-                                elev_val = float(elevation)
-                                if abs(elev_val) > 100:  
-                                    elev_val = elev_val / 1000
-                                storey_info['Уровень_этажа_мм'] = round(elev_val * 1000, 2)
-                        
-                        storey_info['Тип_этажа'] = classify_storey_type(
-                            storey_info['Этаж'],
-                            storey_info['Уровень_этажа_мм']
-                        )
-                        break
+        container = find_storey(element)
+        if container is not None:
+            storey_info['Этаж'] = safe_get_attr(container, 'Name')
+            elevation = safe_get_attr(container, 'Elevation')
+            if elevation != '-':
+                elev_val = float(elevation)
+                if abs(elev_val) > 100:
+                    elev_val = elev_val / 1000
+                storey_info['Уровень_этажа_мм'] = round(elev_val * 1000, 2)
+            storey_info['Тип_этажа'] = classify_storey_type(
+                storey_info['Этаж'], storey_info['Уровень_этажа_мм'])
     except Exception as e:
         print(f'Error: {e}')
     
@@ -507,38 +501,38 @@ def get_all_quantities(element):
                                     value = safe_get_attr(qty, 'LengthValue')
                                     if value and value != '-':
                                         # НОВЫЙ формат с QTO_
-                                        quantities[f'QTO_{qto_set_name}_Длина_{qty_name}_мм'] = round(float(value), 2)
+                                        quantities[f'QTO_{qto_set_name}_Длина_{qty_name}_мм'] = float(value)
                                         # СТАРЫЙ формат без QTO_ (как было в работающей версии)
-                                        quantities[f'Длина_{qty_name}_мм'] = round(float(value), 2)
+                                        quantities[f'Длина_{qty_name}_мм'] = float(value)
                                 
                                 elif qty_type == 'IfcQuantityArea':
                                     value = safe_get_attr(qty, 'AreaValue')
                                     if value and value != '-':
                                         # НОВЫЙ формат с QTO_
-                                        quantities[f'QTO_{qto_set_name}_Площадь_{qty_name}_м2'] = round(float(value), 3)
+                                        quantities[f'QTO_{qto_set_name}_Площадь_{qty_name}_м2'] = float(value)
                                         # СТАРЫЙ формат без QTO_ (как было в работающей версии)
-                                        quantities[f'Площадь_{qty_name}_м2'] = round(float(value), 3)
+                                        quantities[f'Площадь_{qty_name}_м2'] = float(value)
                                         
                                         # ЕСЛИ ЭТО GROSS - создаем дополнительные ключи для приоритетного поиска
                                         if 'gross' in qty_name.lower():
                                             # Специальный ключ для поиска Gross в geometry_mapping
-                                            quantities[f'QTO_{qto_set_name}_Площадь_GROSS_м2'] = round(float(value), 3)
+                                            quantities[f'QTO_{qto_set_name}_Площадь_GROSS_м2'] = float(value)
                                             # И в старом формате тоже
-                                            quantities[f'Площадь_GROSS_м2'] = round(float(value), 3)
+                                            quantities[f'Площадь_GROSS_м2'] = float(value)
                                 
                                 elif qty_type == 'IfcQuantityVolume':
                                     value = safe_get_attr(qty, 'VolumeValue')
                                     if value and value != '-':
                                         if qty_name.lower() == 'netvolume':
                                             # НОВЫЙ формат
-                                            quantities[f'QTO_{qto_set_name}_Объём_{qty_name}_м3'] = round(float(value), 3)
+                                            quantities[f'QTO_{qto_set_name}_Объём_{qty_name}_м3'] = float(value)
                                             # СТАРЫЙ формат
-                                            quantities[f'Объём_{qty_name}_м3'] = round(float(value), 3)
+                                            quantities[f'Объём_{qty_name}_м3'] = float(value)
                                         else:
                                             # НОВЫЙ формат
-                                            quantities[f'QTO_{qto_set_name}_Объём_{qty_name}_литры'] = round(float(value), 2)
+                                            quantities[f'QTO_{qto_set_name}_Объём_{qty_name}_литры'] = float(value)
                                             # СТАРЫЙ формат
-                                            quantities[f'Объём_{qty_name}_литры'] = round(float(value), 2)
+                                            quantities[f'Объём_{qty_name}_литры'] = float(value)
                                 
                                 elif qty_type == 'IfcQuantityCount':
                                     value = safe_get_attr(qty, 'CountValue')
@@ -894,6 +888,12 @@ def get_element_info(element, processing_type: str = "KR"):
     # — по ним group_excel считает площадь опалубки плит (периметр ×
     # толщина; для маршей — площадь двух боковых граней).
     ifc_class = element.is_a()
+    if _surface_formwork_kind(ifc_class, element.Name, element.ObjectType):
+        surface = _compute_surface_formwork_quantities(element)
+        if surface:
+            info['Геометрия_Площадь_опалубки_м2'] = surface['formwork_m2']
+            info['Геометрия_Площадь_низа_м2'] = surface['underside_m2']
+            info['Геометрия_Площадь_торцов_м2'] = surface['edges_m2']
     if ifc_class in ('IfcSlab', 'IfcStairFlight'):
         perim_present = _has_positive_qto_value(
             info, ('Длина_Perimeter_мм',
@@ -905,7 +905,7 @@ def get_element_info(element, processing_type: str = "KR"):
         )
         if not (perim_present and depth_present):
             try:
-                bbox_formwork = _compute_formwork_bbox_quantities(element)
+                bbox_formwork = _compute_formwork_quantities(element)
             except Exception as exc:
                 bbox_formwork = {}
                 logger.debug(
@@ -939,7 +939,8 @@ def get_element_info(element, processing_type: str = "KR"):
     if mge_material:
         info['Материал'] = mge_material
 
-    return info
+    from .ifc_raw_dump import enrich_work_height
+    return enrich_work_height(info, element)
 
 
 def parse_name(name: str, ifc_class: str):
@@ -1133,6 +1134,8 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
 
     if model is None:
         model = ifcopenshell.open(ifc_file)
+
+    warm_formwork_surface_cache(model)
 
     logger.info("Обработка ifc с анализом этажей")
     
@@ -2097,6 +2100,9 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
     for col in aggregated_cols:
         if col in df.columns and col not in smetchik_cols:
             smetchik_cols.append(col)
+
+    from .work_height import HEIGHT_FIELDS
+    smetchik_cols.extend(col for col in HEIGHT_FIELDS if col in df.columns)
 
     existing_cols = [col for col in smetchik_cols if col in df.columns]
 

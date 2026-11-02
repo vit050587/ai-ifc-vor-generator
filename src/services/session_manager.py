@@ -1706,6 +1706,7 @@ class SessionManager:
             runs=runs,
             status="processing",
             progress=0,
+            error=None,
             progress_message=f"Запуск {run_number} ({processing_type}): выбрано {len(row_indices)} строк"
         )
         
@@ -1910,6 +1911,14 @@ class SessionManager:
             # как монолитный.
             if material_code_overrides_by_pos:
                 self._apply_material_code_overrides(df_filtered, material_code_overrides_by_pos)
+
+            # Old sessions may have cached element tables without work elevations.
+            # Read only height evidence from their original IFC; retain quantities.
+            try:
+                from .work_height import enrich_frame
+                df_filtered = enrich_frame(df_filtered, self._get_ifc_path(session_id))
+            except Exception as exc:
+                logger.warning('Не удалось дополнить отметки из IFC: %s', exc)
 
             filtered_path = os.path.join(run_dir, 'filtered_elements.xlsx')
             with pd.ExcelWriter(filtered_path, engine='openpyxl') as writer:
@@ -2165,13 +2174,15 @@ class SessionManager:
                     session_id, 60,
                     f"Запуск {run_number}: Получение работ из цифрового сборника (АР)..."
                 )
+                works_fetch_error = None
                 try:
                     from src.services.works_fetcher import fetch_and_save_works
 
                     fetch_and_save_works(works_json_path, session_dir, run_dir)
                 except Exception as exc:
-                    # Шаг вспомогательный: ошибка внешнего API не должна
-                    # ломать финальную сборку запуска.
+                    # The local selector may continue without this API; the
+                    # digital-collection selector requires its output below.
+                    works_fetch_error = str(exc)
                     logger.error(
                         f"Не удалось получить работы из цифрового сборника: {exc}",
                         exc_info=True,
@@ -2203,6 +2214,29 @@ class SessionManager:
                         if os.path.isfile(stale_path):
                             os.remove(stale_path)
 
+                    # Всё по очереди: подбор ждёт, пока ИИ дочитает документы (ВОР, ПД, ПОС/ПЗ)
+                    import time as _wt
+                    def _docs_busy():
+                        s_ = self._sessions.get(session_id, {})
+                        busy = [f"{lab} — {s_.get(k + '_progress_message') or 'чтение…'}"
+                                for k, lab in (("vor", "ВОР"), ("pd", "ПД"), ("pos", "ПОС"), ("pz", "ПЗ"))
+                                if str(s_.get(k + "_status") or "").endswith("processing")]
+                        try:
+                            from src import routes as _rt
+                            if session_id in getattr(_rt, "_PD_RUNNING", set()):
+                                busy.append("ПОС/ПЗ — полный разбор")
+                        except Exception:
+                            pass
+                        return busy
+                    _w0 = _wt.time()
+                    while _wt.time() - _w0 < 3600:
+                        _b = _docs_busy()
+                        if not _b:
+                            break
+                        self._update_progress(session_id, 74, f"Запуск {run_number}: Ждём, пока ИИ дочитает документы: " + "; ".join(_b))
+                        _wt.sleep(3)
+                    if _docs_busy():
+                        raise TimeoutError("Документы не разобраны за час; повторите подбор после завершения чтения")
                     if os.getenv("WORKS_SELECTOR", "llm").strip().lower() == "perechen":
                         # Подбор по перечню сметчиков (data/perechen_kr.xlsx) +
                         # локальная LLM (perechen_kb) вместо works_final_selector:
@@ -2211,34 +2245,28 @@ class SessionManager:
                         build_final_from_perechen(
                             tables_json_path=works_json_path,
                             run_dir=run_dir,
+                            progress=lambda m, f=None: self._update_progress(
+                                session_id, 75 + int(18 * (f or 0)), f"Запуск {run_number}: {m}"),
                         )
                     else:
+                        if not os.path.isfile(works_fetcher_path):
+                            reason = works_fetch_error or 'Для выбранных элементов не получены расценки ТСН'
+                            raise RuntimeError(f'Не удалось получить работы из цифрового сборника: {reason}')
                         select_final_works(
                             tables_json_path=works_json_path,
                             works_json_path=works_fetcher_path,
                             run_dir=run_dir,
                         )
+                    missing = [os.path.basename(path) for path in (final_json_path, final_xlsx_path)
+                               if not os.path.isfile(path) or os.path.getsize(path) == 0]
+                    if missing:
+                        raise RuntimeError('Подбор не создал обязательные результаты: ' + ', '.join(missing))
+                except TimeoutError:
+                    raise
                 except Exception as exc:
-                    # Шаг вспомогательный: ошибка LLM не должна ломать
-                    # финальную сборку запуска.
-                    logger.error(
-                        f"Не удалось выполнить финальный подбор работ через LLM: {exc}",
-                        exc_info=True,
-                    )
+                    raise RuntimeError(f'Финальный перечень работ не сформирован: {exc}') from exc
 
-                # АР: сравнение работ и объёмов ВОР заказчика (если ВОР загружен и
-                # разобран — ВОР_ведомость_объемов_работ.json) и сформированного
-                # перечня работ → Сравнение_ВОР_и_перечня.xlsx/.json в папке запуска.
-                # Шаг вспомогательный: ошибка не должна ломать запуск.
-                try:
-                    from src.services import vor_comparison
-
-                    vor_comparison.run(run_dir)
-                except Exception as exc:
-                    logger.error(
-                        f"Не удалось построить сравнение ВОР и перечня работ: {exc}",
-                        exc_info=True,
-                    )
+                # Сверка с ВОР исполнителя запускается пользователем по кнопке.
 
                 self._update_progress(session_id, 95, f"Запуск {run_number}: Сохранение результатов...")
             
@@ -2266,6 +2294,16 @@ class SessionManager:
             except Exception as e:
                 logger.error(f"Ошибка при сборке финального JSON: {e}", exc_info=True)
             
+            # Separate estimate export: source quantities and current-price totals are immutable.
+            try:
+                from src.services.estimate_export import build as build_estimate
+                self._update_progress(session_id, 98, f"Запуск {run_number}: Сметная форма и проверка коэффициентов...")
+                estimate = build_estimate(run_dir, project_name=ifc_file_name)
+                if estimate['warnings']:
+                    logger.warning("Сметная форма: %s предупреждений", len(estimate['warnings']))
+            except Exception as exc:
+                logger.error("Не удалось сформировать сметную форму: %s", exc, exc_info=True)
+
             # =====================================================================
             #  ТЕПЕРЬ СОБИРАЕМ ФИНАЛЬНЫЕ ФАЙЛЫ (включая final_result_*.json)
             # =====================================================================
@@ -2365,6 +2403,7 @@ class SessionManager:
                 # как результаты запуска
                 ar_final_files = {
                     'Финальный_перечень_работ.xlsx',
+                    'Смета_по_сформированному_перечню.xlsx',
                     # Сравнение работ/объёмов ВОР заказчика и перечня (если ВОР загружен)
                     'Сравнение_ВОР_и_перечня.xlsx',
                 }
@@ -2380,6 +2419,7 @@ class SessionManager:
             if processing_type == "KR":
                 kr_final_files = {
                     'ОБЩИЙ_Финальный_перечень_работ.xlsx',
+                    'Смета_по_сформированному_перечню.xlsx',
                 }
                 final_files = [f for f in final_files if f['filename'] in kr_final_files]
 
@@ -2398,6 +2438,7 @@ class SessionManager:
                     
                     self._sessions[session_id]['runs'] = runs
                     self._sessions[session_id]['status'] = 'completed'
+                    self._sessions[session_id]['error'] = None
                     self._sessions[session_id]['has_results'] = True
                     self._sessions[session_id]['progress'] = 100
                     self._sessions[session_id]['progress_message'] = f"Запуск {run_number} ({processing_type}) завершён"
@@ -2417,6 +2458,9 @@ class SessionManager:
                             run['error'] = error_msg
                             break
                     self._sessions[session_id]['runs'] = runs
+                    self._sessions[session_id]['status'] = 'error'
+                    self._sessions[session_id]['error'] = error_msg
+                    self._sessions[session_id]['progress_message'] = f'Запуск {run_number}: {error_msg}'
                     self._save()
     
     # =====================================================================

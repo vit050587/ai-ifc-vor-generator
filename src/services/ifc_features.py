@@ -147,7 +147,8 @@ def storey_heights(ifc, scale):
 
 
 def build(session_dir):
-    ifcs = glob.glob(os.path.join(session_dir, "original", "*.ifc")) + glob.glob(os.path.join(session_dir, "*.ifc"))
+    ifcs = [p for sub in ("original", "original_ifc", "") for p in glob.glob(os.path.join(session_dir, sub, "*"))
+            if p.lower().endswith(".ifc") or os.path.basename(p) == "original_ifc"]
     if not ifcs:
         return {}
     ifc = ifcopenshell.open(ifcs[0])

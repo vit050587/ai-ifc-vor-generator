@@ -4,7 +4,7 @@ from collections import Counter
 from functools import lru_cache
 from pathlib import Path
 
-LABELS = {'operation_linked':'Связь установлена через общую операцию','quantity_allocation_required':'Работы сопоставлены; общий объём по строкам не распределён','complex_matched':'Комплекс работ сопоставлен; объёмы операций приведены отдельно','matching_unresolved':'Требуется сопоставление по наименованию','matched':'Расхождение в пределах допуска','quantity_mismatch':'Объёмы различаются','only_project':'Только в ВОР заказчика','only_ifc':'Только в сформированном ВОР','ifc_quantity_incomplete':'Неполный объём сформированного ВОР','project_quantity_incomplete':'Неполный объём ВОР заказчика','unit_unresolved':'Требуется проверка единицы'}
+LABELS = {'operation_linked':'Связь установлена через общую операцию','quantity_allocation_required':'Работы сопоставлены; общий объём по строкам не распределён','complex_matched':'Комплекс работ сопоставлен; объёмы операций приведены отдельно','matching_unresolved':'Требуется сопоставление по наименованию','matched':'Расхождение в пределах допуска','quantity_mismatch':'Объёмы различаются','only_project':'Только в ВОР заказчика','only_ifc':'Только в сформированной ВОР','ifc_quantity_incomplete':'Неполный объём сформированной ВОР','project_quantity_incomplete':'Неполный объём ВОР заказчика','unit_unresolved':'Требуется проверка единицы'}
 
 
 TEMPLATE = Path(__file__).resolve().parents[2] / 'data' / 'comparison_vor_template.xlsx'
@@ -255,7 +255,7 @@ def expand_comparison_rows(comparison):
                     clone['_generated_count_once']=bool(fresh)
                 if formwork:
                     clone['semanticMatch']={**semantic,'confirmed':True,'relation':'equivalent' if len(generated)==1 else 'aggregate',
-                        'reason':'Опалубка заказчика сопоставлена с операцией сформированного ВОР. Монтаж и демонтаж относятся к одной площади; в общих объёмах площадь учитывается один раз.'}
+                        'reason':'Опалубка заказчика сопоставлена с операцией сформированной ВОР. Монтаж и демонтаж относятся к одной площади; в общих объёмах площадь учитывается один раз.'}
                     binding=semantic.get('constructionMatch') or {}
                     if binding.get('confirmed') is False:
                         clone['semanticMatch']['confirmed']=False
@@ -280,14 +280,15 @@ def prepare_report(report, models=None):
     from .works_comparison.compare_positions_groups import ComparePositionsGroups
     from .works_comparison.validation_result_former import ValidationResultFormer
     result = copy.deepcopy(report)
-    if result.get('csFinalModels'):
+    if result.get('csFinalModels') or result.get('quantityAuditedModels'):
         from .works_comparison.ifc_positions_extractor import IfcPositionsExtractor
         from .works_comparison.units import normalize_positions
         from .cs_model_members import split_slab_roles
-        role_models=split_slab_roles(result['csFinalModels'])
+        source_models=result.get('csFinalModels') or result['quantityAuditedModels']
+        role_models=split_slab_roles(source_models)
         final=normalize_positions(IfcPositionsExtractor(role_models).run())
         models=role_models
-        result['inputStatistics']={**result.get('inputStatistics',{}),'generatedPositions':sum(len(g.get('positions',[])) for m in result['csFinalModels'] for g in m.get('elementGroups',[])),'generatedWorks':sum(p.get('positionType')!='material' for m in result['csFinalModels'] for g in m.get('elementGroups',[]) for p in g.get('positions',[])),'generatedMaterials':0}
+        result['inputStatistics']={**result.get('inputStatistics',{}),'generatedPositions':sum(len(g.get('positions',[])) for m in source_models for g in m.get('elementGroups',[])),'generatedWorks':sum(p.get('positionType')!='material' for m in source_models for g in m.get('elementGroups',[]) for p in g.get('positions',[])),'generatedMaterials':sum(p.get('positionType')=='material' for m in source_models for g in m.get('elementGroups',[]) for p in g.get('positions',[]))}
         # Old CS JSON can use a different unit label; match original group and rate.
         rates={}
         for p in final:rates.setdefault((p.get('sourceFile'),p.get('_sourceGroupId') or p.get('groupId'),p.get('code')),[]).append(p)
@@ -304,10 +305,15 @@ def prepare_report(report, models=None):
                 result.setdefault('comparison',[]).append({'normalized_code':p.get('code'),'normalized_unit':p.get('unit'),'status':'matching_unresolved','projectGroup':None,
                     'ifcGroup':{'positions':[copy.deepcopy(p)],**sum_positions_quantity([p])}})
     result['comparison']=[entry for entry in result.get('comparison',[]) if (entry.get('ifcGroup') or {}).get('positions') or (entry.get('projectGroup') or {}).get('positions')]
+    from .comparison_reconciliation import repair_customer_hierarchy
+    result['comparison']=repair_customer_hierarchy(result['comparison'])
     result['comparison']=refresh_customer_parts(result.get('comparison',[]))
     if report.get('reconcileConstructionLinks'):
         from .comparison_reconciliation import reconcile_saved_links
         result['comparison']=reconcile_saved_links(result['comparison'],cs_mode=bool(result.get('csFinalModels')))
+    if models is not None:
+        from .comparison_reconciliation import explain_unpriced_stairs
+        result['comparison'] = explain_unpriced_stairs(result['comparison'], models)
     customer = [p for g in result.get('comparison', []) for p in (g.get('projectGroup') or {}).get('positions', [])]
     generated = [p for g in report.get('comparison', []) for p in (g.get('ifcGroup') or {}).get('positions', [])]
     if report.get('comparison') and not any(g.get('semanticMatch') for g in report['comparison']):
@@ -346,7 +352,7 @@ def prepare_report(report, models=None):
     result.setdefault('comparison',[]).extend(extra)
     restore_unpaired_generated(result.get('comparison',[]))
     result['comparison'] = expand_comparison_rows(consolidate_customer_comparisons(expand_comparison_rows(consolidate_customer_comparisons(result.get('comparison',[])))))
-    result['reportVersion'] = 16
+    result['reportVersion'] = 18
     if models is not None:
         from .works_comparison.ifc_positions_extractor import IfcPositionsExtractor
         from .works_comparison.units import normalize_positions
@@ -388,6 +394,10 @@ def prepare_report(report, models=None):
         verdict = next((v for v in ('incorrect','error','insufficient_data','uncertain','correct') if v in verdicts), 'not_checked')
         semantic = group.get('semanticMatch') or {}
         reasons = list(dict.fromkeys(v.get('reason','') for v in validations if v.get('reason')))
+        for p in gp:
+            calculation=p.get('quantityCalculation') or {}
+            if p.get('quantityStatus')=='partial_data' and isinstance(calculation,dict):
+                reasons.append(str(calculation.get('reason') or 'Неполные данные: показана известная часть объёма.')+f" Нет данных у {calculation.get('missingElements', '?')} из {calculation.get('totalElements', '?')} элементов.")
         if semantic:
             reasons.insert(0, 'Сопоставление: ' + str(semantic.get('reason', '')))
         construction_match = semantic.get('constructionMatch') or next((p.get('_construction_match') for p in cp if p.get('_construction_match')), {})
@@ -425,7 +435,7 @@ def prepare_report(report, models=None):
             source_item=group_layout.get(tuple(construction_match['groups'][0]))
         if source_item:
             el=source_item.get('element') or {}
-            location=(source_item.get('sourceFile') or 'Сформированный ВОР',
+            location=(source_item.get('sourceFile') or 'Сформированная ВОР',
                       (el.get('typeName') or 'Группа элементов')+' ('+str(source_item.get('groupId') or '')+')','')
             if group.get('_shared_customer_set'):
                 ids=list(dict.fromkeys(str(p.get('groupId')) for p in display_gp))
@@ -450,18 +460,26 @@ def prepare_report(report, models=None):
         if cp and not display_gp:
             confidence_text = 'Принадлежность к группе подтверждена; пара работ не найдена' if element_confirmed else 'Связь не установлена'
         comments = [LABELS.get(group['status'],group['status']), 'Ед. изм.: '+str(group.get('normalized_unit') or '')]
+        if semantic.get('elementCandidates'):
+            comments.append(str(semantic.get('reason') or 'В модели найдены элементы; работа не подобрана.'))
+        for p in display_gp:
+            calculation = p.get('quantityCalculation') or {}
+            if isinstance(calculation, dict) and calculation.get('source') == 'explicit_beam_formwork' and p.get('quantity') is None:
+                comments.append(str(calculation.get('reason') or 'Площадь контакта балки с опалубкой не задана.'))
         if cp and not display_gp and element_confirmed:
             comments.insert(0,'Работа заказчика сохранена в подтверждённой группе элементов; соответствующая сформированная работа не установлена.')
         if group.get('difference') is not None and (group.get('ifcGroup') or {}).get('totalQuantity'):
             percentage=group['difference'] / abs(group['ifcGroup']['totalQuantity'])
-            comments.append(('Заказчик завысил' if percentage>0 else 'Заказчик занизил' if percentage<0 else 'Объёмы совпадают')+(f' на {abs(percentage):.2%} относительно сформированного ВОР' if percentage else ''))
+            comments.append(('Объём ВОР заказчика больше' if percentage>0 else 'Объём ВОР заказчика меньше' if percentage<0 else 'Объёмы совпадают')+(f' на {abs(percentage):.2%} относительно сформированной ВОР' if percentage else ''))
         if group.get('_area_conflict'):
             comments.append('Площади монтажа и демонтажа в исходном ВОР различаются; общий объём опалубки требует проверки.')
         if not group.get('_generated_count_once',True) or not group.get('_customer_count_once',True):
             comments.append('Повтор общей площади / объёма для отдельной работы; при суммировании повторно не учитывать.')
         if group.get('_scope_warning'):comments.append(group['_scope_warning'])
         allocations=[p.get('quantityCalculation',{}).get('allocation') for p in display_gp if isinstance(p.get('quantityCalculation'),dict) and p['quantityCalculation'].get('allocation')]
-        if allocations:comments.append('Часть исходной группы выделена по GUID элементов и их конструктивному назначению. Объём распределён по исходным измерителям элементов; суммы частей равны объёму исходного ВОР.')
+        if allocations:comments.append('Часть исходной группы выделена по GUID и привязке элементов к этажам. Объём распределён по исходным измерителям элементов; суммы частей равны объёму исходного ВОР.')
+        if any(a.get('role') == 'basement_cover' and a.get('basis') == 'storey_name' for a in allocations):
+            comments.append('Плиты первого этажа отнесены к перекрытию подвала по привязке IFC; проектные отметки требуют проверки.')
         if any(p.get('_cs_operation_family') for p in display_gp):
             comments.append('Альтернативные расценки ЦС на одну операцию. Общий объём учитывается один раз; применимость конкретной расценки этим сравнением не определяется.')
             if all(p.get('_cs_operation_primary') is False for p in display_gp):
@@ -485,7 +503,7 @@ def prepare_report(report, models=None):
                      'work':'; '.join(names),'code':None if str(group.get('normalized_code','')).startswith(('__uncoded__:', '__semantic__')) else group.get('normalized_code'),'unit':group.get('normalized_unit'),
                      'customerQuantity':(group.get('projectGroup') or {}).get('totalQuantity'),
                      'generatedQuantity':(group.get('ifcGroup') or {}).get('totalQuantity') if display_gp else None,
-                     'presence':'Требуется сопоставление' if group['status']=='matching_unresolved' else 'В обоих ВОР' if gp and cp else 'Только в сформированном ВОР' if gp else 'Только в ВОР заказчика',
+                     'presence':'Требуется сопоставление' if group['status']=='matching_unresolved' else 'В обоих ВОР' if gp and cp else 'Только в сформированной ВОР' if gp else 'Только в ВОР заказчика',
                      'status':group['status'],'result':('Объём не определён или неполон' if group['status'] in ('only_ifc','only_project') and any((side or {}).get('positionsWithoutQuantity',0)>0 for side in (group.get('ifcGroup'),group.get('projectGroup'))) else LABELS.get(group['status'],group['status'])),
                      'difference':group.get('difference'),'differencePercent':None if group.get('difference') is None or not (group.get('ifcGroup') or {}).get('totalQuantity') else group['difference'] / abs(group['ifcGroup']['totalQuantity']) * 100,
                      'validationVerdict':verdict,'confidence':score,'confidenceLabel':'Не оценивалась' if score is None else 'Высокая' if score >= .85 else 'Средняя' if score >= .6 else 'Низкая',
@@ -538,7 +556,7 @@ def prepare_report(report, models=None):
         label=(element.get('typeName') or element.get('materialGroup') or 'Группа элементов')+' ('+str(item.get('groupId') or '')+')'
         comment='Работы для группы не подобраны.'
         if element.get('count') is not None:comment+=' Количество элементов: '+str(element['count'])+'.'
-        rows.append({'isEmptyGroup':True,'displayOrder':(0,index),'part':item.get('sourceFile') or 'Сформированный ВОР','section':label,'subsection':'','elementGroup':'',
+        rows.append({'isEmptyGroup':True,'displayOrder':(0,index),'part':item.get('sourceFile') or 'Сформированная ВОР','section':label,'subsection':'','elementGroup':'',
                      'generatedWork':None,'customerWork':None,'generatedQuantity':None,'customerQuantity':None,'difference':None,'differencePercent':None,
                      'modelReason':'','comparisonConfidence':'','comments':comment,'unit':None,'work':'','code':None,'status':'empty_group','presence':'Группа без работ','result':'Работы не подобраны',
                      'quantityAccountingKey':None,'generatedQuantityForTotals':0,'customerQuantityForTotals':0,'detail':{}})
@@ -583,4 +601,5 @@ def prepare_report(report, models=None):
         similarity.update(customerTotal=manifest['totalGroups'],customerMatched=result['displayStatistics']['matchedWorkGroups'],customerCoverage=None if coverage is None else round(coverage*100,1))
         generated_coverage=similarity['generatedMatched']/similarity['generatedTotal'] if similarity['generatedTotal'] else 0
         similarity['score']=None if not manifest['totalGroups'] and not similarity['generatedTotal'] else round(200*generated_coverage*(coverage or 0)/(generated_coverage+(coverage or 0)),1) if generated_coverage+(coverage or 0) else 0
+    result['similarityVersion']=3
     return result

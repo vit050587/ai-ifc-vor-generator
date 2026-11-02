@@ -21,8 +21,14 @@
   фоновая обработка, статусы, выдача результата).
 """
 
-from .manager import VorGenerationManager  # noqa: F401
-from .builder import build_vor  # noqa: F401
-from .customer_vor import build_customer_vor  # noqa: F401
+from .builder import build_vor
+from .customer_vor import build_customer_vor
 
 __all__ = ["VorGenerationManager", "build_vor", "build_customer_vor"]
+
+
+def __getattr__(name):
+    if name == "VorGenerationManager":
+        from .manager import VorGenerationManager
+        return VorGenerationManager
+    raise AttributeError(name)

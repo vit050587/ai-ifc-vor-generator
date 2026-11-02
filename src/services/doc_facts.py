@@ -802,6 +802,13 @@ class Facts:
         return round(total, 4) if total > 0 else None
 
 
+def _mt(path) -> float:
+    try:
+        return os.path.getmtime(path) if path else 0.0
+    except OSError:
+        return 0.0
+
+
 def load(session_dir: str) -> Optional["Facts"]:
     """Читает ВОР/ПД из каталога сессии (кеш по каталогу).
 
@@ -809,17 +816,18 @@ def load(session_dir: str) -> Optional["Facts"]:
     """
     global _cache, _cache_dir
     key_dir = os.path.abspath(session_dir)
-    if _cache is not None and _cache_dir == key_dir:
-        return _cache
     vor_path = _find(key_dir, VOR_JSON)
     pd_path = _find(key_dir, PD_JSON)
+    stamp = (key_dir, _mt(vor_path), _mt(pd_path))
+    if _cache is not None and _cache_dir == stamp:
+        return _cache
     if not vor_path and not pd_path:
-        _cache, _cache_dir = None, key_dir
+        _cache, _cache_dir = None, stamp
         return None
     vor_items = (_load_json(vor_path).get("items") or []) if vor_path else []
     pd_items = (_load_json(pd_path).get("items") or []) if pd_path else []
     _cache = Facts(vor_items, pd_items, session_dir=key_dir)
-    _cache_dir = key_dir
+    _cache_dir = stamp
     return _cache
 
 
@@ -871,8 +879,9 @@ def _corpus(session_dir: str) -> List[Tuple[str, Any, str]]:
     Кешируется по каталогу (файлы сессии не меняются в ходе расчёта).
     """
     key_dir = os.path.abspath(session_dir)
-    if key_dir in _CORPUS_CACHE:
-        return _CORPUS_CACHE[key_dir]
+    ckey = (key_dir, _mt(_find(key_dir, VOR_JSON)), _mt(_find(key_dir, PD_JSON)), _mt(os.path.join(key_dir, "pd_full.json")))
+    if ckey in _CORPUS_CACHE:
+        return _CORPUS_CACHE[ckey]
     corpus: List[Tuple[str, Any, str]] = []
     vor = _find(key_dir, VOR_JSON)
     if vor:
@@ -919,7 +928,7 @@ def _corpus(session_dir: str) -> List[Tuple[str, Any, str]]:
             el = entry.get("element") or {}
             if isinstance(el, dict):
                 corpus.append(("IFC (модель)", None, str(el.get("name") or "")))
-    _CORPUS_CACHE[key_dir] = corpus
+    _CORPUS_CACHE[ckey] = corpus
     logger.info(f"doc_facts: корпус документов — {len(corpus)} записей")
     return corpus
 

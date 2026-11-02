@@ -16,13 +16,15 @@ import time
 from typing import List, Dict, Any, Tuple
 from collections import defaultdict
 from pathlib import Path
+from io import BytesIO
 import openpyxl
 from openpyxl.utils import get_column_letter
 
+from src.core.cache_manager import CacheManager
 from src.core.logger import setup_logger
 
 logger = setup_logger(__name__)
-
+memory = CacheManager.memory
 
 # ========== Configuration ==========
 GEOMETRY_GROUP_RULES = {
@@ -611,9 +613,24 @@ def _element_formwork_area_m2(row: Dict[str, Any], perim_cols: List[str],
     У элементов без периметра/толщины (стены, балки и т.п.) вклад
     равен нулю.
     """
+    name_lower = str(row.get('Имя', '')).lower()
+    if 'сборн' in name_lower:
+        return 0.0
+    if str(row.get('Тип элемента') or '') in ('IfcWall', 'IfcWallStandardCase'):
+        return _first_nonzero(row, ['QTO_Qto_WallBaseQuantities_Площадь_GrossSideArea_м2',
+                                   'Площадь_GrossSideArea_м2', 'QTO_Qto_WallBaseQuantities_Площадь_NetSideArea_м2',
+                                   'Площадь_NetSideArea_м2', 'Площадь, м2'])
+    geometric = _first_nonzero(row, ['Геометрия_Площадь_опалубки_м2'])
+    if geometric > 0:
+        return geometric
+    if str(row.get('Тип элемента') or '') == 'IfcBeam' or re.search(r'балк|ригел', name_lower, re.I):
+        # Net/GrossSurfaceArea includes faces that do not contact formwork.
+        explicit = [key for key in row if re.search(r'опалуб|formwork', str(key), re.I)
+                    and re.search(r'площад|area', str(key), re.I)
+                    and not re.search(r'мм2|mm2', str(key), re.I)]
+        return _first_nonzero(row, explicit)
     if not perim_cols or not depth_cols:
         return 0.0
-    name_lower = str(row.get('Имя', '')).lower()
     perim = _first_nonzero(row, perim_cols)
     depth = _first_nonzero(row, depth_cols)
     # Fallback толщины для плит IfcSlab без QTO-толщины: толщина часто
@@ -625,8 +642,9 @@ def _element_formwork_area_m2(row: Dict[str, Any], perim_cols: List[str],
         if m:
             depth = float(m.group(1).replace(',', '.'))
     side_area = perim * depth / 1e6
-    if 'перекрыт' in name_lower and 'фундамент' not in name_lower:
-        slab_area = _first_nonzero(row, area_cols or _AREA_COLS)
+    if any(word in name_lower for word in ('перекрыт', 'покрыти', 'площадк', 'landing')) and 'фундамент' not in name_lower:
+        net_keys = ['QTO_Qto_SlabBaseQuantities_Площадь_NetArea_м2', 'Площадь_NetArea_м2', 'Площадь_NET_м2']
+        slab_area = _first_nonzero(row, net_keys + (area_cols or _AREA_COLS))
         return side_area + slab_area
     return side_area
 
@@ -652,8 +670,6 @@ def _formwork_area_m2(group_df, perim_cols, depth_cols) -> float:
         (боковые граны + нижняя поверхность);
       * прочие плиты — периметр × толщина.
     """
-    if not perim_cols or not depth_cols:
-        return 0.0
     area_cols = [c for c in _AREA_COLS if c in group_df.columns]
     total = 0.0
     for _, row in group_df.iterrows():
@@ -1191,12 +1207,9 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
         # демонтажа опалубки.
         perim_cols, depth_cols = _find_formwork_columns(headers)
         formwork_area = 0.0
-        if perim_cols and depth_cols:
-            for e in elems_list:
-                formwork_area += _element_formwork_area_m2(
-                    e.row, perim_cols, depth_cols
-                )
-            formwork_area = float(round(formwork_area, 2))
+        for e in elems_list:
+            formwork_area += _element_formwork_area_m2(e.row, perim_cols, depth_cols)
+        formwork_area = float(round(formwork_area, 2))
 
         return {
             'name': name, 'level': level, 'indices': indices,
@@ -1561,6 +1574,12 @@ def group_elements_ar(rows: List[Dict[str, Any]], headers: List[str]) -> List[Di
 
 # ========== Excel Export ==========
 def create_excel_report(groups: List[Dict], headers: List[str], rows: List[Dict], output_path: str) -> str:
+    content = build_excel_bytes(groups, headers, rows)
+    Path(output_path).write_bytes(content)
+    return output_path
+
+@memory.cache
+def build_excel_bytes(groups, headers, rows) -> bytes:
     wb = openpyxl.Workbook()
     
     ws = wb.active
@@ -1665,8 +1684,9 @@ def create_excel_report(groups: List[Dict], headers: List[str], rows: List[Dict]
     
     write_detail_groups(groups)
     
-    wb.save(output_path)
-    return output_path
+    buffer = BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
 
 
 # ========== Кеширование на диске ==========

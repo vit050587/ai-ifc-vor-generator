@@ -778,11 +778,19 @@ def _load_cache() -> Dict[str, Any]:
         return {}
 
 
+import threading as _threading
+_CACHE_LOCK = _threading.Lock()
+
+
 def _save_cache(cache: Dict[str, Any]) -> None:
-    tmp = CACHE_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(cache, fh, ensure_ascii=False, indent=1)
-    os.replace(tmp, CACHE_PATH)
+    # параллельный подбор: сливаем с тем, что уже на диске, под замком
+    with _CACHE_LOCK:
+        disk = _load_cache()
+        disk.update(cache)
+        tmp = f"{CACHE_PATH}.{_threading.get_ident()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(disk, fh, ensure_ascii=False, indent=1)
+        os.replace(tmp, CACHE_PATH)
 
 
 def _filtered(sub: Dict[str, Any], el: Dict[str, Any], height: Optional[float]) -> Dict[str, Any]:

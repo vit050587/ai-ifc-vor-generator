@@ -519,7 +519,7 @@ class ARBuilder:
                 positions.append({'positionType':'material' if row.get('is_resource') else 'work',
                                   'code':row['pressmark'], 'name':row.get('title') or row.get('work') or '',
                                   'unit':row.get('unit') or None, 'quantity':quantity,
-                                  'quantityStatus':'calculated' if quantity is not None else 'missing_data',
+                                  'quantityStatus':row.get('quantityStatus') or ('calculated' if quantity is not None else 'missing_data'),
                                   'selectionParameters':{'work':row.get('work'), 'subsection':selected.get('subsection'), 'tsnCoefficients':row.get('tsn_coeffs', [])},
                                   'quantityCalculation':row.get('volume_source') or row.get('reason')})
             groups.append({'groupId':f'group-{index:04d}', 'element':element,

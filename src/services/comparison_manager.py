@@ -13,6 +13,8 @@ from werkzeug.utils import secure_filename
 from werkzeug.datastructures import FileStorage
 from .vor_parser import parse_vor, QuantityColumnRequired
 from .comparison_exports import EXPORT_FILES, build_comparison_exports
+from .comparison_typical import FILES as TYPICAL_FILES, VERSION as TYPICAL_VERSION, build_typical_comparison
+from src.core.cache_manager import CacheManager
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +86,14 @@ class ComparisonManager:
                 if index<len(models) and runs:
                     updated=synchronize_cs_model(models[index],runs[-1].parent)
                     if updated is not models[index]:models[index]=updated;changed=True
+        if job.get('mode') == 'AR':
+            from .comparison_reconciliation import synchronize_quantity_completeness
+            for index, sid in enumerate(job.get('sessions', [])):
+                runs = sorted((self.root / sid).glob('run_*/filtered_elements.xlsx'))
+                if index < len(models) and runs:
+                    updated = synchronize_quantity_completeness(models[index], runs[-1].parent)
+                    if updated is not models[index]:
+                        models[index] = updated; changed = True
         if changed:self._write(job_id,'models.json',models)
         return models,changed
 
@@ -95,16 +105,9 @@ class ComparisonManager:
                 raise KeyError('Сессия сравнения удалена')
             job.update(fields)
             job.setdefault('created_at', datetime.now(timezone.utc).isoformat())
-            files = []
-            for name in ('models.json', 'estimates.json', 'model_analytics.json', 'semantic_match_diagnostics.jsonl', 'result.json', 'result.xlsx', *EXPORT_FILES):
-                path = self.root / job_id / name
-                if path.is_file() and (name not in ('result.json', 'result.xlsx') or job['status'] == 'completed'):
-                    files.append({'path': str(path), 'filename': name, 'size': path.stat().st_size})
-            from .comparison_documents import DOC_FILENAMES
-            for kind, document in job.get('documents', {}).items():
-                for path in (Path(document['path']), self.root / job_id / DOC_FILENAMES[kind], self.root / job_id / Path(DOC_FILENAMES[kind]).with_suffix('.xlsx')):
-                    if path.is_file():
-                        files.append({'path':str(path),'filename':path.name,'size':path.stat().st_size})
+
+            files = self._get_files_to_save(job, job_id)
+
             self.sessions._sessions[job_id] = {
                 'session_id': job_id, 'session_type': 'comparison', 'source_type': 'comparison',
                 'created_at': job['created_at'], 'status': job['status'],
@@ -119,6 +122,19 @@ class ComparisonManager:
                     child['parent_session_id'] = job_id
             job['_registered'] = True
             self.sessions._save()
+
+    def _get_files_to_save(self, job: dict, job_id) -> list[dict]:
+        files = []
+        for name in ('models.json', 'estimates.json', 'model_analytics.json', 'semantic_match_diagnostics.jsonl', 'result.json', 'result.xlsx', *EXPORT_FILES, *TYPICAL_FILES):
+            path = self.root / job_id / name
+            if path.is_file() and (name not in ('result.json', 'result.xlsx') or job['status'] == 'completed'):
+                files.append({'path': str(path), 'filename': name, 'size': path.stat().st_size})
+        from .comparison_documents import DOC_FILENAMES
+        for kind, document in job.get('documents', {}).items():
+            for path in (Path(document['path']), self.root / job_id / DOC_FILENAMES[kind], self.root / job_id / Path(DOC_FILENAMES[kind]).with_suffix('.xlsx')):
+                if path.is_file():
+                    files.append({'path':str(path),'filename':path.name,'size':path.stat().st_size})
+        return files
 
     def get(self, job_id):
         with self.lock:
@@ -187,11 +203,12 @@ class ComparisonManager:
         with open(source['path'], 'rb') as file:
             return self.compare(job_id, [FileStorage(stream=file, filename=source['name'])])
 
-    def _stage(self, job_id, key, progress=None, message='', **fields):
+    def _stage(self, job_id, key, progress=None, message='', update_params: dict | None = None, **fields):
+        update_params = update_params or {}
         with self.lock:
             stages = copy.deepcopy(self.jobs[job_id].get('stages', {}))
             stages[key] = dict(progress=progress, message=message, **fields)
-            self._update(job_id, stages=stages, message=message)
+            self._update(job_id, stages=stages, message=message, **update_params)
 
     def _wait(self, getter, complete, timeout=14400, on_progress=None):
         deadline = time.monotonic() + timeout
@@ -349,8 +366,7 @@ class ComparisonManager:
                     fraction = max(0, min(100, state.get('progress', 0) or 0)) / 100
                     value = round((index + start + weight * fraction) / len(job['sources']) * 100)
                     message = f"{source['name']} ({index + 1}/{len(job['sources'])}): {state.get('progress_message') or label}"
-                    self._stage(job_id, 'models', value, message, active=True)
-                    self._update(job_id, progress=value)
+                    self._stage(job_id, 'models', value, message, active=True, update_params={"progress": value})
                 self._wait(lambda: self.sessions.get(session_id), {'ifc_processed', 'selecting_rows'},
                            on_progress=lambda state: report_model(state, 0, .4, 'Извлечение элементов'))
                 constants = {}
@@ -394,7 +410,7 @@ class ComparisonManager:
                 if not any(record.get('elementGroups') for record in records):
                     raise RuntimeError(f"ВОР файла {source['name']} не содержит групп элементов")
                 if not any(group.get('positions') for record in records for group in record.get('elementGroups', [])):
-                    raise RuntimeError(f"Сформированный ВОР файла {source['name']} пуст: группы элементов найдены, но работы не сформированы. Проверьте этап подбора работ.")
+                    raise RuntimeError(f"Сформированная ВОР файла {source['name']} пуста: группы элементов найдены, но работы не сформированы. Проверьте этап подбора работ.")
                 for record in records:
                     record['sourceFile'] = source['name']
                     combined.append(record)
@@ -430,7 +446,7 @@ class ComparisonManager:
             if job['status'] in self.ACTIVE:
                 raise ValueError('Обработка уже выполняется')
             if not job['can_retry']:
-                raise ValueError('Для повтора нужны сформированный ВОР и сохранённые файлы ВОР заказчика')
+                raise ValueError('Для повтора нужны сформированная ВОР и сохранённые файлы ВОР заказчика')
             if job['status'] == 'input_required':
                 pending = job.get('pending_input') or {}
                 if source_index != pending.get('sourceIndex') or quantity_column not in pending.get('choices', []):
@@ -547,22 +563,28 @@ class ComparisonManager:
                     if runs:
                         enrich_group_levels(model, runs[-1].parent)
             build_comparison_exports(self.root/job_id,models=models,projects=projects)
-            self._update(job_id)
             processor = Processor(models, projects, output_path=self.root / job_id / 'result.json')
             self._stage(job_id, 'comparison', None, 'Группировка и сравнение позиций', active=True)
             def validation_progress(done, total):
                 value = round(done / total * 100) if total else 100
-                self._stage(job_id, 'comparison', value, f'Сопоставление и проверка ИИ: {value}%' , active=True)
-                self._update(job_id, progress=65 + round(value * .35))
+                self._stage(job_id, 'comparison', value, f'Сопоставление и проверка ИИ: {value}%' , active=True, update_params={"progress": 65 + round(value * .35)})
             result = processor.run(on_progress=validation_progress)
             from .comparison_vor import prepare_report, input_statistics
             result['inputStatistics'] = input_statistics(models,projects)
             if job.get('mode')=='KR':result['csFinalModels']=models
+            elif any(m.get('quantityCompletenessVersion') for m in models):result['quantityAuditedModels']=models
             result['reconcileConstructionLinks']=True
             result = prepare_report(result,models=models)
+            self._typical_report(job_id, result, models, projects)
             self._write(job_id, 'result.json', result)
             from .comparison_report import build_comparison_excel
             build_comparison_excel(str(self.root / job_id), result)
+
+            try:
+                CacheManager.trim_cache()
+            except Exception:
+                logger.exception("Не удалось сократить кеш")
+
             self._stage(job_id, 'comparison', 100, 'Сравнение завершено', active=False)
             self._update(job_id, status='completed', progress=100, message='Сравнение завершено')
         except QuantityColumnRequired as exc:
@@ -573,9 +595,28 @@ class ComparisonManager:
             logger.exception('Comparison failed: %s', job_id)
             self._update(job_id, status='error', error=str(exc), message='Ошибка сравнения')
 
+    def _typical_report(self, job_id, report, models, projects):
+        try:
+            job = self.jobs[job_id]
+            raw_paths = [self.root / sid / 'IFC_исходные_параметры.json' for sid in job.get('sessions', [])]
+            documents = {kind: item['path'] for kind, item in job.get('documents', {}).items()}
+            estimates = job.get('estimates', [])
+            customer_path = estimates[0]['path'] if len(estimates) == 1 else None
+            report['typicalComparison'] = build_typical_comparison(
+                self.root / job_id, models, projects, raw_paths=raw_paths, document_paths=documents,
+                ifc_names=[source['name'] for source in job.get('sources', [])], customer_path=customer_path,
+                ifc_paths=[source.get('path') for source in job.get('sources', [])])
+            from .comparison_ai_reason import add_ai_reasons
+            add_ai_reasons(report['typicalComparison'])
+        except Exception as exc:
+            logger.exception('Typical VOR comparison failed: %s', job_id)
+            report['typicalComparison'] = {'version': TYPICAL_VERSION, 'status': 'error',
+                                           'rows': [], 'explanation': f'Не удалось построить типовой ВОР: {exc}'}
+        return report
+
     def artifact(self, job_id, filename):
         job = self.get(job_id)
-        if filename not in ('result.json', 'result.xlsx', 'models.json', 'estimates.json', 'semantic_match_diagnostics.jsonl', *EXPORT_FILES):
+        if filename not in ('result.json', 'result.xlsx', 'models.json', 'estimates.json', 'semantic_match_diagnostics.jsonl', *EXPORT_FILES, *TYPICAL_FILES):
             raise KeyError('Файл не найден')
         if filename in ('result.json', 'result.xlsx') and job['status'] != 'completed':
             raise ValueError('Результат ещё не готов')
@@ -599,15 +640,21 @@ class ComparisonManager:
                 models,refreshed=self._read_models(job_id) if (folder/'models.json').is_file() else (None,False)
                 revisions=lambda values:[model.get('workSourceRevision') for model in values or []]
                 stale_cs=self.jobs[job_id].get('mode')=='KR' and revisions(report.get('csFinalModels'))!=revisions(models)
-                if report.get('reportVersion') != 16 or not report.get('inputStatistics') or refreshed or stale_cs:
+                if report.get('reportVersion') != 18 or report.get('similarityVersion') != 3 or not report.get('inputStatistics') or refreshed or stale_cs:
                     if models is not None and (folder/'estimates.json').is_file():
                         report['inputStatistics']=input_statistics(models,json.loads((folder/'estimates.json').read_text(encoding='utf-8')))
                     if self.jobs[job_id].get('mode')=='KR' and models is not None:report['csFinalModels']=models
+                    elif models is not None and any(m.get('quantityCompletenessVersion') for m in models):report['quantityAuditedModels']=models
                     report['reconcileConstructionLinks']=True
                     report = prepare_report(report,models=models)
                     if (folder/'models.json').is_file():
                         build_comparison_exports(folder,models=models,projects=json.loads((folder/'estimates.json').read_text(encoding='utf-8')) if (folder/'estimates.json').is_file() else None)
                     self._write(job_id, 'result.json', report)
+                if (report.get('typicalComparison') or {}).get('version') != TYPICAL_VERSION or refreshed or stale_cs:
+                    if models is not None and (folder/'estimates.json').is_file():
+                        self._typical_report(job_id, report, models, json.loads((folder/'estimates.json').read_text(encoding='utf-8')))
+                        self._write(job_id, 'result.json', report)
+                        self._update(job_id)
                 if filename == 'result.xlsx':
                     build_comparison_excel(str(self.root / job_id), report)
                     self._update(job_id)

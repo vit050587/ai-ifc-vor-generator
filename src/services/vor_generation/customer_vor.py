@@ -117,6 +117,7 @@ class CustomerRow:
     diameter: Optional[int] = None   # диаметр арматуры, мм
     rebar_class: Optional[str] = None
     thickness: Optional[int] = None  # толщина из наименования, мм
+    thickness_label: str = ''
     section_label: Optional[str] = None  # сечение из наименования («400х400»)
     orientation: Optional[str] = None  # horizontal|vertical (для гидроизоляции)
     component: str = ""              # подтип лестницы: flight (марш)|landing (площадка)
@@ -173,8 +174,6 @@ def _section_kind(section: str) -> Optional[str]:
         return kind
     low = (section or "").lower()
     if "фундамент" in low and not any(w in low for w in ("сва", "маф")):
-        # Включая фундаменты башенных кранов: объёмы плит 1400/1800 мм
-        # приведены в этом разделе ВОР заказчика.
         return "foundation_slab"
     return None
 
@@ -189,6 +188,8 @@ def _detect_kind(name: str, section: str) -> Optional[str]:
     полиуретановая плёнка, геотекстиль, экструзионный ППС и т. п.) относятся к
     подразделу «Устройство деформационного шва» (``seam``).
     """
+    if mapping.detect_kind(section) == "crane_foundation":
+        return "crane_foundation"
     low = (name or "").lower()
     if any(w in low for w in _SEAM_WORDS) or _has_token(low, _SEAM_TOKENS):
         return "seam"
@@ -213,6 +214,8 @@ def _detect_category(name: str, unit: str) -> str:
         return "formwork"
     if mapping.is_rebar_text(name) or _REBAR_CHILD_RX.match(name or ""):
         return "rebar"
+    if 'подготовк' in s and 'бетон' in s:
+        return 'preparation'
     if "бетон" in s or "бетонирован" in s:
         return "concrete"
     if "шов" in s or "аквастоп" in s or "гидрошпонк" in s:
@@ -247,11 +250,7 @@ def _detect_orientation(section: str, block: str, name: str) -> Optional[str]:
 
 def _thickness(name: str) -> Optional[int]:
     """Толщина (мм) из наименования строки ВОР заказчика."""
-    m = _THICKNESS_RX.search(name or "") or _T_MM_RX.search(name or "")
-    if not m:
-        return None
-    value = int(m.group(1))
-    return value if 30 <= value <= 3000 else None
+    return mapping.parse_thickness(name)
 
 
 def _section_label(name: str) -> Optional[str]:
@@ -273,11 +272,12 @@ def _block_thickness_map(rows: List[dict]) -> Dict[Tuple[str, str], int]:
     """
     result: Dict[Tuple[str, str], int] = {}
     for row in rows:
-        thickness = mapping.parse_thickness(str(row.get("name") or ""))
-        if thickness:
+        name = str(row.get('name') or '')
+        values = mapping.thickness_values(name)
+        if values and 'подготовк' not in name.lower():
             key = (str(row.get("section") or "").strip(),
                    str(row.get("block") or "").strip())
-            result[key] = thickness
+            result[key] = values[0] if len(values) == 1 else None
     return result
 
 
@@ -329,15 +329,16 @@ def collect_rows(rows: List[dict]) -> List[CustomerRow]:
             block=block,
             name=name,
             unit=unit,
-            volume=volume,
+            volume=documents.source_quantity(volume, row),
             unit_family=_unit_family(unit),
             part=_detect_part(section, block),
-            kind=_detect_kind(name, section),
+            kind=_detect_kind(name, f'{section} {block}'),
             category=category,
             grade=mapping.parse_concrete_grade(name),
             diameter=diameter,
             rebar_class=rebar_class,
             thickness=thickness,
+            thickness_label='/'.join(map(str, mapping.thickness_values(name))) if len(mapping.thickness_values(name)) > 1 else '',
             section_label=_section_label(name),
             orientation=_detect_orientation(section, block, name),
             component=components.get((section, block, pos), ""),
@@ -356,7 +357,7 @@ def _in_scope(row: CustomerRow, kind: Optional[str], part: Optional[str]) -> boo
     """Относится ли строка заказчика к подразделу типового ВОР (kind + part)."""
     if part and row.part and row.part != part:
         return False
-    if kind and row.kind and row.kind != kind:
+    if kind and row.kind != kind:
         return False
     return True
 
@@ -553,7 +554,7 @@ def _fill_work(row: template.TemplateRow, group_rows: List[CustomerRow],
     # Явные соответствия наименований (`_NAME_ALIASES`) имеют приоритет: для этих
     # строк автоматическое сопоставление по словам даёт неверный результат.
     total: Optional[float] = _sum_by_aliases(row.name, group_rows, fallback_rows,
-                                             share, orientation)
+                                             share, orientation, family)
     if total is None:
         # Опалубка и бетонирование надёжно определяются видом работы; остальные
         # работы сопоставляются по наименованию с наименованиями заказчика.
@@ -567,19 +568,19 @@ def _fill_work(row: template.TemplateRow, group_rows: List[CustomerRow],
         # слишком общее («сборных»), поэтому применяется строгое сопоставление.
         lead = qk != "count"
         total = _sum_by_name(group_rows, row.name, family, lead=lead,
-                             orientation=orientation, cross_unit=True)
+                             orientation=orientation, cross_unit=False)
         if total is None and fallback_rows:
             total = _sum_by_name(fallback_rows, row.name, family, lead=lead,
-                                 orientation=orientation, cross_unit=True)
+                                 orientation=orientation, cross_unit=False)
             if total is not None:
                 total *= share
 
-    return (round(total, 2), ctx.ref_vor) if total else (None, None)
+    return (round(total, 2), ctx.ref_vor) if total is not None else (None, None)
 
 
 def _sum_by_aliases(name: str, group_rows: List[CustomerRow],
                     fallback_rows: List[CustomerRow], share: float,
-                    orientation: Optional[str] = None) -> Optional[float]:
+                    orientation: Optional[str] = None, unit_family: str = '') -> Optional[float]:
     """Сумма по явным соответствиям наименований (`_NAME_ALIASES`).
 
     Применяется приоритетно к автоматическому сопоставлению: если для строки
@@ -588,9 +589,9 @@ def _sum_by_aliases(name: str, group_rows: List[CustomerRow],
     похожих наименований материалов).
     """
     for alias in _NAME_ALIASES.get((name or "").strip().lower(), ()):
-        total = _sum_by_name(group_rows, alias, orientation=orientation)
+        total = _sum_by_name(group_rows, alias, unit_family, orientation=orientation)
         if total is None and fallback_rows:
-            total = _sum_by_name(fallback_rows, alias, orientation=orientation)
+            total = _sum_by_name(fallback_rows, alias, unit_family, orientation=orientation)
             if total is not None:
                 total *= share
         if total:
@@ -625,7 +626,7 @@ def _fill_resource(row: template.TemplateRow, group_rows: List[CustomerRow],
                              orientation=orientation)
         if total is not None:
             total *= share
-    return (round(total, 2), ctx.ref_vor) if total else (None, None)
+    return (round(total, 2), ctx.ref_vor) if total is not None else (None, None)
 
 
 # =====================================================================
@@ -684,12 +685,13 @@ def _fill_rows(children: List[template.TemplateRow], group_rows: List[CustomerRo
     Строки-работы арматуры («…стержней» / «…каркасов»), бетонирования и
     закладных деталей получают **динамические** строки-ресурсы по фактическим
     данным ВОР заказчика: арматура — диаметры и классы из разделов заказчика
-    («Арматура класса …» → стержни, «Арматурные выпуски …» → каркасы), бетон —
+    («Арматура класса …» → стержни, «Арматурные выпуски …» → отдельная работа), бетон —
     марки из наименований строк заказчика, закладные — фактические позиции
     (пластины, уголки и т. п.). Статические строки шаблона под этими работами
     заменяются.
     """
     buckets = documents.rebar_buckets(ctx.rebar, kind, part, thickness, share)
+    children = template.with_release_work(children, buckets)
     embedded_specs = _embedded_specs(group_rows)
     if not embedded_specs and fallback_rows:
         # Закладные без привязки к геометрии распределяются по доле группы.
@@ -809,7 +811,7 @@ def _fill_rows(children: List[template.TemplateRow], group_rows: List[CustomerRo
             component = component_of(row)
             row_buckets = documents.rebar_buckets(ctx.rebar, kind, part, thickness,
                                                   share, component) if component else buckets
-            if qk == "rebar" and (row_buckets.get("bars") or row_buckets.get("frames")):
+            if qk == "rebar" and any(row_buckets.values()):
                 items = documents.rebar_work_items(row_buckets, row.name,
                                                    has_bars_work, has_frames_work)
                 category = "rebar"
@@ -831,6 +833,8 @@ def _fill_rows(children: List[template.TemplateRow], group_rows: List[CustomerRo
             continue
 
         output.append(template.OutputRow(src_index=row.index,
+                                         label=row.number if mapping.rebar_bucket(row.name) == 'releases' else None,
+                                         name_override=row.name if mapping.rebar_bucket(row.name) == 'releases' else None,
                                          volume=round(sum(items.values()), 2) if items else None,
                                          justification=ctx.ref_vor if items else None))
         sample = _resource_sample(kids, category) or row.index
@@ -890,8 +894,10 @@ def _block_text(row: template.TemplateRow) -> str:
 
 
 def _geometry_value(row: CustomerRow, param: str) -> Optional[str]:
+    if row.category == 'preparation':
+        return None
     if param == "thickness":
-        return str(row.thickness) if row.thickness else None
+        return row.thickness_label or (str(row.thickness) if row.thickness else None)
     if param == "section":
         return row.section_label
     return None
@@ -934,13 +940,13 @@ def _block_header(index, kind: Optional[str], part: Optional[str], label: Option
     if index is not None and label:
         name = index.geometry_group_name(kind, part, label)
         if name:
-            return name
+            return 'Фундамент башенного крана: ' + name if kind == 'crane_foundation' and 'кран' not in name.lower() else name
     return _format_header(fallback_text, geometry, label)
 
 
 def _geometry_int(label: Optional[str]) -> Optional[int]:
     """Числовое значение геометрической подписи («1400» → 1400)."""
-    if not label:
+    if not label or '/' in label:
         return None
     m = re.match(r"\d+", label)
     return int(m.group(0)) if m else None
@@ -953,38 +959,44 @@ def _geometry_int(label: Optional[str]) -> Optional[int]:
 def build_customer_vor(vor_path: str, output_path: str, template_path: str = None,
                        sheet_name: str = template.DEFAULT_SHEET,
                        progress: Progress = None,
-                       elements_json_path: str = None) -> Dict[str, object]:
+                       elements_json_path: str = None, raw_rows: List[dict] = None,
+                       include_rows: bool = False, prepared_rows=None, prepared_rebar=None,
+                       prepared_index=None, prepared_template=None) -> Dict[str, object]:
     """Строит ВОР заказчика в структуре типового ВОР.
 
     ``elements_json_path`` — сырой дамп элементов модели IFC: используется для
     подстановки наименований групп элементов в заголовки геометрических блоков.
+    ``raw_rows`` позволяет использовать уже разобранные строки любого формата
+    без повторного чтения PDF; ``include_rows`` возвращает строки шаблона
+    с рассчитанными объёмами для сравнения ведомостей.
     Возвращает статистику сборки (число строк, заполненных объёмов, строк
     ВОР заказчика, тоннаж арматуры).
     """
-    if os.path.splitext(vor_path)[1].lower() != ".pdf":
+    if raw_rows is None and os.path.splitext(vor_path)[1].lower() != ".pdf":
         raise ValueError("Приведение к типовому ВОР поддерживается только для PDF-файла ВОР")
 
     template_path = template_path or template.DEFAULT_TEMPLATE_PATH
     from src.services.doc_pdf_parser import extract_vor_rows
 
     _say(progress, "ВОР заказчика: разбор таблиц")
-    raw = extract_vor_rows(vor_path)
+    raw = extract_vor_rows(vor_path) if raw_rows is None else raw_rows
     if not raw:
         raise ValueError("В ВОР заказчика не найдено строк таблиц")
 
-    rows = collect_rows(raw)
-    rebar = documents.extract_rebar(raw)
+    rows = prepared_rows if prepared_rows is not None else collect_rows(raw)
+    rebar = prepared_rebar if prepared_rebar is not None else documents.extract_rebar(raw)
     _say(progress, f"ВОР заказчика: строк — {len(rows)}, арматура — {round(rebar.total, 2)} т")
 
-    index = None
-    if elements_json_path and os.path.isfile(elements_json_path):
+    index = prepared_index
+    if index is None and elements_json_path and os.path.isfile(elements_json_path):
         from .elements import ElementIndex
         try:
             index = ElementIndex.from_raw_dump(elements_json_path)
+            index.apply_vor_foundation_changes(raw)
         except Exception as exc:  # pragma: no cover — заголовки блоков не критичны
             logger.warning("ВОР заказчика: не удалось построить индекс модели: %s", exc)
 
-    trows = template.parse_template(template_path, sheet_name)
+    trows = prepared_template if prepared_template is not None else template.parse_template(template_path, sheet_name)
     by_index = {r.index: r for r in trows}
     pos_by_index = {r.index: k for k, r in enumerate(trows)}
 
@@ -1049,6 +1061,23 @@ def build_customer_vor(vor_path: str, output_path: str, template_path: str = Non
                     if out_row.volume is not None:
                         filled += 1
                     output.append(out_row)
+            if row.element_kind == 'foundation_slab':
+                crane_scope = [r for r in rows if _in_scope(r, 'crane_foundation', part)]
+                crane_groups, crane_ungrouped = _geometry_groups(crane_scope, 'thickness')
+                if crane_scope and not crane_groups:
+                    crane_groups = {'': crane_scope}
+                    crane_ungrouped = []
+                total = _concrete_total(crane_scope)
+                for label in sorted(crane_groups, key=_geometry_sort):
+                    members = crane_groups[label]
+                    output.append(template.OutputRow(src_index=row.index,
+                        label=_block_header(index, 'crane_foundation', part, label,
+                                            'Фундамент под башенный кран толщиной … мм', 'thickness')))
+                    share = _concrete_total(members) / total if total else 1.0
+                    added = _fill_rows(template.with_kind(children, 'crane_foundation'), members, crane_ungrouped,
+                                       ctx, 'crane_foundation', part, share, _geometry_int(label))
+                    filled += sum(r.volume is not None for r in added)
+                    output.extend(added)
             i = pos_by_index[block_end[row.index]] + 1
             continue
 
@@ -1080,6 +1109,21 @@ def build_customer_vor(vor_path: str, output_path: str, template_path: str = Non
         "source": os.path.basename(vor_path),
         "output": os.path.basename(output_path),
     }
+    if include_rows:
+        records = []
+        block = ""
+        for item in output:
+            source = by_index[item.src_index]
+            if source.kind in _HEADER_KINDS:
+                block = (item.label or source.number or source.name) if source.kind == "block" else ""
+            if source.kind not in ("work", "resource", "variant"):
+                continue
+            records.append({"templateRow": source.index, "part": source.part_text or "",
+                            "section": source.section or "", "subsection": source.subsection or "",
+                            "elementGroup": block, "work": item.name_override or source.name,
+                            "code": source.number, "unit": source.unit,
+                            "quantity": item.volume, "reason": item.justification or ""})
+        stats["templateRows"] = records
     logger.info("ВОР заказчика приведён к типовому виду: строк %d, заполнено %d",
                 len(output), filled)
     return stats

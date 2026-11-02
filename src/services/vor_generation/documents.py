@@ -18,6 +18,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from src.core.logger import setup_logger
 from . import mapping
+from .quantity import source_quantity
 
 logger = setup_logger(__name__)
 
@@ -43,10 +44,6 @@ def _say(progress: Progress, message: str) -> None:
 
 def _pick_volume(now, was) -> Optional[float]:
     """Выбирает объём строки ВОР: приоритет «стало», затем «было»."""
-    if now is not None and now > 0:
-        return now
-    if was is not None and was > 0:
-        return was
     if now is not None:
         return now
     return was
@@ -150,9 +147,9 @@ class RebarData:
 
         Возвращает словарь ``{'bars': {(diameter, class): тоннаж}, 'frames': {...}}``:
         ``bars`` — продольная/поперечная арматура («Арматура класса …»),
-        ``frames`` — арматурные выпуски и каркасы («Арматурные выпуски …»).
+        ``frames`` — каркасы, ``releases`` — арматурные выпуски.
         """
-        result: Dict[str, Dict[Tuple, float]] = {"bars": {}, "frames": {}}
+        result: Dict[str, Dict[Tuple, float]] = {"bars": {}, "frames": {}, "releases": {}}
         for row in self.scope_rows(kind, part, thickness, component):
             bucket = mapping.rebar_bucket(row.group or row.name)
             key = (row.diameter, row.rebar_class or "")
@@ -172,11 +169,10 @@ def rebar_buckets(rebar: Optional[RebarData], kind: Optional[str], part: Optiona
     ``component`` — подтип лестницы (``flight``/``landing``).
     """
     if rebar is None or not rebar.rows:
-        return {"bars": {}, "frames": {}}
+        return {"bars": {}, "frames": {}, "releases": {}}
     if thickness is not None and rebar.has_thickness(kind, part):
         buckets = rebar.buckets(kind, part, thickness, component)
-        if buckets["bars"] or buckets["frames"]:
-            return buckets
+        return buckets
     result = rebar.buckets(kind, part, None, component)
     if share != 1.0:
         result = {bucket: {key: value * share for key, value in items.items()}
@@ -202,19 +198,10 @@ def rebar_work_items(buckets: Dict[str, Dict[Tuple, float]], work_name: str,
                      has_bars_work: bool, has_frames_work: bool) -> Dict[Tuple, float]:
     """Строки арматуры для работы типового ВОР.
 
-    Работа «…стержней» получает продольную/поперечную арматуру («Арматура
-    класса …»), работа «…каркасов» — арматурные выпуски и каркасы
-    («Арматурные выпуски …»). Если для категории работы данных нет, а работы
-    другой категории в подразделе нет (двойного счёта не будет) — берётся
-    другая категория.
+    Стержни, каркасы и выпуски получают только свою категорию арматуры.
     """
     bucket = mapping.rebar_bucket(work_name)
     items = {key: volume for key, volume in buckets.get(bucket, {}).items() if volume > 0}
-    if not items:
-        other = "frames" if bucket == "bars" else "bars"
-        other_work = has_frames_work if bucket == "bars" else has_bars_work
-        if not other_work:
-            items = {key: volume for key, volume in buckets.get(other, {}).items() if volume > 0}
     return items
 
 
@@ -273,11 +260,12 @@ def extract_rebar(rows: List[dict]) -> RebarData:
     # Толщина конструкции по (разделу, блоку) — последнее значение в блоке.
     thickness_map: Dict[Tuple[str, str], int] = {}
     for row in rows:
-        thickness = mapping.parse_thickness(str(row.get("name") or ""))
-        if thickness:
+        name = str(row.get('name') or '')
+        values = mapping.thickness_values(name)
+        if values and 'подготовк' not in name.lower():
             key = (str(row.get("section") or "").strip(),
                    str(row.get("block") or "").strip())
-            thickness_map[key] = thickness
+            thickness_map[key] = values[0] if len(values) == 1 else None
 
     # Первый проход: позиции родительских строк-арматуры, их классы и наименования.
     # Ключ — (раздел, блок, позиция): нумерация позиций повторяется в каждом
@@ -322,6 +310,7 @@ def extract_rebar(rows: List[dict]) -> RebarData:
         volume = _pick_volume(row.get("volume_now"), row.get("volume_was"))
         if volume is None:
             continue
+        volume = source_quantity(volume, row)
 
         diameter, rebar_class = mapping.parse_rebar_spec(name)
         group = name
@@ -340,7 +329,8 @@ def extract_rebar(rows: List[dict]) -> RebarData:
             continue
 
         thickness = thickness_map.get((section, block))
-        data.rows.append(RebarRow(section=section, name=name, diameter=diameter,
+        scope_section = f'{section} / {block}' if mapping.detect_kind(block) == 'crane_foundation' else section
+        data.rows.append(RebarRow(section=scope_section, name=name, diameter=diameter,
                                   rebar_class=rebar_class, volume=volume,
                                   group=group, thickness=thickness,
                                   component=components.get((section, block, pos), "")))
@@ -377,6 +367,8 @@ class Documents:
     rows: List[DocumentRow] = field(default_factory=list)
     constants: Dict[str, object] = field(default_factory=dict)
     file_names: Dict[str, str] = field(default_factory=dict)
+    vor_rows: List[dict] = field(default_factory=list)
+    prepared_customer_rows: Optional[list] = None
 
     def add_rows(self, rows: List[DocumentRow]) -> None:
         self.rows.extend(rows)
@@ -477,6 +469,14 @@ is_num = _is_num
 common_stems = _common_stems
 
 
+def customer_rows(docs: Documents):
+    """Parse customer scope/units once per prepared document set."""
+    if docs.prepared_customer_rows is None:
+        from .customer_vor import collect_rows
+        docs.prepared_customer_rows = collect_rows(docs.vor_rows)
+    return docs.prepared_customer_rows
+
+
 def load_documents(paths: Dict[str, str], use_llm: bool = True,
                    progress: Progress = None) -> Documents:
     """Разбирает загруженные документы и собирает данные для заполнения ВОР.
@@ -495,6 +495,7 @@ def load_documents(paths: Dict[str, str], use_llm: bool = True,
         try:
             from src.services.doc_pdf_parser import extract_vor_rows
             rows = extract_vor_rows(vor_path)
+            docs.vor_rows = rows
             docs.rebar = extract_rebar(rows)
             for row in rows:
                 docs.add_rows([DocumentRow(

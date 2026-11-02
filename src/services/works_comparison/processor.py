@@ -51,7 +51,7 @@ class Processor:
         from .name_matching import match_customer_names
         ifc_positions = self.ifc_positions_extractor.run()
         if not ifc_positions:
-            raise ValueError("Сформированный ВОР пуст: в моделях нет работ. Необходимо повторить формирование ВОР перед сравнением.")
+            raise ValueError("Сформированная ВОР пуста: в моделях нет работ. Необходимо повторить формирование ВОР перед сравнением.")
         uncoded = any(not str(p.get("code") or "").strip() for p in positions)
         if not uncoded:
             positions = match_customer_names(positions, ifc_positions)

@@ -110,7 +110,7 @@ def match_constructions(rows, generated, llm, cache_path=None, progress=None):
             customer = {'name':construction['name'],'sectionName':construction['sectionName'],'unit':'объект','_matching_scope':scope}
             candidates = [(i,dict(p,name=(p.get('element') or {}).get('typeName') or (p.get('element') or {}).get('category') or work_name(p),unit='объект')) for i,(_,p) in enumerate(eligible)]
             try:
-                key = hashlib.sha256(json.dumps(['construction-v2',str(getattr(llm,'model','')),describe(customer),[(identity,describe(p)) for identity,p in eligible]],ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+                key = hashlib.sha256(json.dumps(['construction-v3',str(getattr(llm,'model','')),describe(customer),[(identity,describe(p)) for identity,p in eligible]],ensure_ascii=False,sort_keys=True).encode()).hexdigest()
                 from .semantic_matching import validate_answer
                 answer = validate_answer(cache[key],candidates) if key in cache else propose_all(llm,customer,candidates)
                 cache[key] = answer

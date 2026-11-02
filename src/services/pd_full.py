@@ -107,19 +107,19 @@ def snippets(docs, kw, limit=9000):
     return "\n\n".join(out)
 
 
-def ask(prompt):
+def ask(prompt, *, timeout=600):
     r = requests.post(f"{LLM_URL}/api/chat", json={
         "model": LLM_MODEL, "stream": False, "think": False, "format": "json",
         "messages": [{"role": "user", "content": prompt}],
         "options": {"temperature": 0, "num_ctx": 16384, "num_predict": 2048},
-    }, timeout=600)
+    }, timeout=timeout)
     r.raise_for_status()
     txt = r.json()["message"]["content"]
     m = re.search(r"\{.*\}", txt, re.S)
     return json.loads(m.group(0)) if m else {}
 
 
-def extract(pos_path=None, pz_path=None, log=print):
+def extract(pos_path=None, pz_path=None, log=print, progress=None):
     docs = {}
     if pos_path and os.path.isfile(pos_path): docs["ПОС"] = pages(pos_path)
     if pz_path and os.path.isfile(pz_path): docs["ПЗ"] = pages(pz_path)
@@ -132,7 +132,12 @@ def extract(pos_path=None, pz_path=None, log=print):
     if key in cache:
         return cache[key]
     result = []
-    for group, (where, items) in PARAMS.items():
+    for _gi, (group, (where, items)) in enumerate(PARAMS.items(), 1):
+        if progress:
+            try:
+                progress(_gi, len(PARAMS), group)
+            except Exception:
+                pass
         use = {k: v for k, v in docs.items() if k in where.split(",")}
         texts, todo = [], []
         for pid, title, kw in items:

@@ -1,4 +1,4 @@
-"""Жизненный цикл задачи формирования ВОР (вкладка «Формирование ВОР»).
+"""Совместимый API прежних самостоятельных задач формирования ВОР.
 
 Задача (job) — отдельная запись в общем реестре сессий
 (``outputs/sessions.json``) с ``session_type='vor_generation'``; файлы — в
@@ -25,7 +25,7 @@ from pathlib import Path
 from werkzeug.utils import secure_filename
 
 from src.core.logger import setup_logger
-from . import builder, customer_vor, documents
+from . import builder, customer_vor, documents, reconcile
 
 logger = setup_logger(__name__)
 
@@ -33,6 +33,9 @@ logger = setup_logger(__name__)
 VOR_OUTPUT_FILENAME = "Сформированный_ВОР.xlsx"
 # Имя ВОР заказчика, приведённого к структуре типового ВОР.
 VOR_CUSTOMER_FILENAME = "ВОР_заказчика.xlsx"
+# Сверка сформированной ВОР с ВОР заказчика (выводы «где правильнее и почему»).
+VOR_RECONCILE_FILENAME = reconcile.RECONCILE_FILENAME
+VOR_TYPICAL_COMPARISON_FILENAME = "Сравнение_типовых_ВОР.xlsx"
 # Имя JSON со статистикой сборки.
 VOR_RESULT_JSON = "vor_generation.json"
 # Имя сырого дампа IFC.
@@ -57,20 +60,27 @@ def _is_positive(value) -> bool:
         return False
 
 
+def build_comparison_reports(job_dir: Path, llm=None) -> dict:
+    """Export detailed typical views and archive verdicts from the same row pairs."""
+    from src.services.comparison_typical import compare_workbooks
+    from src.services.comparison_layout import typical_views
+
+    typical = compare_workbooks(job_dir / VOR_OUTPUT_FILENAME, job_dir / VOR_CUSTOMER_FILENAME)
+    from src.services.comparison_ai_reason import add_ai_reasons
+    add_ai_reasons(typical, llm=llm)
+    workbook = typical_views(typical)
+    try:
+        workbook.save(job_dir / VOR_TYPICAL_COMPARISON_FILENAME)
+    finally:
+        workbook.close()
+    summary = reconcile.explain(typical["rows"])
+    reconcile.write_excel(typical["rows"], summary, str(job_dir / VOR_RECONCILE_FILENAME))
+    return {"counts": dict(summary["counts"]), "total": summary["total"]}
+
+
 def _enrich_slab_formwork(raw_json: Path, model) -> int:
-    """Дополняет сырой дамп bbox-периметром/толщиной плит с неполным QTO.
-
-    Опалубка фундаментной плиты считается по торцам (периметр контура ×
-    толщина). У части плит QTO не содержит ``Perimeter``/``Depth`` (неполная
-    выгрузка Revit) — для них периметр и толщина вычисляются из геометрии
-    (bbox) тем же помощником, что и в конвейере ЦС/ИИ
-    (``ifc_raw_dump._compute_formwork_bbox_quantities``). Значения (в мм)
-    записываются в колонки ``QTO_bbox::Периметр_мм`` / ``QTO_bbox::Толщина_мм``
-    и читаются :mod:`src.services.vor_generation.elements`.
-
-    Возвращает число обогащённых элементов.
-    """
-    from src.services.ifc_raw_dump import _compute_formwork_bbox_quantities
+    """Дополняет геометрию плит общим расчётом контура для ВОР и элементов."""
+    from src.services.ifc_raw_dump import enrich_formwork_quantities
 
     rows = json.loads(raw_json.read_text(encoding="utf-8"))
     by_gid = {str(row.get("GlobalId")): row for row in rows if row.get("GlobalId")}
@@ -79,21 +89,12 @@ def _enrich_slab_formwork(raw_json: Path, model) -> int:
         row = by_gid.get(str(getattr(element, "GlobalId", "") or ""))
         if row is None:
             continue
-        has_perimeter = _is_positive(row.get(_SLAB_PERIMETER_KEY))
-        has_thickness = _is_positive(row.get(_SLAB_DEPTH_KEY))
-        if has_perimeter and has_thickness:
-            continue
-        bbox = _compute_formwork_bbox_quantities(element)
-        if not bbox:
-            continue
-        if not has_perimeter:
-            row[_BBOX_PERIMETER_KEY] = bbox["perimeter_mm"]
-        if not has_thickness:
-            row[_BBOX_DEPTH_KEY] = bbox["depth_mm"]
-        enriched += 1
+        before = dict(row)
+        enrich_formwork_quantities(row, element)
+        enriched += row != before
     if enriched:
         raw_json.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
-        logger.info("Сырой дамп IFC: bbox-периметр/толщина плит добавлены для %d элементов", enriched)
+        logger.info("Сырой дамп IFC: геометрия опалубки уточнена для %d элементов", enriched)
     return enriched
 
 
@@ -130,7 +131,7 @@ class VorGenerationManager:
             job.update(fields)
             job.setdefault("created_at", datetime.now(timezone.utc).isoformat())
             files = []
-            for name in (VOR_OUTPUT_FILENAME, VOR_CUSTOMER_FILENAME, VOR_RESULT_JSON, IFC_RAW_JSON):
+            for name in (VOR_OUTPUT_FILENAME, VOR_CUSTOMER_FILENAME, VOR_RECONCILE_FILENAME, VOR_TYPICAL_COMPARISON_FILENAME, VOR_RESULT_JSON, IFC_RAW_JSON):
                 path = self.root / job_id / name
                 if path.is_file():
                     files.append({"path": str(path), "filename": name, "size": path.stat().st_size})
@@ -260,6 +261,13 @@ class VorGenerationManager:
                 progress=lambda message: self._stage(job_id, None, message),
             )
             stats["customer"] = customer_stats
+            customer_file = job_dir / VOR_CUSTOMER_FILENAME
+            if customer_file.is_file():
+                self._stage(job_id, 90, "Сверка с ВОР заказчика")
+                try:
+                    stats["reconcile"] = build_comparison_reports(job_dir)
+                except Exception as exc:  # pragma: no cover — не роняем задачу
+                    logger.warning("Сверка с ВОР заказчика не выполнена: %s", exc)
 
             self._write(job_id, VOR_RESULT_JSON, stats)
             self._stage(job_id, 100, "ВОР сформирован", status="completed", result=stats)
@@ -275,6 +283,8 @@ class VorGenerationManager:
             job = copy.deepcopy(self.jobs[job_id])
         job["has_result"] = (self.root / job_id / VOR_OUTPUT_FILENAME).is_file()
         job["has_customer_vor"] = (self.root / job_id / VOR_CUSTOMER_FILENAME).is_file()
+        job["has_typical_comparison"] = (self.root / job_id / VOR_TYPICAL_COMPARISON_FILENAME).is_file()
+        job["has_reconcile"] = (self.root / job_id / VOR_RECONCILE_FILENAME).is_file()
         return job
 
     def list(self) -> list:
@@ -284,10 +294,10 @@ class VorGenerationManager:
 
     def artifact(self, job_id: str, filename: str):
         job = self.get(job_id)
-        allowed = {VOR_OUTPUT_FILENAME, VOR_CUSTOMER_FILENAME, VOR_RESULT_JSON, IFC_RAW_JSON}
+        allowed = {VOR_OUTPUT_FILENAME, VOR_CUSTOMER_FILENAME, VOR_RECONCILE_FILENAME, VOR_TYPICAL_COMPARISON_FILENAME, VOR_RESULT_JSON, IFC_RAW_JSON}
         if filename not in allowed:
             raise KeyError("Файл не найден")
-        if filename in (VOR_OUTPUT_FILENAME, VOR_CUSTOMER_FILENAME) and job["status"] != "completed":
+        if filename in (VOR_OUTPUT_FILENAME, VOR_CUSTOMER_FILENAME, VOR_RECONCILE_FILENAME, VOR_TYPICAL_COMPARISON_FILENAME) and job["status"] != "completed":
             raise ValueError("Результат ещё не готов")
         path = self.root / job_id / filename
         if not path.is_file():

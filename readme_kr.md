@@ -818,59 +818,12 @@ API (`api_works_response.json`, сопоставление группы и ре�
 
 ---
 
-## 9. Сравнение ведомостей объёмов работ (comparison-сессии)
+## 9. Типовые ВОР и сверка в обработке модели
 
-Отдельный режим сервиса (вкладка «**Сравнение ведомостей объёмов работ**»,
-эндпоинты `/api/comparisons*`) — общий для обоих режимов, но применим и к ЦС.
-Пользователь загружает **несколько моделей/чертежей** (IFC или PDF — только один
-формат на сравнение) и **ВОР заказчика** (PDF, XLSX, XLS, XML, ZIP, GSFX, GGE);
-сервис формирует ВОР по каждой модели тем же конвейером, что и обычная сессия, и
-сопоставляет работы и объёмы.
-
-Оркестратор — [`src/services/comparison_manager.py`](./src/services/comparison_manager.py)
-(`ComparisonManager`): состояние сравнения — запись с `session_type='comparison'`
-в общем реестре `outputs/sessions.json`, файлы — в `outputs/<comparison_id>/`;
-дочерние сессии моделей ссылаются на сравнение полем `parent_session_id`.
-
-**Ветка ЦС** (`processing_type=CS`):
-
-1. По каждой модели создаётся обычная сессия (`process_ifc`/`process_pdf`) и
-   запускается полный конвейер ЦС (`select_rows(all_rows=True)`): группировка
-   (`group_excel.process_ifc_excel_mssk`) → `ifc_reference_builder` →
-   подбор работ через API ТСН (`api_works_lookup`) → `ОБЩИЙ_Финальный_перечень_работ.xlsx`
-   и `final_result_KR.json`. Параметры расчёта для ЦС **не запрашиваются**
-   (в отличие от ИИ) — документы ПОС/ПЗ/ВОР/ПД в ЦС не поддерживаются.
-2. ВОР по всем моделям объединяются в `models.json` (к каждому `final_result_*`
-   добавляется поле `sourceFile`), статус — `models_ready`.
-3. ВОР заказчика разбирается (см. ниже) → `estimates.json`.
-4. Сравнение — пакетом `works_comparison/` → `result.json` + `result.xlsx`
-   (статус `completed`).
-
-**Разбор ВОР заказчика**: PDF с текстовым слоем и XLSX — локальным парсером
-[`src/services/vor_parser.py`](./src/services/vor_parser.py) (`parse_vor`,
-структура по заголовкам колонок; при нескольких столбцах объёма — статус
-`input_required` и выбор столбца через `POST /api/comparisons/<id>/retry`);
-остальные форматы — через внешний сервис разбора смет (`EstimateTasksClient`).
-
-**Сравнение и отчёт**: извлечение позиций обеих сторон, нормализация единиц
-(`works_comparison/units.py`), группировка по «нормализованный шифр + единица»,
-сопоставление групп (`compare_positions_groups.py`), при отсутствии шифров у
-заказчика — семантическое сопоставление по наименованию и сопоставление по
-конструкциям (`semantic_matching.py`, `construction_matching.py`), LLM-валидация
-(`work_group_validator.py`). Затем `comparison_vor.prepare_report` строит
-компактный отчёт (`reportVersion=3`) по шаблону
-`data/comparison_vor_template.xlsx` (`vorRows` — часть здания → раздел →
-подраздел → группа/работа, объёмы обеих сторон, расхождение, статус, вердикт ИИ).
-
-Статусы сравнения: `models_processing` → (`parameters_required` — только ИИ) →
-`models_ready` → `comparing` → `completed`; `input_required` — нужен выбор
-столбца объёма; `error` — ошибка.
-
-**Артефакты** (`outputs/<comparison_id>/`): `models.json`, `estimates.json`,
-`model_analytics.json`, `semantic_match_diagnostics.jsonl`, `result.json`,
-`result.xlsx` (в ИИ также документы ПОС/ПЗ/ВОР/ПД и `pd_full.json`).
-
-**Эндпоинты**: `GET/POST /api/comparisons`, `GET /api/comparisons/<id>`,
-`POST /api/comparisons/<id>/estimates|parameters|saved-vor|retry`,
-`GET /api/comparisons/<id>/files/<filename>` (`?download=1`). Подробное описание
-потока и веб-интерфейса — в `readme_ar.md` §11.
+Отдельные вкладки формирования ВОР и сравнения удалены. В результатах
+«Обработки» доступны сверка перечня с ВОР исполнителя и формирование двух
+типовых ведомостей с общей сверкой. Формирование использует исходные
+правила IFC/документов; сравниваются готовые строки ведомостей.
+Сохраняются арматура, выпуски, швы, гидроизоляция, теплоизоляция, проценты
+расхождения и ИИ-обоснование. Старые отдельные сессии доступны в истории
+для скачивания результатов. Подробности — [readme_vor.md](readme_vor.md).

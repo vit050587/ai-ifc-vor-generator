@@ -4,6 +4,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 FINAL_WORKBOOK='ОБЩИЙ_Финальный_перечень_работ.xlsx'
+READER_VERSION = 3
 
 
 def read_final_works(folder, selected_groups):
@@ -42,7 +43,15 @@ def synchronize_cs_model(model, folder):
     selected_path=Path(folder)/'selected_elements_grouped.json'
     if not selected_path.is_file() or not (Path(folder)/FINAL_WORKBOOK).is_file():return model
     revision=hashlib.sha256((Path(folder)/FINAL_WORKBOOK).read_bytes()).hexdigest()
-    if model.get('workSource')==FINAL_WORKBOOK and model.get('workSourceRevision')==revision and model.get('workSourceReaderVersion')==2:return model
+    membership = hashlib.sha256()
+    for name in ('selected_elements_grouped.json', 'filtered_elements_grouped_mssk.json', 'filtered_elements.xlsx'):
+        path = Path(folder) / name
+        membership.update(name.encode())
+        if path.is_file():membership.update(path.read_bytes())
+    membership_revision = membership.hexdigest()
+    if (model.get('workSource')==FINAL_WORKBOOK and model.get('workSourceRevision')==revision
+            and model.get('workSourceReaderVersion')==READER_VERSION
+            and model.get('workSourceMembershipRevision')==membership_revision):return model
     selected=json.loads(selected_path.read_text(encoding='utf-8'))
     works=read_final_works(folder,selected)
     groups=model.get('elementGroups',[])
@@ -56,5 +65,6 @@ def synchronize_cs_model(model, folder):
     apply_members(output,exact_members(folder,selected))
     output['workSource']=FINAL_WORKBOOK
     output['workSourceRevision']=revision
-    output['workSourceReaderVersion']=2
+    output['workSourceReaderVersion']=READER_VERSION
+    output['workSourceMembershipRevision']=membership_revision
     return output

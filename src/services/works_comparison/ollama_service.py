@@ -1,10 +1,8 @@
 from src.core.prompt_manager import PromptManager
 from typing import Any, Optional
-from functools import lru_cache
 from langchain_ollama import OllamaLLM
-import json
-from .utils import _get_json_from_response, execute_llm_chain
-from joblib import Memory
+from .utils import execute_llm_chain
+from src.core.cache_manager import CacheManager
 
 from .config import settings
 from src.core.config import load_config
@@ -12,7 +10,7 @@ from src.core.config import load_config
 _cfg = load_config()
 
 OLLAMA_URL = _cfg.ollama_url
-memory = Memory("cache", verbose=0)
+memory = CacheManager.memory
 
 class OllamaService:
     def __init__(self, prompts_path):
@@ -32,43 +30,49 @@ class OllamaService:
         )
 
 
-    def get_tg_model_answer(
-            self,
-            prompt_name: str,
-            payload: dict[str, str],
-            generation_kwargs: Optional[dict[str, Any]] = None
-            ):
-        payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-        generation_kwargs_json = json.dumps(
-            generation_kwargs,
-            ensure_ascii=False,
-            sort_keys=True,
-        )
+    def get_tg_model_answer(self,
+                prompt_name: str,
+                payload: dict[str, str],
+                generation_kwargs: Optional[dict[str, Any]] = None):
+        generation_kwargs = generation_kwargs or {}
+
+        parameters_for_cache = {
+            "base_url": self.llm.base_url,
+            "model": self.llm.model,
+            "temperature": self.llm.temperature,
+            "top_k": self.llm.top_k,
+            "top_p": self.llm.top_p,
+            "seed": self.llm.seed,
+            "num_ctx": self.llm.num_ctx,
+            "num_predict": self.llm.num_predict,
+
+            "prompt_text": self.prompt_manager.get_prompt(prompt_name)
+        }
         return self._get_tg_model_answer_cached(
-            prompt_name,
-            payload_json,
-            generation_kwargs_json,
+            prompt_name=prompt_name,
+            payload=payload,
+            parameters_for_cache=parameters_for_cache,
+            llm=self.llm,
+            prompt_manager=self.prompt_manager,
+            generation_kwargs=generation_kwargs,
         )
 
-    @lru_cache(maxsize=1024)
+
+    @staticmethod
+    @memory.cache(ignore=["llm", "prompt_manager"])
     def _get_tg_model_answer_cached(
-            self,
             prompt_name: str,
-            payload_json: str,
-            generation_kwargs_json: str,
+            payload: dict[str, str],
+            parameters_for_cache: dict[str, Any],
+            llm,
+            prompt_manager,
+            generation_kwargs: Optional[dict[str, Any]] = None
             ):
         """generation_kwargs заменяет все аргументы на переданные"""
-        payload = json.loads(payload_json)
-        generation_kwargs = json.loads(generation_kwargs_json)
-        llm = self.llm
         # Если есть аргументы то заменяем не трогая оригинальную модель
         if generation_kwargs:
             llm = llm.bind(options=generation_kwargs)
 
-        chain = self.prompt_manager.get_template(prompt_name) | llm
+        chain = prompt_manager.get_template(prompt_name) | llm
         response = execute_llm_chain(chain, payload, stub={})
-        if prompt_name == "":
-            with open("train.jsonl", "a", encoding="utf-8") as f:
-                json.dump({"input": payload, "output": response}, f, ensure_ascii=False)
-                f.write("\n")
-        return response, "eos"
+        return response

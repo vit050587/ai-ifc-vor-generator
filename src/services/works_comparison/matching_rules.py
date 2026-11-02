@@ -67,7 +67,7 @@ def object_scope(p):
     if not part and re.search(r'кров[её]?л|крыш|типов\w*\s+этаж|техническ\w*\s+этаж|перекрыти\w*\s+этаж',object_text):
         part = 'above'
     qualifier = next((word for word in ('благоустрой','маф','паркинг','подпорн','наружн','внутренн') if word in text),None)
-    if re.search(r'(?<!\w)бк\d*(?!\w)',text):
+    if re.search(r'(?<!\w)бк\d*(?!\w)|башенн\w*\s+кран|фундамент\w*\s+кран',text):
         qualifier = 'бк'
     building = re.search(r'корпус\s*([а-яa-z0-9]+)',text)
     # Preserve sections/axes instead of broadening a scoped customer row silently.
@@ -82,7 +82,9 @@ def object_scope(p):
     production='precast' if re.search(r'сборн',production_text) else 'monolithic' if re.search(r'монолит',production_text) else None
     if el.get('ifcClass')=='IfcStair':subtype='assembly'
     if el and kind=='slab' and re.search(r'площадк',norm(el.get('typeName'))):kind,subtype='stair','landing'
-    product=re.search(r'(?<!\w)(лм[-– ]?\d+(?:[-–]\d+)+)',norm(work_name(p))) if not el else None
+    if el.get('locationStatus') == 'unresolved':
+        part = 'unresolved'
+    product=re.search(r'(?<!\w)(лм[-– ]?\d+(?:[-–]\d+)+)',norm(el.get('typeName') if el else work_name(p)))
     return {'productionType':production,'productMark':product.group(1) if product else None,'waterResistance':water.group(1) if water else None,'frostResistance':frost.group(1) if frost else None,'subtype':subtype,'qualifier':qualifier,'building':building.group(1) if building else None,'levelRange':(':'.join(level_range.groups()) if level_range else None),'rebarClass':norm(p.get('_rebar_class')) or (grade.group(1).replace('с','c') if grade else None),'kind':kind,'part':part,'level':level.group(1) if level else None,
             'concrete':concrete.group(1) if concrete else None,
             'thickness':thickness.group(1) if thickness else None,
@@ -91,6 +93,10 @@ def object_scope(p):
 
 
 def compatible(a, b):
+    # A specialised object must not consume an unqualified building group (or
+    # vice versa), even when the remaining characteristics are unspecified.
+    if a.get('qualifier') != b.get('qualifier'):
+        return False
     return all(not a.get(key) or not b.get(key) or a[key] == b[key] for key in a)
 
 
@@ -98,7 +104,21 @@ def object_identity(p):
     return (p.get('sourceFile'), p.get('groupId'))
 
 
+def prefer_explicit_operations(candidates):
+    """Generic construction rates must not obscure an explicit concreting work.
+
+    Preserve all explicit alternatives: several concreting rates still require
+    resolution. This only removes generic candidates for the same model object.
+    """
+    explicit = {object_identity(p) for _, p in candidates if operation(p) == 'concrete'
+                and re.search(r'бетонирован|укладк\w*.*бетон', norm(work_name(p)))}
+    return [(index, p) for index, p in candidates
+            if operation(p) != 'concrete' or object_identity(p) not in explicit
+            or re.search(r'бетонирован|укладк\w*.*бетон', norm(work_name(p)))]
+
+
 def rule_match(customer, candidates):
+    candidates = prefer_explicit_operations(candidates)
     scope, op = object_scope(customer), operation(customer)
     if not scope['kind'] or not candidates:
         return None

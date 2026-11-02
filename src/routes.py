@@ -1768,7 +1768,12 @@ def preview_result(session_id: str, filename: str):
         if path.endswith(".csv"):
             df = pd.read_csv(path)
         elif path.endswith(".xlsx"):
-            df = pd.read_excel(path)
+            if filename in ("Сформированный_ВОР_типовой.xlsx", "ВОР_заказчика_типовой.xlsx"):
+                df = pd.read_excel(path, sheet_name="ВОР КР_ЖС", header=1)
+            elif filename == "Смета_по_сформированному_перечню.xlsx":
+                df = pd.read_excel(path, sheet_name="Смета по перечню", header=15)
+            else:
+                df = pd.read_excel(path)
         elif path.endswith(".json"):
             with open(path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
@@ -2797,6 +2802,112 @@ def get_final_json_result_by_number(session_id: str, run_number: int):
 import threading as _pd_threading
 from flask import jsonify as _pd_jsonify
 _PD_RUNNING = set()
+_PD_PROGRESS = {}   # ход полного разбора ПОС/ПЗ для интерфейса
+
+
+@bp.route("/api/session/<session_id>/docs_progress", methods=["GET"])
+def docs_progress(session_id: str):
+    """Какие документы сейчас читает ИИ в фоне (ВОР, ПД, ПОС, ПЗ) — для интерфейса."""
+    s = _get_manager().get(session_id) or {}
+    labels = {"vor": "ВОР", "pd": "ПД", "pos": "ПОС", "pz": "ПЗ"}
+    running = []
+    for k, label in labels.items():
+        st = str(s.get(f"{k}_status") or "")
+        if st.endswith("processing"):
+            running.append({"doc": label, "label": label, "message": s.get(f"{k}_progress_message") or f"{label}: чтение…"})
+    if session_id in _PD_RUNNING:
+        p = _PD_PROGRESS.get(session_id) or {}
+        running.append({"doc": "ПОС/ПЗ", "label": "ПОС/ПЗ", "message": f"ПОС/ПЗ: группа параметров {p.get('done', 0) + 1} из {p['total']}" if p.get("total") else "ПОС/ПЗ: чтение…"})
+    docs = []
+    for k, label in labels.items():
+        st = str(s.get(f"{k}_status") or "")
+        state = "running" if st.endswith("processing") else "done" if st.endswith("completed") else "error" if st.endswith("error") else ""
+        if state:
+            msg = str(s.get(f"{k}_progress_message") or "")
+            docs.append({"doc": label, "state": state, "message": msg.replace(label + ":", "").strip()})
+    return _pd_jsonify({"running": running, "docs": docs})
+
+
+def _vor_comparison_run_dir(base, session_id):
+    """Use the session's selected run, including when restoring older runs."""
+    from src.services import vor_comparison
+    import re
+    selected = (_get_manager().get(session_id) or {}).get("current_run_id")
+    if selected and re.fullmatch(r"run_\d+", str(selected)):
+        path = os.path.join(base, selected)
+        return path if os.path.isdir(path) else None
+    return vor_comparison.latest_run_with_final_works(base)
+
+
+@bp.route("/api/session/<session_id>/estimate", methods=["GET"])
+def export_session_estimate(session_id):
+    from src.services import estimate_export
+    base = os.path.join(_get_manager().output_folder, session_id)
+    run_dir = _vor_comparison_run_dir(base, session_id)
+    if not run_dir:
+        session = _get_manager().get(session_id) or {}
+        selected = session.get("current_run_id")
+        import re
+        if selected and re.fullmatch(r"run_\d+", str(selected)):
+            run_dir = os.path.join(base, selected)
+    if not run_dir:
+        return _pd_jsonify({"status":"none","detail":"Сначала сформируйте перечень работ"})
+    try:
+        session = _get_manager().get(session_id) or {}
+        result = estimate_export.build(run_dir, project_name=session.get("ifc_file_name") or session.get("original_filename") or "",
+            force=request.args.get("rebuild") == "1")
+        _get_manager().register_file(session_id, result["file"])
+        result.update(status="ready",file=estimate_export.FILENAME,
+            download_url=f"/ifc-vor/api/session/{session_id}/download/{estimate_export.FILENAME}")
+        return _pd_jsonify(result)
+    except ValueError as exc:
+        return _pd_jsonify({"status":"none","detail":str(exc)})
+    except Exception as exc:
+        logger.error("Сметная форма: %s",exc,exc_info=True)
+        return _pd_jsonify({"status":"error","detail":str(exc)}), 500
+
+
+@bp.route("/api/session/<session_id>/typical_vor", methods=["GET"])
+def typical_vor(session_id: str):
+    """Оба типовых ВОР по исходным элементам IFC и документам, плюс общая сверка."""
+    from src.services import vor_comparison
+    from src.services.vor_generation import typical_fill, saved_comparisons, template as _tpl
+    base = os.path.join(_get_manager().output_folder, session_id)
+    run_dir = _vor_comparison_run_dir(base, session_id)
+    if not run_dir:
+        if os.path.isfile(os.path.join(base, "IFC_исходные_параметры.json")):
+            run_dir = os.path.join(base, "typical_vor")
+            os.makedirs(run_dir, exist_ok=True)
+        else:
+            return _pd_jsonify({"status":"none", "detail":"Сначала загрузите и обработайте IFC-модель для формирования типовых ВОР."})
+    saved_only = request.args.get("saved") == "1"
+    if not saved_only and not os.path.isfile(_tpl.DEFAULT_TEMPLATE_PATH):
+        return _pd_jsonify({"status": "none", "detail": "Не найден шаблон «Типовой ВОР по КР.xlsx» в папке data."})
+    try:
+        if saved_only:
+            res = saved_comparisons.load(run_dir)
+            if res is None:
+                return _pd_jsonify({"status":"none"})
+        else:
+            res = typical_fill.build(run_dir, session=_get_manager().get(session_id),
+                force=request.args.get("rebuild", "").lower() in ("1", "true", "yes"))
+            saved_comparisons.save(run_dir, res)
+        _get_manager().register_file(session_id, res["file"])
+        labels = {"generated":"Сформированная ВОР в типовой форме", "customer":"ВОР заказчика в типовой форме"}
+        files = []
+        for item in res.pop("source_files", []):
+            _get_manager().register_file(session_id, item["file"])
+            filename = os.path.basename(item["file"])
+            files.append({"kind":item["kind"], "filename":filename, "label":labels[item["kind"]],
+                          "download_url":f"/ifc-vor/api/session/{session_id}/download/{filename}",
+                          "preview_url":f"/ifc-vor/api/session/{session_id}/preview_result/{filename}"})
+        res["files"] = files
+        name = os.path.basename(res["file"])
+        res.update(status="ready", file=name, download_url=f"/ifc-vor/api/session/{session_id}/download/{name}")
+        return _pd_jsonify(res)
+    except Exception as e:
+        logger.error(f"typical_vor: {e}", exc_info=True)
+        return _pd_jsonify({"status": "error", "detail": str(e)})
 
 
 def _pd_find_docs(session_id):
@@ -2851,7 +2962,7 @@ def get_pd_full(session_id: str):
         with open(fp, encoding="utf-8") as f:
             return _pd_jsonify({"status": "ready", "items": json.load(f)})
     if session_id in _PD_RUNNING:
-        return _pd_jsonify({"status": "running"})
+        return _pd_jsonify({"status": "running", **(_PD_PROGRESS.get(session_id) or {})})
     pos, pz, pdfs = _pd_find_docs(session_id)
     if not pos and not pz:
         return _pd_jsonify({"status": "none", "found_pdfs": pdfs})
@@ -2859,7 +2970,8 @@ def get_pd_full(session_id: str):
     def _job():
         try:
             from src.services import pd_full
-            res = pd_full.extract(pos, pz, log=lambda m: None)
+            res = pd_full.extract(pos, pz, log=lambda m: None,
+                                  progress=lambda i, n, g: _PD_PROGRESS.__setitem__(session_id, {"done": i - 1, "total": n, "group": g}))
             os.makedirs(out, exist_ok=True)
             with open(fp, "w", encoding="utf-8") as f:
                 json.dump(res, f, ensure_ascii=False, indent=1)
@@ -2969,21 +3081,39 @@ def get_compare_vor(session_id: str):
     from src.services import vor_comparison
 
     base = os.path.join(_get_manager().output_folder, session_id)
-    run_dir = vor_comparison.latest_run_with_final_works(base)
+    run_dir = _vor_comparison_run_dir(base, session_id)
     if not run_dir:
         return _pd_jsonify({"status": "none",
                             "detail": "Нет запуска с Финальный_перечень_работ.json"})
     json_path = os.path.join(run_dir, vor_comparison.COMPARE_JSON)
     rebuild = str(request.args.get("rebuild", "")).lower() in ("1", "true", "yes")
     try:
+        if request.args.get("saved") == "1" and not os.path.isfile(json_path):
+            return _pd_jsonify({"status":"none"})
         if rebuild or not os.path.isfile(json_path):
             result = vor_comparison.run(run_dir)
             if result is None:
-                return _pd_jsonify({"status": "none",
-                                    "detail": "Не найдены ВОР или перечень работ"})
+                groups = vor_comparison._load_model_groups(run_dir)
+                if not groups or not any(group.get("rows") for group in groups):
+                    return _pd_jsonify({"status":"none", "reason":"generated_missing",
+                        "detail":"Сформированный перечень не содержит работ. Повторите подбор работ; загружать ВОР заказчика заново не нужно."})
+                session = _get_manager().get(session_id) or {}
+                if str(session.get("vor_status") or "").endswith("processing"):
+                    return _pd_jsonify({"status":"processing", "reason":"customer_processing",
+                        "detail":"ВОР заказчика загружен и ещё разбирается. Дождитесь завершения чтения и повторите сравнение."})
+                uploaded = bool(session.get("vor_file_path") or vor_comparison._find_vor_pdf(run_dir)
+                                or vor_comparison._find_session_dir(run_dir, vor_comparison.VOR_JSON))
+                return _pd_jsonify({"status":"error" if uploaded else "none",
+                    "reason":"customer_unreadable" if uploaded else "customer_missing",
+                    "detail": (session.get("vor_error") or "ВОР заказчика загружен, но строки для сравнения не найдены. Проверьте результат разбора документа.")
+                              if uploaded else "В этой сессии нет ВОР заказчика. Загрузите его в поле «Файл ВОР»."})
         else:
             with open(json_path, encoding="utf-8") as f:
                 result = json.load(f)
+        from src.services.comparison_wording import comparison_text
+        for row in result.get("rows", []):
+            if "why" in row:
+                row["why"] = comparison_text(row["why"])
         xlsx_path = os.path.join(run_dir, vor_comparison.COMPARE_XLSX)
         _get_manager().register_file(session_id, xlsx_path)
         result["status"] = "ready"

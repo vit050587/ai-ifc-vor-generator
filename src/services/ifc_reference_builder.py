@@ -763,6 +763,9 @@ def extract_elements_from_ifc(ifc_path: str, output_folder: str, processing_type
         if col in df.columns:
             smetchik_cols.append(col)
 
+    from .work_height import HEIGHT_FIELDS
+    smetchik_cols.extend(col for col in HEIGHT_FIELDS if col in df.columns)
+
     # Оставляем только существующие колонки, убираем дубликаты
     existing_cols = []
     seen = set()
@@ -1181,6 +1184,7 @@ def _recompute_group_aggregates(
     sub_rows: List[Dict[str, Any]],
     headers: List[str],
     volume_cols: List[str],
+    precision: int = 2,
 ) -> Dict[str, Any]:
     """Агрегаты подгруппы листовой группы: объём, площади, арматура, опалубка.
 
@@ -1199,29 +1203,27 @@ def _recompute_group_aggregates(
                 return val
         return 0.0
 
-    volume = float(round(sum(_row_volume(r) for r in sub_rows), 2))
+    volume = float(round(sum(_row_volume(r) for r in sub_rows), precision))
     areas: Dict[str, float] = {}
     for col in headers:
         if 'площадь' not in str(col).lower():
             continue
         total = sum(safe_parse_float(r.get(col, 0)) for r in sub_rows)
         if total > 0:
-            areas[col] = float(round(total, 2))
+            areas[col] = float(round(total, precision))
     reinforcement = float(round(sum(
         safe_parse_float(r.get('ReinforcementVolumeRatio', 0)) * _row_volume(r)
         for r in sub_rows
-    ), 2))
+    ), precision))
     # Площадь опалубки плит подгруппы (фундаментные плиты — периметр ×
     # толщина; перекрытия — периметр × толщина + площадь плиты) —
     # пересчитывается по элементам подгруппы, чтобы сумма площадей
     # опалубки подгрупп равнялась площади исходной группы.
     perim_cols, depth_cols = _find_formwork_columns(headers)
-    formwork_area = 0.0
-    if perim_cols and depth_cols:
-        formwork_area = float(round(sum(
-            _element_formwork_area_m2(r, perim_cols, depth_cols)
-            for r in sub_rows
-        ), 2))
+    formwork_area = float(round(sum(
+        _element_formwork_area_m2(r, perim_cols, depth_cols)
+        for r in sub_rows
+    ), precision))
     return {
         'total_volume': volume,
         'total_areas': areas,

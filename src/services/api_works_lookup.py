@@ -729,6 +729,7 @@ def _calculate_work_volume(
     total_areas: Dict[str, Any] | None = None,
     formwork_area: float = 0.0,
     slab_group: bool = False,
+    beam_group: bool = False,
 ) -> str:
     """Рассчитывает объём работ для расценки из API.
 
@@ -748,14 +749,13 @@ def _calculate_work_volume(
             перекрытие): опалубку таких групп считаем ТОЛЬКО по
             formwork_area, fallback на площадь плиты из totalAreas
             запрещён (иначе объём опалубки завышается в разы).
+        beam_group — группа балок: используется только явно заданная площадь
+            контакта с опалубкой; полная поверхность IFC не подставляется.
 
     Возвращает строку с объёмом (или пустую строку, если посчитать нельзя).
     """
     measure_type = (total_measure or {}).get("type", "")
     measure_value = safe_float((total_measure or {}).get("value", 0))
-
-    if measure_value <= 0:
-        return ""
 
     unit = str(work.get("unitOfMeasure", "") or "").lower().replace(" ", "")
 
@@ -764,6 +764,19 @@ def _calculate_work_volume(
     is_count = "шт" in unit
 
     divisor = _work_divisor(work)
+
+    if is_area and (beam_group or slab_group) and _is_formwork_work(work):
+        if formwork_area <= 0:
+            return ""
+        vol = formwork_area / divisor
+        return f"{vol:.4f}" if divisor > 1 else f"{vol:.2f}"
+
+    if is_area and _is_formwork_work(work) and formwork_area > 0:
+        vol = formwork_area / divisor
+        return f"{vol:.4f}" if divisor > 1 else f"{vol:.2f}"
+
+    if measure_value <= 0:
+        return ""
 
     if is_volume and measure_type == "volume":
         vol = measure_value / divisor
@@ -996,7 +1009,7 @@ def build_final_works_from_api(
         # опалубка считается только по _formworkArea, fallback на
         # площадь плиты из totalAreas запрещён.
         is_slab_group = any(
-            kw in element_name.lower() for kw in ("плит", "перекрыт")
+            kw in element_name.lower() for kw in ("плит", "перекрыт", "площадк", "марш", "лестниц")
         )
         # Отбираем позиции, точно соответствующие характеристикам группы
         # (без дополнительных характеристик, которых в запросе нет, —
@@ -1019,6 +1032,7 @@ def build_final_works_from_api(
                     work, total_measure, total_areas,
                     formwork_area=formwork_area,
                     slab_group=is_slab_group,
+                    beam_group=bool(re.search(r"балк|ригел", element_name, re.I)),
                 )
                 work_name = str(work.get("name", ""))
                 # Работы по установке арматурных изделий/каркасов/сеток/стержней.
@@ -1068,6 +1082,7 @@ def build_final_works_from_api(
                 work, total_measure, total_areas,
                 formwork_area=formwork_area,
                 slab_group=is_slab_group,
+                beam_group=bool(re.search(r"балк|ригел", element_name, re.I)),
             )
             all_works.append(work)
             element_work_ids.add(work.get("id"))
@@ -1105,11 +1120,17 @@ def build_final_works_from_api(
         "_workId",
     ])
 
+    df_works["_norm_group"] = 0
+    for group_index, info in enumerate(element_info):
+        df_works.loc[info["start_index"]:info["end_index"]-1, "_norm_group"] = group_index
+
     # Корректировка объёмов по нормам расхода (koefs.xlsx)
     try:
         df_works = _get_corrected_volume(df_works)
     except Exception as exc:
         logger.error(f"Ошибка при корректировке объёма работ: {exc}")
+
+    df_works = df_works.drop(columns=["_norm_group"])
 
     # Показатели стоимости из API цифрового сборника
     # (works/resources, поля curSalary/curOperationOfMachines/

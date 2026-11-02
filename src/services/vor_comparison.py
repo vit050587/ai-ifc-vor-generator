@@ -99,7 +99,7 @@ COMPARE_JSON = "Сравнение_ВОР_и_перечня.json"
 VOR_PDF_PATTERNS = ("vor_*.pdf", "*ВОР*.pdf", "*вор*.pdf")
 
 # Пороги «аномального» расхождения объёмов.
-DIFF_PCT = 20.0      # относительное расхождение, %
+DIFF_PCT = 3.0      # относительное расхождение, %
 DIFF_ABS = 1.0       # минимальное абсолютное расхождение (в базовой единице)
 
 # ---------------------------------------------------------------------
@@ -400,14 +400,60 @@ def _load_vor_rows(run_dir: str) -> Tuple[List[dict], str]:
     return _rows_from_items(_load_vor_items(run_dir)), "json"
 
 
+def _selected_work_groups(path: str, elements: List[dict]) -> List[dict]:
+    """Read the final Excel amounts, including coefficients, for selected_works JSON."""
+    from contextlib import ExitStack
+    from tempfile import TemporaryDirectory
+    from openpyxl import load_workbook
+    with ExitStack() as stack:
+        workbook_path = os.path.splitext(path)[0] + ".xlsx"
+        if not os.path.isfile(workbook_path):
+            from .works_final_selector import build_final_works_xlsx
+            folder = stack.enter_context(TemporaryDirectory())
+            workbook_path = os.path.join(folder, "final.xlsx")
+            build_final_works_xlsx(elements, workbook_path)
+        book = load_workbook(workbook_path, read_only=True, data_only=True)
+        stack.callback(book.close)
+        sheet = book["Данные"] if "Данные" in book.sheetnames else book.active
+        output, current, part = [], None, ""
+        # Same headings as the existing selector export; amounts are not recalculated.
+        metadata = defaultdict(list)
+        for entry in elements:
+            metadata[str(entry.get("group_header") or "")].append(entry)
+        for values in sheet.iter_rows(min_row=2, values_only=True):
+            code, title, unit, volume = (list(values) + [None] * 4)[:4]
+            title = str(title or "").strip()
+            if not code and title and not unit:
+                if title.upper() in ("ПОДЗЕМНАЯ ЧАСТЬ", "НАДЗЕМНАЯ ЧАСТЬ", "ЦОКОЛЬ", "ЦОКОЛЬНАЯ ЧАСТЬ"):
+                    part, current = title, None
+                elif not re.match(r"итого|всего", title, re.I):
+                    candidates = metadata.get(title) or []
+                    entry = candidates.pop(0) if candidates else {}
+                    current = {"element":title, "part":_vor_part(part or entry.get("part")),
+                               "path":entry.get("group_path") or [], "rows":[],
+                               "quantity":entry.get("group_quantity") or {}}
+                    output.append(current)
+                continue
+            if current is not None and code and title:
+                current["rows"].append({"pressmark":str(code), "title":title, "work":title,
+                    "unit":str(unit or ""), "volume":_num(volume), "is_resource":False})
+        return output
+
+
 def _load_model_groups(run_dir: str) -> List[dict]:
-    """Группы элементов из ``Финальный_перечень_работ.json`` (папка запуска)."""
+    """Read either perechen groups or the selector's elements/selected_works output."""
     path = os.path.join(os.path.abspath(run_dir), FINAL_WORKS_JSON)
     if not os.path.isfile(path):
         path = _find_session_dir(run_dir, FINAL_WORKS_JSON) or ""
     if not path or not os.path.isfile(path):
         return []
-    return [g for g in (_load_json(path).get("groups") or []) if isinstance(g, dict)]
+    data = _load_json(path)
+    if isinstance(data.get("groups"), list):
+        return [g for g in data["groups"] if isinstance(g, dict)]
+    elements = data.get("elements")
+    if isinstance(elements, list):
+        return _selected_work_groups(path, [e for e in elements if isinstance(e, dict)])
+    return []
 
 
 # ---------------------------------------------------------------------
@@ -484,6 +530,14 @@ def _assign_groups(rows: List[dict]) -> Dict[int, str]:
     return out
 
 
+def _dismantle_only(text: Any) -> bool:
+    """Только разборка/демонтаж опалубки — площадь та же, что у монтажа, второй раз не считаем."""
+    t = str(text or "").lower()
+    if not re.search(r"демонтаж|разборк", t):
+        return False
+    return not re.search(r"(?<!де)монтаж\w*\s+и\s+(де)?монтаж|монтаж\w*\s+и\s+разборк|устройств", t)
+
+
 def _vor_records(rows: List[dict]) -> List[Dict[str, Any]]:
     """Нормализует строки ВОР: группа, часть здания, категория, единица, объём.
 
@@ -503,6 +557,8 @@ def _vor_records(rows: List[dict]) -> List[Dict[str, Any]]:
         if volume is None:
             volume = r.get("volume_was")
         category = _row_category(name, unit)
+        if category == "opening" and _dismantle_only(name):
+            continue   # разборка той же опалубки — площадь уже учтена в монтаже
         group = groups.get(id(r)) or GROUP_OTHER
         part = _vor_part(r.get("section"), name)
         label = f"{part} · {group}" if part else group
@@ -537,7 +593,7 @@ def _model_records(groups: List[dict]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for g in groups:
         element = str(g.get("element") or "").strip()
-        part = str(g.get("part") or "").strip()
+        part = _vor_part(g.get("part")) or str(g.get("part") or "").strip()
         path = g.get("path") or []
         path_name = str(path[1]) if len(path) > 1 else ""
         group = element_group(path_name)
@@ -556,6 +612,8 @@ def _model_records(groups: List[dict]) -> List[Dict[str, Any]]:
             category = classify_work(work)
             if category == "other":
                 category = classify_work(title)
+            if category == "opening" and _dismantle_only(title):
+                continue   # разборка той же опалубки — площадь уже учтена в монтаже
             out.append({
                 "source": "Перечень",
                 "group": group,
@@ -572,6 +630,9 @@ def _model_records(groups: List[dict]) -> List[Dict[str, Any]]:
                 "raw_unit": str(r.get("unit") or "").strip(),
                 "volume": vol * mult if vol is not None else None,
                 "is_resource": bool(r.get("is_resource")),
+                "quantityStatus": r.get("quantityStatus") or (
+                    "partial_data" if category == "opening" and (g.get("quantity") or {}).get("formwork_missing")
+                    else "calculated" if vol is not None else "missing_data"),
             })
     return out
 
@@ -605,12 +666,14 @@ def _status(vor_vol: Optional[float], model_vol: Optional[float],
         return "только в перечне", None, None
     if vor_vol is None and model_vol is None:
         return "нет объёма (по проекту)", None, None
-    if vor_vol is None or vor_vol == 0:
+    if vor_vol is None:
         return "нет объёма в ВОР", None, None
     if model_vol is None:
         return "нет объёма в перечне", None, None
     diff = model_vol - vor_vol
-    pct = diff / vor_vol * 100.0
+    pct = diff / abs(vor_vol) * 100.0 if vor_vol else None
+    if pct is None:
+        return ("совпадает" if abs(diff) < 1e-9 else "расхождение"), diff, None
     if abs(pct) >= DIFF_PCT and abs(diff) >= DIFF_ABS:
         return "расхождение", diff, pct
     return "совпадает", diff, pct
@@ -666,6 +729,11 @@ def _compare_level(records: List[Dict[str, Any]], key_fields: Tuple[str, ...]
         model_vol = _sum_vol(m_items)
         status, diff, pct = _status(vor_vol, model_vol, bool(v_items), bool(m_items),
                                     first.get("category", ""))
+        if v_items and m_items and first.get("category") != "rebar":
+            if any(r.get("quantityStatus") == "partial_data" for r in m_items):
+                status, diff, pct = "ifc_quantity_incomplete", None, None
+            elif any(r.get("quantityStatus") == "partial_data" for r in v_items):
+                status, diff, pct = "project_quantity_incomplete", None, None
         label = first.get("label") if "label" in key_fields else first.get("group")
         rows.append({
             "label": label,
@@ -717,6 +785,11 @@ def compare(run_dir: str, vor_rows: Optional[List[dict]] = None,
     resource_rows = [r for r in _compare_level(resource_records, ("label", "category", "unit"))
                      if r["status"] != "только в ВОР"]
 
+    from .vor_verdicts import explain as _explain_verdicts
+    verdicts = _explain_verdicts(rows)
+    _explain_verdicts(kind_rows)
+    _explain_verdicts(resource_rows)
+
     details_vor = [{
         "page": r["page"], "section": r["section"], "block": r["block"],
         "pos": r["pos"], "name": r["name"], "part": r["part"], "group": r["group"],
@@ -744,6 +817,7 @@ def compare(run_dir: str, vor_rows: Optional[List[dict]] = None,
         "только в перечне": _count(rows, "только в перечне"),
         "совпадает": _count(rows, "совпадает"),
         "взято из ВОР": _count(rows, "взято из ВОР"),
+        "verdicts": dict(verdicts),
         "vor_items": len(vor),
         "model_works": sum(1 for r in model if not r["is_resource"]),
         "model_resources": sum(1 for r in model if r["is_resource"]),
@@ -798,12 +872,16 @@ def _status_fill(status: str):
     return None
 
 
+from .vor_verdicts import VERDICTS as _VERDICT_LABELS, summary_lines as _verdict_summary
+
+
 def _write_compare_sheet(ws, rows: List[Dict[str, Any]], first_header: str) -> None:
     """Пишет лист сравнения (по группам / по видам / по ресурсам) с подсветкой."""
     fills = _fills()
     headers = [first_header, "Работа (категория)", "Ед. изм.", "Объём ВОР",
                "Объём перечня", "Δ (перечень − ВОР)", "Δ, %", "Статус",
-               "Источник объёма", "Позиции ВОР (стр.)", "Группы элементов (перечень)"]
+               "Источник объёма", "Позиции ВОР (стр.)", "Группы элементов (перечень)",
+               "Вывод", "Почему"]
     ws.append(headers)
     for cell in ws[1]:
         cell.font = fills["bold"]
@@ -814,13 +892,20 @@ def _write_compare_sheet(ws, rows: List[Dict[str, Any]], first_header: str) -> N
             _fmt(r["vor_volume"]), _fmt(r["model_volume"]), _fmt(r["diff"]),
             "" if r["diff_pct"] is None else f"{r['diff_pct']:.1f}",
             r["status"], r.get("source", ""), r["vor_names"], r["model_groups"],
+            _VERDICT_LABELS.get(r.get("verdict"), ("", ""))[0], r.get("why", ""),
         ])
         fill = _status_fill(r["status"])
         if fill is not None:
             for cell in ws[ws.max_row]:
                 cell.fill = fill
+        vcolor = _VERDICT_LABELS.get(r.get("verdict"), ("", ""))[1]
+        if vcolor:
+            from openpyxl.styles import PatternFill, Alignment
+            for cell in ws[ws.max_row][11:13]:
+                cell.fill = PatternFill("solid", fgColor=vcolor)
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
     widths = {"A": 40, "B": 30, "C": 10, "D": 14, "E": 14, "F": 16, "G": 8,
-              "H": 24, "I": 14, "J": 50, "K": 40}
+              "H": 24, "I": 14, "J": 50, "K": 40, "L": 26, "M": 70}
     for col, width in widths.items():
         ws.column_dimensions[col].width = width
     ws.freeze_panes = "A2"
@@ -835,20 +920,20 @@ def write_xlsx(result: Dict[str, Any], path: str) -> str:
 
     # ---- Лист «Сравнение по группам» -------------------------------
     ws = wb.active
-    ws.title = "Сравнение по группам"
+    ws.title = "Подробно — по группам"
     _write_compare_sheet(ws, result["rows"], "Группа элементов (часть здания · вид)")
 
     # ---- Лист «По видам конструкций» -------------------------------
-    ws2 = wb.create_sheet("По видам конструкций")
+    ws2 = wb.create_sheet("Подробно — по видам")
     _write_compare_sheet(ws2, result["kind_rows"], "Вид конструкции")
 
     # ---- Лист «Ресурсы (материалы)» --------------------------------
-    ws5 = wb.create_sheet("Ресурсы (материалы)")
+    ws5 = wb.create_sheet("Подробно — материалы")
     _write_compare_sheet(ws5, result.get("resource_rows", []),
                          "Группа элементов (часть здания · вид)")
 
     # ---- Лист «Детализация ВОР» ------------------------------------
-    ws3 = wb.create_sheet("Детализация ВОР")
+    ws3 = wb.create_sheet("Исходные строки ВОР")
     headers3 = ["Стр.", "Раздел", "Блок / захватка", "Поз.", "Наименование (ВОР)",
                 "Часть здания", "Группа элементов", "Работа (категория)",
                 "Ед. изм.", "Объём"]
@@ -866,7 +951,7 @@ def write_xlsx(result: Dict[str, Any], path: str) -> str:
     ws3.freeze_panes = "A2"
 
     # ---- Лист «Детализация перечня» --------------------------------
-    ws4 = wb.create_sheet("Детализация перечня")
+    ws4 = wb.create_sheet("Исходные строки перечня")
     headers4 = ["Группа элементов", "Часть здания", "Тип", "Работа (категория)",
                 "Расценка", "Наименование расценки", "Ед. изм.", "Объём"]
     ws4.append(headers4)
@@ -881,6 +966,14 @@ def write_xlsx(result: Dict[str, Any], path: str) -> str:
         ws4.column_dimensions[col].width = width
     ws4.freeze_panes = "A2"
 
+    from .vor_verdicts import write_simple_sheet as _simple_sheet
+    _simple_sheet(wb, result["rows"], 0)
+    ws0 = wb.create_sheet("Итог", 0)
+    for line in _verdict_summary(result["summary"].get("verdicts", {}), result["rows"]):
+        ws0.append([line])
+    ws0.column_dimensions["A"].width = 120
+    ws0["A1"].font = fills["bold"]
+    wb.active = 0
     wb.save(path)
     return path
 
@@ -898,7 +991,7 @@ def run(session_or_run_dir: str, run_dir: Optional[str] = None) -> Optional[Dict
     if not vor_rows:
         logger.info("vor_comparison: ВОР не найден — сравнение не строится")
         return None
-    if not groups:
+    if not groups or not any(group.get("rows") for group in groups):
         logger.info("vor_comparison: перечень работ не найден — сравнение не строится")
         return None
 

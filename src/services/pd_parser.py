@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+from src.core.cache_manager import CacheManager
 
 import fitz
 import httpx
@@ -24,7 +25,7 @@ WORKS_CLASSIFICATION_PATH = (
 TABLE_MARKER = "[Структура таблиц страницы]"
 CONTEXT_CHAR_BUDGET = 36000
 
-
+memory = CacheManager.memory
 @dataclass(frozen=True)
 class Config:
     llm_base_url: str = field(default_factory=lambda: os.getenv("LLM_BASE_URL", "http://localhost:11434"))
@@ -729,49 +730,94 @@ class LLMClient:
         return node
 
     def _chat(self, system: str, user: str, schema: Optional[dict]) -> str:
+        return self._chat_cached(
+            system=system,
+            user=user,
+            schema=schema,
+            config=self.config,
+            base=self.base,
+            openai_mode=self.openai_mode,
+            _schema_supported=self._schema_supported,
+            _chat_openai=self._chat_openai,
+            _content_or_raise=self._content_or_raise,
+        )
+
+    @staticmethod
+    @memory.cache(ignore=["_chat_openai", "_content_or_raise"])
+    def _chat_cached(
+        system: str,
+        user: str,
+        schema: Optional[dict],
+        config: Config,
+        base: str,
+        openai_mode: bool,
+        _schema_supported: bool,
+        _chat_openai,
+        _content_or_raise,
+    ) -> str:
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
-        with _LLM_SEMAPHORE, httpx.Client(timeout=self.config.llm_timeout) as client:
-            if self.openai_mode:
-                return self._chat_openai(client, messages, schema)
+        with _LLM_SEMAPHORE, httpx.Client(timeout=config.llm_timeout) as client:
+            if openai_mode:
+                content = _chat_openai(
+                    client=client,
+                    messages=messages,
+                    schema=schema,
+                    config=config,
+                    base=base,
+                    _schema_supported=_schema_supported,
+                    _content_or_raise=_content_or_raise,
+                )
+                _extract_json(content)
+                return content
             payload = {
-                "model": self.config.llm_model,
+                "model": config.llm_model,
                 "messages": messages,
                 "stream": False,
                 "options": {
-                    "temperature": self.config.llm_temperature,
-                    "num_ctx": self.config.llm_num_ctx,
+                    "temperature": config.llm_temperature,
+                    "num_ctx": config.llm_num_ctx,
                 },
                 "format": schema if schema else "json",
             }
-            r = client.post(f"{self.base}/api/chat", json=payload)
+            r = client.post(f"{base}/api/chat", json=payload)
             r.raise_for_status()
-            return self._content_or_raise(r.json(), "message", "content")
+            content = _content_or_raise(r.json(), "message", "content")
+            _extract_json(content)
+            return content
 
-    def _chat_openai(self, client: httpx.Client, messages: list,
-                     schema: Optional[dict]) -> str:
+    def _chat_openai(
+        self,
+        client: httpx.Client,
+        messages: list,
+        schema: Optional[dict],
+        config: Config,
+        base: str,
+        _schema_supported: bool,
+        _content_or_raise,
+    ) -> str:
         payload = {
-            "model": self.config.llm_model,
+            "model": config.llm_model,
             "messages": messages,
-            "temperature": self.config.llm_temperature,
+            "temperature": config.llm_temperature,
         }
-        if schema and self._schema_supported:
+        if schema and _schema_supported:
             payload["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {"name": "result", "schema": schema, "strict": True},
             }
         else:
             payload["response_format"] = {"type": "json_object"}
-        headers = {"Authorization": f"Bearer {self.config.llm_api_key}"}
-        r = client.post(f"{self.base}/chat/completions", json=payload, headers=headers)
-        if r.status_code == 400 and schema and self._schema_supported:
+        headers = {"Authorization": f"Bearer {config.llm_api_key}"}
+        r = client.post(f"{base}/chat/completions", json=payload, headers=headers)
+        if r.status_code == 400 and schema and _schema_supported:
             self._schema_supported = False
             payload["response_format"] = {"type": "json_object"}
-            r = client.post(f"{self.base}/chat/completions", json=payload, headers=headers)
+            r = client.post(f"{base}/chat/completions", json=payload, headers=headers)
         r.raise_for_status()
-        return self._content_or_raise(r.json(), "choices", 0, "message", "content")
+        return _content_or_raise(r.json(), "choices", 0, "message", "content")
 
 
 GENERIC_MATERIALS = {

@@ -79,37 +79,49 @@ def _get_corrected_volume(df):
     if "Наименование расценки/ресурса" not in df_copy.columns:
         return df_copy
 
-    koefs_filtered = koefs[koefs["Шифр ТСН"].isin(df_copy["Шифр ТСН"])].copy()
     resource_col = "Наименование открытой группы ресурсов/\nресурса в составе открытой группы"
-
-    if resource_col not in koefs_filtered.columns:
+    if resource_col not in koefs.columns or "Объём работ" not in df_copy.columns:
         return df_copy
-
-    koefs_filtered_by_material = koefs_filtered[
-        koefs_filtered[resource_col].isin(df_copy["Наименование расценки/ресурса"])
-    ].copy()
-
-    for _, koef_row in koefs_filtered_by_material.iterrows():
-        resource_name = koef_row[resource_col]
-        matching_indices = df_copy[
-            df_copy["Наименование расценки/ресурса"] == resource_name
-        ].index
-
-        if len(matching_indices) == 0:
+    # Match the parent rate and resource inside its own element group.
+    # Duplicate catalogue rows must never multiply the first resource repeatedly.
+    norms = {}
+    resource_code_col = "Шифр\nресурса" if "Шифр\nресурса" in koefs.columns else None
+    for _, rule in koefs.iterrows():
+        parent = str(rule.get("Шифр ТСН") or "").strip()
+        name = str(rule.get(resource_col) or "").strip()
+        resource = str(rule.get(resource_code_col) or "").strip() if resource_code_col else parent
+        norm = safe_float(rule.get("Норма расхода"), default=None)
+        if norm is not None and norm > 0:
+            norms.setdefault((parent, resource, name), set()).add(norm / 100 if norm > 100 else norm)
+    groups = {}
+    for _, row in df_copy.iterrows():
+        group = row.get("_norm_group", 0)
+        groups.setdefault(group, set()).add(str(row.get("Шифр ТСН") or "").strip())
+    df_copy["Объём работ"] = df_copy["Объём работ"].astype(object)
+    applied = dict(df_copy.attrs.get("volume_norms_applied") or {})
+    for position, (index, row) in enumerate(df_copy.iterrows()):
+        key = (str(row.get("Шифр ТСН") or "").strip(), str(row.get("Наименование расценки/ресурса") or "").strip())
+        group = row.get("_norm_group", 0)
+        factors = set()
+        for (parent, resource, name), values in norms.items():
+            if resource == key[0] and name == key[1] and (not resource_code_col or parent in groups[group]):
+                factors.update(values)
+        if len(factors) > 1:
+            logger.warning("Противоречивые нормы расхода для %s; объём оставлен без изменения", key)
             continue
-
-        df_idx = matching_indices[0]
-
-        if "Объём работ" not in df_copy.columns:
+        if not factors:
             continue
-
-        norm = safe_float(koef_row.get("Норма расхода", 0))
-        volume = safe_float(df_copy.loc[df_idx, "Объём работ"])
-
-        if norm > 100:
-            df_copy.loc[df_idx, "Объём работ"] = volume * norm / 100
-        elif norm:
-            df_copy.loc[df_idx, "Объём работ"] = volume * norm
+        value = safe_float(row.get("Объём работ"), default=None)
+        if value is None:
+            continue
+        factor = next(iter(factors))
+        marker = (index, *key)
+        if applied.get(marker) == (value, factor):
+            continue
+        corrected = value * factor
+        df_copy.iat[position, df_copy.columns.get_loc("Объём работ")] = corrected
+        applied[marker] = (corrected, factor)
+    df_copy.attrs["volume_norms_applied"] = applied
 
     return df_copy
 

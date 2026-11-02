@@ -23,6 +23,7 @@ import os
 import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from functools import lru_cache
 
 import pandas as pd
 
@@ -82,7 +83,7 @@ def _mssk_tree() -> dict:
         _MSSK = _load_json("msck_elements_compact.json")
     return _MSSK
 
-
+@lru_cache(maxsize=4096)
 def _norm_key(name: str) -> str:
     """Ключ сравнения названий сборников (схлопывание пробелов, lower)."""
     return re.sub(r"\s+", " ", str(name)).strip().lower()

@@ -5,6 +5,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from .comparison_vor import prepare_report
+from .comparison_layout import difference_format, reorder_comparison_sheet
 
 
 def build_comparison_excel(comparison_dir, result):
@@ -12,14 +13,14 @@ def build_comparison_excel(comparison_dir, result):
     workbook = Workbook()
     ws = workbook.active
     ws.title = 'Сравнение ВОР'
-    headers = ['Наименование работы из сформированного ВОР','Объём из сформированного ВОР','Наименование работы из ВОР заказчика','Объём из ВОР заказчика','Различие','Обоснование модели','Степень уверенности','Комментарии']
-    ws.append(['Сравнение сформированного ВОР с ВОР заказчика'])
+    headers = ['Наименование работы из сформированной ВОР','Объём из сформированной ВОР','Наименование работы из ВОР заказчика','Объём из ВОР заказчика','Различие','Обоснование модели','Степень уверенности','Комментарии']
+    ws.append(['Сравнение сформированной ВОР с ВОР заказчика'])
     ws.merge_cells(start_row=1,start_column=1,end_row=1,end_column=len(headers))
-    ws.append(['Расхождение = ВОР заказчика − сформированный ВОР. Процент — от объёма сформированного ВОР. Плюс: заказчик завысил, минус: занизил. Единицы без множителей. Уверенность относится к сопоставлению работ, не к точности объёма. Пустая ячейка означает отсутствие установленной пары; нулевой объём отображается числом 0.'])
+    ws.append(['Расхождение = ВОР заказчика − сформированная ВОР. Процент — от объёма сформированной ВОР. Плюс: объём заказчика больше, минус: меньше. Причина различия требует проверки. Единицы без множителей. Уверенность относится к сопоставлению работ, не к точности объёма. Пустая ячейка означает отсутствие установленной пары; нулевой объём отображается числом 0.'])
     similarity=report.get('compositionSimilarity') or {}
     score=similarity.get('score')
     if score is not None:
-        ws.cell(2,1).value='Сходство состава работ: '+str(score)+'%. Сопоставлено групп работ сформированного ВОР: '+str(similarity['generatedMatched'])+' из '+str(similarity['generatedTotal'])+'; заказчика: '+str(similarity['customerMatched'])+' из '+str(similarity['customerTotal'])+'. '+ws.cell(2,1).value+' Монтаж/демонтаж опалубки считаются одной группой работ; пустые группы в оценку не входят.'
+        ws.cell(2,1).value='Сходство состава работ: '+str(score)+'%. Сопоставлено групп работ сформированной ВОР: '+str(similarity['generatedMatched'])+' из '+str(similarity['generatedTotal'])+'; заказчика: '+str(similarity['customerMatched'])+' из '+str(similarity['customerTotal'])+'. '+ws.cell(2,1).value+' Монтаж/демонтаж опалубки считаются одной группой работ; пустые группы в оценку не входят.'
     ws.merge_cells(start_row=2,start_column=1,end_row=2,end_column=len(headers))
     ws.append(headers)
     previous = None
@@ -40,19 +41,19 @@ def build_comparison_excel(comparison_dir, result):
                 ws.cell(ws.max_row,1).alignment = Alignment(indent=depth,wrap_text=True,vertical='center')
                 ws.row_dimensions[ws.max_row].height = 34
             previous=hierarchy
-        ws.append([row['generatedWork'],row['generatedQuantity'],row['customerWork'],row['customerQuantity'],row['difference'],row['modelReason'],row['comparisonConfidence'],row['comments']])
-        unit_text=str(row['unit'] or '').replace('"','')
+        ws.append([row['generatedWork'],row['generatedQuantity'],row['customerWork'],row['customerQuantity'],row['difference'],row['modelReason'],row['comparisonConfidence'],row['comments'],None if row.get('isEmptyGroup') else number,row['unit']])
         for column in (2,4,5):
-            ws.cell(ws.max_row,column).number_format='#,##0.###" '+unit_text+'"'
+            ws.cell(ws.max_row,column).number_format='#,##0.###'
+        ws.cell(ws.max_row,5).number_format = difference_format(row.get('differencePercent'))
         ws.row_dimensions[ws.max_row].height=85
         fill='E7F4EA' if row['status'] in ('matched','operation_linked') else 'FFF3D6' if row['status'] in ('quantity_mismatch','only_ifc','only_project') else 'FDE9E7'
         ws.cell(ws.max_row,8).fill=PatternFill('solid',fgColor=fill)
     matching=workbook.create_sheet('Сопоставление работ')
-    matching.append(['Сопоставление работ сформированного ВОР и ВОР заказчика'])
+    matching.append(['Сопоставление работ сформированной ВОР и ВОР заказчика'])
     matching.merge_cells('A1:N1')
     matching.append(['Номер объединяет строки одной связи. Повторённые строки обоих ВОР в пределах одного номера учитываются один раз. Объёмы операций комплекса не суммируются. Предложенные связи требуют проверки; уверенность сопоставления не является точностью объёма.'])
     matching.merge_cells('A2:N2')
-    matching.append(['№ связи','Работа сформированного ВОР','Объект / группа','Источник модели','Ед. изм. сформированного ВОР','Объём операции','Работа ВОР заказчика','Объект / раздел заказчика','Источник заказчика','Ед. изм. заказчика','Объём заказчика','Тип связи','Уверенность сопоставления','Статус / объяснение'])
+    matching.append(['№ связи','Работа сформированной ВОР','Объект / группа','Источник модели','Ед. изм. сформированной ВОР','Объём операции','Работа ВОР заказчика','Объект / раздел заказчика','Источник заказчика','Ед. изм. заказчика','Объём заказчика','Тип связи','Уверенность сопоставления','Статус / объяснение'])
     relation_labels={'equivalent':'Одна операция','aggregate':'Одна операция на нескольких участках',
                      'complex':'Комплекс операций — не суммировать','unresolved':'Не установлена'}
     def source_label(position):
@@ -86,13 +87,13 @@ def build_comparison_excel(comparison_dir, result):
         source_positions=normalize_positions(IfcPositionsExtractor(report['csFinalModels']).run())
         detail_rows=[{'code':None,'detail':{'ifcGroup':{'positions':source_positions}}}]+[{'code':None,'detail':{'projectGroup':entry.get('projectGroup')}} for entry in report.get('comparison',[]) if entry.get('projectGroup')]
     for row in detail_rows:
-        for key,label in [('ifcGroup','Сформированный ВОР'),('projectGroup','ВОР заказчика')]:
+        for key,label in [('ifcGroup','Сформированная ВОР'),('projectGroup','ВОР заказчика')]:
             for p in (row['detail'].get(key) or {}).get('positions',[]):
                 v=p.get('validation_result') or {}
                 detail.append([p.get('code') or row['code'],label,p.get('name') or p.get('workAndCostName'),p.get('groupId'),p.get('sourceFile') or '; '.join(p.get('sourceFiles') or []),p.get('unit'),p.get('quantity'),p.get('originalUnit'),p.get('originalQuantity'),p.get('unitFactor'),v.get('verdict'),v.get('confidence'),v.get('reason'),'; '.join(v.get('missingData') or []),'; '.join(v.get('warnings') or [])])
-    for sheet,header_row in [(ws,3),(matching,3),(detail,1)]:
+    for sheet,header_row in ([(ws,3)] if ws in workbook.worksheets else [])+[(matching,3),(detail,1)]:
         sheet.sheet_view.showGridLines=False
-        sheet.freeze_panes=f'D{header_row+1}'
+        sheet.freeze_panes=None
         if sheet!=ws:sheet.auto_filter.ref=f'A{header_row}:{get_column_letter(sheet.max_column)}{sheet.max_row}'
         for cell in sheet[header_row]:
             cell.fill=PatternFill('solid',fgColor='244A73');cell.font=Font(bold=True,color='FFFFFF');cell.alignment=Alignment(wrap_text=True,vertical='center')
@@ -117,6 +118,30 @@ def build_comparison_excel(comparison_dir, result):
         matching.row_dimensions[cells[0].row].height=85
     matching.row_dimensions[1].height=28;matching.row_dimensions[2].height=42
     matching.print_title_rows='1:3'
+    reorder_comparison_sheet(ws, (9, 1, 10, 2, 4, 5, 3, 6, 7, 8))
+    for column, title in enumerate(('№ п/п', 'Наименование работы', 'Ед. изм.', 'Объём сформированной ВОР', 'Объём ВОР заказчика', 'Расхождение'), 1):
+        ws.cell(3, column).value = title
+    ws.column_dimensions['A'].width = 9
+    ws.column_dimensions['C'].width = 12
+    typical = report.get('typicalComparison') or {}
+    if typical.get('status') == 'ready':
+        from copy import copy
+        from .comparison_layout import typical_views, copy_cell_style
+        output = typical_views(typical)
+        elements = output.create_sheet('По элементам')
+        for row in ws:
+            for source in row:
+                cell = elements.cell(source.row, source.column, source.value)
+                copy_cell_style(source, cell)
+        for merged in ws.merged_cells.ranges:
+            elements.merge_cells(str(merged))
+        for key, dimension in ws.column_dimensions.items():
+            elements.column_dimensions[key] = copy(dimension)
+        for key, dimension in ws.row_dimensions.items():
+            elements.row_dimensions[key] = copy(dimension)
+        elements.freeze_panes = None
+        workbook.close()
+        workbook = output
     target=Path(comparison_dir)/'result.xlsx';temporary=target.with_name('result.tmp.xlsx')
     workbook.save(temporary);os.replace(temporary,target)
     return str(target)
