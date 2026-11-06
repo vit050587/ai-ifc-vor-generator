@@ -270,6 +270,7 @@ def render_template(output_rows: List[OutputRow], path: str = None,
     if max_row >= FIRST_DATA_ROW:
         ws.delete_rows(FIRST_DATA_ROW, max_row - FIRST_DATA_ROW + 1)
 
+    model_links = []
     for offset, row in enumerate(output_rows):
         target = FIRST_DATA_ROW + offset
         sample = src_ws[row.src_index]
@@ -302,10 +303,19 @@ def render_template(output_rows: List[OutputRow], path: str = None,
             write_text(target, 6, source_summary(row.justification, row.volume.sources))
         for col, value in row.extra.items():
             ws.cell(row=target, column=col).value = value
+        guids = getattr(row.volume, 'element_guids', ())
+        if guids:
+            model_links.append({'row': target, 'number': str(ws.cell(target, 1).value or ''),
+                                'name': str(ws.cell(target, 2).value or ''),
+                                'unit': str(ws.cell(target, 3).value or ''),
+                                'quantity': float(row.volume), 'guids': list(guids),
+                                'relation': 'quantity_contribution'})
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
     out.remove(src_ws)
     out.save(output_path)
     out.close()
+    from .model_links import save as save_model_links
+    save_model_links(output_path, sheet_name, model_links)
     logger.info("ВОР сохранён: %s (строк %d)", output_path, len(output_rows))
     return output_path

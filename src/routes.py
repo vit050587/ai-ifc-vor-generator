@@ -2562,6 +2562,111 @@ def create_3d_model(session_id: str):
         return _err(ErrorResponse(detail=f"Ошибка сервера: {str(e)}"), 500)
 
 
+@bp.route("/api/session/<session_id>/3d_model/groups", methods=["GET"])
+def get_3d_groups(session_id: str):
+    """Точный состав групп выбранного запуска для 3D-просмотра."""
+    from src.services.model_inspector import model_groups, model_relations
+
+    manager = _get_manager()
+    session = manager.get(session_id)
+    if not session:
+        return jsonify({"detail": "Сессия не найдена"}), 404
+    base = os.path.realpath(manager.output_folder)
+    folder = os.path.realpath(os.path.join(base, session_id))
+    if os.path.dirname(folder) != base:
+        return jsonify({"detail": "Сессия не найдена"}), 404
+    run_id = request.args.get("run_id") or session.get("current_run_id")
+    run = next((run for run in session.get("runs", []) if run.get("run_id") == run_id), None)
+    if run_id and not run:
+        return jsonify({"detail": "Запуск не найден"}), 404
+    try:
+        if not run_id:
+            return jsonify({"status": "not_ready", "groups": [],
+                            "detail": "Группы появятся после запуска обработки",
+                            "links": model_relations(os.path.join(folder, "typical_vor"),
+                                                     session.get("processing_type", "KR"))})
+        number = int(run["run_number"])
+        run_folder = os.path.join(folder, f"run_{number:03d}")
+        mode = run.get("processing_type", "KR")
+        try:
+            result = model_groups(run_folder, mode)
+        except ValueError as error:
+            result = {"status":"error", "groups":[], "detail":str(error)}
+        result.update(runId=run_id, runNumber=number, links=model_relations(run_folder, mode))
+        return jsonify(result)
+    except ValueError as error:
+        logger.warning("Не определён состав групп: %s", error)
+        return jsonify({"detail": "Не удалось подтвердить точный состав групп этого запуска"}), 409
+    except Exception:
+        logger.exception("Ошибка чтения групп модели")
+        return jsonify({"detail": "Не удалось прочитать группы модели"}), 500
+
+
+@bp.route("/api/session/<session_id>/3d_model/document_row", methods=["GET"])
+def get_3d_document_row(session_id: str):
+    """Show a verified linked row from the same run, including rows beyond preview limits."""
+    from src.services.model_documents import document_excerpt
+    response = current_app.make_response(get_3d_groups(session_id))
+    if response.status_code != 200:
+        return response
+    data = response.get_json()
+    group_id = request.args.get("group_id")
+    entries = (data.get("links") or {}).get("groups" if group_id else "items", [])
+    item = next((item for item in entries
+                 if item.get("id") == (group_id or request.args.get("relation_id"))), None)
+    if not item:
+        return jsonify({"detail":"Связь с документом не найдена"}), 404
+    folder = os.path.join(_get_manager().output_folder, session_id,
+                          f"run_{int(data['runNumber']):03d}" if data.get('runNumber') is not None else 'typical_vor')
+    try:
+        return jsonify(document_excerpt(folder, item))
+    except (ValueError, KeyError, OSError):
+        return jsonify({"detail":"Не удалось открыть связанную строку документа"}), 404
+
+
+@bp.route("/api/session/<session_id>/3d_model/quantities", methods=["GET"])
+def get_3d_quantities(session_id: str):
+    from src.services.model_inspector import model_quantities
+
+    manager = _get_manager()
+    if not manager.get(session_id):
+        return jsonify({"detail": "Сессия не найдена"}), 404
+    base = os.path.realpath(manager.output_folder)
+    folder = os.path.realpath(os.path.join(base, session_id))
+    if os.path.dirname(folder) != base:
+        return jsonify({"detail": "Сессия не найдена"}), 404
+    try:
+        return jsonify({"elements": model_quantities(folder, manager._get_ifc_path(session_id))})
+    except Exception:
+        logger.exception("Ошибка чтения объёмов модели")
+        return jsonify({"detail": "Не удалось прочитать объёмы модели"}), 500
+
+
+@bp.route("/api/session/<session_id>/3d_model/elements/<guid>", methods=["GET"])
+def get_3d_element(session_id: str, guid: str):
+    """Параметры выбранного элемента исходной IFC-модели."""
+    import re
+    from src.services.model_inspector import element_details
+
+    manager = _get_manager()
+    if not manager.get(session_id):
+        return jsonify({"detail": "Сессия не найдена"}), 404
+    if not re.fullmatch(r"[A-Za-z0-9_$]{22}", guid):
+        return jsonify({"detail": "Некорректный идентификатор элемента"}), 400
+    base = os.path.realpath(manager.output_folder)
+    folder = os.path.realpath(os.path.join(base, session_id))
+    if os.path.dirname(folder) != base:
+        return jsonify({"detail": "Сессия не найдена"}), 404
+    try:
+        details = element_details(folder, guid, manager._get_ifc_path(session_id))
+        if details is None:
+            return jsonify({"detail": "Параметры этого элемента не найдены в исходной модели"}), 404
+        return jsonify(details)
+    except Exception:
+        logger.exception("Ошибка чтения параметров элемента %s", guid)
+        return jsonify({"detail": "Не удалось прочитать параметры элемента"}), 500
+
+
 @bp.route("/api/session/<session_id>/3d_model/status", methods=["GET"])
 def get_3d_model_status(session_id: str):
     """
@@ -2839,10 +2944,18 @@ def _vor_comparison_run_dir(base, session_id):
     """Use the session's selected run, including when restoring older runs."""
     from src.services import vor_comparison
     import re
-    selected = (_get_manager().get(session_id) or {}).get("current_run_id")
+    session = _get_manager().get(session_id) or {}
+    selected = session.get("current_run_id")
+    if selected:
+        run = next((run for run in session.get("runs", []) if run.get("run_id") == selected), None)
+        if run and run.get("run_number") is not None:
+            path = os.path.join(base, f"run_{int(run['run_number']):03d}")
+            return path if os.path.isdir(path) else None
     if selected and re.fullmatch(r"run_\d+", str(selected)):
         path = os.path.join(base, selected)
         return path if os.path.isdir(path) else None
+    if selected:
+        return None
     return vor_comparison.latest_run_with_final_works(base)
 
 

@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -24,8 +25,9 @@ from src.core.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-PRICE_COST_XLSX = os.getenv("PRICE_COST_PATH", "/app/data/price_cost.xlsx")
-LOCAL_WORKS_JSON = os.getenv("LOCAL_WORKS_PATH", "/app/data/local_works.json")
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+PRICE_COST_XLSX = os.getenv("PRICE_COST_PATH", str(_DATA_DIR / "price_cost.xlsx"))
+LOCAL_WORKS_JSON = os.getenv("LOCAL_WORKS_PATH", str(_DATA_DIR / "local_works.json"))
 
 SHEET_RATES = "_Получение_расценок_из_дерева_s"
 SHEET_PARAMS = "_Получние_параметры_позиции_sel"

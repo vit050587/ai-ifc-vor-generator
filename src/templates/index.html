@@ -458,9 +458,42 @@
             font-weight: 600;
             margin-left: 8px;
         }
+        html:has(#viewer3dModal.active), body:has(#viewer3dModal.active) { overflow: hidden; overscroll-behavior: none; }
+        #viewer3dModal { overscroll-behavior: contain; }
+        #viewer3dModal > .modal { width: calc(100% - 32px); max-width: none; height: calc(100vh - 32px); height: calc(100dvh - 32px); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); border-radius: 14px; overflow: hidden; }
+        #viewer3dModal .viewer3d-properties, #viewer3dModal .viewer3d-members, #viewer3dModal .viewer3d-toolbar { overscroll-behavior: contain; }
+        #viewer3dModal canvas { touch-action: none; overscroll-behavior: none; }
+        #viewer3dModal .modal-header { flex-shrink: 0; padding: 12px 20px; }
+        #viewer3dModal .modal-header h3 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #viewer3dModal .modal-close { flex-shrink: 0; }
+        .viewer3d-layout { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+        .viewer3d-properties { box-sizing: border-box; width: 390px; flex: 0 0 390px; padding: 16px; overflow: auto; max-height: none; border-left: 1px solid #e2e8f0; }
+        .viewer3d-properties h4 { margin: 0 0 10px; }
+        .viewer3d-properties p { color: #718096; font-size: 13px; overflow-wrap: anywhere; }
+        .viewer3d-properties input { width: 100%; box-sizing: border-box; padding: 8px; margin: 12px 0; border: 1px solid #cbd5e0; border-radius: 6px; }
+        .viewer3d-properties input[type="checkbox"] { width: auto; margin: 8px 4px; }
+        .viewer3d-properties select { width: 100%; padding: 8px; margin: 8px 0; }
+        .viewer3d-properties details { margin: 10px 0; font-size: 13px; }
+        .viewer3d-properties summary { cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+        .viewer3d-property { padding: 8px 0; border-bottom: 1px solid #edf2f7; overflow-wrap: anywhere; }
+        .viewer3d-group-panel { padding: 10px 0; border-bottom: 1px solid #e2e8f0; }
+        .viewer3d-members { max-height: 240px; overflow: auto; margin-top: 8px; }
+        .viewer3d-member { display: block; width: 100%; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px; border: 0; border-bottom: 1px solid #e2e8f0; background: #f7fafc; color: #2b6cb0; cursor: pointer; font-size: 12px; }
+        .viewer3d-group-title { font-size: 12px; line-height: 1.45; }
+        #viewer3dGroups > details { margin: 5px 0; padding: 4px 0; border-bottom: 1px solid #edf2f7; }
+        #viewer3dSelectionTotals { padding: 10px; margin-bottom: 10px; border-radius: 8px; background: #ebf8ff; font-size: 13px; }
+        #viewer3dSelectionTotals p { margin: 4px 0; color: #2d3748; }
+        .viewer3d-member:hover { background: #ebf8ff; }
+        .viewer3d-member:disabled { color: #718096; cursor: default; }
+        .viewer3d-section-controls { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; width: 100%; font-size: 12px; color: #718096; }
+        .viewer3d-section-controls label { color: #2d3748; }
+        .viewer3d-section-controls input[type="range"] { width: 180px; }
+        .viewer3d-property dt { color: #718096; font-size: 12px; }
+        .viewer3d-property dd { margin: 3px 0 0; white-space: pre-wrap; }
         .viewer3d-container {
-            width: 100%;
-            height: 500px;
+            flex: 1;
+            min-width: 0;
+            height: 100%;
             position: relative;
             background: #f0f4f8;
         }
@@ -474,6 +507,9 @@
             font-size: 16px;
         }
         .viewer3d-toolbar {
+            flex-shrink: 0;
+            max-height: 28vh;
+            overflow: auto;
             padding: 12px 24px;
             border-top: 1px solid #e2e8f0;
             display: flex;
@@ -707,7 +743,9 @@
             .tabs { flex-wrap: wrap; }
             .tab-btn { flex: 1; text-align: center; padding: 8px 12px; font-size: 13px; }
             .params-row { flex-direction: column; gap: 12px; }
-            .viewer3d-container { height: 350px; }
+            .viewer3d-container { height: auto; flex: 1; min-height: 0; width: 100%; }
+            .viewer3d-layout { flex-direction: column; }
+            .viewer3d-properties { width: 100%; flex: 0 0 35%; min-height: 0; box-sizing: border-box; max-height: none; border-left: 0; border-top: 1px solid #e2e8f0; }
             .reference-results-grid { grid-template-columns: 1fr; }
             .processing-type-label { padding: 10px 14px; }
             .pt-text { font-size: 13px; }
@@ -716,6 +754,7 @@
         }
 
         /* ===== Окно просмотра результата: полный текст без обрезки ===== */
+        #previewModal { z-index: 3100; }
         #previewModal .modal { max-width: 96vw !important; width: 96vw; }
         #previewModal .table-wrap td {
             max-width: none;
@@ -1146,19 +1185,69 @@
     </div>
 
     <div class="modal-overlay" id="viewer3dModal">
-        <div class="modal" style="max-width:900px;">
+        <div class="modal">
             <div class="modal-header">
                 <h3 id="viewer3dTitle">🧊 3D просмотр модели</h3>
                 <button class="modal-close" onclick="close3DViewer()">✕</button>
             </div>
-            <div class="viewer3d-container" id="viewer3dContainer">
-                <div class="viewer3d-loading" id="viewer3dLoading">Загрузка 3D модели...</div>
+            <div class="viewer3d-layout">
+                <div class="viewer3d-container" id="viewer3dContainer">
+                    <div class="viewer3d-loading" id="viewer3dLoading">Загрузка 3D модели...</div>
+                </div>
+                <aside class="viewer3d-properties" aria-label="Свойства элемента">
+                    <h4>Свойства элемента</h4>
+                    <p id="viewer3dPropertiesStatus" role="status">Нажмите на элемент модели, чтобы посмотреть его свойства.</p>
+                    <div id="viewer3dSelectionTotals" aria-live="polite" hidden></div>
+                    <div id="viewer3dElementSummary"></div>
+                    <input id="viewer3dPropertySearch" type="search" placeholder="Поиск по свойствам" aria-label="Поиск по свойствам" oninput="filter3DProperties()" disabled>
+                    <details id="viewer3dSelectionPanel" class="viewer3d-group-panel" hidden>
+                        <summary>Выбранные элементы</summary>
+                        <div id="viewer3dSelectionList" class="viewer3d-members"></div>
+                    </details>
+                    <details id="viewer3dModelGroupsPanel" class="viewer3d-group-panel" open>
+                        <summary>Группы модели</summary>
+                        <div id="viewer3dGroups"><p>Загрузка групп…</p></div>
+                    </details>
+                    <details id="viewer3dElementGroupsPanel" class="viewer3d-group-panel" hidden>
+                        <summary>Группы документов выбранного элемента</summary>
+                        <div id="viewer3dElementDocumentGroups"></div>
+                    </details>
+                    <details id="viewer3dDocumentGroupsPanel" class="viewer3d-group-panel">
+                        <summary>Группы документов</summary>
+                        <button class="btn btn-sm btn-secondary" onclick="model3DAction('refreshLinks')">Обновить связи</button>
+                        <label><input id="viewer3dAllRelations" type="checkbox" onchange="filter3DRelations()"> Все группы документа</label>
+                        <select id="viewer3dRelationKind" aria-label="Документ со связанными позициями" onchange="filter3DRelations()">
+                            <option value="">Все документы</option><option value="perechen" selected>Перечень</option><option value="vor">Типовая ВОР</option><option value="estimate">Смета</option>
+                        </select>
+                        <input id="viewer3dRelationSearch" type="search" placeholder="Название группы или работы" aria-label="Поиск групп документов" oninput="filter3DRelations()">
+                        <div id="viewer3dRelations"></div>
+                    </details>
+                    <div id="viewer3dPropertiesContent"></div>
+                </aside>
             </div>
             <div class="viewer3d-toolbar">
                 <button class="btn btn-sm btn-secondary" onclick="reset3DView()">🔄 Сбросить вид</button>
+                <button class="btn btn-sm btn-secondary" onclick="model3DAction('focusSelection')">К выбранному</button>
+                <button class="btn btn-sm btn-secondary" onclick="viewer3d?._zoomStep(-1)" aria-label="Приблизить">＋</button>
+                <button class="btn btn-sm btn-secondary" onclick="viewer3d?._zoomStep(1)" aria-label="Отдалить">−</button>
+                <span id="viewer3dSelectionCount" role="status">Выбрано: 0</span>
+                <label><input id="viewer3dMultiSelect" type="checkbox"> Несколько элементов</label>
+                <button class="btn btn-sm btn-secondary" id="viewer3dClearSelection" onclick="model3DAction('clear')" disabled>Снять выделение</button>
+                <button class="btn btn-sm btn-secondary" id="viewer3dHide" onclick="model3DAction('hide')" disabled>Скрыть выбранное</button>
+                <button class="btn btn-sm btn-secondary" id="viewer3dIsolate" onclick="model3DAction('isolate')" disabled>Только выбранное</button>
+                <button class="btn btn-sm btn-secondary" onclick="model3DAction('showAll')">Показать всё</button>
                 <button class="btn btn-sm btn-secondary" onclick="toggleWireframe()">📐 Каркас</button>
                 <button class="btn btn-sm btn-secondary" onclick="toggleAxes()">📏 Оси</button>
                 <button class="btn btn-sm btn-primary" id="downloadGlbBtn">📥 Скачать GLB</button>
+                <div class="viewer3d-section-controls">
+                    <label><input id="viewer3dSectionEnabled" type="checkbox" onchange="update3DSection()"> Сечение</label>
+                    <select id="viewer3dSectionAxis" aria-label="Ось сечения" onchange="update3DSection()" disabled>
+                        <option value="y">По высоте</option><option value="x">По ширине</option><option value="z">По глубине</option>
+                    </select>
+                    <input id="viewer3dSectionRange" type="range" min="0" max="100" value="50" aria-label="Положение сечения" oninput="update3DSection()" disabled>
+                    <button class="btn btn-sm btn-secondary" onclick="model3DAction('sectionView')">Вид по сечению</button>
+                    <span>ЛКМ — поворот · ПКМ — сдвиг · колесо / ＋ − — масштаб · двойной щелчок — к элементу · Ctrl/⌘ + щелчок — выбор</span>
+                </div>
             </div>
         </div>
     </div>
@@ -1188,6 +1277,7 @@ let groupParent = {};
 let groupLevel = {};
 let leafGroups = {};
 let viewer3d = null;
+let viewer3dRequest = 0;
 let pollingGeneration = 0;
 let isNewRunMode = false;
 let autoGroupEnabled = true;
@@ -4620,10 +4710,903 @@ function renderMarkdownTable(md) {
     return html;
 }
 
+function reset3DProperties(message = 'Нажмите на элемент модели, чтобы посмотреть его свойства.') {
+    document.getElementById('viewer3dElementSummary').replaceChildren();
+    document.getElementById('viewer3dPropertiesContent').replaceChildren();
+    document.getElementById('viewer3dPropertiesStatus').textContent = message;
+    document.getElementById('viewer3dPropertySearch').value = '';
+    document.getElementById('viewer3dPropertySearch').disabled = true;
+}
+
+function element3DQuantities(fields, units = {}) {
+    const entries = Object.entries(fields).filter(([,value]) =>
+        value !== null && value !== '' && typeof value !== 'boolean' && Number.isFinite(Number(String(value).replace(',', '.'))));
+    const find = patterns => {
+        for (const pattern of patterns) {
+            const entry = entries.find(([key]) => pattern.test(key));
+            if (entry) return entry;
+        }
+        return null;
+    };
+    const volume = find([/^Об[ъь]ём?,?\s*м[³3]$/i, /^Объем,?\s*м[³3]$/i, /^QTO::.*::NetVolume$/i, /^QTO::.*::Volume$/i, /^QTO::.*::GrossVolume$/i, /^QTO_bbox::Объём_м3$/i]);
+    const area = find([/^Площадь,?\s*м[²2]$/i, /^QTO::.*::NetArea$/i, /^QTO::.*::NetSideArea$/i, /^QTO::.*::NetSurfaceArea$/i, /^QTO::.*::GrossArea$/i, /^QTO::.*::GrossSideArea$/i, /^QTO::.*::GrossSurfaceArea$/i, /^QTO_bbox::Площадь_поверхности_м2$/i]);
+    const formwork = find([/^QTO_geom::Площадь_опалубки_м2$/i]);
+    const metric = (label, entry, unit) => ({label, source:entry?.[0], value:entry?.[1],
+        unit:entry && /^QTO::/.test(entry[0]) ? (units[entry[0]] || 'единица не указана') : unit});
+    const areaLabel = area && /SideArea/.test(area[0]) ? 'Площадь боковой поверхности' : area && /SurfaceArea|поверхности/.test(area[0]) ? 'Площадь поверхности' : 'Площадь';
+    return [metric('Объём',volume,'м³'),metric(areaLabel,area,'м²'),
+        ...(formwork ? [metric('Площадь опалубки',formwork,'м²')] : [])];
+}
+
+function render3DTotals(state) {
+    const root = document.getElementById('viewer3dSelectionTotals');
+    const guids = [...new Set(state._selectedGuids || [])];
+    root.replaceChildren(); root.hidden = guids.length < 2;
+    if (root.hidden) return;
+    const line = text => { const p = document.createElement('p'); p.textContent = text; root.appendChild(p); };
+    line(`Сумма по выбранным: ${guids.length} эл.`);
+    if (!state._quantityData) { line(state._quantityError || 'Загрузка объёмов…'); return; }
+    const totals = new Map(), coverage = new Map();
+    const factors = {'м³':1, 'мм³':1e-9, 'см³':1e-6, 'дм³':0.001,
+        'м²':1, 'мм²':1e-6, 'см²':1e-4, 'дм²':0.01};
+    for (const guid of guids) {
+        const data = state._quantityData[guid];
+        if (!data) continue;
+        for (const metric of element3DQuantities(data.fields, data.units)) {
+            if (metric.value === undefined) continue;
+            const value = Number(String(metric.value).replace(',', '.'));
+            const unit = metric.unit.replace(/m/g, 'м').replace(/3/g, '³').replace(/2/g, '²');
+            // Never add quantities with unknown units or different area meanings.
+            if (!Number.isFinite(value) || !(unit in factors)) continue;
+            const normalized = unit.endsWith('³') ? 'м³' : 'м²';
+            const key = `${metric.label} · ${normalized}`;
+            totals.set(key, (totals.get(key) || 0) + value * factors[unit]);
+            coverage.set(key, (coverage.get(key) || 0) + 1);
+        }
+    }
+    if (!totals.size) { line('Нет подтверждённых объёмов с единицами измерения.'); return; }
+    for (const [key, total] of totals) {
+        const count = coverage.get(key);
+        line(`${key}: ${total.toLocaleString('ru-RU', {maximumFractionDigits:6})}` +
+            (count < guids.length ? ` · данные ${count} из ${guids.length} эл.` : ''));
+    }
+    line('По параметрам IFC; каждый элемент учтён один раз.');
+}
+
+function render3DProperties(fields, units = {}) {
+    const root = document.getElementById('viewer3dPropertiesContent');
+    const summary = document.getElementById('viewer3dElementSummary');
+    root.replaceChildren(); summary.replaceChildren();
+    const labels = {Name:'Название', Description:'Описание', IfcClass:'Тип IFC', GlobalId:'Идентификатор',
+        ObjectType:'Тип объекта', Tag:'Марка', PredefinedType:'Категория', Отметка_этажа:'Отметка этажа'};
+    const groups = new Map([['Основные сведения', []]]);
+    const primary = ['Name', 'Description', 'IfcClass', 'GlobalId', 'Материал', 'Этаж', 'Отметка_этажа', 'ObjectType', 'Tag'];
+    const entries = [...primary.filter(key => key in fields).map(key => [key, fields[key]]),
+        ...Object.entries(fields).filter(([key]) => !primary.includes(key))];
+    for (const [key, value] of entries) {
+        let group = primary.includes(key) ? 'Основные сведения' : 'Атрибуты IFC';
+        let label = labels[key] || key;
+        const parts = key.split('::');
+        if (parts.length > 1) {
+            const kind = parts.shift();
+            if (kind === 'Свойство' || kind === 'QTO') {
+                group = (kind === 'QTO' ? 'Количество · ' : 'Свойства · ') + parts.shift();
+            } else {
+                group = kind === 'QTO_bbox' ? 'Расчёт по габаритам' : kind === 'QTO_geom' ? 'Расчёт по геометрии' : kind;
+            }
+            label = parts.join(' · ');
+        }
+        if (!groups.has(group)) groups.set(group, []);
+        groups.get(group).push({label, value, unit:units[key]});
+    }
+    for (const [title, rows] of groups) {
+        if (!rows.length) continue;
+        const section = document.createElement('details');
+        section.open = title === 'Основные сведения';
+        const heading = document.createElement('summary');
+        heading.textContent = `${title} (${rows.length})`;
+        section.appendChild(heading);
+        for (const {label, value, unit} of rows) {
+            const row = document.createElement('div');
+            row.className = 'viewer3d-property';
+            const name = document.createElement('dt'); name.textContent = label;
+            const content = document.createElement('dd');
+            content.textContent = (typeof value === 'object' ? JSON.stringify(value) : String(value)) + (unit ? ' ' + unit : '');
+            row.dataset.search = `${title} ${label} ${content.textContent}`.toLocaleLowerCase();
+            row.append(name, content); section.appendChild(row);
+        }
+        (title === 'Основные сведения' ? summary : root).appendChild(section);
+    }
+    const quantities = document.createElement('details'); quantities.open = true;
+    const title = document.createElement('summary'); title.textContent = 'Объём и площадь элемента'; quantities.appendChild(title);
+    for (const metric of element3DQuantities(fields, units)) {
+        const row = document.createElement('div'); row.className = 'viewer3d-property';
+        const label = document.createElement('dt'); label.textContent = metric.label;
+        const value = document.createElement('dd');
+        value.textContent = metric.value === undefined ? 'Нет данных' : `${metric.value} ${metric.unit}`;
+        row.append(label,value);
+        if (metric.source) { const source = document.createElement('small'); source.textContent = metric.source; row.appendChild(source); }
+        row.dataset.search = `${metric.label} ${metric.source || ''} ${value.textContent}`.toLocaleLowerCase();
+        quantities.appendChild(row);
+    }
+    const note = document.createElement('p'); note.textContent = 'Количество выбранного элемента. Объём работы зависит от позиции перечня или сметы.'; quantities.appendChild(note);
+    summary.appendChild(quantities);
+    document.getElementById('viewer3dPropertySearch').disabled = false;
+}
+
+function filter3DProperties() {
+    const query = document.getElementById('viewer3dPropertySearch').value.trim().toLocaleLowerCase();
+    for (const section of [...document.getElementById('viewer3dElementSummary').children, ...document.getElementById('viewer3dPropertiesContent').children]) {
+        let matches = 0;
+        for (const row of section.querySelectorAll('.viewer3d-property')) {
+            row.hidden = !row.dataset.search.includes(query);
+            if (!row.hidden) matches++;
+        }
+        section.hidden = !matches;
+        if (query) section.open = !!matches;
+    }
+}
+
+function preview3DGroups(runId) {
+    if (!isGrouped || (runId && !isNewRunMode) || !window._previewData) return null;
+    const data = window._previewData;
+    const guidColumn = data.headers.indexOf('GlobalId');
+    if (guidColumn < 0) return null;
+    const value = (index, key) => data.rows[index]?.[data.headers.indexOf(key)] || '';
+    const groups = [];
+    for (const id of Object.keys(leafGroups)) {
+        if (!leafGroups[id]) continue;
+        const path = [];
+        for (let ancestor = id; ancestor; ancestor = groupParent[ancestor]) {
+            const cell = document.querySelector(`tr[data-group-id="${ancestor}"] td[colspan]`);
+            if (!cell) continue;
+            const copy = cell.cloneNode(true);
+            copy.querySelectorAll('select,button,input,.pl-icons,.group-badge,.group-arrow').forEach(node => node.remove());
+            path.unshift(copy.dataset.nameKey || copy.textContent.replace(/\s+/g, ' ').trim());
+        }
+        const members = new Map();
+        for (const index of groupIndexMap[id] || []) {
+            const guid = data.rows[index]?.[guidColumn];
+            if (guid) members.set(guid, {guid, name:value(index, 'Имя') || guid,
+                ifcClass:value(index, 'Тип элемента'), storey:value(index, 'Этаж')});
+        }
+        groups.push({id, path:path.length ? path : ['Группа в таблице'], members:[...members.values()]});
+    }
+    return {status:'ready', groups, label:'Группировка в таблице'};
+}
+
+function model3DAction(action) {
+    if (viewer3d?._inspector) viewer3d._inspector[action]?.();
+}
+
+function update3DSection() {
+    if (viewer3d?._inspector) viewer3d._inspector.section();
+}
+
+function render3DGroups(state, guid) {
+    const root = document.getElementById('viewer3dGroups');
+    root.replaceChildren();
+    const paragraph = text => {
+        const node = document.createElement('p'); node.textContent = text; root.appendChild(node);
+    };
+    if (!state._groupData) { paragraph('Загрузка групп…'); return; }
+    if (state._groupData.status !== 'ready') {
+        paragraph(state._groupData.detail || 'Группы появятся после группировки и запуска обработки.'); return;
+    }
+    paragraph(state._groupData.label || `Группы запуска ${state._groupData.runNumber || ''}`);
+    const selected = state._selectedGuids || (guid ? [guid] : []);
+    const groups = selected.length
+        ? [...new Map(selected.flatMap(id => state._groupsByGuid.get(id) || []).map(group => [group.id, group])).values()]
+        : (state._groupData.groups || []);
+    if (!selected.length && !groups.length) { paragraph('В этом запуске пока нет групп модели.'); return; }
+    if (!groups.length) { paragraph('Элемент не входит в группы выбранного запуска.'); return; }
+    for (const group of groups) {
+        const section = document.createElement('details'); section.open = selected.length > 0 && groups.length === 1;
+        const title = document.createElement('summary'); title.className = 'viewer3d-group-title';
+        const fullTitle = group.path.join(' → ');
+        const shortTitle = group.path.map(part => String(part)
+            .replace(/Надземная часть(?: здания)?/gi, 'Надзем.')
+            .replace(/Подземная часть(?: здания)?/gi, 'Подзем.')
+            .replace(/Железобетон/gi, 'Ж/б').replace(/монолитный/gi, 'монол.')
+            .replace(/(.{44}).{8,}/, '$1…')).join(' › ');
+        const selectedCount = group.members.filter(member => selected.includes(member.guid)).length;
+        title.textContent = `${shortTitle} · ${group.members.length} эл.` +
+            (selected.length > 1 ? ` · выбрано ${selectedCount}` : ''); title.title = fullTitle;
+        section.appendChild(title);
+        const present = group.members.filter(member => state._inspector.has(member.guid));
+        const info = document.createElement('p');
+        const chosen = group.members.filter(member => selected.includes(member.guid));
+        info.textContent = `Элементов: ${group.members.length}. В 3D: ${present.length}.` +
+            (chosen.length ? ` Выбрано: ${chosen.length} (${chosen.map(member => member.name).join(', ')}).` : '');
+        section.appendChild(info);
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'btn btn-sm btn-secondary';
+        button.textContent = 'Показать только эту группу'; button.disabled = !present.length;
+        button.onclick = () => state._inspector.showGroup(group.members.map(member => member.guid));
+        section.appendChild(button);
+        const search = document.createElement('input'); search.type = 'search';
+        search.placeholder = 'Найти элемент в группе'; search.setAttribute('aria-label', 'Найти элемент в группе');
+        section.appendChild(search);
+        const list = document.createElement('div'); list.className = 'viewer3d-members';
+        section.appendChild(list);
+        let limit = 100;
+        const renderMembers = () => {
+            list.replaceChildren();
+            const query = search.value.trim().toLocaleLowerCase();
+            const members = group.members.filter(member => `${member.name} ${member.guid} ${member.storey} ${member.ifcClass}`.toLocaleLowerCase().includes(query));
+            for (const member of members.slice(0, limit)) {
+                const item = document.createElement('button'); item.type = 'button';
+                item.className = 'viewer3d-member'; item.disabled = !state._inspector.has(member.guid);
+                item.textContent = `${member.name}${member.storey ? ' · ' + member.storey : ''}\n${member.guid}${item.disabled ? ' · Нет геометрии в 3D' : ''}`;
+                item.onclick = event => state._inspector.reveal(member.guid, !!(event?.ctrlKey || event?.metaKey || document.getElementById('viewer3dMultiSelect').checked));
+                list.appendChild(item);
+            }
+            if (!members.length) {
+                const empty = document.createElement('p'); empty.textContent = 'Элементы не найдены'; list.appendChild(empty);
+            }
+            if (members.length > limit) {
+                const more = document.createElement('button'); more.type = 'button'; more.className = 'btn btn-sm btn-secondary';
+                more.textContent = `Показать ещё (${members.length - limit})`;
+                more.onclick = () => { limit += 100; renderMembers(); };
+                list.appendChild(more);
+            }
+        };
+        search.oninput = () => { limit = 100; renderMembers(); };
+        let membersRendered = false;
+        const ensureMembers = () => { if (!membersRendered && section.open) { renderMembers(); membersRendered = true; } };
+        section.ontoggle = ensureMembers; ensureMembers(); root.appendChild(section);
+    }
+}
+
+async function open3DDocument(state, item, group = null) {
+    const overlay = document.getElementById('previewModal');
+    const source = group || item;
+    const requestId = state._documentRequest = (state._documentRequest || 0) + 1;
+    document.getElementById('previewModalTitle').textContent = group ? `${group.name.split(/\s*\[/)[0]} · ${group.file}` : `${item.file} · строка ${item.row}`;
+    const info = document.getElementById('previewModalInfo'); info.textContent = 'Загрузка группы…';
+    const head = document.getElementById('previewModalHead'), body = document.getElementById('previewModalBody');
+    head.replaceChildren(); body.replaceChildren();
+    currentViewFilename = source.file;
+    currentViewDownloadUrl = `${API_BASE}/session/${encodeURIComponent(state._sessionId)}/download/${encodeURIComponent(source.file)}`;
+    overlay.classList.add('active');
+    try {
+        const query = new URLSearchParams(group ? {group_id:group.id} : {relation_id:item.id});
+        if (state._runId) query.set('run_id', state._runId);
+        const response = await fetch(`${API_BASE}/session/${encodeURIComponent(state._sessionId)}/3d_model/document_row?${query}`);
+        const data = await response.json();
+        if (viewer3d !== state || state._documentRequest !== requestId || !overlay.classList.contains('active')) return;
+        if (!response.ok) throw new Error(data.detail || 'Не удалось открыть группу');
+        const title = document.createElement('tr');
+        const names = group?.kind === 'estimate' ? ['Строка','№','Шифр','Наименование','Ед. изм.','Объём'] : ['Строка',group?.kind === 'vor' ? '№' : 'Шифр','Наименование','Ед. изм.','Объём'];
+        for (const [index,value] of data.headers.entries()) { const cell = document.createElement('th'); cell.textContent = group && index < names.length ? names[index] : value; title.appendChild(cell); }
+        if (group) { const cell = document.createElement('th'); cell.textContent = 'Связь с моделью'; title.appendChild(cell); }
+        head.appendChild(title);
+        let focused;
+        for (const values of data.rows) {
+            const row = document.createElement('tr');
+            const position = (state._groupData.links.items || []).find(entry => entry.file === source.file && entry.sheet === source.sheet && entry.row === values[0]);
+            if (position) row.style.background = '#edf8f0';
+            if (item && values[0] === item.row) { row.style.background = '#dff3ff'; row.setAttribute('aria-current', 'true'); focused = row; }
+            const cells = values.slice(1).filter(value => value !== null && value !== undefined && String(value).trim());
+            if (group && cells.length === 1 && typeof cells[0] === 'string') {
+                const number = document.createElement('td'); number.textContent = values[0]; row.appendChild(number);
+                const heading = document.createElement('td'); heading.colSpan = data.headers.length-1; heading.textContent = cells[0];
+                heading.style.whiteSpace = 'normal'; heading.style.fontWeight = '600'; row.appendChild(heading);
+            } else for (const [index,value] of values.entries()) {
+                const cell = document.createElement('td'); cell.textContent = value ?? '';
+                if (group) {
+                    const nameColumn = group.kind === 'estimate' ? 3 : 2;
+                    cell.style.minWidth = index === nameColumn ? '360px' : '90px';
+                    cell.style.whiteSpace = index === nameColumn ? 'normal' : 'nowrap';
+                    if (index === nameColumn) cell.style.maxWidth = '520px';
+                }
+                row.appendChild(cell);
+            }
+            if (group) {
+                const cell = document.createElement('td');
+                if (position) {
+                    const button = document.createElement('button'); button.className = 'btn btn-sm btn-secondary';
+                    button.textContent = `Показать элементы (${position.guids.length})`;
+                    button.disabled = !position.guids.some(guid => state._inspector.has(guid));
+                    button.onclick = () => { closePreview(); state._inspector.showGroup(position.guids); };
+                    cell.appendChild(button);
+                } else cell.textContent = values[0] === group.startRow ? 'Заголовок группы' : 'Нет подтверждённой связи';
+                row.appendChild(cell);
+            }
+            body.appendChild(row);
+        }
+        info.textContent = group ? `${source.sheet} · вся группа, строки ${data.startRow}–${data.endRow}. Зелёным отмечены строки со связью с моделью; голубым — выбранная строка. Объёмы относятся ко всей позиции.` : `Связанная строка ${data.row} выделена цветом. Объём указан для всей позиции.`;
+        if (focused) focused.scrollIntoView?.({block:'center'});
+    } catch (error) { if (viewer3d === state && state._documentRequest === requestId) info.textContent = error.message; }
+}
+
+function documentGroups3D(data) {
+    if (data.groups) return data.groups;
+    // Compatibility with sessions supplied by an older backend.
+    return (data.items || []).map(item => ({...item, name:item.groupName || item.name,
+        startRow:item.row, endRow:item.row, itemIds:[item.id], linkedRows:[item.row], path:[]}));
+}
+
+function render3DElementGroups(state) {
+    const panel = document.getElementById('viewer3dElementGroupsPanel');
+    const root = document.getElementById('viewer3dElementDocumentGroups');
+    const selected = new Set(state._selectedGuids || []);
+    panel.hidden = !selected.size;
+    // Keep the user's chosen collapsed state when the selection changes;
+    root.replaceChildren();
+    if (!selected.size) return;
+    const data = state._groupData?.links;
+    const note = value => { const text = document.createElement('p'); text.textContent = value; root.appendChild(text); };
+    if (!data) { note('Загружаем группы документов выбранного элемента…'); return; }
+    const groups = documentGroups3D(data).filter(group => group.guids.some(guid => selected.has(guid)));
+    if (!groups.length) { note('Для выбранного элемента нет подтверждённых групп документов. Группы модели показаны выше.'); return; }
+    const labels = {perechen:'Перечень', estimate:'Смета', vor:'Типовая ВОР'};
+    for (const group of groups) {
+        const card = document.createElement('div'); card.className = 'viewer3d-property';
+        const title = document.createElement('p');
+        title.textContent = `${labels[group.kind]} · ${group.name.split(/\s*\[/)[0]} · ${group.guids.length} элементов`;
+        card.appendChild(title);
+        const go = document.createElement('button'); go.type = 'button'; go.className = 'btn btn-sm btn-primary';
+        go.textContent = 'Перейти к группе';
+        go.onclick = () => {
+            document.getElementById('viewer3dRelationKind').value = group.kind;
+            document.getElementById('viewer3dRelationSearch').value = '';
+            document.getElementById('viewer3dAllRelations').checked = true;
+            document.getElementById('viewer3dDocumentGroupsPanel').open = true;
+            state._documentGroupId = group.id;
+            state._inspector.showGroup(group.guids);
+            // A late group in a long document must also be reachable immediately.
+            const target = document.getElementById('viewer3dRelations').querySelector?.('[data-active-document-group]');
+            target?.scrollIntoView?.({block:'nearest'});
+        };
+        card.appendChild(go);
+        if (group.file.endsWith('.xlsx') && group.sheet && group.row) {
+            const table = document.createElement('button'); table.type = 'button'; table.className = 'btn btn-sm btn-secondary';
+            table.textContent = 'Вся группа в таблице'; table.onclick = () => open3DDocument(state,null,group);
+            card.appendChild(table);
+        }
+        root.appendChild(card);
+    }
+}
+
+function render3DRelations(state) {
+    render3DElementGroups(state);
+    const root = document.getElementById('viewer3dRelations');
+    root.replaceChildren();
+    const text = value => { const p = document.createElement('p'); p.textContent = value; root.appendChild(p); };
+    const data = state._groupData?.links;
+    if (!data) { text('Загружаем группы документов…'); return; }
+    const labels = {perechen:'Перечень', vor:'Типовая ВОР', estimate:'Смета'};
+    const groups = documentGroups3D(data);
+    text(Object.entries(labels).map(([kind,label]) => `${label}: ${groups.filter(group => group.kind === kind).length} групп`).join(' · '));
+    for (const note of data.notes || []) text(note);
+    const all = document.getElementById('viewer3dAllRelations').checked;
+    const query = document.getElementById('viewer3dRelationSearch').value.trim().toLocaleLowerCase();
+    const kind = document.getElementById('viewer3dRelationKind').value;
+    const guids = new Set(state._relationGuids || []);
+    const filtered = groups.filter(group => (!kind || group.kind === kind) && (all || !guids.size || group.guids.some(guid => guids.has(guid))) &&
+        `${group.name} ${(group.path || []).join(' ')} ${group.file} ${(data.items || []).filter(item => group.itemIds.includes(item.id)).map(item => `${item.code || ''} ${item.name}`).join(' ')}`.toLocaleLowerCase().includes(query));
+    if (!filtered.length) text(all ? 'Группы не найдены. Выберите другой документ или измените поиск.' : 'Для выбранных элементов группы не найдены. Включите «Все группы документа».');
+    const memberIndex = new Map((state._groupData.groups || []).flatMap(group => group.members).map(member => [member.guid,member]));
+    const activeIndex = filtered.findIndex(group => group.id === state._documentGroupId);
+    const limit = Math.max(state._relationLimit || 100, activeIndex+1);
+    for (const group of filtered.slice(0, limit)) {
+        const section = document.createElement('details'); section.open = state._documentGroupId === group.id;
+        if (section.open) section.setAttribute('data-active-document-group', 'true');
+        const heading = document.createElement('summary'); heading.textContent = `${labels[group.kind]} · ${group.name.split(/\s*\[/)[0]}`;
+        section.appendChild(heading);
+        const path = document.createElement('p'); path.textContent = (group.path || []).join(' → ');
+        const info = document.createElement('p');
+        const available = group.guids.filter(guid => state._inspector.has(guid));
+        info.textContent = `Строки ${group.startRow}–${group.endRow} · подтверждено элементов: ${group.guids.length} · в 3D: ${available.length}.`;
+        section.append(path,info);
+        const select = document.createElement('button'); select.className = 'btn btn-sm btn-primary'; select.type = 'button';
+        select.textContent = section.open ? 'Показать всю группу в 3D' : 'Выбрать группу'; select.disabled = !available.length;
+        select.onclick = () => { state._documentGroupId = group.id; state._inspector.showGroup(group.guids); };
+        section.appendChild(select);
+        if (group.file.endsWith('.xlsx') && group.sheet && group.row) {
+            const open = document.createElement('button'); open.className = 'btn btn-sm btn-secondary'; open.type = 'button';
+            open.textContent = 'Вся группа в таблице'; open.onclick = () => open3DDocument(state, null, group); section.appendChild(open);
+        }
+        if (!group.guids.length) { const note = document.createElement('p'); note.textContent = 'В этом блоке нет подтверждённых связей с элементами. Все строки доступны в таблице.'; section.appendChild(note); }
+        const members = document.createElement('details');
+        const memberTitle = document.createElement('summary'); memberTitle.textContent = `Состав группы: ${group.guids.length} элементов`;
+        members.appendChild(memberTitle);
+        const search = document.createElement('input'); search.type = 'search'; search.placeholder = 'Найти элемент в группе документа'; search.setAttribute('aria-label',search.placeholder);
+        members.appendChild(search);
+        const list = document.createElement('div'); list.className = 'viewer3d-members'; members.appendChild(list);
+        let memberLimit = 100;
+        const renderMembers = () => {
+            list.replaceChildren();
+            const matches = group.guids.filter(guid => `${memberIndex.get(guid)?.name || ''} ${memberIndex.get(guid)?.storey || ''} ${guid}`.toLocaleLowerCase().includes(search.value.toLocaleLowerCase()));
+            for (const guid of matches.slice(0,memberLimit)) {
+                const member = memberIndex.get(guid);
+                const button = document.createElement('button'); button.className = 'viewer3d-member'; button.type = 'button';
+                button.textContent = `${member?.name || guid}${member?.storey ? ' · '+member.storey : ''}${state._inspector.has(guid) ? '' : ' · Нет геометрии'}`;
+                button.disabled = !state._inspector.has(guid); button.onclick = () => state._inspector.reveal(guid);
+                list.appendChild(button);
+            }
+            if (matches.length > memberLimit) { const more = document.createElement('button'); more.textContent = `Ещё элементы (${matches.length-memberLimit})`; more.onclick = () => { memberLimit += 100; renderMembers(); }; list.appendChild(more); }
+        };
+        search.oninput = () => { memberLimit=100; renderMembers(); };
+        renderMembers(); section.appendChild(members);
+        const positions = document.createElement('details');
+        const positionTitle = document.createElement('summary'); positionTitle.textContent = `Связанные строки: ${group.itemIds.length}`; positions.appendChild(positionTitle);
+        for (const item of (data.items || []).filter(item => group.itemIds.includes(item.id)).sort((a,b) => a.row-b.row)) {
+            const button = document.createElement('button'); button.className = 'viewer3d-member'; button.type = 'button';
+            button.textContent = `Строка ${item.row}: ${item.code || item.number || ''} ${item.name} · ${item.quantity ?? '—'} ${item.unit || ''}`;
+            button.onclick = () => open3DDocument(state,item,group); positions.appendChild(button);
+        }
+        section.appendChild(positions); root.appendChild(section);
+    }
+    if (filtered.length > limit) {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'btn btn-sm btn-secondary';
+        button.textContent = `Ещё группы (${filtered.length-limit})`; button.onclick = () => { state._relationLimit=limit+100; render3DRelations(state); }; root.appendChild(button);
+    }
+}
+
+function filter3DRelations() {
+    if (!viewer3d) return;
+    viewer3d._relationLimit = 100;
+    render3DRelations(viewer3d);
+}
+
+function buildingSectionFrame(state, meshes) {
+    const THREE = state._THREE;
+    state.scene.updateMatrixWorld(true);
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    const ab = new THREE.Vector3(), ac = new THREE.Vector3(), normal = new THREE.Vector3();
+    const triangles = meshes.reduce((count, mesh) => count + (mesh.geometry?.index?.count || mesh.geometry?.attributes?.position?.count || 0) / 3, 0);
+    const stride = Math.max(1, Math.ceil(triangles / 24000));
+    let cosine = 0, sine = 0, weight = 0;
+    for (const mesh of meshes) {
+        const geometry = mesh.geometry, positions = geometry?.attributes?.position;
+        if (!positions) continue;
+        const index = geometry.index;
+        const count = index ? index.count : positions.count;
+        for (let i = 0; i + 2 < count; i += 3 * stride) {
+            a.fromBufferAttribute(positions, index ? index.getX(i) : i).applyMatrix4(mesh.matrixWorld);
+            b.fromBufferAttribute(positions, index ? index.getX(i + 1) : i + 1).applyMatrix4(mesh.matrixWorld);
+            c.fromBufferAttribute(positions, index ? index.getX(i + 2) : i + 2).applyMatrix4(mesh.matrixWorld);
+            normal.crossVectors(ab.subVectors(b, a), ac.subVectors(c, a));
+            const length = normal.length();
+            if (!length || Math.abs(normal.y) > length * 0.25) continue;
+            const angle = Math.atan2(normal.z, normal.x);
+            // Fourth moment keeps perpendicular/opposite walls in one building grid,
+            // including square footprints where PCA would choose an arbitrary diagonal.
+            cosine += length * Math.cos(4 * angle);
+            sine += length * Math.sin(4 * angle);
+            weight += length;
+        }
+    }
+    const angle = weight && Math.hypot(cosine, sine) / weight > 0.2 ? Math.atan2(sine, cosine) / 4 : 0;
+    const axes = {x:new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle)),
+        y:new THREE.Vector3(0, 1, 0), z:new THREE.Vector3(-Math.sin(angle), 0, Math.cos(angle))};
+    const ranges = {x:{min:Infinity,max:-Infinity},y:{min:Infinity,max:-Infinity},z:{min:Infinity,max:-Infinity}};
+    for (const mesh of meshes) {
+        const positions = mesh.geometry?.attributes?.position;
+        if (!positions) continue;
+        for (let i = 0; i < positions.count; i++) {
+            a.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
+            for (const key of ['x','y','z']) {
+                const value = a.dot(axes[key]);
+                ranges[key].min = Math.min(ranges[key].min, value);
+                ranges[key].max = Math.max(ranges[key].max, value);
+            }
+        }
+    }
+    const box = new THREE.Box3().setFromObject(state.model);
+    for (const key of ['x','y','z']) if (!Number.isFinite(ranges[key].min)) ranges[key] = {min:box.min[key],max:box.max[key]};
+    if (ranges.z.max - ranges.z.min > ranges.x.max - ranges.x.min) {
+        const oldAxis = axes.x, oldRange = ranges.x;
+        axes.x = axes.z; ranges.x = ranges.z;
+        axes.z = oldAxis.negate(); ranges.z = {min:-oldRange.max,max:-oldRange.min};
+    }
+    return {axes, ranges};
+}
+
+function init3DNavigation(state, meshes) {
+    const THREE = state._THREE, canvas = state.renderer.domElement;
+    const box = new THREE.Box3().setFromObject(state.model);
+    const size = box.getSize(new THREE.Vector3());
+    const span = Math.max(size.x, size.y, size.z, 0.1);
+    state.camera.near = Math.max(0.001, Math.min(0.03, span / 10000));
+    state.camera.far = Math.max(span * 100, 100);
+    state.camera.updateProjectionMatrix();
+    // Interior walls must remain visible and selectable from their reverse side.
+    const materials = new Set(meshes.flatMap(mesh => [mesh.material].flat()));
+    for (const material of materials) { material.side = THREE.DoubleSide; material.needsUpdate = true; }
+    state.controls.enableZoom = false;
+    const forward = new THREE.Vector3();
+    const advance = (pixels, clientX, clientY) => {
+        if (!pixels || viewer3d !== state) return;
+        state.controls.update();
+        state.camera.getWorldDirection(forward);
+        const rect = canvas.getBoundingClientRect();
+        const raycaster = new THREE.Raycaster();
+        state.scene.updateMatrixWorld(true);
+        raycaster.setFromCamera(new THREE.Vector2((clientX - rect.left) / rect.width * 2 - 1,
+            -(clientY - rect.top) / rect.height * 2 + 1), state.camera);
+        const nearest = box.clampPoint(state.camera.position, new THREE.Vector3());
+        const outsideDistance = nearest.distanceTo(state.camera.position);
+        const base = box.containsPoint(state.camera.position) ? span * 0.18 : Math.max(outsideDistance, span * 0.02);
+        const step = Math.min(span * 0.35, base * (1 - Math.exp(-Math.min(Math.abs(pixels), 480) * 0.006)));
+        const travel = pixels < 0 ? step : -step;
+        state.camera.position.addScaledVector(raycaster.ray.direction, travel);
+        state.controls.target.addScaledVector(raycaster.ray.direction, travel);
+        // Keep the pivot near the visible scene after zooming, preserving the
+        // view direction instead of orbiting around a distant, stale target.
+        const radius = box.containsPoint(state.camera.position) ? span * 0.08
+            : Math.max(box.clampPoint(state.camera.position, new THREE.Vector3()).distanceTo(state.camera.position), span * 0.08);
+        state.controls.target.copy(state.camera.position).addScaledVector(forward, radius);
+        state.controls.update();
+    };
+    const wheel = event => {
+        event.preventDefault(); event.stopImmediatePropagation();
+        const pixels = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? canvas.clientHeight : 1);
+        advance(pixels, event.clientX, event.clientY);
+    };
+    state._zoomStep = direction => {
+        const rect = canvas.getBoundingClientRect();
+        advance(direction * 150, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    };
+    const orbitPivot = event => {
+        if (event.button !== 0 || event.pointerType === 'touch') return;
+        const ray = new THREE.Raycaster();
+        state.scene.updateMatrixWorld(true);
+        ray.setFromCamera(new THREE.Vector2(0, 0), state.camera);
+        const visible = mesh => {
+            for (let node = mesh; node && node !== state.model; node = node.parent) if (!node.visible) return false;
+            return true;
+        };
+        const hit = ray.intersectObjects(meshes, false).find(hit => visible(hit.object) &&
+            !(state.renderer.clippingPlanes || []).some(plane => plane.distanceToPoint(hit.point) < 0));
+        if (!hit?.point) return;
+        state.camera.getWorldDirection(forward);
+        const distance = new THREE.Vector3().copy(hit.point).sub(state.camera.position).dot(forward);
+        if (distance > state.camera.near) {
+            state.controls.target.copy(state.camera.position).addScaledVector(forward, distance);
+            state.controls.update();
+        }
+    };
+    const touches = new Map();
+    let pinchDistance = null;
+    const touchDown = event => {
+        orbitPivot(event);
+        if (event.pointerType === 'touch') {
+            touches.set(event.pointerId, {x:event.clientX,y:event.clientY}); pinchDistance = null;
+        }
+    };
+    const touchMove = event => {
+        if (!touches.has(event.pointerId)) return;
+        touches.set(event.pointerId, {x:event.clientX,y:event.clientY});
+        if (touches.size !== 2) return;
+        const [a,b] = [...touches.values()];
+        const distance = Math.hypot(a.x-b.x,a.y-b.y);
+        if (pinchDistance && distance) advance(Math.log(pinchDistance / distance) * 500, (a.x+b.x)/2, (a.y+b.y)/2);
+        pinchDistance = distance;
+    };
+    const touchEnd = event => { touches.delete(event.pointerId); pinchDistance = null; };
+    canvas.addEventListener('wheel', wheel, {capture:true,passive:false});
+    canvas.addEventListener('pointerdown', touchDown, true);
+    canvas.addEventListener('pointermove', touchMove, true);
+    canvas.addEventListener('pointerup', touchEnd, true);
+    canvas.addEventListener('pointercancel', touchEnd, true);
+    state._disposeNavigation = () => {
+        canvas.removeEventListener('wheel', wheel, true);
+        canvas.removeEventListener('pointerdown', touchDown, true);
+        canvas.removeEventListener('pointermove', touchMove, true);
+        canvas.removeEventListener('pointerup', touchEnd, true);
+        canvas.removeEventListener('pointercancel', touchEnd, true);
+        touches.clear();
+    };
+}
+
+function render3DSelection(state) {
+    const guids = state._selectedGuids || [];
+    document.getElementById('viewer3dSelectionCount').textContent = `Выбрано: ${guids.length}`;
+    const panel = document.getElementById('viewer3dSelectionPanel');
+    panel.hidden = guids.length < 2;
+    const list = document.getElementById('viewer3dSelectionList'); list.replaceChildren();
+    for (const guid of guids.slice(0, state._selectionLimit || 100)) {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'viewer3d-member';
+        const group = state._groupsByGuid?.get(guid)?.[0];
+        const name = group?.members.find(member => member.guid === guid)?.name || guid;
+        button.textContent = `Убрать из выбора: ${name}`;
+        button.onclick = () => state._inspector.toggle(guid);
+        list.appendChild(button);
+    }
+    if (guids.length > (state._selectionLimit || 100)) {
+        const more = document.createElement('button'); more.type = 'button'; more.className = 'btn btn-sm btn-secondary';
+        more.textContent = 'Показать ещё выбранные элементы';
+        more.onclick = () => { state._selectionLimit = (state._selectionLimit || 100) + 100; render3DSelection(state); };
+        list.appendChild(more);
+    }
+}
+
+function init3DInspector(state, sessionId, runId = null) {
+    const THREE = state._THREE;
+    state._sessionId = sessionId; state._runId = runId;
+    const meshes = [], byGuid = new Map();
+    state.model.traverse(mesh => {
+        if (!mesh.isMesh) return;
+        meshes.push(mesh);
+        let guid = null;
+        for (let node = mesh; node && node !== state.model; node = node.parent) {
+            const match = /^([A-Za-z0-9_$]{22})(?:_\d+)?$/.exec(node.name || '');
+            if (match) { guid = match[1]; break; }
+        }
+        if (!guid) return;
+        if (!byGuid.has(guid)) byGuid.set(guid, []);
+        byGuid.get(guid).push(mesh);
+        mesh.userData.ifcGuid = guid;
+    });
+    const cache = new Map(), initialVisibility = new Map(meshes.map(mesh => [mesh, mesh.visible]));
+    const groupController = new AbortController();
+    let selected = [], selectedGuids = [], controller = null, selectionNumber = 0, pointer = null;
+    const clearHighlight = () => {
+        for (const [mesh, original] of selected) {
+            for (const material of [mesh.material].flat()) material.dispose();
+            for (const material of [original].flat()) material.wireframe = state.wireframe;
+            mesh.material = original;
+        }
+        selected = [];
+    };
+    const highlight = guids => {
+        const desired = new Set(guids.flatMap(guid => byGuid.get(guid) || []));
+        const kept = [];
+        for (const [mesh, original] of selected) {
+            if (desired.delete(mesh)) { kept.push([mesh, original]); continue; }
+            for (const material of [mesh.material].flat()) material.dispose();
+            for (const material of [original].flat()) material.wireframe = state.wireframe;
+            mesh.material = original;
+        }
+        selected = kept;
+        selectedGuids = guids;
+        state._selectedGuids = [...guids];
+        for (const mesh of desired) {
+            const original = mesh.material;
+            const materials = [original].flat().map(material => {
+                const color = material.clone();
+                if (color.color) color.color.set(0x24b8ff);
+                if (color.emissive) { color.emissive.set(0x0879b5); color.emissiveIntensity = 0.6; }
+                return color;
+            });
+            mesh.material = Array.isArray(original) ? materials : materials[0];
+            selected.push([mesh, original]);
+        }
+        for (const id of ['viewer3dHide', 'viewer3dIsolate', 'viewer3dClearSelection']) document.getElementById(id).disabled = !guids.length;
+        render3DSelection(state);
+    };
+    const select = async (guid, additive = false, explicit = null) => {
+        if (additive && !guid) return;
+        const next = explicit || (additive ? (selectedGuids.includes(guid) ? selectedGuids.filter(id => id !== guid) : [...selectedGuids, guid]) : (guid ? [guid] : []));
+        guid = next.includes(guid) ? guid : (next.at(-1) || null);
+        const number = ++selectionNumber;
+        if (controller) controller.abort();
+        highlight(next);
+        state._selectedGuid = guid;
+        state._relationGuids = [...next];
+        document.getElementById('viewer3dAllRelations').checked = false;
+        render3DTotals(state);
+        state._relationLimit = 100;
+        render3DRelations(state);
+        reset3DProperties(guid ? 'Загрузка свойств…' : undefined);
+        render3DGroups(state, guid);
+        if (!guid) return;
+        controller = new AbortController();
+        try {
+            let data = cache.get(guid);
+            if (!data) {
+                const response = await fetch(`${API_BASE}/session/${encodeURIComponent(sessionId)}/3d_model/elements/${encodeURIComponent(guid)}`, {signal: controller.signal});
+                data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Не удалось загрузить свойства');
+                if (viewer3d !== state || selectionNumber !== number) return;
+                if (cache.size >= 32) cache.delete(cache.keys().next().value);
+                cache.set(guid, data);
+            }
+            if (viewer3d !== state || selectionNumber !== number) return;
+            document.getElementById('viewer3dPropertiesStatus').textContent = (next.length > 1 ? `Выбрано ${next.length}. Свойства: ` : '') + (data.fields.Name || 'Выбранный элемент');
+            render3DProperties(data.fields, data.units);
+            if (next.length > 1) {
+                for (const section of [...document.getElementById('viewer3dElementSummary').children,
+                    ...document.getElementById('viewer3dPropertiesContent').children]) section.open = false;
+            }
+            if (state._quantityData) state._quantityData[guid] = data;
+            render3DTotals(state);
+        } catch (error) {
+            if (error.name !== 'AbortError' && viewer3d === state && selectionNumber === number) reset3DProperties(error.message);
+        }
+    };
+    const focus = guids => {
+        const box = new THREE.Box3();
+        for (const guid of guids) for (const mesh of byGuid.get(guid) || []) box.expandByObject(mesh);
+        if (box.isEmpty()) return;
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        const direction = state.camera.position.clone().sub(state.controls.target).normalize();
+        const distance = Math.max(size.x, size.y, size.z, 0.1) * 2;
+        state.camera.position.copy(center).addScaledVector(direction, distance);
+        state.controls.target.copy(center); state.controls.update();
+    };
+    const disableSection = () => {
+        document.getElementById('viewer3dSectionEnabled').checked = false;
+        state._inspector.section();
+    };
+    const isolate = guids => {
+        const ids = new Set(guids);
+        for (const mesh of meshes) mesh.visible = ids.has(mesh.userData.ifcGuid);
+    };
+    state._inspector = {
+        has: guid => byGuid.has(guid),
+        focusSelection: () => { if (selectedGuids.length) focus(selectedGuids); },
+        toggle: guid => select(guid, true),
+        clear: () => select(null),
+        hide: () => {
+            for (const guid of selectedGuids) for (const mesh of byGuid.get(guid) || []) mesh.visible = false;
+            select(null);
+        },
+        isolate: () => { if (selectedGuids.length) { disableSection(); isolate(selectedGuids); focus(selectedGuids); } },
+        showAll: () => {
+            for (const mesh of meshes) mesh.visible = initialVisibility.get(mesh);
+            document.getElementById('viewer3dSectionEnabled').checked = false;
+            state._inspector.section();
+        },
+        showGroup: guids => {
+            const available = [...new Set(guids)].filter(guid => byGuid.has(guid));
+            if (!available.length) return;
+            const complete = [...new Set(guids)];
+            disableSection(); isolate(available); select(available.at(-1), false, complete); focus(available);
+            state._relationGuids = complete;
+            state._relationLimit = 100;
+            render3DRelations(state);
+        },
+        reveal: (guid, additive = false) => {
+            disableSection();
+            for (const mesh of byGuid.get(guid) || []) mesh.visible = true;
+            select(guid, additive); focus([guid]);
+        },
+        sectionView: () => {
+            const axis = document.getElementById('viewer3dSectionAxis').value;
+            const direction = state._sectionFrame.axes[axis];
+            const box = state._sectionBounds;
+            const center = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
+            const distance = Math.max(size.x,size.y,size.z,0.1) * 2;
+            state.camera.up.copy(axis === 'y' ? state._sectionFrame.axes.z : state._sectionFrame.axes.y);
+            state.camera.position.copy(center).addScaledVector(direction, distance);
+            state.controls.target.copy(center); state.controls.update();
+        },
+        section: () => {
+            const enabled = document.getElementById('viewer3dSectionEnabled').checked;
+            document.getElementById('viewer3dSectionAxis').disabled = !enabled;
+            document.getElementById('viewer3dSectionRange').disabled = !enabled;
+            if (!enabled) { state.renderer.clippingPlanes = []; return; }
+            const axis = document.getElementById('viewer3dSectionAxis').value;
+            const fraction = Number(document.getElementById('viewer3dSectionRange').value) / 100;
+            const range = state._sectionFrame.ranges[axis];
+            const normal = state._sectionFrame.axes[axis].clone().negate();
+            const position = range.min + (range.max - range.min) * fraction;
+            state.renderer.clippingPlanes = [new THREE.Plane(normal, position)];
+        },
+    };
+    state._sectionBounds = new THREE.Box3().setFromObject(state.model);
+    state._sectionFrame = buildingSectionFrame(state, meshes);
+    init3DNavigation(state, meshes);
+    document.getElementById('viewer3dMultiSelect').checked = false;
+    document.getElementById('viewer3dSectionEnabled').checked = false;
+    document.getElementById('viewer3dSectionRange').value = '50';
+    state._inspector.section(); highlight([]);
+    state._groupsByGuid = new Map();
+    const useGroups = data => {
+        if (viewer3d !== state) return;
+        state._groupData = data;
+        state._groupsByGuid.clear();
+        for (const group of data.groups || []) for (const member of group.members) {
+            if (!state._groupsByGuid.has(member.guid)) state._groupsByGuid.set(member.guid, []);
+            state._groupsByGuid.get(member.guid).push(group);
+        }
+        render3DGroups(state, state._selectedGuid);
+        render3DSelection(state);
+        render3DRelations(state);
+    };
+    document.getElementById('viewer3dAllRelations').checked = false;
+    document.getElementById('viewer3dDocumentGroupsPanel').open = false;
+    document.getElementById('viewer3dElementGroupsPanel').open = false;
+    document.getElementById('viewer3dModelGroupsPanel').open = true;
+    document.getElementById('viewer3dRelationSearch').value = '';
+    render3DRelations(state);
+    const preview = preview3DGroups(runId);
+    if (preview) useGroups(preview);
+    const refreshLinks = () => {
+        if (!preview) render3DGroups(state, state._selectedGuid);
+        const query = runId ? `?run_id=${encodeURIComponent(runId)}` : '';
+        return fetch(`${API_BASE}/session/${encodeURIComponent(sessionId)}/3d_model/groups${query}`, {signal:groupController.signal})
+            .then(async response => { const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Не удалось загрузить группы'); return data; })
+            .then(data => useGroups(preview ? {...data, ...preview, links:data.links} : data))
+            .catch(error => { if (error.name !== 'AbortError') useGroups(preview ? {...preview, links:{items:[],notes:[error.message]}} : {status:'error', detail:error.message}); });
+    };
+    state._inspector.refreshLinks = refreshLinks;
+    refreshLinks();
+    fetch(`${API_BASE}/session/${encodeURIComponent(sessionId)}/3d_model/quantities`, {signal:groupController.signal})
+        .then(async response => { const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Не удалось загрузить объёмы'); return data; })
+        .then(data => { if (viewer3d !== state) return; state._quantityData = data.elements; render3DTotals(state); })
+        .catch(error => { if (error.name !== 'AbortError' && viewer3d === state) { state._quantityError = error.message; render3DTotals(state); } });
+    const canvas = state.renderer.domElement;
+    const down = event => { if (event.isPrimary === false) { pointer = null; return; } if (event.button === 0 && event.isPrimary !== false) pointer = {id:event.pointerId, x:event.clientX, y:event.clientY, moved:false}; };
+    const move = event => {
+        if (pointer && Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 5) pointer.moved = true;
+    };
+    const cancel = () => { pointer = null; };
+    const up = event => {
+        const start = pointer; pointer = null;
+        if (!start || start.id !== event.pointerId || start.moved || event.button !== 0) return;
+        const rect = canvas.getBoundingClientRect();
+        const raycaster = new THREE.Raycaster();
+        state.scene.updateMatrixWorld(true);
+        raycaster.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1,
+            -(event.clientY - rect.top) / rect.height * 2 + 1), state.camera);
+        // Hidden and clipped surfaces must not intercept clicks on the interior.
+        const visible = object => {
+            for (let node = object; node && node !== state.model; node = node.parent) if (!node.visible) return false;
+            return true;
+        };
+        const hit = raycaster.intersectObjects(meshes, false).find(hit => visible(hit.object) &&
+            !(state.renderer.clippingPlanes || []).some(plane => plane.distanceToPoint(hit.point) < 0));
+        select(hit?.object.userData.ifcGuid || null, !!(event.ctrlKey || event.metaKey || event.shiftKey || document.getElementById('viewer3dMultiSelect').checked));
+    };
+    const doubleClick = event => {
+        if (event.button !== 0) return;
+        if (state._selectedGuids?.length) focus(state._selectedGuids);
+    };
+    const listeners = {pointerdown:down, pointermove:move, pointerup:up, pointercancel:cancel, pointerleave:cancel, dblclick:doubleClick};
+    for (const [name, listener] of Object.entries(listeners)) canvas.addEventListener(name, listener);
+    state._disposeInspector = () => {
+        selectionNumber++; groupController.abort();
+        if (controller) controller.abort();
+        clearHighlight(); cache.clear();
+        for (const [name, listener] of Object.entries(listeners)) canvas.removeEventListener(name, listener);
+    };
+    reset3DProperties(byGuid.size ? undefined : 'В этой модели нет идентификаторов элементов для просмотра свойств.');
+}
+
+function dispose3DViewer() {
+    const state = viewer3d;
+    viewer3d = null;
+    if (!state) return;
+    if (state._disposeInspector) state._disposeInspector();
+    if (state._disposeNavigation) state._disposeNavigation();
+    document.getElementById('viewer3dSelectionList').replaceChildren();
+    document.getElementById('viewer3dGroups').replaceChildren();
+    document.getElementById('viewer3dRelations').replaceChildren();
+    if (state._resizeObserver) state._resizeObserver.disconnect();
+    state.controls.dispose();
+    if (state._frame) cancelAnimationFrame(state._frame);
+    dispose3DScene(state.scene);
+    state.renderer.dispose();
+    state.renderer.domElement.remove();
+}
+
+function dispose3DScene(scene) {
+    const geometries = new Set(), materials = new Set(), textures = new Set();
+    scene.traverse(object => {
+        if (object.geometry) geometries.add(object.geometry);
+        if (object.material) for (const material of [object.material].flat()) materials.add(material);
+    });
+    for (const material of materials) {
+        for (const value of Object.values(material)) if (value && value.isTexture) textures.add(value);
+        material.dispose();
+    }
+    for (const texture of textures) texture.dispose();
+    for (const geometry of geometries) geometry.dispose();
+}
+
 // ========== 3D просмотр ==========
 // 3D модель создаётся по запросу пользователя (кнопка «3D модель»)
 async function open3dModelViewer() {
     if (!currentSessionId) { showToast('Нет активной сессии', 'warning'); return; }
+    const requestId = ++viewer3dRequest;
+    const sessionId = currentSessionId;
+    reset3DProperties();
     const overlay = document.getElementById('viewer3dModal');
     const container = document.getElementById('viewer3dContainer');
     const loading = document.getElementById('viewer3dLoading');
@@ -4632,26 +5615,25 @@ async function open3dModelViewer() {
     loading.style.display = 'block';
     loading.textContent = '⏳ Идёт создание 3D модели...';
     loading.style.color = '#718096';
-    if (viewer3d) {
-        if (viewer3d._resizeHandler) window.removeEventListener('resize', viewer3d._resizeHandler);
-        try { viewer3d.renderer.dispose(); } catch(e) {}
-        viewer3d = null;
-    }
+    dispose3DViewer();
     container.innerHTML = ''; container.appendChild(loading);
     try {
-        const resp = await fetch(`${API_BASE}/session/${currentSessionId}/3d_model`, { method: 'POST' });
+        const resp = await fetch(`${API_BASE}/session/${sessionId}/3d_model`, { method: 'POST' });
         if (!resp.ok) {
             let detail = 'Ошибка создания 3D модели';
             try { detail = (await resp.json()).detail || detail; } catch(e) {}
             throw new Error(detail);
         }
         let data = await resp.json();
+        if (requestId !== viewer3dRequest) return;
         // Ждём завершения фоновой генерации GLB
         while (data.status === 'creating') {
             await new Promise(r => setTimeout(r, 2000));
-            const sResp = await fetch(`${API_BASE}/session/${currentSessionId}/3d_model/status`);
+            if (requestId !== viewer3dRequest) return;
+            const sResp = await fetch(`${API_BASE}/session/${sessionId}/3d_model/status`);
             if (!sResp.ok) throw new Error('Ошибка получения статуса');
             data = await sResp.json();
+            if (requestId !== viewer3dRequest) return;
         }
         if (data.status === 'error') throw new Error(data.error || 'Ошибка создания 3D модели');
         if (data.status === 'ready') {
@@ -4660,6 +5642,7 @@ async function open3dModelViewer() {
             throw new Error('Не удалось создать 3D модель');
         }
     } catch (e) {
+        if (requestId !== viewer3dRequest) return;
         console.error('3D creation error:', e);
         loading.textContent = '❌ ' + (e.message || 'Ошибка создания 3D модели');
         loading.style.color = '#e53e3e';
@@ -4667,22 +5650,23 @@ async function open3dModelViewer() {
 }
 
 async function previewGlbFile(filename) {
+    const requestId = ++viewer3dRequest;
+    const sessionId = currentSessionId;
+    const runId = currentRunId;
+    reset3DProperties();
     const overlay = document.getElementById('viewer3dModal');
     const container = document.getElementById('viewer3dContainer');
     const loading = document.getElementById('viewer3dLoading');
     document.getElementById('viewer3dTitle').textContent = '🧊 ' + filename;
     overlay.classList.add('active');
     loading.style.display = 'block'; loading.textContent = 'Загрузка 3D модели...'; loading.style.color = '#718096';
-    document.getElementById('downloadGlbBtn').onclick = () => { window.open(`${API_BASE}/session/${currentSessionId}/download/${encodeURIComponent(filename)}`, '_blank'); };
-    if (viewer3d) {
-        if (viewer3d._resizeHandler) window.removeEventListener('resize', viewer3d._resizeHandler);
-        try { viewer3d.renderer.dispose(); } catch(e) {}
-        viewer3d = null;
-    }
+    document.getElementById('downloadGlbBtn').onclick = () => { window.open(`${API_BASE}/session/${sessionId}/download/${encodeURIComponent(filename)}`, '_blank'); };
+    dispose3DViewer();
     try {
         const THREE = await import('three');
         const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
         const { OrbitControls } = await import('three/addons/controls/OrbitControls.js');
+        if (requestId !== viewer3dRequest) return;
         container.innerHTML = ''; container.appendChild(loading);
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0xf0f4f8);
@@ -4696,13 +5680,19 @@ async function previewGlbFile(filename) {
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         container.appendChild(renderer.domElement);
         const controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true; controls.dampingFactor = 0.1; controls.target.set(0, 0, 0);
-        const url = `${API_BASE}/session/${currentSessionId}/download/${encodeURIComponent(filename)}`;
+        controls.enableDamping = true; controls.dampingFactor = 0.12;
+        controls.rotateSpeed = 0.85; controls.panSpeed = 1.2;
+        controls.screenSpacePanning = true; controls.target.set(0, 0, 0);
+        const modelGroup = new THREE.Group(); scene.add(modelGroup);
+        const state = { scene, camera, renderer, controls, model: modelGroup, wireframe: false, _THREE: THREE };
+        viewer3d = state;
+        const url = `${API_BASE}/session/${sessionId}/download/${encodeURIComponent(filename)}`;
         await new Promise((resolve, reject) => {
             new GLTFLoader().load(url,
                 (gltf) => {
+                    if (viewer3d !== state || requestId !== viewer3dRequest) { dispose3DScene(gltf.scene); resolve(); return; }
                     loading.style.display = 'none';
-                    const modelGroup = new THREE.Group(); modelGroup.add(gltf.scene); scene.add(modelGroup);
+                    modelGroup.add(gltf.scene);
                     const box = new THREE.Box3().setFromObject(gltf.scene);
                     const center = box.getCenter(new THREE.Vector3());
                     const size = box.getSize(new THREE.Vector3());
@@ -4715,37 +5705,53 @@ async function previewGlbFile(filename) {
                     camera.lookAt(0, 0, 0); controls.update();
                     const axesHelper = new THREE.AxesHelper(maxDim * 1.5);
                     axesHelper.visible = false; scene.add(axesHelper);
-                    viewer3d = { scene, camera, renderer, controls, model: modelGroup, wireframe: false, axesHelper, _THREE: THREE };
+                    state.axesHelper = axesHelper;
+                    init3DInspector(state, sessionId, runId);
                     const resizeHandler = () => {
-                        if (!viewer3d) return;
+                        if (viewer3d !== state) return;
                         camera.aspect = container.clientWidth / container.clientHeight;
                         camera.updateProjectionMatrix();
                         renderer.setSize(container.clientWidth, container.clientHeight);
                     };
-                    window.addEventListener('resize', resizeHandler);
-                    viewer3d._resizeHandler = resizeHandler;
+                    state._resizeObserver = new ResizeObserver(resizeHandler);
+                    state._resizeObserver.observe(container);
                     showToast('3D модель загружена!', 'success');
                     resolve();
                 },
-                (xhr) => { if (xhr.total > 0) loading.textContent = `Загрузка... ${Math.round(xhr.loaded / xhr.total * 100)}%`; },
-                (error) => { loading.textContent = '❌ Ошибка загрузки'; loading.style.color = '#e53e3e'; reject(error); }
+                (xhr) => { if (viewer3d === state && xhr.total > 0) loading.textContent = `Загрузка... ${Math.round(xhr.loaded / xhr.total * 100)}%`; },
+                (error) => { reject(error); }
             );
         });
-        function animate() { if (!viewer3d) return; requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
+        function animate() { if (viewer3d !== state) return; state._frame = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
         animate();
     } catch (e) {
+        if (requestId !== viewer3dRequest) return;
+        dispose3DViewer();
         console.error('3D error:', e);
+        loading.style.display = 'block';
         loading.textContent = '❌ Ошибка: ' + (e.message || 'Неизвестная');
         loading.style.color = '#e53e3e';
     }
 }
 
+function init3DModalInput() {
+    const overlay = document.getElementById('viewer3dModal');
+    overlay.addEventListener('wheel', event => {
+        if (!overlay.classList.contains('active')) return;
+        const canvas = event.target.closest?.('#viewer3dContainer canvas');
+        const scrollPanel = event.target.closest?.('.viewer3d-properties, .viewer3d-toolbar');
+        // Trackpad pinching is delivered as Ctrl+wheel. It must never zoom the
+        // browser, even over the sidebar or while the model is still loading.
+        if (event.ctrlKey || event.metaKey || (!canvas && !scrollPanel)) event.preventDefault();
+    }, {capture:true, passive:false});
+    const gesture = event => { if (overlay.classList.contains('active')) event.preventDefault(); };
+    overlay.addEventListener('gesturestart', gesture, {passive:false});
+    overlay.addEventListener('gesturechange', gesture, {passive:false});
+}
+
 function close3DViewer() {
-    if (viewer3d) {
-        if (viewer3d._resizeHandler) window.removeEventListener('resize', viewer3d._resizeHandler);
-        try { viewer3d.renderer.dispose(); } catch(e) {}
-        viewer3d = null;
-    }
+    viewer3dRequest++;
+    dispose3DViewer();
     document.getElementById('viewer3dModal').classList.remove('active');
 }
 
@@ -4755,6 +5761,7 @@ function reset3DView() {
     const center = box.getCenter(new viewer3d._THREE.Vector3());
     const size = box.getSize(new viewer3d._THREE.Vector3());
     const distance = Math.max(size.x, size.y, size.z) * 2.0;
+    viewer3d.camera.up.set(0, 1, 0);
     viewer3d.camera.position.set(distance * 0.8, distance * 0.8, distance * 0.8);
     viewer3d.controls.target.copy(center); viewer3d.controls.update();
 }
@@ -4762,11 +5769,11 @@ function reset3DView() {
 function toggleWireframe() {
     if (!viewer3d) return;
     viewer3d.wireframe = !viewer3d.wireframe;
-    viewer3d.model.traverse(c => { if (c.isMesh) c.material.wireframe = viewer3d.wireframe; });
+    viewer3d.model.traverse(c => { if (c.isMesh) for (const material of [c.material].flat()) material.wireframe = viewer3d.wireframe; });
 }
 
 function toggleAxes() {
-    if (!viewer3d) return;
+    if (!viewer3d || !viewer3d.axesHelper) return;
     viewer3d.axesHelper.visible = !viewer3d.axesHelper.visible;
 }
 
@@ -4875,6 +5882,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
     document.getElementById('previewModal').addEventListener('click', function(e) { if (e.target === this) closePreview(); });
+    init3DModalInput();
     document.getElementById('viewer3dModal').addEventListener('click', function(e) { if (e.target === this) close3DViewer(); });
     document.getElementById('blueprintImageModal').addEventListener('click', function(e) { if (e.target === this) closeBlueprintImage(); });
     document.getElementById('materialsLegendModal').addEventListener('click', function(e) { if (e.target === this) closeMaterialsLegend(); });

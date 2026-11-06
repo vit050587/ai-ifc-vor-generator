@@ -12,10 +12,11 @@ def source_summary(reason, sources=()):
 
 
 class Quantity(float):
-    def __new__(cls, value, expression='', sources=()):
+    def __new__(cls, value, expression='', sources=(), element_guids=()):
         obj = super().__new__(cls, value)
         obj.expression = expression or f'{float(value):g}'
         obj.sources = tuple(dict.fromkeys(sources))
+        obj.element_guids = tuple(dict.fromkeys(guid for guid in element_guids if guid))
         return obj
 
     def __add__(self, other):
@@ -23,17 +24,18 @@ class Quantity(float):
             return self
         expression = getattr(other, 'expression', f'{float(other):g}')
         return Quantity(float(self) + float(other), f'{self.expression} + {expression}',
-                        self.sources + getattr(other, 'sources', ()))
+                        self.sources + getattr(other, 'sources', ()),
+                        self.element_guids + getattr(other, 'element_guids', ()))
 
     __radd__ = __add__
 
     def __mul__(self, factor):
-        return Quantity(float(self) * factor, f'({self.expression}) × {factor:g}', self.sources)
+        return Quantity(float(self) * factor, f'({self.expression}) × {factor:g}', self.sources, self.element_guids)
 
     __rmul__ = __mul__
 
     def __round__(self, digits=0):
-        return Quantity(round(float(self), digits), self.expression, self.sources)
+        return Quantity(round(float(self), digits), self.expression, self.sources, self.element_guids)
 
     @property
     def calculation(self):

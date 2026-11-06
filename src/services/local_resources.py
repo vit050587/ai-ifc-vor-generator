@@ -10,14 +10,16 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.core.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-PRICE_COST_XLSX = os.getenv("PRICE_COST_PATH", "/app/data/price_cost.xlsx")
-LOCAL_RES_JSON = os.getenv("LOCAL_RESOURCES_PATH", "/app/data/local_resources.json")
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+PRICE_COST_XLSX = os.getenv("PRICE_COST_PATH", str(_DATA_DIR / "price_cost.xlsx"))
+LOCAL_RES_JSON = os.getenv("LOCAL_RESOURCES_PATH", str(_DATA_DIR / "local_resources.json"))
 SHEET = "_Связаанные_ресурсы_select_wp_p"
 _CODE = re.compile(r"^\d+\.\d+-\d+-\d+")
 _cache: Optional[Dict[str, Dict[str, Any]]] = None
@@ -95,7 +97,7 @@ if __name__ == "__main__":
 
 
 # ===== Нормы расхода ресурсов в расценках (лист «Связанные ресурсы», колонка «Расход») =====
-LOCAL_NORMS_JSON = os.getenv("LOCAL_NORMS_PATH", "/app/data/local_norms.json")
+LOCAL_NORMS_JSON = os.getenv("LOCAL_NORMS_PATH", str(_DATA_DIR / "local_norms.json"))
 _norms = None
 
 

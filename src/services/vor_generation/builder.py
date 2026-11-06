@@ -131,7 +131,7 @@ def _group_header(elements: List[Element], param: Optional[str], label: Optional
 
 def _model_quantity(el, value, expression=None):
     source = ', '.join(filter(None, [el.name or el.group_name or el.mge_name, el.storey]))
-    return Quantity(value, f'{expression or f"{value:g}"} [{source}]', (source,))
+    return Quantity(value, f'{expression or f"{value:g}"} [{source}]', (source,), (el.guid,))
 
 
 def _foundation_formwork_area(elements: List[Element]) -> Optional[float]:
@@ -323,18 +323,21 @@ def _fill_work(row: template.TemplateRow, elements: List[Element],
         elif qk == "volume":
             volume = float(agg.get("volume") or agg.get("gross_volume") or 0.0)
             if volume:
-                result = (round(volume, 2), ctx.ref_ifc)
+                key = "volume" if agg.get("volume") else "gross_volume"
+                traced = Quantity(volume, element_guids=[el.guid for el in elements if el.quantity(key)])
+                result = (round(traced, 2), ctx.ref_ifc)
         elif qk == "hydro_area":
             area = float(agg.get("area") or 0.0)
             if area:
-                result = (round(area, 2), ctx.ref_ifc)
+                traced = Quantity(area, element_guids=[el.guid for el in elements if el.quantity("area")])
+                result = (round(traced, 2), ctx.ref_ifc)
         elif qk == "count" and "шт" in unit and row.element_kind:
             # Штучный объём — количество элементов конкретного типа конструкции;
             # без распознанного типа конструкции брать все элементы части здания
             # нельзя (иначе штучная работа получила бы число всех элементов).
             count = float(agg.get("count") or 0)
             if count:
-                result = (count, ctx.ref_ifc)
+                result = (Quantity(count, element_guids=[el.guid for el in elements]), ctx.ref_ifc)
 
     if result[0] is not None:
         return result

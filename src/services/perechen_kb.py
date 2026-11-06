@@ -18,6 +18,8 @@
     python -m src.services.perechen_kb list            # структура перечня
     python -m src.services.perechen_kb [N] [nocache]   # тест на последнем запуске
 """
+from pathlib import Path
+
 import glob
 import hashlib
 import json
@@ -29,15 +31,16 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from src.core.config import load_config
 from src.core.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-PERECHEN_XLSX = os.getenv("PERECHEN_KR_PATH", "/app/data/perechen_kr.xlsx")
-OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
-KB_MODEL = os.getenv("KB_LLM_MODEL", os.getenv("LLM_MODEL", "qwen3.8:27b"))
-TREE_JSON = os.getenv("TREE_WORK_PATH", "/app/data/tree_work_compact.json")
-CACHE_PATH = os.getenv("KB_CACHE_PATH", "/app/data/kb_cache.json")
+PERECHEN_XLSX = os.getenv("PERECHEN_KR_PATH", str(Path(__file__).resolve().parents[2] / "data" / "perechen_kr.xlsx"))
+OLLAMA_URL = load_config().ollama_url
+KB_MODEL = os.getenv("KB_LLM_MODEL", os.getenv("LLM_MODEL", load_config().model_ollama))
+TREE_JSON = os.getenv("TREE_WORK_PATH", str(Path(__file__).resolve().parents[2] / "data" / "tree_work_compact.json"))
+CACHE_PATH = os.getenv("KB_CACHE_PATH", str(Path(__file__).resolve().parents[2] / "data" / "kb_cache.json"))
 CACHE_VERSION = 18
 
 PARTS = ("Подземная", "Цоколь", "Надземная")
@@ -249,7 +252,7 @@ KB_THINK_TIMEOUT = int(os.getenv("KB_THINK_TIMEOUT", "900"))
 
 
 def _ask_llm(prompt: str, think: bool = False) -> Dict[str, Any]:
-    """Запрос к qwen: лимит длины ответа, таймаут, повтор без format=json."""
+    """Запрос к модели подбора: лимит длины ответа, таймаут, повтор без format=json."""
     import ollama
     num_predict = KB_THINK_NUM_PREDICT if think else KB_NUM_PREDICT
     client = ollama.Client(host=OLLAMA_URL, timeout=KB_THINK_TIMEOUT if think else KB_TIMEOUT)
@@ -267,6 +270,7 @@ def _ask_llm(prompt: str, think: bool = False) -> Dict[str, Any]:
             except ValueError:
                 return {}
 
+    failure = "модель не вернула корректный JSON-объект"
     for use_json in (True, False):
         kwargs = dict(base, format="json") if use_json else dict(base)
         try:
@@ -280,13 +284,15 @@ def _ask_llm(prompt: str, think: bool = False) -> Dict[str, Any]:
                     f"LLM-ответ обрезан или пуст (think={think}, num_predict={num_predict}, "
                     f"done_reason={resp.get('done_reason')}, eval_count={resp.get('eval_count')})")
                 if resp.get("done_reason") == "length":
+                    failure = "ответ обрезан по лимиту длины"
                     break   # тот же промпт при том же лимите снова не поместится
             result = _parse(content)
-            if result:
+            if isinstance(result, dict) and result:
                 return result
         except Exception as exc:
+            failure = str(exc)
             logger.warning(f"LLM-запрос не удался (json={use_json}): {exc}")
-    return {}
+    raise RuntimeError(f"Подбор не выполнен: модель {KB_MODEL} ({OLLAMA_URL}): {failure}")
 
 
 def _ids(values: Any) -> set:
@@ -889,6 +895,8 @@ def search_full(el: Dict[str, Any], part: str, height: Optional[float]) -> Dict[
         "(например: «теплоизол», «пенополист», «плит», «стен»).\n"
         'Ответь строго JSON: {"keywords": ["...", "..."]}')
     keywords = [str(k) for k in (kw.get("keywords") or []) if str(k).strip()]
+    if not keywords:
+        raise RuntimeError(f"Модель {KB_MODEL} не вернула ключевые слова для поиска работ; повторите подбор")
     cands = _search_candidates(keywords, height)
     if not cands:
         return {"works": [], "reason": f"по словам {keywords} в справочнике ничего не найдено"}
@@ -930,7 +938,9 @@ def pick_for_element(el: Dict[str, Any], part: str, subs: List[Dict[str, Any]],
                             "reason": "бетонная подготовка — по правилу: только 3.6-1-1 и бетон В7,5"}
     sig = _signature(el, part, height)
     cache = _load_cache()
-    if use_cache and sig in cache:
+    cached_reason = str(cache.get(sig, {}).get("reason", ""))
+    failed_model = "модель не ответила" in cached_reason or "по словам []" in cached_reason
+    if use_cache and sig in cache and not failed_model:
         c = cache[sig]
         if c.get("sub_id") == "search":
             works = _works_from_rates(c.get("rates") or [])

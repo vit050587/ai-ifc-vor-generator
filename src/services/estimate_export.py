@@ -468,6 +468,7 @@ def write_workbook(data, path):
             continue
         position+=1
         parent_row = i
+        record['estimate_row'] = i
         if record['code'].startswith('1.'):
             for column,value in enumerate([position,record['code'],record['title'],record['unit'],record['quantity_exact']],1):
                 sheet.cell(i,column,value)
@@ -510,6 +511,7 @@ def write_workbook(data, path):
             _,resource_notes=_corrections(resource.get('decisions',[]),resource)
             _comment(sheet.cell(i,7),'\n\n'.join(resource_notes['materials']))
             _comment(sheet.cell(i,2),'Отдельно учтённый ресурс работы «'+record['title']+'». '+resource.get('resource_parent_basis','')+' Включён в общий итог этой работы один раз; накладные расходы и сметная прибыль на стоимость ресурса не начисляются.')
+            resource['estimate_row'] = i
             child={'record':resource,'row':i,'resources':[],'parent':entry}
             layout.append(child);entry['resources'].append(child)
             i+=1

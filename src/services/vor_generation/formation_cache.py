@@ -72,6 +72,8 @@ def save(folder, key, result):
     if result.get('aiReasonSummary', {}).get('failed', 0):
         return
     paths = [result['file'], *[item['file'] for item in result['source_files']]]
+    paths.extend(str(Path(path).with_suffix('.model-links.json')) for path in list(paths)
+                 if Path(path).with_suffix('.model-links.json').is_file())
     payload = {'key':key,'result':result,'artifacts':{str(path):digest(path) for path in paths}}
     target = Path(folder) / CACHE_FILENAME
     temporary = target.with_name(target.name + '.' + uuid.uuid4().hex + '.tmp')

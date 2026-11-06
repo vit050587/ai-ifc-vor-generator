@@ -171,6 +171,7 @@ class Element:
     concrete_spec: str = ""        # марка бетона с показателями («В30, W8, F150»)
     component: str = ""            # подтип лестницы: flight (марш)|landing (площадка)
     quantity_sources: Dict[str, str] = field(default_factory=dict)
+    guid: str = ""
 
     def quantity(self, name: str) -> float:
         return float(self.quantities.get(name) or 0.0)
@@ -416,6 +417,7 @@ class ElementIndex:
 
             grade = _text(row.get("Свойство::ExpCheck_MaterialConcrete::MGE_ConcreteGrade"))
             elements.append(Element(
+                guid=_text(row.get("GlobalId")),
                 ifc_class=ifc_class,
                 kind=kind,
                 part=part,
