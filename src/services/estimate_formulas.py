@@ -119,6 +119,8 @@ def round_costs(data):
         values = [current_values[k] for k in ('labor','machines','materials')]
         record['direct'] = sum_known(values)
         record['total'] = sum_known([*values,record['overhead'],record['profit']])
+        if resource:
+            record['direct'] = record['total'] = current_values['materials']
         record['incomplete'] = (any(v is None for v in [*values,record['overhead'],record['profit']])
                                 or not all(calculation[k]['complete'] for k in ('labor','machines','materials')))
         if record['incomplete']:
@@ -131,6 +133,8 @@ def round_costs(data):
         values = [base_values[k] for k in ('labor','machines','materials')]
         base['direct'] = sum_known(values)
         base['total'] = sum_known([*values,base['overhead'],base['profit']])
+        if resource:
+            base['direct'] = base['total'] = base_values['materials']
         record['base'] = base
         hours = number(detail.get('fixedTime'))
         record['labor_hours'] = {}
@@ -147,7 +151,7 @@ def round_costs(data):
     data['warnings'] = list(dict.fromkeys([*previous,*warnings]))
 
 
-def apply(book, data):
+def apply(book, data, layout):
     """Author live formulas and return independently calculated initial caches."""
     from .estimate_export import _comment
     round_costs(data)
@@ -190,22 +194,34 @@ def apply(book, data):
     for col,title in zip('OPQRSTU',('Исходный объём','Исходная текущая сумма','Исходная поправка','Исходный текущий зимний коэффициент','Текущая цена справочника для проверки','Исходная базисная цена','Исходный индекс')):
         sheet[f'{col}16'] = title
         sheet.column_dimensions[col].hidden = True
-    records = [r for r in data['rows'] if 'code' in r]
-    positions = [r for r in range(19,sheet.max_row+1) if isinstance(sheet.cell(r,1).value,int) and sheet.cell(r,2).value]
-    if len(positions) != len(records):
-        raise ValueError('Не удалось сопоставить позиции сметы и расчёта')
+    records = [entry['record'] for entry in layout]
+    positions = [entry['row'] for entry in layout]
 
-    for p,record in zip(positions,records):
-        if sheet.cell(p,2).value != record['code']:
-            raise ValueError('Порядок позиций сметы и расчёта не совпадает')
+    for entry in layout:
+        p,record = entry['row'],entry['record']
+        resource = record['code'].startswith('1.')
+        children = entry['resources']
         quantity = f'$E${p}'
+        parent = entry['parent']
+        if parent is not None:
+            parent_quantity = number(parent['record']['quantity_exact'])
+            resource_quantity = number(record['quantity_exact'])
+            if parent_quantity is not None and parent_quantity > 0 and resource_quantity is not None:
+                ratio = float(resource_quantity / parent_quantity)
+                input_cell(f'V{p}',ratio)
+                formula(f'E{p}',f'=IF(ISNUMBER(E{parent["row"]}),E{parent["row"]}*V{p},"")',record['quantity_exact'])
+                editable.add(f'E{p}')
         sheet[quantity].font = Font(name='Arial',size=10,color=BLUE)
+        if sheet[quantity].data_type == 'f':
+            sheet[quantity].number_format = '0.00########'
         _comment(sheet[quantity],f"Количество единиц расценки из строки {record['source_row']} сформированного перечня. "+
                  ('Объём не определён: укажите количество для расчёта.' if record['quantity_exact'] is None else 'Повторное деление на 100 и норму расхода не выполняется.')+
                  ' Объём редактируемый; оба уровня цен пересчитываются.')
+        if parent is not None and sheet[f'E{p}'].data_type == 'f':
+            _comment(sheet[f'E{p}'],'Количество ресурса связано с объёмом работы и пересчитывается вместе с ним. Расход на единицу работы определён по исходным количествам перечня; повторно норма расхода не применяется. Для отдельного изменения количества замените формулу числом.')
         refs = []
         complete_checks = [f'ISNUMBER({quantity})']
-        for key,delta in (('labor',1),('machines',2),('drivers',3),('materials',4)):
+        for key,delta in ([('materials',0)] if resource else [('labor',1),('machines',2),('drivers',3),('materials',4)]):
             r = p+delta
             c = record['calculation'][key]
             for col,value in [('F',c['base_price']),('G',c['correction']),('H',c['base_winter']),('J',c['index']),('L',c['current_winter'])]:
@@ -281,11 +297,19 @@ def apply(book, data):
             if key != 'drivers':
                 refs.append(f'F{r}')
                 complete_checks.append(f'AND(ISNUMBER(F{r}),OR(F{r}=0,AND(ISNUMBER(J{r}),J{r}>0,ISNUMBER(L{r}),L{r}>0)))')
+        if resource:
+            if parent is None:
+                formula(f'AA{p}',f'=IF(AND({",".join(complete_checks)}),0,1)',int(record['incomplete']))
+                for col,countcol,valuecol,initial in (('K','AB','AC',record['total']),('I','AD','AE',record['base']['total'])):
+                    formula(f'{countcol}{p}',f'=COUNT({col}{p})',int(initial is not None))
+                    formula(f'{valuecol}{p}',f'=IF(ISNUMBER({col}{p}),{col}{p},"")',initial)
+            continue
+        footer = entry['footer']
         known = [number(record['calculation'][k]['base_price']) for k in ('labor','machines','materials') if record['calculation'][k]['base_price'] is not None]
         formula(f'F{p}',_sum_formula(refs,False),float(sum(known)) if known else None)
         _comment(sheet[f'F{p}'],'Базисная цена единицы работы: зарплата рабочих + эксплуатация машин + материалы, до применения поправок. Зарплата машинистов уже входит в стоимость машин.')
-        for delta,field in ((5,'overhead'),(6,'profit')):
-            r = p+delta
+        for delta,field in ((0,'overhead'),(1,'profit')):
+            r = footer+delta
             input_cell(f'J{r}',record[field+'_rate'])
             formula(f'E{r}',f'=IF(ISNUMBER(J{r}),J{r},"")',record[field+'_rate'])
             for col,initial in (('I',record['base'][field]),('K',record[field])):
@@ -296,7 +320,7 @@ def apply(book, data):
                          f"Норматив взят из расценки за период {data['period']['title']}. Основание: п. 3.4.22 ТСН-2001.12. "+
                          ('Для отдельной строки материала это начисление не применяется.' if record['code'].startswith('1.') else
                           'Недостаточно данных: проверьте зарплату рабочих, зарплату машинистов и норматив. Пустое значение не означает нулевые затраты.' if record[field] is None else ''))
-        hours_row = p+7
+        hours_row = footer+2
         sheet[f'C{hours_row}'] = 'ЗТР'
         sheet[f'D{hours_row}'] = 'чел.-ч'
         input_cell(f'E{hours_row}',record['labor_hours']['unit'])
@@ -305,18 +329,23 @@ def apply(book, data):
             product = f'E{hours_row}*{quantity}*IF(ISNUMBER(G{p+1}),G{p+1},1)*IF(ISNUMBER({w}),{w},1)'
             valid = f'AND(ISNUMBER(E{hours_row}),ISNUMBER({quantity}),OR(G{p+1}="",AND(ISNUMBER(G{p+1}),G{p+1}>0)),OR({w}="",AND(ISNUMBER({w}),{w}>0)))'
             formula(f'{col}{hours_row}',f'=IF({valid},{_round_money(product)},"")',initial)
-        direct,total = p+8,p+9
+        direct,total = footer+3,footer+4
         for col,values in (('I',record['base']),('K',record)):
-            formula(f'{col}{direct}',_sum_formula([f'{col}{p+d}' for d in (1,2,4)]),values['direct'])
-            formula(f'{col}{total}',_sum_formula([f'{col}{direct}',f'{col}{p+5}',f'{col}{p+6}']),values['total'])
+            resource_amounts = [child['record']['base']['total'] if col == 'I' else child['record']['total'] for child in children]
+            formula(f'{col}{direct}',_sum_formula([f'{col}{p+d}' for d in (1,2,4)]+[f'{col}{child["row"]}' for child in children]),sum_known([values['direct'],*resource_amounts]))
+            formula(f'{col}{total}',_sum_formula([f'{col}{direct}',f'{col}{footer}',f'{col}{footer+1}']),sum_known([values['total'],*resource_amounts]))
             _comment(sheet[f'{col}{total}'],'Сумма зарплаты рабочих, эксплуатации машин, материалов, накладных расходов и сметной прибыли. Зарплата машинистов уже входит в стоимость машин, а трудозатраты выражены в часах. Недостающие затраты в итог не включены.')
-        cost_refs = ','.join(f'K{p+d}' for d in (1,2,4,5,6))
-        formula(f'AA{total}',f'=IF(AND(COUNT({cost_refs})=5,{",".join(complete_checks)}),0,1)',int(record['incomplete']))
-        for col,countcol,valuecol,initial in (('K','AB','AC',record['total']),('I','AD','AE',record['base']['total'])):
+        for child in children:
+            q=child['row']
+            complete_checks.append(f'AND(ISNUMBER(E{q}),ISNUMBER(F{q}),ISNUMBER(K{q}),OR(F{q}=0,AND(ISNUMBER(J{q}),J{q}>0,ISNUMBER(L{q}),L{q}>0)))')
+        cost_refs = ','.join([f'K{p+d}' for d in (1,2,4)]+[f'K{footer}',f'K{footer+1}'])
+        incomplete = any(item['record']['incomplete'] for item in [entry,*children])
+        formula(f'AA{total}',f'=IF(AND(COUNT({cost_refs})=5,{",".join(complete_checks)}),0,1)',int(incomplete))
+        for col,countcol,valuecol,initial in (('K','AB','AC',sum_known([record['total'],*[child['record']['total'] for child in children]])),('I','AD','AE',sum_known([record['base']['total'],*[child['record']['base']['total'] for child in children]]))):
             formula(f'{countcol}{total}',f'=COUNT({col}{total})',int(initial is not None))
             formula(f'{valuecol}{total}',f'=IF(ISNUMBER({col}{total}),{col}{total},"")',initial)
         formula(f'C{total}',f'=IF(AA{total}=0,"ВСЕГО по позиции:","ВСЕГО по позиции (по известным суммам):")',
-                'ВСЕГО по позиции (по известным суммам):' if record['incomplete'] else 'ВСЕГО по позиции:')
+                'ВСЕГО по позиции (по известным суммам):' if incomplete else 'ВСЕГО по позиции:')
 
     start = 19
     sections = [r for r in range(19,sheet.max_row+1) if str(sheet.cell(r,1).value or '').startswith('Итого по разделу')]
@@ -339,8 +368,9 @@ def apply(book, data):
     sheet.merge_cells('A9:H9')
     sheet['A9'] = 'Сметная стоимость в базисном уровне цен, тыс. руб. (по известным суммам)'
     formula('I9',f'=IF(ISNUMBER(I{grand}),{_round_money(f"I{grand}/1000")},"")',money(number(base_total)/1000) if base_total is not None else None)
-    for col in ('AA','AB','AC','AD','AE'):
+    for col in ('V','AA','AB','AC','AD','AE'):
         sheet.column_dimensions[col].hidden = True
+    sheet['V16'] = 'Расход ресурса на единицу работы по исходным количествам'
     sheet.print_area = f'A1:L{sheet.max_row}'
     for row in sheet:
         for cell in row:

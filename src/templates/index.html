@@ -767,6 +767,12 @@
                         <span class="pt-text">ИИ</span>
                         <span class="pt-badge">Искусственный интеллект</span>
                     </label>
+                    <label class="processing-type-label" id="ptLabelARCH">
+                        <input type="radio" name="processingType" value="ARCH" onchange="onProcessingTypeChange()">
+                        <span class="pt-icon">📐</span>
+                        <span class="pt-text">Архитектура</span>
+                        <span class="pt-badge">Только архитектурные решения</span>
+                    </label>
                 </div>
 
                 <div class="upload-area" id="uploadArea">
@@ -985,6 +991,12 @@
                         <span class="pt-icon">🏛️</span>
                         <span class="pt-text">ИИ</span>
                         <span class="pt-badge">Искусственный интеллект</span>
+                    </label>
+                    <label class="processing-type-label" id="refPtLabelARCH">
+                        <input type="radio" name="referenceProcessingType" value="ARCH">
+                        <span class="pt-icon">📐</span>
+                        <span class="pt-text">Архитектура</span>
+                        <span class="pt-badge">Только архитектурные решения</span>
                     </label>
                 </div>
                 <div class="upload-area" id="referenceUploadArea">
@@ -1345,14 +1357,23 @@ const PERF = {
 const API_BASE = '/ifc-vor/api';
 
 // ========== Режимы обработки ==========
-const MODE_NAMES = { CS: 'Цифровой сборник (ЦС)', AI: 'Искусственный интеллект (ИИ)' };
+const MODE_NAMES = {
+    CS: 'Цифровой сборник (ЦС)',
+    AI: 'Искусственный интеллект (ИИ)',
+    ARCH: 'Архитектура'
+};
 function normalizeProcessingType(value) {
     if (!value) return 'CS';
     const v = String(value).trim().toUpperCase();
+    if (v === 'ARCH' || v === 'ARCHITECTURE' || v === 'АРХ' || v === 'АРХИТЕКТУРА') return 'ARCH';
     if (v === 'AI' || v === 'AR' || v === 'АР') return 'AI';
     return 'CS';
 }
 function isAIMode(value) { return normalizeProcessingType(value) === 'AI'; }
+function isArchMode(value) { return normalizeProcessingType(value) === 'ARCH'; }
+// Режимы, использующие LLM-пайплайн подбора работ и разбор документов
+// ПОС/ПЗ/ВОР/ПД: ИИ и Архитектура.
+function isAIorArchMode(value) { return isAIMode(value) || isArchMode(value); }
 function isCSMode(value) { return normalizeProcessingType(value) === 'CS'; }
 
 // ========== Переключатель ЦС / ИИ ==========
@@ -1390,7 +1411,7 @@ let _posConstantsPollTimer = null;
 function updateArConstantsPanel() {
     const panel = document.getElementById('arConstantsPanel');
     if (!panel) return;
-    const isAI = isAIMode(currentProcessingType);
+    const isAI = isAIorArchMode(currentProcessingType);
     panel.style.display = isAI ? 'block' : 'none';
     if (isAI) loadWorksConstants();
 }
@@ -1655,13 +1676,15 @@ function collectArConstants() {
 }
 
 function updateProcessingTypeBadges() {
-    const badgeText = currentProcessingType;
+    const badgeText = { CS: 'ЦС', AI: 'ИИ', ARCH: 'АРХ' }[currentProcessingType]
+        || currentProcessingType;
     ['ptBadgeStep0', 'ptBadgeStep1', 'ptBadgeResults'].forEach(id => {
         const badge = document.getElementById(id);
         if (badge) badge.textContent = badgeText;
     });
-    // В режиме ИИ показываем высоту этажа + высоту здания, в ЦС — только высоту здания.
-    const isAI = isAIMode(currentProcessingType);
+    // В режимах ИИ и Архитектура показываем высоту этажа + высоту здания,
+    // в ЦС — только высоту здания.
+    const isAI = isAIorArchMode(currentProcessingType);
     const label = document.getElementById('buildingHeightLabel');
     if (label) label.textContent = isAI ? 'Высота этажа (м):' : 'Высота здания (м):';
     const hint = document.getElementById('buildingHeightHint');
@@ -1675,11 +1698,11 @@ function updateProcessingTypeBadges() {
 }
 
 // Подстановка высот в поля интерфейса с учётом режима:
-// ЦС — единственное поле «Высота здания»; ИИ — «Высота этажа» + «Высота здания».
+// ЦС — единственное поле «Высота здания»; ИИ/Архитектура — «Высота этажа» + «Высота здания».
 function applyHeightsToInputs(buildingHeight, floorHeight) {
     const floorInput = document.getElementById('buildingHeight');
     const buildingInput = document.getElementById('buildingHeightAR');
-    if (isAIMode(currentProcessingType)) {
+    if (isAIorArchMode(currentProcessingType)) {
         if (buildingInput && buildingHeight) buildingInput.value = buildingHeight;
         if (floorHeight && floorInput) floorInput.value = floorHeight;
     } else if (buildingHeight && floorInput) {
@@ -2318,7 +2341,7 @@ function resetPdUpload() {
 
 // Показывает блоки загрузки ПОС, ПЗ, ВОР и ПД только в режиме ИИ
 function updatePosUploadVisibility() {
-    const isAI = isAIMode(currentProcessingType);
+    const isAI = isAIorArchMode(currentProcessingType);
     const block = document.getElementById('posUploadBlock');
     if (block) block.style.display = isAI ? 'block' : 'none';
     const pzBlock = document.getElementById('pzUploadBlock');
@@ -2382,16 +2405,16 @@ async function uploadFile() {
         }
     }
 
-    if (isAIMode(currentProcessingType) && posSelectedFile) {
+    if (isAIorArchMode(currentProcessingType) && posSelectedFile) {
         formData.append('posFile', posSelectedFile);
     }
-    if (isAIMode(currentProcessingType) && pzSelectedFile) {
+    if (isAIorArchMode(currentProcessingType) && pzSelectedFile) {
         formData.append('pzFile', pzSelectedFile);
     }
-    if (isAIMode(currentProcessingType) && vorSelectedFile) {
+    if (isAIorArchMode(currentProcessingType) && vorSelectedFile) {
         formData.append('vorFile', vorSelectedFile);
     }
-    if (isAIMode(currentProcessingType) && pdSelectedFile) {
+    if (isAIorArchMode(currentProcessingType) && pdSelectedFile) {
         formData.append('pdFile', pdSelectedFile);
     }
     try {
@@ -2555,7 +2578,7 @@ async function startNewRun() {
 
 async function confirmRowSelection() {
     if (selectedRows.size === 0) { showToast('Выберите хотя бы одну строку', 'warning'); return; }
-    const isAI = isAIMode(currentProcessingType);
+    const isAI = isAIorArchMode(currentProcessingType);
     let height = null;
     let floorHeight = null;
     if (isAI) {
@@ -2617,7 +2640,7 @@ async function confirmRowSelection() {
         buildingHeight: height,
         groupedData: null,
         processingType: currentProcessingType,
-        globalConstants: isAIMode(currentProcessingType) ? collectArConstants() : {}
+        globalConstants: isAIorArchMode(currentProcessingType) ? collectArConstants() : {}
     };
     if (floorHeight !== null) payload.floorHeight = floorHeight;
 
@@ -2927,7 +2950,7 @@ function renderPreview(data) {
     if (!head || !body) return;
     // В режиме ИИ «Часть здания» и «Материал» — только отображаемые значения
     // (как «Тип элемента»), пользователь их не редактирует. В ЦС поведение прежнее.
-    const isAI = isAIMode(data.processingType);
+    const isAI = isAIorArchMode(data.processingType);
     const globalMatSelect = document.getElementById('globalMaterialSelect');
     if (globalMatSelect) globalMatSelect.style.display = isAI ? 'none' : '';
     const typeFloorIdx = data.headers.indexOf('Этаж');
@@ -3007,7 +3030,7 @@ function renderPreview(data) {
         // элементы (GlobalId → {name, order, code} в data.materialsGroupMap).
         // Если МССК-кода нет («Прочее»/«Многослойные») — оставляем исходное
         // значение колонки «Материал».
-        if (isAIMode(data.processingType) && data.materialsGroupMap) {
+        if (isAIorArchMode(data.processingType) && data.materialsGroupMap) {
             const gidIdx = data.headers.indexOf('GlobalId');
             if (gidIdx !== -1) {
                 const gid = row[gidIdx] ? String(row[gidIdx]).trim() : '';
@@ -4341,7 +4364,7 @@ function groupRowsCommon(mode) {
 
 // ========== Группировка для режима ЦС ==========
 function autoGroupRows() {
-    if (isAIMode(currentProcessingType)) { autoGroupRowsAR(); return; }
+    if (isAIorArchMode(currentProcessingType)) { autoGroupRowsAR(); return; }
     groupRowsCommon('ЦС');
 }
 
@@ -4992,8 +5015,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   async function load(){
     const sid=(typeof currentSessionId!=='undefined')?currentSessionId:null;
-    // Панель работает только в режиме ИИ (AI); легаси-код AR нормализуется isAIMode.
-    if(!sid || (typeof isAIMode==='function' && !isAIMode(currentProcessingType))) return;
+    // Панель работает в режимах ИИ (AI) и Архитектура (ARCH);
+    // легаси-код AR нормализуется isAIorArchMode.
+    if(!sid || (typeof isAIorArchMode==='function' && !isAIorArchMode(currentProcessingType))) return;
     if(sid!==lastSid || !Object.keys(pos).length){
       lastSid=sid; pos={}; posFile='';
       try{ const base=(typeof API_BASE!=='undefined')?API_BASE:'';
@@ -5152,7 +5176,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   async function load(){
     const sid=(typeof currentSessionId!=='undefined')?currentSessionId:null;
-    if(!sid || (typeof isAIMode==='function' && !isAIMode(currentProcessingType))) return;
+    if(!sid || (typeof isAIorArchMode==='function' && !isAIorArchMode(currentProcessingType))) return;
     if(sid!==lastSid){ lastSid=sid; data=null; render(); }
     try{ data=await (await fetch(base()+'/session/'+sid+'/doc_facts')).json(); render(); }catch(e){}
   }

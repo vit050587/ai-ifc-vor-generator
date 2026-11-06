@@ -197,9 +197,87 @@ def _coefficients(row, extra, model_state=None):
     return out
 
 
+def _resource_links():
+    """Read explicit work/resource relationships, never infer from row proximity."""
+    import pandas as pd
+    from src.core.config import load_config
+    try:
+        table = pd.read_excel(load_config().KOEFS_PATH)
+        required = {'Шифр ТСН','Шифр\nресурса'}
+        if not required.issubset(table.columns):
+            return set()
+        return {(str(parent).strip(),str(resource).strip())
+                for parent,resource in table[['Шифр ТСН','Шифр\nресурса']].itertuples(index=False,name=None)
+                if pd.notna(parent) and pd.notna(resource)}
+    except (OSError,ValueError):
+        logger.warning('Не удалось прочитать связи работ и ресурсов из справочника')
+        return set()
+
+
+def _resource_matches_work(resource, work):
+    """Recognize specific material/operation pairs, not generic shared words."""
+    material, operation = _norm(resource['title']), _norm(work['title'])
+    if re.search(r'смес[ьи]\s+бетон|бетон\w*\s+смес',material):
+        return bool(re.match(r'бетонирование(?:\s|$)',operation))
+    if 'арматур' in material and re.search(r'заготов|сталь|каркас|сетк',material):
+        if not re.match(r'установка\s+.*(?:арматур|отдельн\w*\s+стержн)',operation):
+            return False
+        # Loose bars must not be charged to installing assembled cages/meshes.
+        if re.search(r'не\s+собран\w*\s+в\s+каркас',material):
+            return bool(re.search(r'отдельн\w*\s+стержн',operation))
+        return True
+    if re.match(r'марши\s+лестничные',material):
+        return operation.startswith('установка лестничных маршей')
+    if 'плиты из минеральной ваты' in material:
+        return operation.startswith('теплоизоляция ')
+    return False
+
+
+def _position_groups(rows):
+    """Resolve catalog links first, then unambiguous material/operation pairs."""
+    links = _resource_links()
+    groups = []
+    section = []
+
+    def finish():
+        entries = [(record,[]) for record in section]
+        attached = set()
+        for resource,_ in entries:
+            if not resource['code'].startswith('1.'):
+                continue
+            resource.pop('resource_parent_basis',None)
+            resource.pop('resource_parent_issue',None)
+            works = [(parent,children) for parent,children in entries
+                     if not parent['code'].startswith('1.')
+                     and parent.get('group_id',parent.get('group')) == resource.get('group_id',resource.get('group'))]
+            candidates = [(parent,children) for parent,children in works
+                          if (parent['code'],resource['code']) in links]
+            basis = 'Связь работы и ресурса указана в справочнике.'
+            if not candidates:
+                candidates = [(parent,children) for parent,children in works
+                              if _resource_matches_work(resource,parent)]
+                basis = 'Ресурс отнесён к единственной подходящей работе этой группы по назначению материала и виду операции.'
+            if len(candidates) == 1:
+                resource['resource_parent_basis'] = basis
+                candidates[0][1].append(resource)
+                attached.add(id(resource))
+            elif len(candidates) > 1:
+                resource['resource_parent_issue'] = 'Подходят несколько работ этой группы: '+', '.join(parent['code'] for parent,_ in candidates)+'. Уточните, как распределить количество ресурса между ними.'
+        groups.extend(entry for entry in entries if id(entry[0]) not in attached)
+        section.clear()
+
+    for record in rows:
+        if 'heading' in record:
+            finish()
+            groups.append((record,[]))
+        else:
+            section.append(record)
+    finish()
+    return groups
+
+
 def _row_decisions(rows, extra, provider, model_state, warnings):
     decisions={}
-    scoped={}
     for index,row in enumerate(rows):
         if 'code' not in row or row['code'].startswith('1.'):
             continue
@@ -214,12 +292,19 @@ def _row_decisions(rows, extra, provider, model_state, warnings):
             from .work_height import height_decisions
             found = height_decisions(row['code'],row['title'],row['facts'],tsn_coeffs.candidates(row['code']),found)
         decisions[index]=found
-        scoped.setdefault(row.get('group_id',row['group']),[]).extend(d for d in found if d.get('resource'))
+    parents = {}
+    for parent, resources in _position_groups(rows):
+        if 'code' in parent:
+            for resource in resources:
+                parents[id(resource)] = parent
+    indices = {id(row):index for index,row in enumerate(rows)}
     for index,row in enumerate(rows):
         if 'code' not in row or not row['code'].startswith('1.'):
             continue
+        parent = parents.get(id(row))
+        found = decisions.get(indices[id(parent)],[]) if parent is not None else []
         decisions[index]=[dict(d,coefficients={'material_consumption':d.get('coefficients',{}).get('material_consumption')})
-                          for d in scoped.get(row.get('group_id',row['group']),[]) if _norm(d['resource']) in _norm(row['title'])]
+                          for d in found if d.get('resource') and _norm(d['resource']) in _norm(row['title'])]
     return decisions
 
 
@@ -371,7 +456,8 @@ def write_workbook(data, path):
             sheet.cell(i,1).font=Font(name='Arial',size=10,bold=True)
             i+=2
             section_totals.clear()
-    for record in data['rows']:
+    layout = []
+    for record, resources in _position_groups(data['rows']):
         if 'heading' in record:
             finish_section()
             sheet.merge_cells(start_row=i,start_column=1,end_row=i,end_column=11)
@@ -381,6 +467,18 @@ def write_workbook(data, path):
             i+=1
             continue
         position+=1
+        parent_row = i
+        if record['code'].startswith('1.'):
+            for column,value in enumerate([position,record['code'],record['title'],record['unit'],record['quantity_exact']],1):
+                sheet.cell(i,column,value)
+            sheet.row_dimensions[i].height=max(42,14*(len(record['title'])//45+1))
+            layout.append({'record':record,'row':i,'resources':[],'parent':None})
+            _comment(sheet.cell(i,2),'Ресурс указан отдельно. '+record.get('resource_parent_issue','Не удалось определить подходящую работу этой группы по справочнику или назначению материала.')+' По соседству строк ресурс не присоединяется. Стоимость включена в итог раздела один раз.')
+            totals.append(record['total']);section_totals.append((record['total'],record['incomplete']))
+            i+=2
+            continue
+        entry = {'record':record,'row':i,'resources':[],'parent':None}
+        layout.append(entry)
         for column,value in enumerate([position,record['code'],record['title'],record['unit'],record['quantity_exact']],1):
             sheet.cell(i,column,value)
         sheet.row_dimensions[i].height=max(42,14*(len(record['title'])//45+1))
@@ -405,6 +503,19 @@ def write_workbook(data, path):
                 sheet.cell(i,3,'в т.ч. ЗПМ');sheet.cell(i,11,record['drivers'])
                 _comment(sheet.cell(i,11),'Зарплата машинистов уже входит в ЭМ; повторно в итог не суммируется.')
                 i+=1
+        for resource_number,resource in enumerate(resources,1):
+            for column,value in enumerate([f'{position}.{resource_number}',resource['code'],resource['title'],resource['unit'],resource['quantity_exact']],1):
+                sheet.cell(i,column,value)
+            sheet.row_dimensions[i].height=max(42,14*(len(resource['title'])//45+1))
+            _,resource_notes=_corrections(resource.get('decisions',[]),resource)
+            _comment(sheet.cell(i,7),'\n\n'.join(resource_notes['materials']))
+            _comment(sheet.cell(i,2),'Отдельно учтённый ресурс работы «'+record['title']+'». '+resource.get('resource_parent_basis','')+' Включён в общий итог этой работы один раз; накладные расходы и сметная прибыль на стоимость ресурса не начисляются.')
+            child={'record':resource,'row':i,'resources':[],'parent':entry}
+            layout.append(child);entry['resources'].append(child)
+            i+=1
+        entry['footer'] = i
+        if resources and record['components']['materials']['value'] == 0 and record['base']['components']['materials'] == 0:
+            sheet.row_dimensions[parent_row+4].hidden=True
         for label,field in [('НР от ФОТ','overhead'),('СП от ФОТ','profit')]:
             sheet.cell(i,3,label);sheet.cell(i,4,'%');sheet.cell(i,5,record[field+'_rate']);sheet.cell(i,10,record[field+'_rate']);sheet.cell(i,11,record[field])
             if record[field] is None:
@@ -419,7 +530,8 @@ def write_workbook(data, path):
         if record.get('incomplete',record['total'] is None):
             _comment(sheet.cell(i,11),'Позиция неполная. Суммированы известные ЗП, ЭМ, МР, НР и СП; отсутствующие значения не включены. ЗПМ повторно не добавляется.')
         sheet.cell(i,3).font=sheet.cell(i,11).font=Font(name='Arial',size=10,bold=True)
-        totals.append(record['total']);section_totals.append((record['total'],record.get('incomplete',record['total'] is None)));i+=2
+        combined=sum_known([record['total'],*[r['total'] for r in resources]])
+        totals.append(combined);section_totals.append((combined,any(r.get('incomplete',r['total'] is None) for r in [record,*resources])));i+=2
     finish_section()
     sheet.merge_cells(start_row=i,start_column=1,end_row=i,end_column=8)
     sheet.cell(i,1,'ИТОГО ПО СМЕТЕ:' if not incomplete_count else 'ИТОГО ПО СМЕТЕ (по известным суммам): есть неполные позиции')
@@ -456,7 +568,7 @@ def write_workbook(data, path):
     sheet.page_setup.fitToWidth=1;sheet.page_setup.fitToHeight=0
     sheet.sheet_properties.pageSetUpPr.fitToPage=True
     from .estimate_formulas import apply, cache_results
-    formula_cache = apply(book,data)
+    formula_cache = apply(book,data,layout)
     try:
         book.save(path)
     finally:
@@ -472,6 +584,10 @@ def _fingerprint(folder, project_name):
     paths = {source_file(folder),Path(__file__),Path(__file__).with_name('estimate_calculation.py'),Path(__file__).with_name('estimate_formulas.py'),Path(__file__).with_name('work_height.py'),Path(tsn_coeffs.__file__)}
     paths.update(p/name for p in (folder,folder.parent) for name in names if (p/name).is_file())
     paths.update(Path(tsn_coeffs.TSN_DIR).glob('*.json'))
+    from src.core.config import load_config
+    resource_catalog = Path(load_config().KOEFS_PATH)
+    if resource_catalog.is_file():
+        paths.add(resource_catalog)
     digests=[]
     for path in sorted(paths):
         with path.open('rb') as stream:

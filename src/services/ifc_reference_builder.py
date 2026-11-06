@@ -710,7 +710,15 @@ def extract_elements_from_ifc(ifc_path: str, output_folder: str, processing_type
         raise FileNotFoundError(f"IFC файл не найден: {ifc_path}")
 
     processing_type = str(processing_type).upper()
-    selected_types = ELEMENT_TYPES_AR if processing_type == "AR" else ELEMENT_TYPES_KR
+    if processing_type == "ARCH":
+        # Режим «Архитектура»: только архитектурные IFC-классы
+        from src.services.architecture.zero_step import ELEMENT_TYPES_ARCH
+
+        selected_types = ELEMENT_TYPES_ARCH
+    elif processing_type == "AR":
+        selected_types = ELEMENT_TYPES_AR
+    else:
+        selected_types = ELEMENT_TYPES_KR
 
     model = ifcopenshell.open(ifc_path)
     elements = []
@@ -948,12 +956,13 @@ def group_elements_by_type(
         return [], [], '', ''
 
     processing_type = processing_type.upper()
-    if processing_type not in ("KR", "AR"):
+    if processing_type not in ("KR", "AR", "ARCH"):
         processing_type = "KR"
 
-    # Вызываем ту же функцию, что и веб-интерфейс (разная для КР и АР)
-    if processing_type == "AR":
-        logger.info(f"Группировка (АР) через process_ifc_excel_ar: {input_excel_path}")
+    # Вызываем ту же функцию, что и веб-интерфейс (разная для КР и АР).
+    # «Архитектура» использует правила группировки АР.
+    if processing_type in ("AR", "ARCH"):
+        logger.info(f"Группировка ({processing_type}) через process_ifc_excel_ar: {input_excel_path}")
         group_result = process_ifc_excel_ar(input_excel_path, output_folder)
     else:
         logger.info(f"Группировка (КР) через process_ifc_excel: {input_excel_path}")
@@ -1615,7 +1624,7 @@ def build_reference_from_ifc(ifc_path: str, output_folder: str, processing_type:
     logger.info("=" * 60)
 
     processing_type = processing_type.upper()
-    if processing_type not in ("KR", "AR"):
+    if processing_type not in ("KR", "AR", "ARCH"):
         processing_type = "KR"
     logger.info(f"Тип обработки: {processing_type}")
 
@@ -1700,7 +1709,7 @@ def build_reference_from_pdf(df: pd.DataFrame, output_folder: str, processing_ty
     logger.info("=" * 60)
 
     processing_type = processing_type.upper()
-    if processing_type not in ("KR", "AR"):
+    if processing_type not in ("KR", "AR", "ARCH"):
         processing_type = "KR"
     logger.info(f"Тип обработки: {processing_type}")
 

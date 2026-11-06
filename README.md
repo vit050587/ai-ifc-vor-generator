@@ -4,19 +4,26 @@
 Принимает на вход **IFC-файлы** и **PDF-чертежи**, извлекает строительные элементы,
 группирует их и формирует финальный **перечень работ** (Excel) со стоимостью.
 
-Поддерживает два режима обработки (режимы переименованы; оба обрабатывают одни и те же
-файлы — IFC и PDF-чертежи, различается только пайплайн подбора работ):
+Поддерживает три режима обработки (все обрабатывают одни и те же файлы — IFC и
+PDF-чертежи, различается набор извлекаемых элементов и пайплайн подбора работ):
 
 - **CS / ЦС** — **цифровой сборник** (ранее KR — «конструктивные решения»; ж/б конструкции:
   стены, колонны, перекрытия, балки и т.д.). Подбор работ — через внешний API цифрового
   справочника ТСН;
 - **AI / ИИ** — **искусственный интеллект** (ранее AR — «архитектурные решения»; окна,
   двери, покрытия, кровля, отделка и т.д.). Подбор таблиц работ — детерминированный
-  алгоритм, финальный выбор работ и разбор ПОС/ПЗ — локальная LLM.
+  алгоритм, финальный выбор работ и разбор ПОС/ПЗ — локальная LLM;
+- **ARCH / Архитектура** — **только архитектурные решения** (окна, двери, витражи,
+  кровля, отделка, перила, мебель и т.п.) без конструктивных элементов (стены,
+  колонны, перекрытия, балки, фундаменты, сваи, лестницы). Пайплайн подбора работ
+  повторяет режим ИИ, но использует собственные копии модулей в
+  [`src/services/architecture/`](./src/services/architecture); подробности —
+  [readme_architecture.md](./readme_architecture.md).
 
 Легаси-коды `KR`/`AR` по-прежнему принимаются API и нормализуются к `CS`/`AI`
 (`src/core/modes.py`); внутренние коды пайплайн-модулей и имена артефактов
-(`final_result_KR.json`, `final_result_AR.json` и др.) не изменились.
+(`final_result_KR.json`, `final_result_AR.json`, `final_result_ARCH.json` и др.)
+не изменились для ЦС/ИИ.
 
 Сервис реализован на **Flask + gunicorn**, работает в **Docker Compose** вместе с **Ollama**
 (локальная модель LLM) на базе графического ускорителя NVIDIA. Вся тяжёлая обработка
@@ -27,10 +34,11 @@
 
 ## Функциональность (что делает сервис)
 
-- **Загрузка IFC (.ifc) или PDF-чертежа (.pdf)** на выбор, с указанием режима обработки `CS` / `AI`
-  (легаси `KR` / `AR` также принимаются).
+- **Загрузка IFC (.ifc) или PDF-чертежа (.pdf)** на выбор, с указанием режима обработки
+  `CS` / `AI` / `ARCH` (легаси `KR` / `AR` также принимаются).
 - **Извлечение элементов** из IFC (через `ifcopenshell`): стены, колонны, плиты, балки, лестницы,
-  фундаменты, сваи, а в режиме ИИ — окна, двери, кровля, покрытия, перила, мебель и др.
+  фундаменты, сваи, а в режимах ИИ и Архитектура — окна, двери, кровля, покрытия, перила,
+  мебель и др. В режиме Архитектура конструктивные элементы исключены.
 - **Извлечение данных из PDF-чертежей** (машинное зрение): обнаружение стен (YOLO),
   анализ штриховок и расшифровка материалов (DINO + VLM), легенды и масштабы.
 - **Нормализация** характеристик элемента: размеры, геометрия (в т.ч. вычисление по bbox,
@@ -40,7 +48,10 @@
 - **Подбор работ**:
   - в режиме **ЦС (CS)** — через **внешний API цифрового справочника ТСН** (по группам элементов);
   - в режиме **ИИ (AI)** — детерминированный подбор таблиц + локальная LLM-модель
-    (этапы фильтрации, ранжирования и финального выбора работ, разбор ПОС/ПЗ).
+    (этапы фильтрации, ранжирования и финального выбора работ, разбор ПОС/ПЗ);
+  - в режиме **Архитектура (ARCH)** — тот же LLM-пайплайн, что и в ИИ, но только для
+    архитектурных элементов; используются отдельные копии модулей
+    `src/services/architecture/`.
 - Расчёт **объёмов работ** (по группам/материалам), корректировка по нормам расхода
   (`koefs.xlsx`) и **стоимости** (по `price_cost.xlsx`).
 - **Формирование Excel-перечней**: `ДЛЯ_СМЕТЧИКА*`, `ОБЩИЙ_Финальный_перечень_работ.xlsx`,
@@ -106,6 +117,11 @@ ai-ifc-vor-generator/
 │       ├── vor_comparison.py  # АР: сравнение ВОР заказчика и сформированного перечня
 │       ├── works_cost.py      # Расчёт/форматирование стоимости перечня (КР)
 │       ├── group_excel.py     # Группировка элементов (КР и АР), правила группировки
+│       ├── architecture/      # Режим «Архитектура» (ARCH): собственные копии модулей
+│       │                      #   zero_step, ifc_raw_dump, work_height, group_excel,
+│       │                      #   works_table_selector, works_fetcher, works_final_selector,
+│       │                      #   works_cost, ifc_reference_builder, ifc_json_builder,
+│       │                      #   ifc_features, selection_template_builder
 │       ├── api_works_lookup.py# Подбор работ через API справочника ТСН (КР)
 │       ├── materials_lookup.py# Карта МССК-кодов материалов (АР)
 │       ├── mssk_lookup.py     # Карта МССК-кодов элементов
@@ -194,7 +210,7 @@ ai-ifc-vor-generator/
 | `yolo_legend_layout.pt` | Ultralytics YOLO | Детекция таблиц легенды |
 | `dino_hatching.pt` | DINO (TorchScript) | Анализ штриховок, сравнение символов легенды |
 | `hf.co/unsloth/Qwen3-VL-8B-Instruct-GGUF` (`OLLAMA_MODEL_NAME`) | Ollama / VLM | Обработка чертежей PDF: распознавание материалов/штриховок по изображению |
-| `yandex/YandexGPT-5-Lite-8B-instruct-GGUF` (`NORMS_LLM_MODEL` / `model_ollama`, `LLM_MODEL`, `KB_LLM_MODEL`) | Ollama | Режим ИИ (АР): разбор ПОС/ПЗ/ВОР/ПД (`pd_parser`, `doc_pdf_parser`, `pd_full`), подбор работ по перечню (`perechen_kb`/`perechen_pipeline`), поправки ТСН (`tsn_coeffs`) |
+| `yandex/YandexGPT-5-Lite-8B-instruct-GGUF` (`NORMS_LLM_MODEL` / `model_ollama`, `LLM_MODEL`, `KB_LLM_MODEL`) | Ollama | Режимы ИИ (АР) и Архитектура (ARCH): разбор ПОС/ПЗ/ВОР/ПД (`pd_parser`, `doc_pdf_parser`, `pd_full`), подбор работ (`works_final_selector`, `perechen_kb`/`perechen_pipeline`), поправки ТСН (`tsn_coeffs`) |
 | `OLLAMA_MODEL` (`works_comparison`) | Ollama | Сравнение ВОР: семантическое сопоставление позиций и LLM-валидация подобранных работ |
 | `GreenMap/qwen3-vl-4b-ru-blueprint-extractor` (`TG_MODEL_DIR`) | transformers (HF) | Извлечение данных с чертежа/легенды (VLM через `transformer_service`) |
 | **ifcopenshell** | C++/Python | Парсинг и геометрия IFC, экспорт в GLB (не ML) |
@@ -204,8 +220,9 @@ ai-ifc-vor-generator/
 - **PDF-чертежи** — весь конвейер в `ai-blueprint-to-ifc`: YOLO (стены/layout/легенда) →
   DINO + VLM (штриховки и материалы) → формирование Excel.
 - **IFC-файлы** — `ifcopenshell`: атрибуты, Property Sets, QTO, геометрия → расчёт количеств.
-- **Подбор работ (нормы)** — в режиме ИИ (АР) используется локальная LLM (YandexGPT),
-  в режиме ЦС (КР) — внешний API справочника ТСН (LLM не используется).
+- **Подбор работ (нормы)** — в режимах ИИ (АР) и Архитектура (ARCH) используется
+  локальная LLM (YandexGPT), в режиме ЦС (КР) — внешний API справочника ТСН
+  (LLM не используется).
 
 ---
 
@@ -221,6 +238,10 @@ ai-ifc-vor-generator/
   `ОБЩИЙ_Финальный_перечень_работ.xlsx` с шифрами ТСН, объёмами и стоимостью.
 - **Режим ИИ (АР, архитектурные решения)** — расширенный набор IFC-классов (окна, двери, кровля,
   покрытия, перила, мебель и др.) и группа правил группировки по кодам МССК и материалам.
+- **Режим «Архитектура» (ARCH)** — третий режим: извлекает только архитектурные элементы
+  (`ELEMENT_TYPES_ARCH`, без стен/колонн/перекрытий/балок/фундаментов/свай/лестниц) и
+  использует собственные копии модулей пайплайна в `src/services/architecture/`.
+  Документация — [readme_architecture.md](./readme_architecture.md).
 - **Авторизация через Keycloak** (`keycloak.py`) — автоматическое получение/обновление
   Bearer-токена (`client_credentials`) для API справочника работ; статичный `WORKS_API_TOKEN`
   используется как fallback.
@@ -297,6 +318,10 @@ ai-ifc-vor-generator/
 `ВОР_ведомость_объемов_работ.json/.xlsx`, `ПД_характеристики_элементов.json/.xlsx`,
 `pd_full.json`, `Параметры_подбора_элементов.json`, `Сравнение_ВОР_и_перечня.xlsx/.json`.
 
+Режим «Архитектура» (ARCH) создаёт те же файлы, что и ИИ, плюс
+`final_result_ARCH.json`; набор элементов ограничен архитектурными IFC-классами
+(см. [readme_architecture.md](./readme_architecture.md)).
+
 Архивные файлы прежнего отдельного сравнения (каталог `outputs/<comparison_id>/`): `models.json`,
 `estimates.json`, `model_analytics.json`, `result.json`, `result.xlsx`,
 `semantic_match_diagnostics.jsonl`.
@@ -342,7 +367,7 @@ ai-ifc-vor-generator/
 ### Загрузка и справочники
 | Метод | Путь | Описание |
 |-------|------|----------|
-| POST | `/ifc-vor/api/upload_ifc` | Загрузка IFC/PDF + `processingType` (CS/AI; легаси KR/AR), async. Ответ: `sessionId, status, sourceType, processingType, message` |
+| POST | `/ifc-vor/api/upload_ifc` | Загрузка IFC/PDF + `processingType` (CS/AI/ARCH; легаси KR/AR), async. Ответ: `sessionId, status, sourceType, processingType, message` |
 | POST | `/ifc-vor/api/reference` | Только построение JSON-справочников из IFC/PDF (202). Возвращает `Location` и `Retry-After` |
 | GET | `/ifc-vor/api/session/<id>/reference` | Результат построения справочников (200 готово / 202 в процессе / 422 ошибка) |
 
@@ -358,8 +383,8 @@ ai-ifc-vor-generator/
 ### Обработка (выбор строк и запуски)
 | Метод | Путь | Описание |
 |-------|------|----------|
-| POST | `/ifc-vor/api/session/<id>/select_rows` | Выбор строк (`rowIndices`, `allRows`, `rowTypes`, `rowMaterials`, `buildingHeight`, `processingType`; ИИ — также `floorHeight` и `globalConstants`) и запуск обработки |
-| POST | `/ifc-vor/api/session/<id>/new_run` | Новый запуск обработки (без повтора извлечения из файла; ИИ — `floorHeight`, `globalConstants`) |
+| POST | `/ifc-vor/api/session/<id>/select_rows` | Выбор строк (`rowIndices`, `allRows`, `rowTypes`, `rowMaterials`, `buildingHeight`, `processingType`; ИИ/Архитектура — также `floorHeight` и `globalConstants`) и запуск обработки |
+| POST | `/ifc-vor/api/session/<id>/new_run` | Новый запуск обработки (без повтора извлечения из файла; ИИ/Архитектура — `floorHeight`, `globalConstants`) |
 | GET | `/ifc-vor/api/session/<id>/runs` | Список запусков сессии |
 | POST | `/ifc-vor/api/session/<id>/switch_run/<run_id>` | Переключение на другой запуск |
 | POST | `/ifc-vor/api/session/<id>/filter_height` | Обновить высоту здания |
@@ -367,7 +392,7 @@ ai-ifc-vor-generator/
 Статусы сессии: `ifc_processing` / `pdf_processing` / `selecting_rows` / `processing` /
 `completed` / `error` (маппинг в краткий `status`: `processing`, `selecting_rows`, ...).
 
-### Константы подбора работ и документы (режим ИИ)
+### Константы подбора работ и документы (режимы ИИ и Архитектура)
 | Метод | Путь | Описание |
 |-------|------|----------|
 | GET | `/ifc-vor/api/session/<id>/works_constants` | Схема констант подбора работ (`works_classification.json`) + значения из IFC/ПОС/ПЗ (`constants`, `detected`, `posDetected`, `pzDetected`, `vorStatus`, `pdStatus`, `vorCount`, `pdCount`) |
@@ -386,7 +411,7 @@ ai-ifc-vor-generator/
 ### Финальный JSON
 | Метод | Путь | Описание |
 |-------|------|----------|
-| POST | `/ifc-vor/api/session/<id>/run/<run_number>/build_final_json` | Запустить сборку финального JSON для запуска (`final_result_AR.json` / `final_result_KR.json`) |
+| POST | `/ifc-vor/api/session/<id>/run/<run_number>/build_final_json` | Запустить сборку финального JSON для запуска (`final_result_AR.json` / `final_result_KR.json` / `final_result_ARCH.json`) |
 | GET | `/ifc-vor/api/session/<id>/run/<run_number>/final_json/status` | Статус сборки финального JSON |
 | GET | `/ifc-vor/api/session/<id>/run/<run_number>/final_json/result` | Результат сборки финального JSON |
 
@@ -426,8 +451,8 @@ ai-ifc-vor-generator/
 ### 1. Вход
 Пользователь открывает веб-интерфейс (`/ifc-vor/`), проходит авторизацию.
 
-### 2. Загрузка исходных данных — **две вариации**
-Пользователь выбирает **режим обработки** (ЦС или ИИ) и загружает файл:
+### 2. Загрузка исходных данных — **две вариации источника**
+Пользователь выбирает **режим обработки** (ЦС, ИИ или Архитектура) и загружает файл:
 
 - **Вариант A — IFC-файл.** `SessionManager.process_ifc` сохраняет файл и запускает фоновую
   обработку: `zero_step` (+ `ifc_raw_dump` и `ifc_reference_builder`) извлекают элементы,
@@ -459,6 +484,14 @@ ai-ifc-vor-generator/
      справочники `ifc_to_collections.json`, `msck_elements_compact.json`,
      `tree_work_compact.json`, `works_classification.json`) → `Подобранные_таблицы_работ.json`.
   4. Сборка `final_result_AR.json` (`ifc_json_builder`).
+
+- **Режим Архитектура (только архитектурные элементы):**
+  1. Извлечение по `ELEMENT_TYPES_ARCH` (`src/services/architecture/zero_step.py`) —
+     без конструктивных элементов.
+  2. Группировка по правилам АР и подбор работ собственными копиями модулей
+     `src/services/architecture/` (`works_table_selector`, `works_fetcher`,
+     `works_final_selector`).
+  3. Сборка `final_result_ARCH.json`.
 
 В обоих режимах:
 - дополнительно формируются `Дерево_проекта*.xlsx`, справочные JSON и сырой дамп IFC;
@@ -496,7 +529,7 @@ make clean     # остановить и удалить volumes
 
 - `OLLAMA_BASE_URL` — адрес Ollama;
 - `OLLAMA_MODEL_NAME` — VLM для обработки чертежей (Qwen3-VL-8B);
-- `NORMS_LLM_MODEL` — LLM для этапов ИИ (АР) (YandexGPT-5-Lite-8B);
+- `NORMS_LLM_MODEL` — LLM для этапов ИИ (АР) и Архитектуры (ARCH) (YandexGPT-5-Lite-8B);
 - `DOCUMENTS_PATH`, `KOEFS_PATH`, `PRICE_COST_PATH` — справочники;
 - `WORKS_API_URL`, `WORKS_API_TOKEN` — API справочника ТСН;
 - `KEYCLOAK_TOKEN_URL`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET` — авто-токен Keycloak;

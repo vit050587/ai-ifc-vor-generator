@@ -223,7 +223,8 @@ def upload_ifc():
         required: false
         default: "CS"
         description: Режим обработки — CS (ЦС, цифровой сборник; подбор через API ТСН)
-          или AI (ИИ, искусственный интеллект; подбор через LLM). Легаси-коды
+          или AI (ИИ, искусственный интеллект; подбор через LLM), или ARCH
+          (Архитектура; только архитектурные решения). Легаси-коды
           KR/AR также принимаются и эквивалентны CS/AI
       - name: posFile
         in: formData
@@ -389,7 +390,7 @@ def upload_ifc():
         # Дополнительный файл ПОС (режим ИИ): разбирается в фоне,
         # константы сохраняются в ПОС_глобальные_константы.json
         pos_file = request.files.get("posFile")
-        if pos_file and pos_file.filename and processing_type == "AR":
+        if pos_file and pos_file.filename and processing_type in ("AR", "ARCH"):
             try:
                 _get_manager().upload_pos(result["session_id"], pos_file, pos_file.filename)
             except ValueError as e:
@@ -399,7 +400,7 @@ def upload_ifc():
         # тем же пайплайном, что и ПОС, константы сохраняются в
         # ПЗ_глобальные_константы.json
         pz_file = request.files.get("pzFile")
-        if pz_file and pz_file.filename and processing_type == "AR":
+        if pz_file and pz_file.filename and processing_type in ("AR", "ARCH"):
             try:
                 _get_manager().upload_pz(result["session_id"], pz_file, pz_file.filename)
             except ValueError as e:
@@ -409,7 +410,7 @@ def upload_ifc():
         # разбирается в фоне (doc_pdf_parser.parse_vor), результат —
         # ВОР_ведомость_объемов_работ.json/.xlsx
         vor_file = request.files.get("vorFile")
-        if vor_file and vor_file.filename and processing_type == "AR":
+        if vor_file and vor_file.filename and processing_type in ("AR", "ARCH"):
             try:
                 _get_manager().upload_vor(result["session_id"], vor_file, vor_file.filename)
             except ValueError as e:
@@ -419,7 +420,7 @@ def upload_ifc():
         # разбирается в фоне (doc_pdf_parser.parse_pd) — только текстовая часть,
         # результат — ПД_характеристики_элементов.json/.xlsx
         pd_file = request.files.get("pdFile")
-        if pd_file and pd_file.filename and processing_type == "AR":
+        if pd_file and pd_file.filename and processing_type in ("AR", "ARCH"):
             try:
                 _get_manager().upload_pd(result["session_id"], pd_file, pd_file.filename)
             except ValueError as e:
@@ -456,8 +457,9 @@ def build_reference():
         type: string
         required: false
         default: "CS"
-        description: Режим обработки — CS (ЦС, цифровой сборник) или AI (ИИ,
-          искусственный интеллект); легаси-коды KR/AR также принимаются
+        description: Режим обработки — CS (ЦС, цифровой сборник), AI (ИИ,
+          искусственный интеллект) или ARCH (Архитектура); легаси-коды KR/AR
+          также принимаются
     responses:
       202:
         description: Файл принят, построение запущено
@@ -1090,7 +1092,7 @@ def preview_excel(session_id: str):
 
     # Карта материалов для группировки превью по материалу
     materials_group_map = None
-    if s.get("processing_type", "KR") in ("AR", "KR"):
+    if s.get("processing_type", "KR") in ("AR", "KR", "ARCH"):
         try:
             from src.services.materials_lookup import (
                 build_materials_lookup,
@@ -2091,7 +2093,7 @@ def select_rows(session_id: str):
               type: object
             processingType:
               type: string
-              enum: ["CS", "AI"]
+              enum: ["CS", "AI", "ARCH"]
               default: "CS"
               description: Режим обработки (легаси-коды KR/AR также принимаются)
     responses:
@@ -2271,7 +2273,7 @@ def new_run(session_id: str):
               type: object
             processingType:
               type: string
-              enum: ["CS", "AI"]
+              enum: ["CS", "AI", "ARCH"]
               default: "CS"
               description: Режим обработки (легаси-коды KR/AR также принимаются)
     responses:
@@ -2630,7 +2632,7 @@ def build_final_json_by_number(session_id: str, run_number: int):
           properties:
             processingType:
               type: string
-              enum: ["CS", "AI"]
+              enum: ["CS", "AI", "ARCH"]
               default: "CS"
               description: Режим обработки (легаси-коды KR/AR также принимаются)
     responses:
@@ -2782,9 +2784,14 @@ def get_final_json_result_by_number(session_id: str, run_number: int):
             run_id=str(run_number),
             status="completed",
             # discipline финального JSON («КР»/«АР») и код запуска приводим
-            # к публичным кодам режимов CS/AI
-            processing_type=to_public_type(
-                result.get('discipline') or status_result.get('processing_type')
+            # к публичным кодам режимов CS/AI/ARCH. У режима «Архитектура»
+            # discipline = «АР» (структура как у ИИ), поэтому ARCH берём из запуска.
+            processing_type=(
+                to_public_type(status_result.get('processing_type'))
+                if str(status_result.get('processing_type') or '').upper() == 'ARCH'
+                else to_public_type(
+                    result.get('discipline') or status_result.get('processing_type')
+                )
             ),
             result=result
         ))

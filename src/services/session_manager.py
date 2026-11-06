@@ -384,7 +384,7 @@ class SessionManager:
             raise ValueError("Поддерживаются файлы .ifc и .pdf")
 
         processing_type = processing_type.upper()
-        if processing_type not in ("KR", "AR"):
+        if processing_type not in ("KR", "AR", "ARCH"):
             processing_type = "KR"
 
         source_type = extension[1:]
@@ -536,7 +536,7 @@ class SessionManager:
             raise ValueError("Отсутствует файл или имя файла")
         
         processing_type = processing_type.upper()
-        if processing_type not in ("KR", "AR"):
+        if processing_type not in ("KR", "AR", "ARCH"):
             processing_type = "KR"
         
         safe_name = secure_filename(original_name)
@@ -660,8 +660,20 @@ class SessionManager:
                 logger.debug(traceback.format_exc())
 
             self._update_progress(session_id, 20, "Извлечение элементов из IFC...")
-            zero_step(ifc_path, output_folder=session_dir, write_full_data=False,
-                      processing_type=processing_type, model=ifc_model)
+            if processing_type == "ARCH":
+                # Режим «Архитектура»: собственный zero_step из
+                # src/services/architecture с набором ELEMENT_TYPES_ARCH
+                # (только архитектурные элементы, без конструктивных).
+                from src.services.architecture.zero_step import (
+                    zero_step as zero_step_arch,
+                )
+                zero_step_arch(
+                    ifc_path, output_folder=session_dir, write_full_data=False,
+                    processing_type=processing_type, model=ifc_model,
+                )
+            else:
+                zero_step(ifc_path, output_folder=session_dir, write_full_data=False,
+                          processing_type=processing_type, model=ifc_model)
 
             # Глобальные константы, определённые по модели IFC
             # (IFC_глобальные_константы.json в корне сессии), регистрируем
@@ -800,7 +812,7 @@ class SessionManager:
             raise ValueError("Отсутствует файл или имя файла")
         
         processing_type = processing_type.upper()
-        if processing_type not in ("KR", "AR"):
+        if processing_type not in ("KR", "AR", "ARCH"):
             processing_type = "KR"
         
         safe_name = secure_filename(original_name)
@@ -1004,10 +1016,21 @@ class SessionManager:
         вспомогательный (аддитивный шаг, на подбор работ не влияет).
         """
         try:
-            from src.services.selection_template_builder import (
-                build_selection_parameters,
-                OUTPUT_FILENAME,
-            )
+            # Режим «Архитектура» использует собственную копию модуля
+            # (он опирается на архитектурный works_table_selector).
+            proc_type = str(
+                self._sessions.get(session_id, {}).get("processing_type", "KR")
+            ).upper()
+            if proc_type == "ARCH":
+                from src.services.architecture.selection_template_builder import (
+                    build_selection_parameters,
+                    OUTPUT_FILENAME,
+                )
+            else:
+                from src.services.selection_template_builder import (
+                    build_selection_parameters,
+                    OUTPUT_FILENAME,
+                )
             output_path = build_selection_parameters(session_dir)
             if output_path and os.path.isfile(output_path):
                 with self._state_lock:
@@ -1044,9 +1067,17 @@ class SessionManager:
         Ошибки не прерывают обработку — шаг вспомогательный.
         """
         try:
-            from src.services.selection_template_builder import (
-                update_selection_parameters_constants,
-            )
+            proc_type = str(
+                self._sessions.get(session_id, {}).get("processing_type", "KR")
+            ).upper()
+            if proc_type == "ARCH":
+                from src.services.architecture.selection_template_builder import (
+                    update_selection_parameters_constants,
+                )
+            else:
+                from src.services.selection_template_builder import (
+                    update_selection_parameters_constants,
+                )
             output_path = update_selection_parameters_constants(session_dir)
             if output_path and os.path.isfile(output_path):
                 logger.info(
@@ -1115,8 +1146,10 @@ class SessionManager:
         s = self.get(session_id)
         if not s:
             raise ValueError("Сессия не найдена")
-        if s.get("processing_type", "KR").upper() != "AR":
-            raise ValueError(f"Файл {label} поддерживается только в режиме АР")
+        if s.get("processing_type", "KR").upper() not in ("AR", "ARCH"):
+            raise ValueError(
+                f"Файл {label} поддерживается только в режимах ИИ и Архитектура"
+            )
         if not file or not original_name:
             raise ValueError("Отсутствует файл или имя файла")
         if not str(original_name).lower().endswith(".pdf"):
@@ -1297,8 +1330,10 @@ class SessionManager:
         s = self.get(session_id)
         if not s:
             raise ValueError("Сессия не найдена")
-        if s.get("processing_type", "KR").upper() != "AR":
-            raise ValueError(f"Файл {label} поддерживается только в режиме АР")
+        if s.get("processing_type", "KR").upper() not in ("AR", "ARCH"):
+            raise ValueError(
+                f"Файл {label} поддерживается только в режимах ИИ и Архитектура"
+            )
         if not file or not original_name:
             raise ValueError("Отсутствует файл или имя файла")
         if not str(original_name).lower().endswith(".pdf"):
@@ -1621,7 +1656,7 @@ class SessionManager:
             raise KeyError("Сессия не найдена")
         
         processing_type = processing_type.upper()
-        if processing_type not in ("KR", "AR"):
+        if processing_type not in ("KR", "AR", "ARCH"):
             processing_type = "KR"
         
         if s["status"] not in ("ifc_processed", "selecting_rows", "completed"):
@@ -1827,7 +1862,7 @@ class SessionManager:
                                          material_code_overrides: Dict[int, str] = None) -> None:
         try:
             processing_type = processing_type.upper()
-            if processing_type not in ("KR", "AR"):
+            if processing_type not in ("KR", "AR", "ARCH"):
                 processing_type = "KR"
             
             logger.info(f"Запуск пайплайна: run={run_number}, тип={processing_type}")
@@ -1873,7 +1908,7 @@ class SessionManager:
             df_filtered = df_original.iloc[unique_indices].reset_index(drop=True)
 
             # Подмешиваем колонку с материалами
-            if processing_type in ("AR", "KR"):
+            if processing_type in ("AR", "KR", "ARCH"):
                 try:
                     mat_map = self._load_material_layer_map(session_id)
                     if mat_map and 'GlobalId' in df_filtered.columns:
@@ -1929,7 +1964,16 @@ class SessionManager:
             # Группировка (разная для КР и АР)
             self._update_progress(session_id, 10, f"Запуск {run_number}: Группировка элементов ({processing_type})...")
             
-            if processing_type == "AR":
+            if processing_type == "ARCH":
+                # Режим «Архитектура»: группировка по правилам АР
+                # собственной копией group_excel из пакета architecture.
+                from src.services.architecture.group_excel import (
+                    process_ifc_excel_ar as process_ifc_excel_arch,
+                )
+                group_result = process_ifc_excel_arch(
+                    filtered_path, run_dir,
+                    material_code_overrides=material_code_overrides_by_pos)
+            elif processing_type == "AR":
                 group_result = process_ifc_excel_ar(
                     filtered_path, run_dir,
                     material_code_overrides=material_code_overrides_by_pos)
@@ -1952,7 +1996,12 @@ class SessionManager:
             if all_data_path and os.path.exists(all_data_path):
                 os.makedirs(original_dir, exist_ok=True)
                 
-                if processing_type == "AR":
+                if processing_type == "ARCH":
+                    from src.services.architecture.group_excel import (
+                        process_ifc_excel_ar as process_ifc_excel_arch,
+                    )
+                    all_project_tree = process_ifc_excel_arch(all_data_path, original_dir)
+                elif processing_type == "AR":
                     all_project_tree = process_ifc_excel_ar(all_data_path, original_dir)
                 else:
                     all_project_tree = process_ifc_excel_mssk(all_data_path, original_dir)
@@ -2125,17 +2174,26 @@ class SessionManager:
 
                 self._update_progress(session_id, 95, f"Запуск {run_number}: Сохранение результатов...")
             else:
-                # АР: подбор таблиц работ по алгоритму data/algorithm.md
-                # (детерминированный подбор сборников/таблиц ГЭСН/ТСН-2001
-                # по типу элемента, МССК, материалу и константам проекта).
-                from src.services.works_table_selector import (
-                    build_works_tables_json,
-                    WORKS_TABLES_JSON_FILENAME,
-                )
+                # АР / Архитектура: подбор таблиц работ по алгоритму
+                # data/algorithm.md (детерминированный подбор сборников/таблиц
+                # ГЭСН/ТСН-2001 по типу элемента, МССК, материалу и константам
+                # проекта). Режим «Архитектура» использует собственные копии
+                # модулей из src/services/architecture.
+                mode_label = "АРХ" if processing_type == "ARCH" else "АР"
+                if processing_type == "ARCH":
+                    from src.services.architecture.works_table_selector import (
+                        build_works_tables_json,
+                        WORKS_TABLES_JSON_FILENAME,
+                    )
+                else:
+                    from src.services.works_table_selector import (
+                        build_works_tables_json,
+                        WORKS_TABLES_JSON_FILENAME,
+                    )
 
                 self._update_progress(
                     session_id, 30,
-                    f"Запуск {run_number}: Подбор таблиц работ по алгоритму (АР)..."
+                    f"Запуск {run_number}: Подбор таблиц работ по алгоритму ({mode_label})..."
                 )
 
                 raw_dump_json = os.path.join(session_dir, 'IFC_исходные_параметры.json')
@@ -2146,7 +2204,12 @@ class SessionManager:
                 # Влияет на выбор таблиц Сб. 7 (одноэтажные vs многоэтажные здания).
                 if not (global_constants or {}).get("building_storeys_type"):
                     try:
-                        from src.services.zero_step import detect_storeys_type_from_session
+                        if processing_type == "ARCH":
+                            from src.services.architecture.zero_step import (
+                                detect_storeys_type_from_session,
+                            )
+                        else:
+                            from src.services.zero_step import detect_storeys_type_from_session
 
                         storeys_type = detect_storeys_type_from_session(session_dir)
                         if storeys_type:
@@ -2176,7 +2239,12 @@ class SessionManager:
                 )
                 works_fetch_error = None
                 try:
-                    from src.services.works_fetcher import fetch_and_save_works
+                    if processing_type == "ARCH":
+                        from src.services.architecture.works_fetcher import (
+                            fetch_and_save_works,
+                        )
+                    else:
+                        from src.services.works_fetcher import fetch_and_save_works
 
                     fetch_and_save_works(works_json_path, session_dir, run_dir)
                 except Exception as exc:
@@ -2198,12 +2266,22 @@ class SessionManager:
                     f"Запуск {run_number}: Подбор подходящих работ через LLM (АР)..."
                 )
                 try:
-                    from src.services.works_fetcher import WORKS_JSON_FILENAME
-                    from src.services.works_final_selector import (
-                        FINAL_WORKS_JSON_FILENAME,
-                        FINAL_WORKS_XLSX_FILENAME,
-                        select_final_works,
-                    )
+                    if processing_type == "ARCH":
+                        from src.services.architecture.works_fetcher import (
+                            WORKS_JSON_FILENAME,
+                        )
+                        from src.services.architecture.works_final_selector import (
+                            FINAL_WORKS_JSON_FILENAME,
+                            FINAL_WORKS_XLSX_FILENAME,
+                            select_final_works,
+                        )
+                    else:
+                        from src.services.works_fetcher import WORKS_JSON_FILENAME
+                        from src.services.works_final_selector import (
+                            FINAL_WORKS_JSON_FILENAME,
+                            FINAL_WORKS_XLSX_FILENAME,
+                            select_final_works,
+                        )
 
                     works_fetcher_path = os.path.join(run_dir, WORKS_JSON_FILENAME)
                     final_json_path = os.path.join(run_dir, FINAL_WORKS_JSON_FILENAME)
@@ -2280,7 +2358,14 @@ class SessionManager:
                 ifc_file_name = self._sessions.get(session_id, {}).get("pdf_file_name", "source.pdf")
             
             try:
-                from src.services.ifc_json_builder import build_final_json
+                if processing_type == "ARCH":
+                    # Режим «Архитектура»: собственный сборщик JSON
+                    # (ARBuilder + код дисциплины ARCH → final_result_ARCH.json).
+                    from src.services.architecture.ifc_json_builder import (
+                        build_final_json,
+                    )
+                else:
+                    from src.services.ifc_json_builder import build_final_json
                 
                 output_filename = f"final_result_{processing_type}.json"
                 result = build_final_json(
@@ -2381,10 +2466,11 @@ class SessionManager:
                         "size": os.path.getsize(raw_dump_path),
                     })
 
-            # АР: период ТСН из цифрового сборника (larix) — общий для запусков,
-            # хранится в корне сессии; Подобранные_работы.json пишется в
-            # run_<NNN>/ и попадает в итоговые файлы через allowed_json выше
-            if processing_type == "AR":
+            # АР / Архитектура: период ТСН из цифрового сборника (larix) —
+            # общий для запусков, хранится в корне сессии;
+            # Подобранные_работы.json пишется в run_<NNN>/ и попадает в
+            # итоговые файлы через allowed_json выше
+            if processing_type in ("AR", "ARCH"):
                 from src.services.works_fetcher import PERIOD_JSON_FILENAME
                 ar_path = os.path.join(session_dir, PERIOD_JSON_FILENAME)
                 if os.path.isfile(ar_path):
@@ -2527,7 +2613,7 @@ class SessionManager:
             raise RuntimeError(f"Запуск {run_number} ещё не завершён (статус: {target_run.get('status')})")
         
         processing_type = processing_type.upper()
-        if processing_type not in ("KR", "AR"):
+        if processing_type not in ("KR", "AR", "ARCH"):
             processing_type = "KR"
         
         # Определяем директорию запуска

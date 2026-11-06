@@ -44,6 +44,11 @@ def create_app() -> Flask:
     app.config["SESSIONS_FILE"] = os.getenv("SESSIONS_FILE", "outputs/sessions.json")
     app.config["PERECHEN_XLSX"] = os.getenv("PERECHEN_XLSX", "data/perechen_kr.xlsx")
     app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "iloverza123")
+    # Cookie браузера общие для всех портов одного хоста: если рядом работает
+    # другой экземпляр сервиса (например, Docker на 6001 и копия на 6005) с
+    # другим SECRET_KEY, они перезаписывают cookie друг друга и API отвечает
+    # 401. Имя cookie можно задать отдельно для каждого экземпляра.
+    app.config["SESSION_COOKIE_NAME"] = os.getenv("SESSION_COOKIE_NAME", "session")
 
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
     os.makedirs(app.config["OUTPUT_FOLDER"], exist_ok=True)
