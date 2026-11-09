@@ -1436,7 +1436,7 @@ def group_elements_ar(rows: List[Dict[str, Any]], headers: List[str]) -> List[Di
     from src.services.materials_lookup import (
         build_materials_lookup,
         resolve_material_group,
-        extract_material_value,
+        extract_material_value_ai as extract_material_value,
     )
     lookup, _ = build_mssk_lookup()
     materials_lookup, _ = build_materials_lookup()
@@ -1466,7 +1466,9 @@ def group_elements_ar(rows: List[Dict[str, Any]], headers: List[str]) -> List[Di
     has_mge_material = any('MGE_Material' in str(h) for h in headers)
 
     # Группировка по материалу выполняется, если есть хотя бы один источник.
-    has_material_source = bool(material_col) or has_mge_material
+    has_material_source = bool(material_col) or has_mge_material or any(
+        re.search(r'material|материал', str(h), re.IGNORECASE) for h in headers
+    )
 
     has_mssk_col = 'Код мсск' in headers
 

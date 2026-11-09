@@ -1548,13 +1548,19 @@ class SessionManager:
         в корне сессии. При отсуствии JSON читает XLSX-дамп (`IFC_исходные_параметры.xlsx`).
         Используется для группировки элементов в режиме АР по главному материалу.
 
-        Значение для каждого элемента строится функцией extract_material_value:
-        сначала берётся «Свойство::IfcMaterialLayer::Name», а если оно пустое —
-        пары MGE_MaterialCode/MGE_Material из Pset «ExpCheck_*» (двери, окна и т.п.).
+        В ЦС/ARCH значение строится прежней extract_material_value: слои,
+        затем пары MGE_MaterialCode/MGE_Material. Только в ИИ используется
+        extract_material_value_ai с уточнением железобетона по свойствам
+        конкретного элемента, в том числе для ранее созданных сессий.
         """
         from src.services.ifc_raw_dump import RAW_DUMP_JSON_FILENAME, RAW_DUMP_FILENAME
-        from src.services.materials_lookup import extract_material_value
+        from src.services.materials_lookup import (
+            extract_material_value, extract_material_value_ai,
+        )
 
+        session = self.get(session_id) or {}
+        is_ai = str(session.get('processing_type', 'KR')).upper() in ('AR', 'AI')
+        extractor = extract_material_value_ai if is_ai else extract_material_value
         session_dir = os.path.join(self.output_folder, session_id)
         json_path = os.path.join(session_dir, RAW_DUMP_JSON_FILENAME)
         xlsx_path = os.path.join(session_dir, RAW_DUMP_FILENAME)
@@ -1593,7 +1599,7 @@ class SessionManager:
         has_any_source = has_material_col or any(
             "MGE_Material" in str(k) for k in rows[0].keys()
         )
-        if not has_any_source:
+        if not has_any_source and not is_ai:
             return {}
 
         material_map = {}
@@ -1601,7 +1607,7 @@ class SessionManager:
             gid = row.get("GlobalId")
             if gid is None:
                 continue
-            material_map[str(gid)] = extract_material_value(row)
+            material_map[str(gid)] = extractor(row)
         logger.info(f"Карта материалов: {len(material_map)} элементов")
         return material_map
 
@@ -1915,6 +1921,13 @@ class SessionManager:
                         df_filtered['Свойство::IfcMaterialLayer::Name'] = (
                             df_filtered['GlobalId'].astype(str).map(mat_map).fillna('')
                         )
+                        if processing_type == 'AR':
+                            from .materials_lookup import resolve_material_group_with_code
+                            for idx, material_value in df_filtered[
+                                    'Свойство::IfcMaterialLayer::Name'].items():
+                                name, _, code = resolve_material_group_with_code(material_value)
+                                if code in ('СТ 00 15 01', 'СТ 00 15 02'):
+                                    df_filtered.at[idx, 'Материал'] = name
                 except Exception as e:
                     logger.warning(f"Не удалось подмешать материалы слоёв ({processing_type}): {e}", exc_info=True)
 

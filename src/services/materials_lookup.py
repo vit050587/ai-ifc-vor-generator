@@ -300,6 +300,81 @@ def _is_empty_value(val) -> bool:
     return str(val).strip().lower() in _EMPTY_VALUES
 
 
+def extract_material_value_ai(row: Dict[str, Any]) -> str:
+    """Уточняет материал ИИ по согласованным свойствам конкретного элемента.
+
+    Полные коды и многослойные материалы сохраняются. Общий железобетон
+    уточняется только при явном признаке технологии; конфликт не разрешается
+    догадкой. Поддерживаются сырые и нормализованные имена свойств IFC.
+    """
+    row = dict(row) if row is not None else {}
+    normalized = {}
+    for key, value in row.items():
+        key = re.sub(r'^Свойство_(.*?)_(MGE_.*)$', r'Свойство::\1::\2', str(key))
+        normalized[key] = value
+    value = extract_material_value(normalized)
+    segments = parse_material_segments(value)
+    if len(segments) > 1:
+        return value
+    if segments and segments[0][1] != 'СТ 00 15':
+        return value
+
+    def text(val):
+        return re.sub(r'[^a-zа-яё0-9]+', ' ', str(val).lower()).strip()
+
+    material_values = []
+    method_values = []
+    codes = set()
+    for key, val in normalized.items():
+        if _is_empty_value(val):
+            continue
+        key_text = text(key)
+        compact_key = key_text.replace(' ', '')
+        if 'material' in compact_key or 'материал' in compact_key:
+            material_values.append(str(val))
+            codes.update(re.findall(r'СТ\s+00\s+15(?:\s+0[12])?(?!\s*\d)', str(val)))
+        if any(token in compact_key for token in (
+                'constructionmethod', 'constructiontype', 'технолог',
+                'способизготовления', 'методизготовления', 'типизготовления',
+                'способвозведения', 'методвозведения', 'типконструкции')):
+            method_values.append(str(val))
+    codes = {re.sub(r'\s+', ' ', code).strip() for code in codes}
+    full_codes = codes & {'СТ 00 15 01', 'СТ 00 15 02'}
+    is_reinforced = bool(segments or codes) or any(
+        re.search(r'железобетон|reinforced\s+concrete|\bж\s*б\b', text(v))
+        for v in material_values
+    )
+    name_values = [row.get(k, '') for k in ('Имя', 'Name', 'ObjectType')]
+    if not is_reinforced:
+        is_reinforced = any(
+            re.search(r'железобетон|reinforced\s+concrete|\bж\s*б\b', text(v))
+            for v in name_values
+        )
+    if not is_reinforced:
+        return value
+
+    def methods(values):
+        found = set()
+        for val in values:
+            val = text(val)
+            if re.search(r'\bмонолит\w*|\bin\s*situ\b|\bcast\s+in\s+place\b', val):
+                if not re.search(r'\bне\s+монолит', val):
+                    found.add('СТ 00 15 02')
+            if re.search(r'\bсборн\w*|\bprecast\b|\bprefabricat\w*', val):
+                if not re.search(r'\bне\s+сборн', val):
+                    found.add('СТ 00 15 01')
+        return found
+
+    evidence = full_codes | methods(material_values) | methods(method_values)
+    if not evidence:
+        evidence = methods(name_values)
+    if len(evidence) != 1:
+        return value
+    code = evidence.pop()
+    lookup, _ = build_materials_lookup()
+    return f'{lookup[code]["name"]} ({code})'
+
+
 def extract_material_value(row: Dict[str, Any]) -> str:
     """Собирает строку материалов элемента с учётом fallback-источников.
 

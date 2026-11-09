@@ -939,6 +939,15 @@ def get_element_info(element, processing_type: str = "KR"):
     if mge_material:
         info['Материал'] = mge_material
 
+    if processing_type.upper() in ('AR', 'AI'):
+        from .materials_lookup import (
+            extract_material_value_ai, resolve_material_group_with_code,
+        )
+        material_value = extract_material_value_ai(info)
+        name, _, code = resolve_material_group_with_code(material_value)
+        if code in ('СТ 00 15 01', 'СТ 00 15 02'):
+            info['Материал'] = name
+
     from .ifc_raw_dump import enrich_work_height
     return enrich_work_height(info, element)
 
