@@ -47,6 +47,13 @@ services:
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-1024}
       KB_WORKERS: ${KB_WORKERS:-2}
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      MODELS_DIR: /external/models
+      YOLO_LAYOUT_MODEL: /external/models/yolo_layout.pt
+      YOLO_LEGEND_LAYOUT_MODEL: /external/models/yolo_legend_layout.pt
+      DINO_HATCHING_MODEL: /external/models/dino_hatching.pt
+      HATCH_FINDER_MODEL: /external/models/hatch_finder.pt
+      WALL_DETECTION__MODEL_NAME: /external/models/yolo_walls_obb.pt
+      UNHATCHED_WALL_DETECTION__MODEL_NAME: /external/models/yolo_walls_obb.pt
     deploy:
       resources:
         reservations:
@@ -62,7 +69,7 @@ services:
     volumes:
       - ./uploads:/app/uploads
       - ./outputs:/app/outputs
-      - ../external/models:/external/models:ro
+      - /home/projects/external/models:/external/models:ro
     networks:
       - ai-ifc-network
 
@@ -72,3 +79,4 @@ networks:
 
 volumes:
   ollama_data:
+  

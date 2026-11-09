@@ -51,6 +51,25 @@
 | IFC-файл (`.ifc`) | `POST /api/upload_ifc` (multipart, поле `processingType=AI`; легаси `AR` принимается) | BIM-модель; элементы извлекаются через `ifcopenshell` |
 | PDF-чертёж (`.pdf`) | `POST /api/upload_ifc` (multipart, `processingType=AI`) | Обрабатывается пайплайном машинного зрения `ai-blueprint-to-ifc`; результат — те же Excel/JSON, что и для IFC. Легенду можно задать вручную (`autoLegend=false` + `legend`, §3.5) |
 
+**Модели чертежей при локальном запуске.** `./start.sh` после загрузки `.env`
+настраивает общий каталог весов `/home/projects/external/models` (тот же каталог
+на хосте, который использует основной Docker-сервис). Переопределить его для
+локальной копии можно через `LOCAL_BLUEPRINT_MODELS_DIR` в окружении или `.env`.
+Скрипт экспортирует `MODELS_DIR`, отдельные пути `YOLO_LAYOUT_MODEL`,
+`YOLO_LEGEND_LAYOUT_MODEL`, `DINO_HATCHING_MODEL`, `HATCH_FINDER_MODEL` и
+абсолютный `MODEL_NAME` обоих профилей `WALL_DETECTION` /
+`UNHATCHED_WALL_DETECTION`. Используются файлы `yolo_walls_obb.pt`,
+`yolo_layout.pt`, `yolo_legend_layout.pt`, `dino_hatching.pt`, `hatch_finder.pt`;
+копировать веса в `ai-blueprint-to-ifc/models` не требуется. Настройки путей
+локального запуска имеют приоритет над одноимёнными контейнерными путями из
+`.env`. Дополнительно `src/services/pdf_processor.py` перед импортом процессора
+устанавливает эти же пути для локальной копии: это работает и при запуске Flask
+напрямую, без `start.sh`, и заменяет устаревшие `/app/...` из окружения.
+Docker-ветка (корень сервиса `/app`) не меняет пути моделей. Docker Compose и
+настройки Ollama/Transformers не меняются. После изменения настроек или кода
+нужно перезапустить локальный Flask: модуль `config` кэшируется после первого
+импорта; старую ошибочную сессию следует заменить новой загрузкой чертежа.
+
 ### 1.2. Опциональные файлы ПОС и пояснительной записки (ПЗ)
 
 | Источник | Эндпоинт | Описание |
