@@ -591,7 +591,7 @@ def _first_nonzero(row: Dict[str, Any], cols: List[str]) -> float:
     return 0.0
 
 
-def _element_formwork_area_m2(row: Dict[str, Any], perim_cols: List[str],
+def _element_formwork_measure(row: Dict[str, Any], perim_cols: List[str],
                               depth_cols: List[str],
                               area_cols: List[str] | None = None) -> float:
     """Площадь опалубки одного элемента-плиты (м²) по правилам КР:
@@ -609,12 +609,19 @@ def _element_formwork_area_m2(row: Dict[str, Any], perim_cols: List[str],
     У элементов без периметра/толщины (стены, балки и т.п.) вклад
     равен нулю.
     """
+    def first(columns):
+        for key in columns:
+            value = safe_parse_float(row.get(key, 0))
+            if value > 0:
+                return value, str(key)
+        return 0.0, ''
+
     name_lower = str(row.get('Имя', '')).lower()
     from .construction_method import construction_method
     if construction_method(row) in ('precast', 'conflicting'):
-        return 0.0
+        return 0.0, ''
     if str(row.get('Тип элемента') or '') in ('IfcWall', 'IfcWallStandardCase'):
-        return _first_nonzero(row, ['QTO_Qto_WallBaseQuantities_Площадь_GrossSideArea_м2',
+        return first(['QTO_Qto_WallBaseQuantities_Площадь_GrossSideArea_м2',
                                    'Площадь_GrossSideArea_м2', 'QTO_Qto_WallBaseQuantities_Площадь_NetSideArea_м2',
                                    'Площадь_NetSideArea_м2', 'Площадь, м2'])
     is_beam = str(row.get('Тип элемента') or '') == 'IfcBeam' or bool(re.search(r'балк|ригел', name_lower, re.I))
@@ -625,7 +632,7 @@ def _element_formwork_area_m2(row: Dict[str, Any], perim_cols: List[str],
                     and not re.search(r'геометрия|qto_geom|мм2|mm2', str(key), re.I)):
                 explicit = number(value)
                 if explicit is not None:
-                    return explicit
+                    return explicit, str(key)
     from .vor_generation.elements import _element_component, _element_kind
     stair_name = str(row.get('Имя') or '') + ' ' + ' '.join(
         str(value or '') for key, value in row.items() if str(key).lower().endswith('mge_name'))
@@ -637,20 +644,20 @@ def _element_formwork_area_m2(row: Dict[str, Any], perim_cols: List[str],
         from .stair_formwork import NORMAL_NET, NORMAL_GROSS
         from .ifc_quantities import number
         value = number(row.get(NORMAL_GROSS if component == 'landing' else NORMAL_NET))
-        return value if value is not None else 0.0
-    geometric = _first_nonzero(row, ['Геометрия_Площадь_опалубки_м2'])
+        return (value, NORMAL_GROSS if component == 'landing' else NORMAL_NET) if value is not None else (0.0, '')
+    geometric, geometric_source = first(['Геометрия_Площадь_опалубки_м2'])
     if geometric > 0:
-        return geometric
+        return geometric, geometric_source
     if is_beam:
         # Net/GrossSurfaceArea includes faces that do not contact formwork.
         explicit = [key for key in row if re.search(r'опалуб|formwork', str(key), re.I)
                     and re.search(r'площад|area', str(key), re.I)
                     and not re.search(r'мм2|mm2', str(key), re.I)]
-        return _first_nonzero(row, explicit)
+        return first(explicit)
     if not perim_cols or not depth_cols:
-        return 0.0
-    perim = _first_nonzero(row, perim_cols)
-    depth = _first_nonzero(row, depth_cols)
+        return 0.0, ''
+    perim, perim_source = first(perim_cols)
+    depth, depth_source = first(depth_cols)
     # Fallback толщины для плит IfcSlab без QTO-толщины: толщина часто
     # закодирована в имени элемента («Перекрытие_200мм_ЖБ_B30_W6_F150»,
     # «Фундаментная плита_800мм…»). Без неё боковые грани перекрытий
@@ -659,12 +666,18 @@ def _element_formwork_area_m2(row: Dict[str, Any], perim_cols: List[str],
         m = re.search(r'(\d+(?:[.,]\d+)?)\s*мм', str(row.get('Имя', '')))
         if m:
             depth = float(m.group(1).replace(',', '.'))
+            depth_source = 'Имя (толщина, мм)'
     side_area = perim * depth / 1e6
+    side_source = f'{perim_source} × {depth_source} / 1000000 (мм² → м²)' if perim and depth else ''
     if any(word in name_lower for word in ('перекрыт', 'покрыти', 'площадк', 'landing')) and 'фундамент' not in name_lower:
         net_keys = ['QTO_Qto_SlabBaseQuantities_Площадь_NetArea_м2', 'Площадь_NetArea_м2', 'Площадь_NET_м2']
-        slab_area = _first_nonzero(row, net_keys + (area_cols or _AREA_COLS))
-        return side_area + slab_area
-    return side_area
+        slab_area, slab_source = first(net_keys + (area_cols or _AREA_COLS))
+        return side_area + slab_area, ' + '.join(s for s in (side_source, slab_source) if s)
+    return side_area, side_source
+
+
+def _element_formwork_area_m2(row, perim_cols, depth_cols, area_cols=None):
+    return _element_formwork_measure(row, perim_cols, depth_cols, area_cols)[0]
 
 
 def _coalesce_series(group_df, cols):

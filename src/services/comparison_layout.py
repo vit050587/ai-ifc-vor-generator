@@ -74,7 +74,7 @@ def _heading_level(value):
         return 2
     if value.startswith('раздел '):
         return 1
-    if value.startswith(('подземная часть', 'надземная часть', 'автостоянка')):
+    if value.startswith(('подземная часть', 'надземная часть', 'автостоянка', 'часть здания:')):
         return 0
     return 3
 
@@ -129,6 +129,9 @@ def typical_views(typical):
     for position, row in enumerate(rows):
         if row.get('generatedSourceRow') is not None or row.get('customerSourceRow') is None or row.get('isSeparator'):
             continue
+        if customer_sheet.row_dimensions[row['customerSourceRow']].hidden:
+            row['sourceOnly'] = True
+            continue
         context = context_of(row)
         exact = [(i, candidate) for i, candidate in generated_rows if context_of(candidate) == context]
         prefix = 4
@@ -169,10 +172,40 @@ def typical_views(typical):
                             source=None, comparison=row, ancestors=list(ancestors.values())))
     display_order = [index for original in display_order
                      for index in [*insertions.get((original, False), []), original, *insertions.get((original, True), [])]]
+    # A many-to-one match is displayed on an existing work row. The source
+    # sheets retain the individual quantities; no additional total works or
+    # headings belong in the typical VOR form.
+    hidden = set()
+    for row in rows:
+        if not row.get('isAggregate'):
+            continue
+        anchor = generated_indices[row['generatedSourceRows'][0]]
+        record = records[anchor]
+        record['comparison'] = row
+        record['cells'][3].value = row.get('generatedQuantity')
+        record['cells'][4].value = row.get('generatedCalculation')
+        record['cells'][5].value = row.get('modelReason')
+        # The displayed quantity covers the customer scope, rather than just
+        # the first IFC thickness contributing to it. Reuse its existing header.
+        heading = next((i for i in reversed(record['ancestors'])
+                        if _heading_level(str(records[i]['cells'][0].value or '')) == 3), None)
+        if heading is not None:
+            records[heading]['cells'][0].value = row.get('comparisonObject') or row.get('customerElementGroup') or records[heading]['cells'][0].value
+        generated_members = set(row['generatedSourceRows'])
+        customer_members = set(row['customerSourceRows'])
+        for index in display_order:
+            member = records[index].get('comparison') or {}
+            if index != anchor and member.get('coveredByAggregate') and (
+                    member.get('generatedSourceRow') in generated_members
+                    or member.get('customerSourceRow') in customer_members):
+                hidden.add(index)
+    display_order = [index for index in display_order if index not in hidden]
     merges = list(sheet.merged_cells.ranges)
     different = set(range(min(3, len(records))))
     populated = set(different)
     for index, record in enumerate(records):
+        if index in hidden:
+            continue
         row = record['comparison']
         has_quantity = row and (row.get('generatedQuantity') is not None or row.get('customerQuantity') is not None)
         if has_quantity:
@@ -307,6 +340,12 @@ def typical_views(typical):
             if merged.min_col == 1 and merged.max_col == 8 and merged.min_row == merged.max_row:
                 target.unmerge_cells(str(merged))
                 target.merge_cells(start_row=merged.min_row, end_row=merged.max_row, start_column=1, end_column=15 if include_ai else 14)
+        for number, index in enumerate(indices,1):
+            record = records[index]
+            if number > 3 and record['cells'][0].value and not record['comparison'] and not any(target.cell(number,c).value for c in range(2,15 if include_ai else 14)):
+                target.merge_cells(start_row=number,end_row=number,start_column=1,end_column=15 if include_ai else 14)
+                alignment = copy(target.cell(number,1).alignment); alignment.wrap_text=True; alignment.horizontal='left'
+                target.cell(number,1).alignment=alignment
         target.column_dimensions['G'].width = 60
         for column in ('D', 'E', 'F'):
             target.column_dimensions[column].width = 24

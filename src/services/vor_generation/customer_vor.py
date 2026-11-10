@@ -118,10 +118,16 @@ class CustomerRow:
     rebar_class: Optional[str] = None
     thickness: Optional[int] = None  # толщина из наименования, мм
     thickness_label: str = ''
+    thickness_spec: Optional[dict] = None
     section_label: Optional[str] = None  # сечение из наименования («400х400»)
     orientation: Optional[str] = None  # horizontal|vertical (для гидроизоляции)
     component: str = ""              # подтип лестницы: flight (марш)|landing (площадка)
     tokens: frozenset = frozenset()
+    normalized_scope: bool = False
+    source_context: str = ""
+    target_subsection: Optional[str] = None
+    external_scope: str = ""
+    construction_method: str = ""
 
 
 def _pick(row: dict) -> Optional[float]:
@@ -318,13 +324,16 @@ def collect_rows(rows: List[dict]) -> List[CustomerRow]:
             continue
 
         low_section = section.lower()
-        if any(w in low_section for w in _SKIP_SECTION_WORDS):
+        if not row.get("normalized_scope") and any(w in low_section for w in _SKIP_SECTION_WORDS):
             continue
 
         diameter, rebar_class = mapping.parse_rebar_spec(name)
         category = _detect_category(name, unit)
-        thickness = _thickness(name)
-        if thickness is None and category == "embedded":
+        from .thickness import label as thickness_label
+        geometry = row.get("geometry_values", ())
+        spec = row.get("thickness_spec")
+        thickness = (geometry[0] if len(geometry)==1 else None) if row.get("normalized_scope") else _thickness(name)
+        if thickness is None and category == "embedded" and not row.get("normalized_scope"):
             # Закладные детали обычно идут без толщины в наименовании — берём её
             # из строки блока/секции («… толщиной N мм …»), чтобы отнести позицию
             # к нужному геометрическому блоку (плита толщиной N мм).
@@ -341,18 +350,23 @@ def collect_rows(rows: List[dict]) -> List[CustomerRow]:
             unit=unit,
             volume=quantity,
             unit_family=_unit_family(unit),
-            part=_detect_part(section, block),
-            kind=_detect_kind(name, f'{section} {block}'),
+            part=row.get("building_part") if row.get("normalized_scope") else _detect_part(section, block),
+            kind=row.get("construction_kind") if row.get("normalized_scope") else _detect_kind(name, f'{section} {block}'),
             category=category,
             grade=mapping.parse_concrete_grade(name),
             diameter=diameter,
             rebar_class=rebar_class,
             thickness=thickness,
-            thickness_label='/'.join(map(str, mapping.thickness_values(name))) if len(mapping.thickness_values(name)) > 1 else '',
+            thickness_label=thickness_label(spec) if spec and spec['mode']!='exact' else '/'.join(map(str, mapping.thickness_values(name))) if not row.get('normalized_scope') and len(mapping.thickness_values(name))>1 else '',
+            thickness_spec=spec,
             section_label=_section_label(name),
             orientation=_detect_orientation(section, block, name),
-            component=components.get((section, block, pos), ""),
+            component=(mapping.stair_component(row.get("construction")) or ("flight" if row.get("construction_kind")=="precast" else "")) if row.get("normalized_scope") and row.get("construction_kind") in ("stair", "precast") else components.get((section, block, pos), ""),
             tokens=frozenset(documents.tokens(name)),
+            normalized_scope=row.get("normalized_scope", False),
+            source_context=" / ".join(dict.fromkeys(filter(None,[section,block,row.get("construction")]))),
+            external_scope=row.get("external_scope", ""),
+            construction_method=row.get("construction_method", ""),
         ))
 
     logger.info("ВОР заказчика: строк для приведения — %d", len(result))
@@ -363,8 +377,12 @@ def collect_rows(rows: List[dict]) -> List[CustomerRow]:
 #  Отбор и суммирование объёмов
 # =====================================================================
 
-def _in_scope(row: CustomerRow, kind: Optional[str], part: Optional[str]) -> bool:
+def _in_scope(row: CustomerRow, kind: Optional[str], part: Optional[str], subsection=None) -> bool:
     """Относится ли строка заказчика к подразделу типового ВОР (kind + part)."""
+    if row.normalized_scope and (row.external_scope or subsection is not None and row.target_subsection != subsection):
+        return False
+    if row.normalized_scope and part and row.part != part:
+        return False
     if part and row.part and row.part != part:
         return False
     if kind and row.kind != kind:
@@ -556,10 +574,14 @@ def _fill_work(row: template.TemplateRow, group_rows: List[CustomerRow],
     family = _unit_family(row.unit)
     orientation = _context_orientation(row.subsection)
 
+    if qk in ('concrete','formwork') and any(r.normalized_scope for r in group_rows+fallback_rows):
+        category = 'concrete' if qk == 'concrete' else 'formwork'
+        total = _pick_total(group_rows, {category}, family or ('m3' if qk=='concrete' else 'm2'), fallback_rows, share)
+        return (round(total,2),ctx.ref_vor) if total is not None else (None,None)
     if qk == "rebar":
         t = documents.rebar_thickness(ctx.rebar, kind, part, thickness)
         total = ctx.rebar.section_total(kind, part, t, component) * share
-        return (round(total, 2), ctx.ref_vor) if total > 0 else (None, None)
+        return (round(total, 5), ctx.ref_vor) if total > 0 else (None, None)
 
     # Явные соответствия наименований (`_NAME_ALIASES`) имеют приоритет: для этих
     # строк автоматическое сопоставление по словам даёт неверный результат.
@@ -592,7 +614,7 @@ def _fill_work(row: template.TemplateRow, group_rows: List[CustomerRow],
     if total is not None and family == 'pcs':
         from .precast_quantities import count_factor
         total = total * (1 / count_factor(row.unit))
-    return (round(total, 2), ctx.ref_vor) if total is not None else (None, None)
+    return (round(total, 5 if family == "t" else 2), ctx.ref_vor) if total is not None else (None, None)
 
 
 def _sum_by_aliases(name: str, group_rows: List[CustomerRow],
@@ -632,7 +654,7 @@ def _fill_resource(row: template.TemplateRow, group_rows: List[CustomerRow],
         if total is not None:
             from .precast_quantities import count_factor
             total = total * (1 / count_factor(row.unit))
-        return (round(total, 2), ctx.ref_vor) if total is not None else (None, None)
+        return (round(total, 5 if family == "t" else 2), ctx.ref_vor) if total is not None else (None, None)
 
     if category == "rebar":
         diameter, rebar_class = mapping.parse_rebar_spec(row.name)
@@ -642,7 +664,7 @@ def _fill_resource(row: template.TemplateRow, group_rows: List[CustomerRow],
         if total <= 0 and diameter is None and rebar_class:
             total = ctx.rebar.diameter_class(None, rebar_class, kind=kind, part=part,
                                              thickness=t, component=component) * share
-        return (round(total, 2), ctx.ref_vor) if total > 0 else (None, None)
+        return (round(total, 5), ctx.ref_vor) if total > 0 else (None, None)
 
     orientation = _context_orientation(row.subsection)
     total = _sum_by_name(group_rows, row.name, family, lead=True, lead_limit=2,
@@ -652,7 +674,7 @@ def _fill_resource(row: template.TemplateRow, group_rows: List[CustomerRow],
                              orientation=orientation)
         if total is not None:
             total *= share
-    return (round(total, 2), ctx.ref_vor) if total is not None else (None, None)
+    return (round(total, 5 if family == "t" else 2), ctx.ref_vor) if total is not None else (None, None)
 
 
 # =====================================================================
@@ -823,7 +845,7 @@ def _fill_rows(children: List[template.TemplateRow], group_rows: List[CustomerRo
         related = [r for r in rebar_resources if str(r.number).strip().startswith(prefix)]
         resource_sum = sum(fills[r.index][0] or 0.0 for r in related)
         if resource_sum > 0:
-            fills[work.index] = (round(resource_sum, 2), ctx.ref_vor)
+            fills[work.index] = (round(resource_sum, 5), ctx.ref_vor)
 
     # Строки-ресурсы арматуры, не относящиеся к работам армирования («Устройство
     # закладных деталей» и т. п.), не заполняются из общего тоннажа раздела —
@@ -866,7 +888,10 @@ def _fill_rows(children: List[template.TemplateRow], group_rows: List[CustomerRo
                     category = "concrete"
                     dynamic = True
             elif qk == "embedded" and embedded_specs:
-                items = dict(embedded_specs)
+                selected_specs = _embedded_specs(subset(component)[0]) if component else embedded_specs
+                if not selected_specs and component:
+                    selected_specs = [(name, volume * share) for name, volume in _embedded_specs(subset(component)[1])]
+                items = dict(selected_specs)
                 category = "embedded"
                 dynamic = True
 
@@ -878,7 +903,7 @@ def _fill_rows(children: List[template.TemplateRow], group_rows: List[CustomerRo
         output.append(template.OutputRow(src_index=row.index,
                                          label=row.number if mapping.rebar_bucket(row.name) == 'releases' else None,
                                          name_override=row.name if mapping.stair_component(row.name) == 'combined' or mapping.rebar_bucket(row.name) == 'releases' else None,
-                                         volume=round(sum(items.values()), 2) if items else None,
+                                         volume=round(sum(items.values()), 5 if category in ("rebar", "embedded") else 2) if items else None,
                                          justification=ctx.ref_vor if items else None))
         sample = _resource_sample(kids, category) or row.index
         ordered = sorted(items.items(), key=documents.rebar_sort_key) if category == "rebar" \
@@ -894,7 +919,7 @@ def _fill_rows(children: List[template.TemplateRow], group_rows: List[CustomerRo
                 name = key
             output.append(template.OutputRow(
                 src_index=sample, label=f"{row.number}.{number}", name_override=name,
-                volume=round(volume, 2), justification=ctx.ref_vor))
+                volume=round(volume, 5 if category in ("rebar", "embedded") else 2), justification=ctx.ref_vor))
         for child in kids:
             if child.kind == "resource":
                 child_category = mapping.classify_resource(child.name)
@@ -915,6 +940,15 @@ def _fill_rows(children: List[template.TemplateRow], group_rows: List[CustomerRo
     output.extend(mixed_rows(children, group_rows, kind, part, ctx.ref_vor))
     from .estimate_parameters import fill
     fill(output, children, group_rows)
+    from .thickness import fill_work_names
+    fill_work_names(output, children, thickness)
+    for item in output:
+        source = next((r for r in children if r.index == item.src_index), None)
+        if source and not source.unit and item.volume is not None:
+            category = mapping.classify_work(source.name)
+            unit = {"concrete":"м3", "rebar":"т", "embedded":"т", "formwork":"м2"}.get(category)
+            if unit:
+                item.extra[3] = unit
     return output
 
 
@@ -942,10 +976,10 @@ def _block_text(row: template.TemplateRow) -> str:
 
 
 def _geometry_value(row: CustomerRow, param: str) -> Optional[str]:
-    if row.category == 'preparation':
+    if row.category == 'preparation' or row.normalized_scope and row.category not in ("concrete", "rebar", "embedded", "formwork"):
         return None
     if param == "thickness":
-        return row.thickness_label or (str(row.thickness) if row.thickness else None)
+        return row.thickness_label or (f"{row.thickness:g}" if row.thickness else None)
     if param == "section":
         return row.section_label
     return None
@@ -988,6 +1022,10 @@ def _block_header(index, kind: Optional[str], part: Optional[str], label: Option
     if index is not None and label:
         name = index.geometry_group_name(kind, part, label)
         if name:
+            from .thickness import parse
+            named = parse(name,bare=True)
+            if geometry == 'thickness' and (not named or named['mode']!='exact' or f"{named['values'][0]:g}" != label):
+                name += f' (толщина: {label} мм)'
             return 'Фундамент башенного крана: ' + name if kind == 'crane_foundation' and 'кран' not in name.lower() else name
     return _format_header(fallback_text, geometry, label)
 
@@ -1020,14 +1058,14 @@ def build_customer_vor(vor_path: str, output_path: str, template_path: str = Non
     Возвращает статистику сборки (число строк, заполненных объёмов, строк
     ВОР заказчика, тоннаж арматуры).
     """
-    if raw_rows is None and os.path.splitext(vor_path)[1].lower() != ".pdf":
-        raise ValueError("Приведение к типовому ВОР поддерживается только для PDF-файла ВОР")
+    if raw_rows is None and os.path.splitext(vor_path)[1].lower() not in (".pdf", ".xlsx"):
+        raise ValueError("Приведение к типовому ВОР поддерживается для PDF и XLSX")
 
     template_path = template_path or template.DEFAULT_TEMPLATE_PATH
-    from src.services.doc_pdf_parser import extract_vor_rows
+    from src.services.customer_documents import read_vor
 
-    _say(progress, "ВОР заказчика: разбор таблиц")
-    raw = extract_vor_rows(vor_path) if raw_rows is None else raw_rows
+    _say(progress, "ВОР заказчика: разбор таблиц; Ollama только при неполной схеме")
+    raw = read_vor(vor_path) if raw_rows is None else raw_rows
     if not raw:
         raise ValueError("В ВОР заказчика не найдено строк таблиц")
 
@@ -1047,6 +1085,8 @@ def build_customer_vor(vor_path: str, output_path: str, template_path: str = Non
     trows = prepared_template if prepared_template is not None else template.parse_template(template_path, sheet_name)
     from .stair_grouping import adapt_template
     trows = adapt_template(trows, rows)
+    from .customer_scope import assign_subsections
+    rows = assign_subsections(rows, trows)
     by_index = {r.index: r for r in trows}
     pos_by_index = {r.index: k for k, r in enumerate(trows)}
 
@@ -1081,24 +1121,30 @@ def build_customer_vor(vor_path: str, output_path: str, template_path: str = Non
 
         if row.kind == "block":
             part = row.part if row.part in ("underground", "above") else None
-            scope = [r for r in rows if _in_scope(r, row.element_kind, part)]
+            scope = [r for r in rows if _in_scope(r, row.element_kind, part, row.subsection)]
             children = block_rows.get(row.index, [])
 
             groups, ungrouped = _geometry_groups(scope, row.geometry) \
                 if row.geometry in ("thickness", "section") and scope else ({}, scope)
 
+            normalized = any(r.normalized_scope for r in scope)
+            if normalized and groups and ungrouped:
+                groups[""] = ungrouped
+                ungrouped = []
             if groups:
                 total_concrete = _concrete_total(scope)
                 for label in sorted(groups, key=_geometry_sort):
                     group = groups[label]
                     group_concrete = _concrete_total(group)
-                    share = (group_concrete / total_concrete) if total_concrete > 0 else 1.0
+                    share = 1.0 if normalized else (group_concrete / total_concrete) if total_concrete > 0 else 1.0
                     thickness = _geometry_int(label) if row.geometry == "thickness" else None
                     output.append(template.OutputRow(
                         src_index=row.index,
                         label=_block_header(index, row.element_kind, part, label,
                                             _block_text(row), row.geometry)))
-                    for out_row in _fill_rows(children, group, ungrouped, ctx,
+                    from .customer_scope import scoped_rebar
+                    group_ctx = _Context(scoped_rebar(rebar, group), ctx.ref_vor) if normalized else ctx
+                    for out_row in _fill_rows(children, group, ungrouped, group_ctx,
                                               row.element_kind, part, share, thickness):
                         if out_row.volume is not None:
                             filled += 1
@@ -1107,15 +1153,20 @@ def build_customer_vor(vor_path: str, output_path: str, template_path: str = Non
                 header_label = _format_header(_block_text(row), row.geometry, None) \
                     if row.geometry else _block_text(row)
                 output.append(template.OutputRow(src_index=row.index, label=header_label))
-                for out_row in _fill_rows(children, scope, [], ctx, row.element_kind, part, 1.0):
+                from .customer_scope import scoped_rebar
+                group_ctx = _Context(scoped_rebar(rebar, scope), ctx.ref_vor) if normalized else ctx
+                for out_row in _fill_rows(children, scope, [], group_ctx, row.element_kind, part, 1.0):
                     if out_row.volume is not None:
                         filled += 1
                     output.append(out_row)
             if row.element_kind == 'foundation_slab':
-                crane_scope = [r for r in rows if _in_scope(r, 'crane_foundation', part)]
+                crane_scope = [r for r in rows if _in_scope(r, 'crane_foundation', part, row.subsection)]
                 crane_groups, crane_ungrouped = _geometry_groups(crane_scope, 'thickness')
                 if crane_scope and not crane_groups:
                     crane_groups = {'': crane_scope}
+                    crane_ungrouped = []
+                if crane_ungrouped and any(r.normalized_scope for r in crane_scope):
+                    crane_groups[''] = crane_ungrouped
                     crane_ungrouped = []
                 total = _concrete_total(crane_scope)
                 for label in sorted(crane_groups, key=_geometry_sort):
@@ -1124,8 +1175,10 @@ def build_customer_vor(vor_path: str, output_path: str, template_path: str = Non
                         label=_block_header(index, 'crane_foundation', part, label,
                                             'Фундамент под башенный кран толщиной … мм', 'thickness')))
                     share = _concrete_total(members) / total if total else 1.0
+                    from .customer_scope import scoped_rebar
+                    crane_ctx = _Context(scoped_rebar(rebar, members),ctx.ref_vor) if any(r.normalized_scope for r in members) else ctx
                     added = _fill_rows(template.with_kind(children, 'crane_foundation'), members, crane_ungrouped,
-                                       ctx, 'crane_foundation', part, share, _geometry_int(label))
+                                       crane_ctx, 'crane_foundation', part, share, _geometry_int(label))
                     filled += sum(r.volume is not None for r in added)
                     output.extend(added)
             i = pos_by_index[block_end[row.index]] + 1
@@ -1137,8 +1190,10 @@ def build_customer_vor(vor_path: str, output_path: str, template_path: str = Non
                 group.append(trows[i])
                 i += 1
             part = group[0].part if group[0].part in ("underground", "above") else None
-            scope = [r for r in rows if _in_scope(r, group[0].element_kind, part)]
-            for out_row in _fill_rows(group, scope, [], ctx, group[0].element_kind, part, 1.0):
+            scope = [r for r in rows if _in_scope(r, group[0].element_kind, part, group[0].subsection)]
+            from .customer_scope import scoped_rebar
+            group_ctx = _Context(scoped_rebar(rebar, scope),ctx.ref_vor) if any(r.normalized_scope for r in scope) else ctx
+            for out_row in _fill_rows(group, scope, [], group_ctx, group[0].element_kind, part, 1.0):
                 if out_row.volume is not None:
                     filled += 1
                 output.append(out_row)
@@ -1147,6 +1202,10 @@ def build_customer_vor(vor_path: str, output_path: str, template_path: str = Non
         output.append(template.OutputRow(src_index=row.index))
         i += 1
 
+    from .customer_scope import preserve_remaining, fill_product_counts
+    fill_product_counts(output, rows, trows, ctx.ref_vor)
+    mapped_sources, preserved_sources = preserve_remaining(output, rows, trows, ctx.ref_vor)
+    filled = sum(item.volume is not None for item in output)
     _say(progress, "Запись ВОР заказчика по типовому шаблону")
     template.render_template(output, path=template_path, sheet_name=sheet_name,
                              output_path=output_path)
@@ -1155,6 +1214,7 @@ def build_customer_vor(vor_path: str, output_path: str, template_path: str = Non
         "rows": len(output),
         "filled": filled,
         "customer_rows": len(rows),
+        "mapped_sources": mapped_sources, "preserved_sources": preserved_sources,
         "rebar_total": round(rebar.total, 2),
         "source": os.path.basename(vor_path),
         "output": os.path.basename(output_path),

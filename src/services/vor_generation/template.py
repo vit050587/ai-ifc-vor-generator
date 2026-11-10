@@ -216,6 +216,7 @@ class OutputRow:
     justification: Optional[str] = None
     name_override: Optional[str] = None  # переопределение колонки B
     extra: Dict[int, object] = field(default_factory=dict)
+    hidden: bool = False
 
 
 def with_release_work(rows, buckets):
@@ -281,6 +282,7 @@ def render_template(output_rows: List[OutputRow], path: str = None,
             dst_cell = ws.cell(row=target, column=col)
             dst_cell._style = copy.copy(src_cell._style)
         ws.row_dimensions[target].height = src_ws.row_dimensions[row.src_index].height
+        ws.row_dimensions[target].hidden = row.hidden
 
         # Значения колонок A/B/C берём из строки-образца.
         ws.cell(row=target, column=1).value = _cell(src_ws, row.src_index, 1)
@@ -295,7 +297,8 @@ def render_template(output_rows: List[OutputRow], path: str = None,
         if row.volume is not None:
             cell = ws.cell(row=target, column=4)
             cell.value = float(row.volume)
-            cell.number_format = "0.00"
+            unit = str(row.extra.get(3,ws.cell(target,3).value) or "").strip().lower().rstrip(".")
+            cell.number_format = "0.00000" if unit in ("т","тонн","тонна","тн") else "0.00"
         if row.justification is not None:
             ws.cell(row=target, column=6).value = row.justification
         if isinstance(row.volume, Quantity):
@@ -304,15 +307,15 @@ def render_template(output_rows: List[OutputRow], path: str = None,
         for col, value in row.extra.items():
             ws.cell(row=target, column=col).value = value
         from .stair_grouping import BAND_NAMES
-        if row.name_override == '' and row.label in BAND_NAMES.values():
+        if row.name_override == '' and row.label:
             from openpyxl.styles import Alignment
             ws.merge_cells(start_row=target, end_row=target, start_column=1, end_column=COLUMNS)
             heading = ws.cell(target, 1)
             font = copy.copy(heading.font)
             font.bold = True
             heading.font = font
-            heading.alignment = Alignment(wrap_text=True, vertical='center')
-            ws.row_dimensions[target].height = 28
+            heading.alignment = Alignment(wrap_text=True, vertical='center', horizontal='left')
+            ws.row_dimensions[target].height = max(28, 18*((len(row.label)+119)//120))
         guids = getattr(row.volume, 'element_guids', ())
         if guids:
             model_links.append({'row': target, 'number': str(ws.cell(target, 1).value or ''),

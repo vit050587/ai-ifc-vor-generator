@@ -26,27 +26,6 @@ _BLUEPRINT_DIR = Path(__file__).resolve().parent.parent.parent / "ai-blueprint-t
 _PDF_PROCESS_LOCK = threading.Lock()
 
 
-def _configure_local_blueprint_models() -> None:
-    """Задаёт пути весов на хосте, не меняя окружение Docker-сервиса в /app."""
-    if _BLUEPRINT_DIR.parent == Path("/app"):
-        return
-
-    models_dir = Path(os.environ.get(
-        "LOCAL_BLUEPRINT_MODELS_DIR", "/home/projects/external/models"
-    )).expanduser().resolve()
-    os.environ["MODELS_DIR"] = str(models_dir)
-    model_files = {
-        "YOLO_LAYOUT_MODEL": "yolo_layout.pt",
-        "YOLO_LEGEND_LAYOUT_MODEL": "yolo_legend_layout.pt",
-        "DINO_HATCHING_MODEL": "dino_hatching.pt",
-        "HATCH_FINDER_MODEL": "hatch_finder.pt",
-        "WALL_DETECTION__MODEL_NAME": "yolo_walls_obb.pt",
-        "UNHATCHED_WALL_DETECTION__MODEL_NAME": "yolo_walls_obb.pt",
-    }
-    for setting, filename in model_files.items():
-        os.environ[setting] = str(models_dir / filename)
-
-
 # =====================================================================
 #  РУЧНАЯ ЛЕГЕНДА ЧЕРТЕЖА (PDF)
 #  Пользователь может отключить авто-определение легенды в UI и передать
@@ -226,7 +205,6 @@ def _process_pdf_unlocked(
     original_sys_path = sys.path[:]
 
     # Устанавливаем переменные окружения для config.py ДО импорта
-    _configure_local_blueprint_models()
     blueprint_abs = str(_BLUEPRINT_DIR)
     os.environ.setdefault("LOG_DIR", os.path.join(blueprint_abs, "logs"))
     os.environ.setdefault("RECORDS_DIR", os.path.join(blueprint_abs, "logs", "characteristics_records"))

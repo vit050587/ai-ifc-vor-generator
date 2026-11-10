@@ -85,6 +85,8 @@ def actual_parameters(name, objects):
         section = geometry.get('section_label') or getattr(obj, 'section_label', None)
         if thickness:
             values.append(f'Толщина: {thickness:g} мм')
+        elif getattr(obj, 'thickness_label', ''):
+            values.append('Толщина: '+obj.thickness_label+' мм')
         if section:
             values.append('Сечение: ' + str(section))
         method = getattr(obj, 'construction_method', '')
@@ -111,6 +113,14 @@ def fill(output, source_rows, objects, template_path=None):
         parameter = required_parameter(name, original, examples)
         if parameter:
             row.extra[7] = parameter
-        value = actual_parameters(name, objects) if row.volume is not None else ''
+        selected = objects
+        if row.volume is not None:
+            guids = set(getattr(row.volume, 'element_guids', ()))
+            sources = set(getattr(row.volume, 'sources', ()))
+            if guids and any(getattr(obj, 'guid', '') for obj in objects):
+                selected = [obj for obj in objects if getattr(obj, 'guid', '') in guids]
+            elif sources and any(getattr(getattr(obj, 'volume', None), 'sources', ()) for obj in objects):
+                selected = [obj for obj in objects if sources.intersection(getattr(getattr(obj, 'volume', None), 'sources', ()))]
+        value = actual_parameters(name, selected) if row.volume is not None else ''
         if value:
             row.extra[8] = value

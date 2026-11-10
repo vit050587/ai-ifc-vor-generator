@@ -72,6 +72,9 @@ class RebarRow:
     group: str = ""                  # наименование родительской строки арматуры
     thickness: Optional[int] = None  # толщина конструкции блока, мм
     component: str = ""              # подтип лестницы: flight (марш)|landing (площадка)
+    source_kind: Optional[str] = None
+    source_part: Optional[str] = None
+    normalized_scope: bool = False
 
 
 @dataclass
@@ -94,7 +97,10 @@ class RebarData:
         ``landing``) для разделения арматуры маршей и площадок.
         """
         for row in self.rows:
-            if kind is not None and not mapping.vor_section_matches(row.section, kind, part):
+            if row.normalized_scope:
+                if kind and row.source_kind != kind or part and row.source_part != part:
+                    continue
+            elif kind is not None and not mapping.vor_section_matches(row.section, kind, part):
                 continue
             if thickness is not None and row.thickness != thickness:
                 continue
@@ -330,12 +336,15 @@ def extract_rebar(rows: List[dict]) -> RebarData:
         if diameter is None and pos and (section, block, pos) in parents_with_children:
             continue
 
-        thickness = thickness_map.get((section, block))
+        thickness = row.get('geometry_values', ())
+        thickness = thickness[0] if len(thickness)==1 else None if row.get('normalized_scope') else thickness_map.get((section, block))
         scope_section = f'{section} / {block}' if mapping.detect_kind(block) == 'crane_foundation' else section
         data.rows.append(RebarRow(section=scope_section, name=name, diameter=diameter,
                                   rebar_class=rebar_class, volume=volume,
                                   group=group, thickness=thickness,
-                                  component=components.get((section, block, pos), "")))
+                                  component=components.get((section, block, pos), ""),
+                                  source_kind=None if row.get("external_scope") else row.get("construction_kind"), source_part=row.get("building_part"),
+                                  normalized_scope=row.get("normalized_scope", False)))
         data.by_section[section] = data.by_section.get(section, 0.0) + volume
         key = (diameter, rebar_class or "")
         data.by_diameter_class[key] = data.by_diameter_class.get(key, 0.0) + volume

@@ -121,6 +121,11 @@ def _group_header(elements: List[Element], param: Optional[str], label: Optional
     """
     name = _dominant_group_name(elements)
     if name:
+        if param == "thickness" and label:
+            from .thickness import parse
+            named = parse(name,bare=True)
+            if not named or named["mode"]!="exact" or abs(named["values"][0]-float(label))>.01:
+                return name+f" (толщина по IFC: {label} мм)"
         return name
     return _format_header(fallback_text, param, label)
 
@@ -667,10 +672,24 @@ def _fill_rows(rows: List[template.TemplateRow], elements: List[Element],
             output.append(_output_row(child, fills, label))
         i = j
 
+    # Keep a measured assembly total once when the model does not identify
+    # its flights and landings. Never copy that volume into both operations.
+    if kind == 'stair':
+        unidentified = [el for el in elements if not el.component]
+        concrete = next((row for row in rows if row.kind == 'work'
+                         and mapping.classify_work(row.name) == 'concrete'), None)
+        if unidentified and concrete and any(el.quantity('volume') for el in unidentified):
+            value, reference = _fill_work(concrete, unidentified, aggregate(unidentified), ctx, share, thickness, 'combined')
+            output.append(template.OutputRow(
+                src_index=concrete.index, label=concrete.number,
+                name_override='Бетонирование монолитных железобетонных конструкций лестничных маршей и площадок',
+                volume=value, justification=(reference or ctx.ref_ifc) + '. В IFC нет разделения объёма на марши и площадки; показан общий объём без распределения.'))
     from .stair_grouping import mixed_rows
     output.extend(mixed_rows(rows, documents.customer_rows(ctx.docs), kind, part, ctx.ref_ifc, generated=True))
     from .estimate_parameters import fill
     fill(output, rows, elements)
+    from .thickness import fill_work_names
+    fill_work_names(output, rows, thickness)
     return output
 
 
@@ -723,7 +742,10 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
     source_rows = documents.customer_rows(docs)
     route_landings(index, source_rows)
     rows = adapt_template(rows, source_rows)
-    ctx = _Context(index, docs, ifc_name)
+    from dataclasses import replace
+    normalized_rebar = any(row.normalized_scope for row in docs.rebar.rows)
+    calculation_docs = replace(docs, rebar=replace(docs.rebar, rows=[r for r in docs.rebar.rows if not r.normalized_scope])) if normalized_rebar else docs
+    ctx = _Context(index, calculation_docs, ifc_name)
 
     by_index = {r.index: r for r in rows}
     pos_by_index = {r.index: k for k, r in enumerate(rows)}
@@ -830,6 +852,10 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
         output.append(template.OutputRow(src_index=row.index))
         i += 1
 
+    if normalized_rebar:
+        from .customer_scope import insert_source_rebar
+        insert_source_rebar(output, source_rows, rows, docs.rebar, ctx.ref_vor)
+        filled = sum(item.volume is not None for item in output)
     _say(progress, "Запись заполненного ВОР")
     template.render_template(output, path=template_path, sheet_name=sheet_name,
                              output_path=output_path)

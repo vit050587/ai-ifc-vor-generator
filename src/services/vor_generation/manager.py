@@ -231,9 +231,13 @@ class VorGenerationManager:
             # 2. Разбор документов.
             self._stage(job_id, 35, "Разбор загруженных документов")
             docs = documents.load_documents(
-                doc_paths, use_llm=True,
+                {k:v for k,v in doc_paths.items() if k != "vor"}, use_llm=True,
                 progress=lambda message: self._stage(job_id, None, message),
             )
+
+            if doc_paths.get('vor'):
+                from ..customer_documents import populate_documents
+                populate_documents(docs, doc_paths['vor'])
 
             # 3. ВОР заказчика — в структуру типового ВОР (группировка заказчика
             #    по блокам/секциям/этажам «схлопывается» к подразделам шаблона).
@@ -244,7 +248,7 @@ class VorGenerationManager:
                 try:
                     customer_stats = customer_vor.build_customer_vor(
                         vor_path, str(job_dir / VOR_CUSTOMER_FILENAME),
-                        elements_json_path=str(raw_json),
+                        elements_json_path=str(raw_json), raw_rows=docs.vor_rows,
                         progress=lambda message: self._stage(job_id, None, message),
                     )
                 except Exception as exc:  # pragma: no cover — не роняем задачу

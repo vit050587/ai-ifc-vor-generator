@@ -5,10 +5,11 @@ import re
 
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.comments import Comment
 
 from .estimate_export import _metadata, _rows, _position_groups, public_group_name
 from .estimate_consolidation import merge_rows
-from .ifc_quantities import SOURCE
+from .quantity_provenance import text, joined
 from .construction_method import construction_method
 from .work_sections import sectioned_positions
 
@@ -31,7 +32,7 @@ def ensure_current(path):
                 rows = book[SHEET].iter_rows(values_only=True)
                 current = list(next(rows, ())) == HEADERS
                 if current:
-                    current = not any(re.search(r'\[(?:Высота от земли:|Этажи:)', str(row[1] or '')) for row in rows)
+                    current = not any(re.search(r'\[(?:Высота от земли:|Этажи:)', str(row[1] or '')) or (row[0] and (str(row[4] or '').startswith('Расчётные данные:') or str(row[4]).lower() == 'nan')) for row in rows)
         finally:
             book.close()
         if not current:
@@ -93,13 +94,15 @@ def build(path):
                     cell.fill = PatternFill('solid', fgColor='E7EDF4')
                 continue
             for item in (record, *resources):
-                work, facts = item.get('work') or {}, item.get('facts') or {}
-                source = '; '.join(item.get('volume_sources') or []) or work.get('volume_source') or facts.get(SOURCE)
-                source = str(source) if source else f"Расчётные данные: Данные!D{item['source_row']}"
-                if item.get('source_rows'):
-                    source += '\nСумма строк: ' + ', '.join(f"Данные!D{r}" for r in item['source_rows'])
+                work = item.get('work') or {}
+                source = joined(item.get('volume_sources') or []) or text(work.get('volume_source'))
+                if not source:
+                    source = ('Источник исходного числа не сохранён в этом расчёте' if item['quantity_exact'] is not None
+                              else 'Объём не определён')
                 quantity, unit = item['quantity_exact'], item['unit']
                 sheet.append([item['code'], item['title'], unit, quantity, source])
+                sheet.cell(sheet.max_row, 5).comment = Comment(
+                    'Расчётные строки: ' + ', '.join(f"Данные!D{r}" for r in item.get('source_rows') or [item['source_row']]), 'Сервис')
                 sheet.cell(sheet.max_row, 5).hyperlink = f"#'Данные'!D{item['source_row']}"
         for cell in sheet[1]:
             cell.font = Font(bold=True)

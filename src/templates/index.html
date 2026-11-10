@@ -6303,7 +6303,7 @@ document.addEventListener('DOMContentLoaded', () => {
     box.innerHTML='<button class="btn btn-primary" id="vorCmpBtn">⚖️ Сравнить с ВОР исполнителя</button> <span id="vorCmpMsg" style="color:#718096;font-size:13px;margin-left:8px">сформированный перечень ↔ ВОР исполнителя: где совпадает, кто прав и почему</span>'
       +'<div style="margin-top:8px"><button class="btn btn-primary" id="typVorBtn">📋 Разложить в типовую ВОР и сравнить</button> <span id="typVorMsg" style="color:#718096;font-size:13px;margin-left:8px">оба типовых ВОР по модели IFC и документам, с общей сверкой</span></div>'
       +'<div style="margin-top:8px"><button class="btn btn-primary" id="estimateBtn">📄 Смета по сформированному перечню</button> <span id="estimateMsg" style="color:#718096;font-size:13px;margin-left:8px">отдельный Excel в сметной форме; обоснования коэффициентов — в комментариях</span></div>'
-      +'<div style="margin-top:8px"><button class="btn btn-primary" id="estimateCompareBtn">⚖️ Сравнить смету заказчика с нашей ЛСР</button><input type="file" id="estimateCompareFile" accept=".xlsx,.json" hidden> <span id="estimateCompareMsg" style="color:#718096;font-size:13px;margin-left:8px">смета XLSX или расчётный JSON; объёмы, стоимость и начисления</span></div>';
+      +'<div style="margin-top:8px"><button class="btn btn-primary" id="estimateCompareBtn">⚖️ Сравнить смету заказчика с нашей ЛСР</button><input type="file" id="estimateCompareFile" accept=".pdf,.xlsx,.json" hidden> <span id="estimateCompareMsg" style="color:#718096;font-size:13px;margin-left:8px">смета PDF, XLSX или расчётный JSON; объёмы, стоимость и начисления</span></div>';
     const title=card.querySelector('.step-title'); (title||card.firstChild).after(box);
     $('vorCmpBtn').onclick=showCompare;
     $('typVorBtn').onclick=showTypical;
@@ -6404,6 +6404,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         +`<div style="margin-top:6px;padding:6px 8px;background:#f7fafc;border-left:3px solid #a0aec0;color:#4a5568;font-size:13px">Геометрия и бетон — из IFC. Арматура, деформационные швы, гидроизоляция и теплоизоляция — из ВОР заказчика с указанием источников. Расхождение = объём исполнителя − сформированный объём. Заимствованные объёмы не являются независимой проверкой по модели.</div>`
         +`<a class="btn btn-sm btn-primary" style="margin-top:8px" href="${esc(d.download_url)}" download>Скачать общий ВОР со сверкой (Excel)</a>`;
+      if(d.documentImport?.status==='partial'){
+        const warning=document.createElement('div');
+        warning.style.cssText='margin:8px 0;padding:8px;border-left:3px solid #b7791f;background:#fffaf0;color:#744210';
+        warning.textContent='ВОР заказчика разобран частично. Сравнение сформировано по извлечённым данным. '+
+          (d.documentImport.warnings||[]).map(item=>[item.location,item.message].filter(Boolean).join(': ')).join('; ');
+        c.appendChild(warning);
+      }
       (d.files||[]).forEach(file=>{
         const row=document.createElement('div');row.className='file-info';
         const label=document.createElement('span');label.className='name';label.textContent=file.label;

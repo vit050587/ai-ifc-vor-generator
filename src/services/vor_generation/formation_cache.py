@@ -25,8 +25,7 @@ def digest(path):
 
 def fingerprint(folder, template_path, session):
     from .. import vor_comparison as vc
-    from ..works_comparison.config import settings
-    from src.core.config import load_config
+    from .. import perechen_kb as kb
     folder = Path(folder)
     inputs = [template_path, vc._find_session_dir(str(folder), 'IFC_исходные_параметры.json'),
               vc._find_session_dir(str(folder), vc.VOR_JSON), vc._find_vor_pdf(str(folder))]
@@ -37,10 +36,11 @@ def fingerprint(folder, template_path, session):
     # Changes to calculation/rendering code must also invalidate the result.
     package = Path(__file__).parent
     inputs.extend(package.glob('*.py'))
+    inputs.extend((package.parent / 'customer_documents').glob('*.py'))
     inputs.extend(package.parent / name for name in (
         'comparison_typical.py','comparison_layout.py','comparison_ai_reason.py','comparison_wording.py',
         'doc_pdf_parser.py','vor_parser.py','vor_comparison.py','pd_parser.py','ifc_quantities.py','construction_method.py',
-        'estimate_parameter_comparison.py','stair_formwork.py'))
+        'estimate_parameter_comparison.py','stair_formwork.py','perechen_kb.py'))
     from ..stair_formwork import find_ifc
     raw = vc._find_session_dir(str(folder), 'IFC_исходные_параметры.json')
     if raw:
@@ -48,12 +48,10 @@ def fingerprint(folder, template_path, session):
     records = []
     for path in sorted({str(Path(p).resolve()) for p in inputs if p and Path(p).is_file()}):
         records.append((path, digest(path)))
-    cfg = load_config()
     payload = {'version':VERSION, 'files':records, 'session':{
         'original_filename':(session or {}).get('original_filename')},
-        'llm':{'server':cfg.ollama_url,'model':settings.OLLAMA_MODEL,
-               'temperature':settings.TEMPERATURE,'top_k':settings.TOP_K,
-               'top_p':settings.TOP_P,'seed':settings.SEED}}
+        'llm':{'server':kb.OLLAMA_URL,'model':kb.KB_MODEL,
+               'temperature':0,'num_predict':kb.KB_NUM_PREDICT,'timeout':kb.KB_TIMEOUT,'think':False}}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
@@ -74,7 +72,7 @@ def load(folder, key):
 
 def save(folder, key, result):
     # A failed model explanation remains retryable on the next request.
-    if result.get('aiReasonSummary', {}).get('failed', 0):
+    if result.get('aiReasonSummary', {}).get('failed', 0) or result.get('documentImport',{}).get('status')=='partial':
         return
     paths = [result['file'], *[item['file'] for item in result['source_files']]]
     paths.extend(str(Path(path).with_suffix('.model-links.json')) for path in list(paths)

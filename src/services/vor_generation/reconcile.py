@@ -95,6 +95,12 @@ def _explain(row: dict) -> None:
     def put(verdict: str, why: str) -> None:
         row["verdict"], row["why"] = verdict, why
 
+    if row.get('coveredByAggregate'):
+        put('info', 'Строка учтена в суммарном сравнении по подразделу; объём между группами не распределяется.')
+        return
+    if g is not None and c is None:
+        put('check', f'В сформированной ВОР {_fmt(g)} {unit}; сопоставимый объём заказчика отсутствует. По отсутствию пары нельзя определить правильность объёма.')
+        return
     parameters = row.get('parameterComparison') or {}
     if status == 'quantity_estimate':
         put('info', 'Показана геометрическая оценка площади, а не подтверждённая площадь контакта с опалубкой. Для балок учитываются низ и вертикальные грани; примыкания к соседним конструкциям не исключены. Численная разница приведена справочно.')
@@ -262,7 +268,7 @@ def write_excel(rows: List[dict], summary: dict, path: str, *, workbook=None) ->
         cell.font = Font(bold=True)
         cell.alignment = Alignment(wrap_text=True, vertical="center")
     for r in rows:
-        if r.get("status") == "separator" or not r.get("verdict"):
+        if r.get("coveredByAggregate") or r.get("status") == "separator" or not r.get("verdict"):
             continue
         g, c = r.get("generatedQuantity"), r.get("customerQuantity")
         diff = None if g is None or c is None or r.get("status") in ("ifc_quantity_incomplete", "project_quantity_incomplete") else round(c - g, 3)
@@ -281,7 +287,7 @@ def write_excel(rows: List[dict], summary: dict, path: str, *, workbook=None) ->
         ws.column_dimensions[get_column_letter(i)].width = w
     for row in ws.iter_rows(min_row=2, min_col=7, max_col=9):
         for cell in row:
-            cell.number_format = "0.00"
+            cell.number_format = "0.00000" if str(ws.cell(cell.row,6).value or "").rstrip(".") == "т" else "0.00"
     ws.freeze_panes = "E2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(head))}{ws.max_row}"
 

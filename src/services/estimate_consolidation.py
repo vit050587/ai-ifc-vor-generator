@@ -17,10 +17,13 @@ def merge_rows(target, other):
         target['merged_sources'] = [{key: target.get(key) for key in
                                      ('source_row','group','title','quantity_exact')}]
     target['source_rows'].extend(other.get('source_rows') or [other['source_row']])
-    from .ifc_quantities import SOURCE
+    from .quantity_provenance import text
     def sources(row):
-        value = (row.get('work') or {}).get('volume_source') or (row.get('facts') or {}).get(SOURCE)
-        return row.get('volume_sources') or ([str(value)] if value else [])
+        values = row.get('volume_sources') or [(row.get('work') or {}).get('volume_source')]
+        valid = [v for value in values if (v := text(value))]
+        if not valid and row.get('quantity_exact') is not None:
+            valid = ['Источник части исходного числа не сохранён в этом расчёте']
+        return valid
     target['volume_sources'] = list(dict.fromkeys([*sources(target), *sources(other)]))
     target['merged_sources'].extend(other.get('merged_sources') or [
         {key: other.get(key) for key in ('source_row','group','title','quantity_exact')}])

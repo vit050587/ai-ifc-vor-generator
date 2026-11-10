@@ -3008,8 +3008,8 @@ def compare_session_estimate(session_id):
         return _pd_jsonify({"status": "error", "detail": "Сессия не найдена"}), 404
     upload = request.files.get("estimate")
     suffix = Path(upload.filename or "").suffix.lower() if upload else ""
-    if suffix not in (".xlsx", ".json"):
-        return _pd_jsonify({"status": "error", "detail": "Загрузите смету в формате XLSX или расчётный JSON сметы"}), 400
+    if suffix not in (".xlsx", ".json", ".pdf"):
+        return _pd_jsonify({"status": "error", "detail": "Загрузите смету в формате PDF, XLSX или расчётный JSON сметы"}), 400
     base = os.path.join(manager.output_folder, session_id)
     run_dir = _vor_comparison_run_dir(base, session_id)
     if not run_dir:

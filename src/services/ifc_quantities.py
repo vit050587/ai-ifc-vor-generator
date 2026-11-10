@@ -31,14 +31,14 @@ def number(value):
 
 def volume_rank(key):
     key = str(key).lower().replace('ё', 'е').replace('³', '3')
-    if any(word in key for word in ('gross', 'ratio', 'reinforcement', 'коэффициент')):
+    if any(word in key for word in ('gross', 'ratio', 'reinforcement', 'коэффициент', 'габаритный', 'envelope')):
         return None
     name = re.sub(r'[\s_-]', '', key.rsplit('::', 1)[-1])
     if name in ('netvolume', 'чистыйобъем', 'объемнетто'):
         return 0
     if name in ('volume', 'объем'):
         return 1 if key.startswith('qto::') else 2
-    if key.startswith('qto_bbox::') and 'объем' in key:
+    if key.startswith(('qto_bbox::', 'qto_geom::')) and 'объем' in key:
         return 3
     if re.search(r'(объем|volume).*?(м3|m3|литр|lit[er])', key):
         return 2
@@ -47,7 +47,7 @@ def volume_rank(key):
 
 def volume_columns(columns):
     return sorted((c for c in columns if volume_rank(c) is not None),
-                  key=lambda c: (volume_rank(c), str(c)))
+                  key=lambda c: (volume_rank(c), str(c).startswith('QTO_bbox::'), str(c)))
 
 
 def unit_factor(unit):
@@ -157,5 +157,5 @@ def stamp_ifc_volume(row, element):
             return stamp_volume(row, Volume(None, '; '.join(primary_unknown), 'missing_units'))
         return stamp_volume(row, resolve_volume(values))
     # Only explicitly labelled model geometry is eligible as a fallback.
-    geometry = {key: value for key, value in row.items() if str(key).startswith('QTO_bbox::')}
+    geometry = {key: value for key, value in row.items() if str(key).startswith(('QTO_bbox::', 'QTO_geom::'))}
     return stamp_volume(row, resolve_volume(geometry))

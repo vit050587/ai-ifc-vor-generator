@@ -437,7 +437,9 @@ class ElementIndex:
 
             group_name = _text(row.get("ObjectType")) or re.sub(r":\d+$", "", _text(row.get("Name")))
             if "thickness" not in geometry and kind in _THICKNESS_KINDS:
-                thickness = _group_thickness(group_name)
+                from .thickness import parse
+                candidates = [parse(row.get(key),bare=True) for key in ("ObjectType","Name")]
+                thickness = next((spec["values"][0] for spec in candidates if spec and spec["mode"]=="exact"),None)
                 if thickness:
                     geometry["thickness"] = float(thickness)
 
@@ -482,6 +484,8 @@ class ElementIndex:
 
         logger.info("Индекс элементов IFC построен: элементов %d", len(elements))
         index = cls(elements)
+        from .stair_assemblies import hydrate_index as hydrate_assemblies
+        hydrate_assemblies(index, path, ifc_path)
         from ..stair_formwork import hydrate_index
         hydrate_index(index, path, ifc_path)
         return index

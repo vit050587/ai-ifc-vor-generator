@@ -41,12 +41,17 @@ def _compare_sources(generated, customer, output_path, llm):
     from . import reconcile
     typical = compare_workbooks(generated, customer)
     summary = reconcile.explain(typical['rows'])
-    add_ai_reasons(typical, llm=llm)
+    if llm is not None:
+        add_ai_reasons(typical, llm=llm)
+    else:
+        typical['aiReasonSummary'] = {'requested':0,'completed':0,'failed':0}
     book = typical_views(typical)
+    display_rows = [row for row in typical['rows'] if not row.get('sourceOnly') and not row.get('coveredByAggregate')]
+    summary = reconcile.explain(display_rows)
     try:
         _copy_source(book, generated, 'Сформированная ВОР')
         _copy_source(book, customer, 'ВОР заказчика')
-        reconcile.write_excel(typical['rows'], summary, str(output_path), workbook=book)
+        reconcile.write_excel(display_rows, summary, str(output_path), workbook=book)
     finally:
         book.close()
     rows = [row for row in typical['rows'] if not row.get('isSeparator')]
@@ -66,21 +71,22 @@ def _build(run_dir, output_path=None, template_path=None, session=None, llm=None
     raw = vc._find_session_dir(str(root), 'IFC_исходные_параметры.json')
     if not raw:
         raise ValueError('Для формирования типовых ВОР нужны исходные элементы IFC. Повторите обработку модели.')
-    vor_rows, _ = vc._load_vor_rows(str(root))
+    session = session or {}
+    vor_path = session.get('vor_file_path') or vc._find_vor_pdf(str(root))
+    from ..customer_documents import read_vor, populate_documents
+    import_report = {}
+    if vor_path and Path(vor_path).is_file():
+        vor_rows = read_vor(vor_path, report=import_report)
+        import json
+        (root / 'ВОР_заказчика_разбор.json').write_text(json.dumps(import_report,ensure_ascii=False,indent=2),encoding='utf-8')
+    else:
+        vor_rows, _ = vc._load_vor_rows(str(root))
     if not vor_rows:
         raise ValueError('ВОР заказчика не разобран: проверьте состояние загруженного документа')
-    session = session or {}
     paths = {kind: session.get(f'{kind}_file_path') for kind in ('pos','pz','pd')}
     docs = documents.load_documents(paths, use_llm=False)
-    docs.vor_rows = vor_rows
-    docs.rebar = documents.extract_rebar(vor_rows)
-    vor_path = session.get('vor_file_path') or vc._find_vor_pdf(str(root)) or 'ВОР заказчика'
-    docs.file_names['vor'] = os.path.basename(vor_path)
-    for row in vor_rows:
-        docs.add_rows([documents.DocumentRow(
-            name=str(row.get('name') or ''), unit=str(row.get('unit') or ''),
-            volume=documents.pick_volume(row.get('volume_now'), row.get('volume_was')),
-            section=str(row.get('section') or ''), source='ВОР', file_name=docs.file_names['vor'])])
+    vor_path = vor_path or 'ВОР заказчика'
+    populate_documents(docs, vor_path, raw_rows=vor_rows)
 
     from .elements import ElementIndex
     index = ElementIndex.from_raw_dump(str(raw), ifc_path=session.get('ifc_file_path'))
@@ -99,7 +105,12 @@ def _build(run_dir, output_path=None, template_path=None, session=None, llm=None
     result = _compare_sources(generated, customer, output_path or root / OUTPUT_FILENAME, llm)
     result.update(source_files=[{'kind':'generated','file':str(generated)},
                                 {'kind':'customer','file':str(customer)}],
-                  generated=generated_stats, customer=customer_stats, formation='ifc_documents')
+                  generated=generated_stats, customer=customer_stats, formation='ifc_documents',
+                  documentImport={**import_report.get('stats', {}),
+                                  'status':import_report.get('status','ready'),
+                                  'warnings':[dict(location=issue.get('location',''),message=issue.get('message',''))
+                                              for issue in import_report.get('issues',[])
+                                              if issue['kind'] in ('unparsed_table','unparsed_rows','semantic_fallback_failed')]})
     return result
 
 

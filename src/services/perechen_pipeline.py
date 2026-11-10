@@ -27,7 +27,7 @@ PART_TITLES = {"Подземная": "ПОДЗЕМНАЯ ЧАСТЬ", "Цоко�
 PART_TOTALS = {"Подземная": "ИТОГО по подземной части:", "Цоколь": "ИТОГО по цокольной части:",
                "Надземная": "ИТОГО по надземной части:"}
 HEADERS = ["Шифр ТСН", "Наименование расценки/ресурса", "Ед. изм.", "Объём работ",
-           "ЗП", "ЭМ", "МР", "Стоимость"]
+           "ЗП", "ЭМ", "МР", "Стоимость", "Источник объёма"]
 
 _local: Optional[Dict[str, Dict[str, Any]]] = None
 
@@ -107,7 +107,7 @@ def _element_quantities(run_dir: str, filename: str = "filtered_elements.xlsx", 
     # Функция и колонки — те же, что использует КР (ifc_reference_builder /
     # group_excel) при расчёте площади опалубки групп.
     from src.services.group_excel import (
-        _element_formwork_area_m2,
+        _element_formwork_area_m2, _element_formwork_measure,
         _find_formwork_columns,
     )
 
@@ -144,10 +144,15 @@ def _element_quantities(run_dir: str, filename: str = "filtered_elements.xlsx", 
         area = num(r, area_main) if area_main else 0.0
         if not area and area_cols:
             area = max(num(r, c) for c in area_cols)
-        fw = _element_formwork_area_m2(r.to_dict(), perim_cols, depth_cols)
+        fw, fw_source = _element_formwork_measure(r.to_dict(), perim_cols, depth_cols)
+        area_source = area_main if area_main and num(r, area_main) else next(
+            (c for c in area_cols if num(r, c) == area and area > 0), '')
+        sources = {'volume': resolved_volume.source, 'area': area_source,
+                   'fw_hint': fw_source,
+                   'rebar_kg': f'{rebar_col} (кг/м³) × {resolved_volume.source}' if rebar_col and vol else ''}
         name = str(r.get("Имя") or "").lower()
         formwork_known = fw > 0 or (str(r.get("Тип элемента") or "") != "IfcBeam" and not re.search(r"балк|ригел|плит|перекрыт", name) and area > 0)
-        out.append({"volume": vol, "area": area, "fw_hint": fw,
+        out.append({"_sources": sources, "volume": vol, "area": area, "fw_hint": fw,
                     "volume_source": resolved_volume.source, "volume_status": resolved_volume.status,
                     "volume_missing": int(resolved_volume.value is None),
                     "area_missing": int(area <= 0), "formwork_missing": int(not formwork_known),
@@ -225,38 +230,54 @@ def _layers(el: Dict[str, Any]) -> int:
 REBAR_NORM = {"stair": 100, "slab": 110, "wall": 90, "beam": 150, "column": 180}
 
 
-def _volume(rate: Dict[str, Any], el: Dict[str, Any], q: Dict[str, float]) -> Optional[float]:
+def _volume(rate: Dict[str, Any], el: Dict[str, Any], q: Dict[str, float], trace=None) -> Optional[float]:
     unit = (rate.get("unit") or "").lower().replace("²", "2").replace("³", "3")
     title = kb._full_title(rate).lower()
     tokens = unit.replace(".", " ").split()
     div = _divisor(unit)
+    origins = q.get('_sources') or {}
+    source = ''
     if "м3" in unit:
         base = q["volume"]
+        source = origins.get('volume') or 'quantity.volume (м³)'
         if not base and q["area"]:
             t = (kb.element_thickness(el) or 0) / 1000
             base = q["area"] * t if t else 0.0
+            source = f"{origins.get('area') or 'quantity.area'} × толщина из характеристик элемента ({t:g} м)"
     elif "м2" in unit:
         base = _formwork_area(el, q) if "опалуб" in title else q["area"] * _layers(el)
+        source = (origins.get('fw_hint') if q.get('fw_hint') else origins.get('area')) if 'опалуб' in title else (
+            f"{origins.get('area') or 'quantity.area'} × число слоёв {_layers(el)}")
+        source = source or 'quantity.fw_hint / quantity.area (м²)'
     elif tokens and tokens[-1] == "т":
         if rate["is_resource"] or "отдельных стержней" not in title:
             return None
         kg = q["rebar_kg"] or REBAR_NORM.get(_element_kind(el), 100) * q["volume"]
         base = kg / 1000.0
+        source = (origins.get('rebar_kg') or 'quantity.rebar_kg') if q['rebar_kg'] else (
+            f"ОЦЕНКА: {origins.get('volume') or 'quantity.volume'} × типовая норма армирования {REBAR_NORM.get(_element_kind(el), 100)} кг/м³")
+        source += ' / 1000 (кг → т)'
     elif "шт" in unit:
         if rate["is_resource"]:
             return None   # сколько штук материала — модель не знает
         base = q["count"]
+        source = origins.get('count') or 'Количество элементов IFC'
     elif "конструкц" in unit or "элемент" in unit:
         # Напр. «100 сборных конструкций» (монтаж сборного ж/б): объём —
         # количество элементов группы, приведённое к единице расценки.
         if rate["is_resource"]:
             return None
         base = q["count"]
+        source = origins.get('count') or 'Количество элементов IFC'
     else:
         return None
     if not base:
         return None
-    return round(base / div, 4)
+    result = round(base / div, 4)
+    if trace is not None:
+        from .quantity_provenance import divided
+        trace['source'] = divided(source, div, base, result)
+    return result
 
 
 def _costs(rate: Dict[str, Any], vol: Optional[float]):
@@ -331,10 +352,11 @@ def _concrete_resource(el: Dict[str, Any], subs) -> Optional[Dict[str, Any]]:
 
 
 def _row(rate: Dict[str, Any], el: Dict[str, Any], q: Dict[str, float], work: str) -> Dict[str, Any]:
-    vol = _volume(rate, el, q)
+    trace = {}
+    vol = _volume(rate, el, q, trace=trace)
     zp, em, mr, total = _costs(rate, vol)
     return {"pressmark": rate["pressmark"], "title": kb._full_title(rate), "unit": rate["unit"],
-            "volume": vol, "zp": zp, "em": em, "mr": mr, "total": total,
+            "volume": vol, "volume_source": trace.get("source", ""), "zp": zp, "em": em, "mr": mr, "total": total,
             "is_resource": rate["is_resource"], "work": work,
             **({"reason": "Неполные данные: показана известная часть площади опалубки.", "quantityStatus": "partial_data"}
                if "опалуб" in kb._full_title(rate).lower() and q.get("formwork_missing", 0) > 0 else {})}
@@ -495,6 +517,9 @@ def build_final_from_perechen(tables_json_path: str, run_dir: str, progress=None
             if len(floor_groups) > 1:
                 floor_q = {key:sum(per_el[i].get(key,0) for i in floor_ids) for key in q if key != 'count'}
                 floor_q['count'] = len(floor_ids)
+            from .quantity_provenance import aggregate_sources
+            floor_q = dict(floor_q)
+            floor_q['_sources'] = aggregate_sources([per_el[i] for i in floor_ids if i < len(per_el)])
             ctx = work_height.context([height_rows[i] for i in floor_ids]) if aligned else None
             rows = finalize_rows(dict(el,height_context=ctx), floor_q, res["works"], subs)
             results.append({"part": part, "element": tkey, "material": material,
@@ -561,7 +586,7 @@ def _write_xlsx(results: List[Dict[str, Any]], path: str) -> None:
                 title = r["title"]
                 if [x["pressmark"] for x in g["rows"]].count(r["pressmark"]) > 1:
                     title += f"  [{r['work'].split(' — ')[0][:60]}]"
-                ws.append([r["pressmark"], title, r["unit"], vol, *money])
+                ws.append([r["pressmark"], title, r["unit"], vol, *money, r.get("volume_source") or ""])
                 for i, v in enumerate(money):
                     if v:
                         ptot[i] += v
@@ -573,6 +598,7 @@ def _write_xlsx(results: List[Dict[str, Any]], path: str) -> None:
 
     for col, width in zip("ABCDEFGH", (14, 90, 12, 14, 14, 14, 14, 16)):
         ws.column_dimensions[col].width = width
+    ws.column_dimensions["I"].hidden = True
     ws.auto_filter.ref = f"A1:H{ws.max_row}"
     wb.save(path)
     wb.close()
@@ -635,10 +661,12 @@ def _concrete_resource(el, subs):
 _volume_base = _volume
 
 
-def _volume(rate, el, q):
-    v = _volume_base(rate, el, q)
+def _volume(rate, el, q, trace=None):
+    v = _volume_base(rate, el, q, trace=trace)
     title = kb._full_title(rate).lower()
     if v and re.search(r"огрунт|праймер", title) and _layers(el) > 1:
+        if trace is not None:
+            trace['source'] = f"{trace.get('source', '')}; огрунтовка: / {_layers(el)} (площадь один раз)"
         return round(v / _layers(el), 4)
     return v
 
@@ -770,6 +798,7 @@ def finalize_rows(el, q, works, subs):
             n = norm(last["pressmark"], r["pressmark"]) or _norm_similar(last["pressmark"], r["pressmark"])
             if n:
                 r["volume"] = round(last["volume"] * n, 4)
+                r['volume_source'] = f"{last.get('volume_source', '')}; ресурс {r['pressmark']}: объём работы {last['pressmark']} × норма расхода {n:g}"
                 r["work"] += " — по норме расхода"
 
     # (3) цена ресурса, если не найдена
@@ -2029,6 +2058,7 @@ def _rebar_vor_rows(q):
         _, _, mr, total = _costs({"pressmark": pm, "is_resource": True}, mass)
         diam = ", ".join(f"Ø{d}" for d in sorted(set(a["d"])))
         rows.append({"pressmark": pm, "title": _rebar_title(pm), "unit": "т", "volume": mass,
+                     "volume_source": f"Рассчитан из полей: {q.get('_sources', {}).get('rebar_kg') or 'rebar_by_diameter (ВОР заказчика)'}; диаметры {diam}; масса / 1000 (кг → т)",
                      "zp": 0, "em": 0, "mr": mr, "total": total, "is_resource": True,
                      "work": f"Арматурная сталь ({diam}) — объём по ВОР",
                      "diameter_mm": sorted(set(a["d"]))})
@@ -2077,6 +2107,7 @@ def _finalize_with_rebar(el, q, works, subs):
         title = (f"Арматура {cls} (А-III), сталь периодического профиля — не учтена в расценке установки "
                  f"(диаметр по проекту; цена принята для Ø12–14 мм, уточнить по спецификации КР)")
         row = {"pressmark": _REBAR_DEFAULT, "title": title, "unit": "т", "volume": t,
+               "volume_source": f"{work.get('volume_source') or 'Объём работы по установке арматуры'}; × {_unit_mult(work.get('unit')):g} = {t:g} т",
                "zp": 0, "em": 0, "mr": round(price * t, 2) if isinstance(price, (int, float)) else None,
                "total": round(price * t, 2) if isinstance(price, (int, float)) else None,
                "is_resource": True, "work": work.get("work") or "Арматура"}
@@ -2506,6 +2537,7 @@ def _doc_fill_rebar(el, q):
         q["rebar_kg"] = round(sum(x["kg"] for x in items), 2)
     else:
         q["rebar_kg"] = round(vol * norm * 1000, 2)
+    q.setdefault('_sources', {})['rebar_kg'] = f"ВОР заказчика: расход армирования ({norm * 1000:g} кг/м³); {q.get('_sources', {}).get('volume') or 'quantity.volume'} × расход"
     _DOC_STATS["rebar"] = _DOC_STATS.get("rebar", 0) + 1
     logger.info(f"арматура по ВОР: {_an_short(el.get('name'))} — "
                 f"{round(q['rebar_kg'] / 1000, 2)} т (по {round(norm * 1000, 1)} кг/м3)"
@@ -2652,6 +2684,7 @@ def _doc_fill_volumes(el, q, rows):
             vol = _doc_share(el, q, vol)
             v = round(vol / _divisor(r.get("unit") or ""), 4)
             r["volume"] = v
+            r['volume_source'] = f"ВОР заказчика (DOC.volume_for): {_work_text(r)}; распределение по доле группы (_doc_share); / {_divisor(r.get('unit') or ''):g} = {v:g}"
             zp, em, mr, total = _costs({"pressmark": r["pressmark"], "is_resource": False}, v)
             r.update(zp=zp, em=em, mr=mr, total=total)
             r["work"] = re.sub(r"\s*—\s*объём по проекту[^;|]*", "", str(r.get("work") or "")).strip()
@@ -2670,6 +2703,7 @@ def _doc_fill_volumes(el, q, rows):
             if n:
                 v = round(last_work["volume"] * n, 4)
                 r["volume"] = v
+                r['volume_source'] = f"{last_work.get('volume_source', '')}; ресурс {r['pressmark']}: объём работы {last_work['pressmark']} × норма расхода {n:g}"
                 zp, em, mr, total = _costs({"pressmark": r["pressmark"], "is_resource": True}, v)
                 r.update(zp=zp, em=em, mr=mr, total=total)
 

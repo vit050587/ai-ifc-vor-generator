@@ -113,6 +113,8 @@ def _schema(values):
             if 'текущ' in text or 'total' not in result:
                 result['total'] = i
                 result['priceLevel'] = 'current' if 'текущ' in text else 'unspecified'
+        elif compact in ('зп','эм','мр'):
+            result[{'зп':'labor','эм':'machines','мр':'materials'}[compact]]=i
         elif 'коэффициент' in text and 'поправ' in text:
             result['correction'] = i
         elif 'зимн' in text:
@@ -173,6 +175,7 @@ def read_xlsx(path):
                             # Native printed position totals include its separate
                             # resources. Do not add those children a second time.
                             active['total'] = number(cell('total'))
+                            active['source']['costRow'] = row_index
                             active['hasFooter'] = True
                             active['incomplete'] = 'известным суммам' in title
                             active = None
@@ -196,7 +199,10 @@ def read_xlsx(path):
                 quantity = number(cell('quantity'))
                 position = {'code':code, 'name':name, 'unit':unit,
                             'quantity':quantity * factor if quantity is not None else None,
-                            'total':number(cell('total')), 'components':{}, 'factors':{}, 'incomplete':False,
+                            'total':number(cell('total')),
+                            'components':{key:number(cell(key)) for key in ('labor','machines','materials') if key in schema},
+                            'factors':({key:cell(key) for key in ('correction','index','winter_current','winter_base') if key in schema and cell(key) not in (None,'')} if not block_layout else {}),
+                            'incomplete':False,
                             'scope':' > '.join([*hierarchy, *([group] if group else [])]), 'resources':[],
                             'source':{'file':Path(path).name, 'sheet':sheet.title, 'row':row_index}}
                 if block_layout and code.startswith('1.') and active is not None:
@@ -223,11 +229,24 @@ def read_xlsx(path):
         book.close()
 
 
-def read_customer(path):
+def read_customer(path, *, llm=None):
     path = Path(path)
-    if path.suffix.lower() == '.xlsx': return read_xlsx(path)
-    if path.suffix.lower() == '.json': return from_data(json.loads(path.read_text(encoding='utf-8')), path.name)
-    raise ValueError('Для сравнения смет загрузите Excel XLSX или расчётный JSON сметы.')
+    if path.suffix.lower() == '.json':
+        return from_data(json.loads(path.read_text(encoding='utf-8')), path.name)
+    from .customer_documents import read_estimate
+    if path.suffix.lower() == '.xlsx':
+        try:
+            result = read_xlsx(path)
+            # A recognized first sheet must not conceal unrecognized later sheets.
+            from .customer_documents.estimate import validate_native_coverage
+            if validate_native_coverage(path,result):
+                return result
+        except ValueError:
+            pass
+        return read_estimate(path,llm=llm)
+    if path.suffix.lower() == '.pdf':
+        return read_estimate(path,llm=llm)
+    raise ValueError('Для сравнения смет загрузите PDF, Excel XLSX или расчётный JSON сметы.')
 
 
 def _scope(position):

@@ -1992,6 +1992,8 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
 
     xlsx_path = os.path.join(run_dir, FINAL_WORKS_XLSX_FILENAME)
     build_final_works_xlsx(result_elements, xlsx_path)
+    with open(json_path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
     return json_path
 
 
@@ -2040,7 +2042,7 @@ _AREA_KEY_PRIORITY = (
 )
 
 
-def _pick_group_area_m2(total_areas: Optional[Dict[str, Any]]) -> float:
+def _pick_group_area_m2(total_areas: Optional[Dict[str, Any]], trace=None) -> float:
     """Выбирает «рабочую» площадь группы из totalAreas (правила КР)."""
     if not isinstance(total_areas, dict):
         return 0.0
@@ -2050,10 +2052,14 @@ def _pick_group_area_m2(total_areas: Optional[Dict[str, Any]]) -> float:
                     and "footprint" not in str(key).lower()):
                 area_value = safe_float(value)
                 if area_value > 0:
+                    if trace is not None:
+                        trace['key'] = key
                     return float(area_value)
-    for value in total_areas.values():
+    for key, value in total_areas.items():
         area_value = safe_float(value)
         if area_value > 0:
+            if trace is not None:
+                trace['key'] = key
             return float(area_value)
     return 0.0
 
@@ -2230,6 +2236,7 @@ def _calculate_work_volume(
     total_areas: Optional[Dict[str, Any]] = None,
     formwork_area: float = 0.0,
     slab_group: bool = False,
+    trace=None, sources=None,
 ) -> str:
     """Рассчитывает объём работ для расценки (правила КР).
 
@@ -2238,6 +2245,14 @@ def _calculate_work_volume(
     fallback на площадь плиты из totalAreas запрещён (иначе объём
     опалубки завышается в разы) — как в КР (_calculate_work_volume).
     """
+    origins = sources or {}
+    def result(value, decimals, key, input_value):
+        formatted = f'{value:.{decimals}f}'
+        if trace is not None:
+            from .quantity_provenance import divided
+            trace['source'] = divided(origins.get(key) or key, divisor, input_value, formatted)
+        return formatted
+
     measure_type = (total_measure or {}).get("type", "")
     measure_value = safe_float((total_measure or {}).get("value", 0))
 
@@ -2264,22 +2279,22 @@ def _calculate_work_volume(
     if is_volume and measure_type == "volume":
         vol = measure_value / divisor
         decimals = 4 if divisor > 1 else 3
-        return f"{vol:.{decimals}f}"
+        return result(vol, decimals, 'volume_m3', measure_value)
 
     if is_area and measure_type == "area":
         vol = measure_value / divisor
         decimals = 4 if divisor > 1 else 2
-        return f"{vol:.{decimals}f}"
+        return result(vol, decimals, 'area_m2', measure_value)
 
     if is_count and measure_type == "count":
         vol = measure_value / divisor
         decimals = 4 if divisor > 1 else 0
-        return f"{vol:.{decimals}f}"
+        return result(vol, decimals, 'count', measure_value)
 
     if is_area and _is_formwork_work(work) and formwork_area > 0:
         vol = formwork_area / divisor
         decimals = 4 if divisor > 1 else 2
-        return f"{vol:.{decimals}f}"
+        return result(vol, decimals, 'formwork_area', formwork_area)
 
     # Опалубка плитных групп: если formwork_area не рассчитана — объём
     # остаётся пустым (площадь плиты не является площадью опалубки).
@@ -2291,23 +2306,23 @@ def _calculate_work_volume(
         if area_value > 0:
             vol = area_value / divisor
             decimals = 4 if divisor > 1 else 2
-            return f"{vol:.{decimals}f}"
+            return result(vol, decimals, 'area_m2', area_value)
 
     if is_length and measure_type == "joint":
         vol = measure_value / divisor
         decimals = 4 if divisor > 1 else 2
-        return f"{vol:.{decimals}f}"
+        return result(vol, decimals, 'joint_length_m', measure_value)
 
     if is_length and measure_type == "length":
         vol = measure_value / divisor
         decimals = 4 if divisor > 1 else 2
-        return f"{vol:.{decimals}f}"
+        return result(vol, decimals, 'length_m', measure_value)
 
     if is_ton:
         mass = safe_float((work.get("quantity") or {}).get("mass_t"),
                            default=None)
         if mass and mass > 0:
-            return f"{mass / divisor:.4f}"
+            return result(mass / divisor, 4, 'quantity.mass_t (т)', mass)
 
     return ""
 
@@ -2382,10 +2397,58 @@ def _resolve_building_part(entry):
 #  Excel builder
 # ======================================================================
 
+def _entry_work_volume(entry, work, origins):
+    base_name = str(entry.get('group_base_name') or '')
+    slab_group = any(kw in base_name.lower() for kw in ('плит', 'перекрыт'))
+    group_formwork_area = safe_float(entry.get('group_formwork_area_m2'), default=0.0)
+    group_rebar_kg = safe_float(entry.get('group_rebar_mass_kg'), default=0.0)
+    q = work.get("quantity") or {}
+    total_measure = _build_total_measure(q)
+    origins = dict(origins)
+    if total_measure.get('type') == 'area' and _is_formwork_work(work) and group_formwork_area > 0:
+        import math
+        if math.isclose(total_measure['value'], group_formwork_area, abs_tol=1e-8):
+            origins['area_m2'] = origins.get('formwork_area') or 'group_formwork_area_m2'
+    # total_areas группы — как в КР: суммарные площади группы
+    # (totalAreas), а не площадь опалубки из quantity работы
+    # (у опалубочных работ quantity.area_m2 = площадь опалубки).
+    group_area_m2 = _pick_quantity(
+        entry.get("group_quantity") or {}, "area_m2"
+    )
+    if group_area_m2:
+        total_areas = {"Площадь, м2": float(group_area_m2)}
+    else:
+        total_areas = _build_total_areas(q)
+    formwork_area = (
+        group_formwork_area
+        if _is_formwork_work(work) else 0.0
+    )
+    trace = {}
+    vol_text = _calculate_work_volume(
+        work, total_measure,
+        total_areas=total_areas,
+        formwork_area=formwork_area,
+        slab_group=slab_group, trace=trace, sources=origins,
+    )
+
+    # Арматура — правила КР: расход арматуры группы подставляется
+    # ТОЛЬКО в расценку «Установка отдельных стержней...» (т),
+    # прочие арматурные расценки остаются без объёма.
+    work_title_low = str(work.get("title") or "").lower()
+    if group_rebar_kg > 0 and _is_rebar_work_title(work_title_low):
+        if "отдельн" in work_title_low and "стержн" in work_title_low:
+            vol_text = f"{group_rebar_kg / 1000.0:.4f}"
+            trace['source'] = f"Рассчитан из полей: {origins.get('rebar_kg') or 'group_rebar_mass_kg'} / 1000 (кг → т) = {vol_text}"
+        else:
+            vol_text = ""
+
+    return vol_text, trace.get('source', '') if vol_text else ''
+
+
 def build_final_works_xlsx(result_elements, xlsx_path):
     columns = [
         "Шифр ТСН", "Наименование расценки/ресурса", "Ед. изм.",
-        "Объём работ", "ЗП", "ЭМ", "МР", "Стоимость",
+        "Объём работ", "ЗП", "ЭМ", "МР", "Стоимость", "Источник объёма",
         "_is_part_header", "_is_element_header", "_is_part_total",
         "_is_grand_total",
     ]
@@ -2411,63 +2474,27 @@ def build_final_works_xlsx(result_elements, xlsx_path):
             for col in ("ЗП", "ЭМ", "МР", "Стоимость")
         }
 
+    from pathlib import Path
+    from .quantity_provenance import ar_entry_sources, normalized_rows
+    source_rows = normalized_rows(Path(xlsx_path).parent)
     element_blocks = []
     for entry in result_elements:
+        origins = dict(entry.get('quantity_sources') or {}, **ar_entry_sources(entry, source_rows))
+        entry['quantity_sources'] = origins
         part = _resolve_building_part(entry)
         header = entry.get("group_header") or _element_header(entry)
 
-        # Плоская группа является плитной (фундаментная плита /
-        # перекрытие) — опалубка только по площади опалубки (правила КР).
-        base_name = str(entry.get("group_base_name") or "")
-        slab_group = any(kw in base_name.lower()
-                         for kw in ("плит", "перекрыт"))
-
-        # Агрегаты группы (правила КР): площадь опалубки и расход арматуры.
-        group_formwork_area = safe_float(
-            entry.get("group_formwork_area_m2"), default=0.0)
-        group_rebar_kg = safe_float(entry.get("group_rebar_mass_kg"),
-                                    default=0.0)
-
         work_rows: List[Dict[str, Any]] = []
         for work in entry.get("selected_works") or []:
-            q = work.get("quantity") or {}
-            total_measure = _build_total_measure(q)
-            # total_areas группы — как в КР: суммарные площади группы
-            # (totalAreas), а не площадь опалубки из quantity работы
-            # (у опалубочных работ quantity.area_m2 = площадь опалубки).
-            group_area_m2 = _pick_quantity(
-                entry.get("group_quantity") or {}, "area_m2"
-            )
-            if group_area_m2:
-                total_areas = {"Площадь, м2": float(group_area_m2)}
-            else:
-                total_areas = _build_total_areas(q)
-            formwork_area = (
-                group_formwork_area
-                if _is_formwork_work(work) else 0.0
-            )
-            vol_text = _calculate_work_volume(
-                work, total_measure,
-                total_areas=total_areas,
-                formwork_area=formwork_area,
-                slab_group=slab_group,
-            )
-
-            # Арматура — правила КР: расход арматуры группы подставляется
-            # ТОЛЬКО в расценку «Установка отдельных стержней...» (т),
-            # прочие арматурные расценки остаются без объёма.
-            work_title_low = str(work.get("title") or "").lower()
-            if group_rebar_kg > 0 and _is_rebar_work_title(work_title_low):
-                if "отдельн" in work_title_low and "стержн" in work_title_low:
-                    vol_text = f"{group_rebar_kg / 1000.0:.4f}"
-                else:
-                    vol_text = ""
+            vol_text, source = _entry_work_volume(entry, work, origins)
 
             row = _blank()
             row["Шифр ТСН"] = work.get("pressmark") or ""
             row["Наименование расценки/ресурса"] = work.get("title") or ""
             row["Ед. изм."] = _resolve_unit_label(work)
             row["Объём работ"] = vol_text
+            row['Источник объёма'] = source
+            work["volume_source"] = source
             row["_work"] = work  # для расчёта стоимости после корректировки
             work_rows.append(row)
 
@@ -2489,6 +2516,7 @@ def build_final_works_xlsx(result_elements, xlsx_path):
                 "Шифр ТСН": r["Шифр ТСН"],
                 "Наименование расценки/ресурса": r["Наименование расценки/ресурса"],
                 "Объём работ": r["Объём работ"],
+                "Источник объёма": r["Источник объёма"],
             })
     if flat_records:
         try:
@@ -2503,6 +2531,8 @@ def build_final_works_xlsx(result_elements, xlsx_path):
                 for r in block["rows"]:
                     if idx < len(corrected_volumes):
                         r["Объём работ"] = corrected_volumes[idx]
+                        r['Источник объёма'] = df_corrected.iloc[idx].get('Источник объёма', '')
+                        r['_work']['volume_source'] = r['Источник объёма']
                     idx += 1
         except Exception as exc:
             logger.warning(f"Корректировка объёмов по koefs.xlsx не "
@@ -2656,6 +2686,7 @@ def build_final_works_xlsx(result_elements, xlsx_path):
         worksheet.column_dimensions["B"].width = 60
         worksheet.column_dimensions["C"].width = 10
         worksheet.column_dimensions["D"].width = 15
+        worksheet.column_dimensions["I"].hidden = True
         for col in "EFGH":
             worksheet.column_dimensions[col].width = 15
         worksheet.auto_filter.ref = (

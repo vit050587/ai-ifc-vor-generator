@@ -121,6 +121,11 @@ def _get_corrected_volume(df):
         corrected = value * factor
         df_copy.iat[position, df_copy.columns.get_loc("Объём работ")] = corrected
         applied[marker] = (corrected, factor)
+        if 'Источник объёма' in df_copy.columns:
+            from .quantity_provenance import text
+            origin = text(row.get('Источник объёма'))
+            df_copy.iat[position, df_copy.columns.get_loc('Источник объёма')] = (
+                f"{origin}; koefs.xlsx: норма расхода для {key[0]} × {factor:g}; {value:g} × {factor:g} = {corrected:g}")
     df_copy.attrs["volume_norms_applied"] = applied
 
     return df_copy

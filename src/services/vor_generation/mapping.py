@@ -122,19 +122,18 @@ def parse_thickness(text: Optional[str]) -> Optional[int]:
     Понимает «толщиной 200мм», «t=100 мм», «t-50мм». Значения вне диапазона
     30…3000 мм игнорируются (защита от случайных чисел в наименовании).
     """
-    values = thickness_values(text)
-    return values[0] if len(values) == 1 else None
+    from .thickness import parse
+    spec = parse(text)
+    return int(spec['values'][0]) if spec and spec['mode']=='exact' else None
 
 
 def thickness_values(text: Optional[str]) -> tuple:
-    mixed = re.search(r'толщин\w*[^\d]{0,12}(\d{2,4})\s*\(\s*(\d{2,4})\s*\)', text or '', re.I)
-    if mixed:
-        return tuple(dict.fromkeys(int(v) for v in mixed.groups() if 30 <= int(v) <= 3000))
-    m = _THICKNESS_RX.search(text or "") or _T_MM_RX.search(text or "")
-    if not m:
-        return ()
-    value = int(m.group(1))
-    return (value,) if 30 <= value <= 3000 else ()
+    from .thickness import parse
+    spec = parse(text)
+    if not spec: return ()
+    if spec['mode'] in ('exact','set'): return tuple(int(v) for v in spec['values'])
+    if spec['mode']=='range': return (int(spec['low']),int(spec['high']))
+    return ()
 
 
 def detect_geometry(text: Optional[str]) -> Optional[str]:
@@ -240,7 +239,7 @@ def classify_work(name: Optional[str]) -> str:
 _GRADE_RE = re.compile(r"[ВB]\s*(\d+(?:[.,]\d+)?)")
 _W_RE = re.compile(r"\bW\s*(\d+)", re.IGNORECASE)
 _F_RE = re.compile(r"\bF\s*(\d+)", re.IGNORECASE)
-_REBAR_DIAMETER_RE = re.compile(r"(?:d|D|Ø|Д)\s*=?\s*(\d+(?:[.,]\d+)?)")
+_REBAR_DIAMETER_RE = re.compile(r"(?:диаметр(?:ом)?|[dØø∅фД])\s*[:=]?\s*(\d+(?:[.,]\d+)?)", re.I)
 _REBAR_CLASS_RE = re.compile(r"(А\d{3}[СсC]?|A\d{3}[СсC]?|Вр-?1|Bp-?1|В500[СсC]?|B500[СсC]?)")
 _REBAR_WORD_RE = re.compile(r"арматур|арм-?ра|стержн|каркас", re.IGNORECASE)
 

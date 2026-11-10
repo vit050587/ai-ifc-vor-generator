@@ -8,7 +8,7 @@ from openpyxl import load_workbook
 from .works_comparison.units import normalize_positions
 from .vor_generation.quantity import source_summary
 
-VERSION = 22
+VERSION = 25
 FILES = ('typical_generated.xlsx', 'typical_customer.xlsx')
 NATIVE_FILES = ('Сформированный_ВОР.xlsx', 'ВОР_заказчика.xlsx')
 
@@ -34,7 +34,7 @@ def read_typical_workbook(path):
                     subsection, group = number, ''
                 elif heading.startswith('раздел '):
                     section, subsection, group = number, '', ''
-                elif heading.startswith(('подземная часть', 'надземная часть')) or heading == 'автостоянка':
+                elif heading.startswith(('подземная часть', 'надземная часть')) or heading.startswith('часть здания:') or heading == 'автостоянка':
                     if heading == 'автостоянка':
                         parking = number
                         part, section = number, ''
@@ -45,6 +45,11 @@ def read_typical_workbook(path):
                     subsection = group = ''
                 else:
                     group = number
+                    if 'лестниц' in norm(subsection):
+                        from .vor_generation.mapping import stair_component
+                        detected = stair_component(number)
+                        component = {'flight':'Лестничные марши','landing':'Лестничные площадки',
+                                     'combined':'Лестничные марши и площадки'}.get(detected, '')
                 continue
             context = dict(part=part, section=section, subsection=subsection, elementGroup=group)
             if not number and not name and not unit and quantity is None:
@@ -90,7 +95,9 @@ def scope(row):
 
 def identity(row):
     # Resource numbering changes as diameters/grades are inserted; its name and owning work do not.
-    return (row.get('kind', 'work'), norm(row.get('parentWork')), norm(row.get('work')), norm(row.get('unit')))
+    def work_key(value):
+        return norm(re.sub(r'\bt\s*=\s*(?:\d+(?:[.,]\d+)?|не указана)?\s*мм', 't= мм', str(value or ''), flags=re.I))
+    return (row.get('kind', 'work'), work_key(row.get('parentWork')), work_key(row.get('work')), norm(row.get('unit')))
 
 
 def group_aliases(generated, customer):
@@ -118,7 +125,7 @@ def group_aliases(generated, customer):
     for side, rows in (('generated', generated), ('customer', customer)):
         for row in rows:
             key = scope(row)
-            if mapping.detect_kind(key[-1]) == 'crane_foundation':
+            if mapping.detect_kind(key[-1]) == 'crane_foundation' or re.search(r'(?:фундамент|плит).*кран', key[-1]):
                 cranes[side][key[:3]].add(key)
     for parent, gkeys in cranes['generated'].items():
         ckeys = cranes['customer'].get(parent, set())
@@ -129,21 +136,47 @@ def group_aliases(generated, customer):
         if not model_thickness:
             found = re.search(r'(?:^|[\s_:])(\d{2,4})\s*мм\b', gkey[-1])
             model_thickness = (int(found[1]),) if found else ()
+        if len(model_thickness) == 1 and mapping.thickness_values(ckey[-1]) == tuple(model_thickness):
+            aliases[ckey] = gkey
+            continue
         combined = re.search(r'толщин\w*\s+((?:\d{2,4}\s*[/()]\s*)+\d{2,4})\s*\)?\s*мм', ckey[-1])
         combined_values = set(map(int, re.findall(r'\d+', combined[1]))) if combined else set()
         if len(model_thickness) == 1 and len(combined_values) > 1 and model_thickness[0] in combined_values:
             aliases[ckey] = gkey
+    from .vor_generation.thickness import from_row
+    from .vor_generation.group_comparison import _family
+    exact = {'generated':defaultdict(set),'customer':defaultdict(set)}
+    for side,source in (('generated',generated),('customer',customer)):
+        for row in source:
+            if row.get('isSeparator'): continue
+            spec = from_row(row)
+            kind = _family(row)
+            if spec and spec['mode']=='exact' and kind in ('wall','slab','foundation_slab','crane_foundation'):
+                key = scope(row)
+                exact[side][key[:3]+(kind,spec['values'][0])].add(key)
+    for family,gkeys in exact['generated'].items():
+        ckeys = exact['customer'].get(family,set())
+        if len(gkeys)==len(ckeys)==1:
+            aliases.setdefault(next(iter(ckeys)),next(iter(gkeys)))
     return aliases
 
 
 def compare_rows(generated, customer):
     aliases = group_aliases(generated, customer)
+    from .vor_generation.foundation_matching import operation_links, operation_identity
+    foundation_links = operation_links(generated, customer)
+    from .vor_generation.group_matching import operation_links as group_links
+    compatible_links, compatible_bands = group_links(generated, customer)
+    from .vor_generation.object_matching import bindings
+    object_links, object_bands = bindings(generated, customer, aliases, {**compatible_links, **foundation_links})
+    object_targets = set(object_links.values())
     groups = OrderedDict()
     for side, rows in (('generated', generated), ('customer', customer)):
         for row in rows:
             key = scope(row)
-            if side == 'customer':
-                key = aliases.get(key, key)
+            if side == 'generated':
+                key = object_links.get(key, key)
+
             groups.setdefault(key, {'generated': [], 'customer': []})[side].append(row)
     tree = OrderedDict()
     for key in groups:
@@ -163,7 +196,7 @@ def compare_rows(generated, customer):
         for index, row in enumerate(members['customer']):
             if not row.get('isSeparator'):
                 lookup[identity(row)].append(index)
-        display_group = (members['generated'] or members['customer'])[0].get('elementGroup', '')
+        display_group = ((members['customer'] or members['generated']) if key in object_targets else (members['generated'] or members['customer']))[0].get('elementGroup', '')
         used = set()
         pairs = []
         for row in members['generated']:
@@ -171,7 +204,21 @@ def compare_rows(generated, customer):
                 pairs.append((row, None))
                 continue
             candidates = lookup[identity(row)]
-            index = candidates.pop(0) if candidates else None
+            equivalent = [item for item in members['generated'] if not item.get('isSeparator') and identity(item)==identity(row)]
+            populated = [item for item in equivalent if item.get('quantity') is not None]
+            multiple_objects = len({scope(item) for item in populated})>1
+            empty_variant = row.get('quantity') is None and bool(populated)
+            index = candidates.pop(0) if candidates and not multiple_objects and not empty_variant else None
+            if index is None and not empty_variant:
+                fallback = [i for i,candidate in enumerate(members['customer'])
+                            if i not in used and (id(candidate) in foundation_links or key in object_targets)
+                            and operation_identity(candidate)==operation_identity(row)]
+                equivalent_generated = [candidate for candidate in members['generated']
+                                        if not candidate.get('isSeparator') and operation_identity(candidate)==operation_identity(row)]
+                if len(fallback)==1 and len(equivalent_generated)==1:
+                    index=fallback[0]
+                    original=lookup[identity(members['customer'][index])]
+                    if index in original: original.remove(index)
             if index is not None:
                 used.add(index)
             pairs.append((row, members['customer'][index] if index is not None else None))
@@ -196,12 +243,15 @@ def compare_rows(generated, customer):
             crane_alias = bool(g and c and scope(g) != scope(c)
                                and 'кран' in norm(g.get('elementGroup')))
             comments = source_summary((c or {}).get('reason', ''))
-            if crane_alias:
+            foundation_link = bool(g and c and id(c) in foundation_links)
+            if foundation_link:
+                comments = '. '.join(filter(None,[comments,'Сопоставлена единственная одинаковая работа по фундаментной плите в этой части здания и подразделе. Толщина и марка бетона сравниваются как параметры, объёмы не распределяются.']))
+            if crane_alias and not foundation_link:
                 comments = '. '.join(filter(None, [comments,
                     'Сравнение единственной группы фундамента башенного крана с объединённой группой заказчика. Объём заказчика не распределён по толщинам']))
             difference = None if gv is None or cv is None or partial_g or partial_c else round(cv - gv, 6)
             status = 'only_project' if g is None else 'only_ifc' if c is None else 'ifc_quantity_incomplete' if partial_g else 'project_quantity_incomplete' if partial_c else 'no_quantity' if gv is None or cv is None else 'matched' if abs(difference) < 1e-6 else 'quantity_mismatch'
-            if crane_alias and status == 'matched':
+            if crane_alias and not foundation_link and status == 'matched':
                 status = 'group_composition_difference'
             from .estimate_parameter_comparison import compare as compare_parameters, explanation
             quantity_status = status
@@ -209,6 +259,13 @@ def compare_rows(generated, customer):
                 status = 'quantity_estimate'
                 quantity_status = status
             parameters = compare_parameters(g, c)
+            if foundation_link:
+                from .vor_generation.thickness import from_row
+                for item,field in ((g,'missingGenerated'),(c,'missingCustomer')):
+                    if from_row(item) is None and 'Толщина' not in parameters[field]:
+                        parameters[field].append('Толщина')
+                if parameters['status']!='mismatch' and (parameters['missingGenerated'] or parameters['missingCustomer']):
+                    parameters['status']='missing_data'
             if status == 'matched' and parameters['status'] in ('mismatch', 'missing_data'):
                 status = 'parameters_mismatch' if parameters['status'] == 'mismatch' else 'parameters_missing'
             if parameters['status'] in ('mismatch', 'missing_data'):
@@ -231,7 +288,21 @@ def compare_rows(generated, customer):
                            'modelReason': source_summary((g or {}).get('reason', '')), 'comments': comments,
                            'generatedVolumeSource': source_summary((g or {}).get('reason', '')),
                            'customerVolumeSource': source_summary((c or {}).get('reason', '')),
-                           'status': status, 'comparisonConfidence': 'Одинаковая работа; единственная группа фундамента башенного крана' if crane_alias else 'Одинаковая работа в одной группе' if g and c else 'Пара отсутствует', 'detail': {}})
+                           'status': status, 'comparisonConfidence': 'Единственная одинаковая работа; параметры фундамента сравниваются отдельно' if foundation_link else 'Одинаковая работа; единственная группа фундамента башенного крана' if crane_alias else 'Одинаковая работа в одной группе' if g and c else 'Пара отсутствует', 'detail': {}})
+            if key in object_targets:
+                result[-1].update(comparisonObjectKey=key, comparisonObject=display_group,
+                                  comparisonConfidence='Работа или ресурс внутри сопоставленного объекта')
+            if c and id(c) in compatible_links:
+                result[-1]['comparisonConfidence'] = 'Одинаковая работа в совместимой группе толщин' if id(c) in compatible_bands else 'Одинаковая работа и одинаковый компонент лестницы'
+            if c and g and (id(c) in compatible_bands or key in object_bands):
+                from .vor_generation.group_comparison import _compatible_parameters
+                previous_explanation = explanation(parameters)
+                _compatible_parameters(result[-1])
+                if previous_explanation:
+                    result[-1]['comments'] = result[-1]['comments'].replace(previous_explanation, '').strip('. ')
+                current_explanation = explanation(result[-1]['parameterComparison'])
+                if current_explanation:
+                    result[-1]['comments'] = '. '.join(filter(None, [result[-1]['comments'], current_explanation]))
     return result
 
 
@@ -239,6 +310,8 @@ def compare_workbooks(generated_path, customer_path):
     generated = read_typical_workbook(generated_path)
     customer = read_typical_workbook(customer_path)
     rows = compare_rows(generated, customer)
+    from .vor_generation.group_comparison import add_totals
+    add_totals(rows, generated, customer)
     from .comparison_similarity import typical_composition_similarity
     result = {'version': VERSION, 'status': 'ready', 'rows': rows,
             'compositionSimilarity': typical_composition_similarity(rows),
@@ -322,7 +395,10 @@ def build_typical_comparison(folder, models=None, projects=None, raw_paths=(), d
     paths = dict(paths)
     if customer_path and Path(customer_path).suffix.lower() == '.pdf':
         paths['vor'] = customer_path
-    docs = documents.load_documents(paths, use_llm=False)
+    docs = documents.load_documents({k:v for k,v in paths.items() if k!='vor'}, use_llm=False)
+    if paths.get('vor'):
+        from .customer_documents import populate_documents
+        populate_documents(docs, paths['vor'])
     if not docs.vor_rows and projects:
         docs.vor_rows = template_input(PositionsExtractor(projects).run())
         docs.rebar = documents.extract_rebar(docs.vor_rows)

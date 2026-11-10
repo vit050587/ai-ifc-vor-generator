@@ -58,6 +58,8 @@ def public_group_name(header):
 
 def _metadata(folder):
     data = _json(folder / 'Финальный_перечень_работ.json')
+    from .quantity_provenance import restore_metadata_sources
+    restore_metadata_sources(folder, data)
     records = []
     for group in data.get('groups', []):
         header = group.get('element', '') + (f" ({group['material']})" if group.get('material') else '') + f"  Кол-во: {group.get('count')}"
@@ -121,6 +123,18 @@ def _rows(path, metadata):
             if len(matches) > 1:
                 matches = [(w,f) for w,f in matches if _norm(w.get('title')) == _norm(title)]
             work, facts = matches[0] if len(matches) == 1 else ({}, {'name':group})
+            work = dict(work)
+            if 'Источник объёма' in header:
+                from .quantity_provenance import text
+                source = text(row[header.index('Источник объёма')])
+                if source:
+                    work['volume_source'] = source
+            from .quantity_provenance import text
+            if not text(work.get('volume_source')) and work.get('_replayed_quantity') is not None:
+                import math
+                saved = number(d['Объём работ'])
+                if saved is not None and math.isclose(float(saved), work['_replayed_quantity'], abs_tol=1e-8, rel_tol=1e-9):
+                    work['volume_source'] = work.get('_replayed_source')
             facts = dict(facts)
             if not facts.get('part'):
                 facts['part'] = part
@@ -619,7 +633,7 @@ def _fingerprint(folder, project_name):
              'ПЗ_глобальные_константы.json','pd_full.json','.estimate_rate_details.json')
     from .work_sections import template
     paths = {source_file(folder),Path(__file__),Path(__file__).with_name('estimate_calculation.py'),Path(__file__).with_name('estimate_formulas.py'),Path(__file__).with_name('work_height.py'),Path(tsn_coeffs.__file__),
-             Path(__file__).with_name('work_sections.py'),Path(__file__).with_name('estimate_consolidation.py'),Path(__file__).with_name('construction_method.py'),Path(template.DEFAULT_TEMPLATE_PATH)}
+             Path(__file__).with_name('work_sections.py'),Path(__file__).with_name('estimate_consolidation.py'),Path(__file__).with_name('quantity_provenance.py'),Path(__file__).with_name('construction_method.py'),Path(template.DEFAULT_TEMPLATE_PATH)}
     paths.update(p/name for p in (folder,folder.parent) for name in names if (p/name).is_file())
     paths.update(Path(tsn_coeffs.TSN_DIR).glob('*.json'))
     from src.core.config import load_config
