@@ -130,7 +130,8 @@ def _group_header(elements: List[Element], param: Optional[str], label: Optional
 # =====================================================================
 
 def _model_quantity(el, value, expression=None):
-    source = ', '.join(filter(None, [el.name or el.group_name or el.mge_name, el.storey]))
+    source = ', '.join(filter(None, [el.name or el.group_name or el.mge_name, el.storey,
+                                    el.quantity_sources.get('volume')]))
     return Quantity(value, f'{expression or f"{value:g}"} [{source}]', (source,), (el.guid,))
 
 
@@ -160,17 +161,12 @@ def _formwork_area(kind: Optional[str], agg: Dict[str, object],
         # Опалубка фундаментной плиты — только торцы (периметр × толщина).
         return _foundation_formwork_area(elements)
     def measured(el):
+        if el.component in ('flight', 'landing') and kind in ('stair', 'slab'):
+            # TSN 2001.3-6 §2.8 uses horizontal projection, not skin area.
+            key = 'gross_projection_area' if el.component == 'landing' else 'projection_area'
+            return el.quantity(key) if key in el.quantities else None
         if 'formwork_area' in el.quantities and not (kind in ('wall', 'parapet') and el.quantity_sources.get('formwork_area') == 'QTO_geom::Площадь_опалубки_м2'):
             return el.quantity('formwork_area')
-        if kind == "stair" and el.component in ("flight", "landing"):
-            # Identical to the element pipeline: slab edges / flight bbox estimate.
-            perimeter = el.quantity("perimeter")
-            depth = el.geometry.get("thickness") or 0
-            if perimeter <= 0 or depth <= 0:
-                return None
-            if el.component == 'landing':
-                return el.quantity('area') + perimeter * depth / 1e6 if 'area' in el.quantities else None
-            return perimeter * depth / 1e6
         side, area, surface = (el.quantity(key) for key in ('side_area', 'area', 'surface_area'))
         if kind in ("wall", "parapet"):
             if side or surface:
@@ -194,7 +190,9 @@ def _formwork_area(kind: Optional[str], agg: Dict[str, object],
         return side or surface or area if any(key in el.quantities for key in ("side_area", "surface_area", "area")) else None
     values = [measured(el) for el in elements]
     known = [_model_quantity(el, value,
-              (f'{el.quantity("underside_area"):g} + {el.quantity("edge_area"):g}'
+              (f'{value:g} (горизонтальная проекция, ТСН-2001.3-6 п. 2.8)'
+               if el.component in ('flight', 'landing') and kind in ('stair', 'slab') else
+               f'{el.quantity("underside_area"):g} + {el.quantity("edge_area"):g}'
                if 'underside_area' in el.quantities and 'edge_area' in el.quantities else
                f'{value:g} ({", ".join(el.quantity_sources.values())})'))
              for el, value in zip(elements, values) if value is not None and value >= 0]
@@ -275,6 +273,12 @@ def _fill_work(row: template.TemplateRow, elements: List[Element],
     работ маршей и площадок.
     """
     qk = mapping.classify_work(row.name)
+    from .precast_quantities import count_factor
+    if count_factor(row.unit) is not None and row.element_kind and row.element_kind.startswith('precast'):
+        qk = 'count'
+        from .precast_quantities import select_variant
+        elements = select_variant(elements, row.name)
+        agg = aggregate(elements)
     unit = (row.unit or "").lower()
     result: Tuple[Optional[float], Optional[str]] = (None, None)
 
@@ -306,10 +310,20 @@ def _fill_work(row: template.TemplateRow, elements: List[Element],
                 geometry_note = ''
                 if row.element_kind not in ('wall', 'parapet') and any(el.quantity_sources.get('formwork_area') == 'QTO_geom::Площадь_опалубки_м2' for el in elements):
                     geometry_note = '. По граням IFC: стороны, торцы, откосы и низ перемычек; основание исключено.' if row.element_kind in ('wall', 'parapet') else '. По вертикальным граням IFC.' if row.element_kind == 'column' else '. По геометрии IFC: нижняя поверхность и вертикальные торцы.'
-                stair_note = '. Оценка по габаритам марша; грани опалубки не определены.' if row.element_kind == 'stair' and any(el.component == 'flight' and 'formwork_area' not in el.quantities for el in elements) else ''
-                result = (round(area, 2), ctx.ref_ifc + wall_note + foundation_note + geometry_note + stair_note)
+                stair_note = ''
+                if row.element_kind == 'stair':
+                    geometry_note = '. ТСН-2001.3-6, п. 2.8: горизонтальная проекция маршей; для площадок — проекция перекрытий без вычета отверстий. Вертикальные грани и наклонная площадь низа не прибавляются.'
+                beam_note = ''
+                if row.element_kind == 'beam' and any(el.quantity_sources.get('formwork_area') == 'QTO_geom::Площадь_опалубки_м2' for el in elements):
+                    beam_note = '. Оценка площади поверхностей балки: низ и все вертикальные грани, включая торцы. Примыкания к стенам, плитам и опорам не исключены; это не подтверждённая площадь контакта с опалубкой.'
+                    geometry_note = ''
+                result = (round(area, 2), ctx.ref_ifc + wall_note + foundation_note + geometry_note + stair_note + beam_note)
         elif qk == "concrete":
             volume = _concrete_volume(elements, None)
+            missing = sum('volume' not in el.quantities for el in elements)
+            if missing:
+                note = 'Показана известная часть объёма.' if volume else 'Объём не рассчитан.'
+                return (round(volume, 2) if volume else None), f"{ctx.ref_ifc}. Неполные данные: нет объёма у {missing} из {len(elements)} элементов. {note}"
             if volume:
                 result = (round(volume, 2), ctx.ref_ifc)
         elif qk == "thermoliner":
@@ -321,7 +335,9 @@ def _fill_work(row: template.TemplateRow, elements: List[Element],
                 if volume:
                     result = (round(volume, 2), ctx.ref_ifc)
         elif qk == "volume":
-            volume = float(agg.get("volume") or agg.get("gross_volume") or 0.0)
+            if not unit.strip():
+                return None, None  # A structural caption without a unit is not a measurable operation.
+            volume = float(agg.get("volume") or 0.0)
             if volume:
                 key = "volume" if agg.get("volume") else "gross_volume"
                 traced = Quantity(volume, element_guids=[el.guid for el in elements if el.quantity(key)])
@@ -331,15 +347,18 @@ def _fill_work(row: template.TemplateRow, elements: List[Element],
             if area:
                 traced = Quantity(area, element_guids=[el.guid for el in elements if el.quantity("area")])
                 result = (round(traced, 2), ctx.ref_ifc)
-        elif qk == "count" and "шт" in unit and row.element_kind:
+        elif qk == "count" and count_factor(row.unit) is not None and row.element_kind:
             # Штучный объём — количество элементов конкретного типа конструкции;
             # без распознанного типа конструкции брать все элементы части здания
             # нельзя (иначе штучная работа получила бы число всех элементов).
-            count = float(agg.get("count") or 0)
-            if count:
-                result = (Quantity(count, element_guids=[el.guid for el in elements]), ctx.ref_ifc)
+            from .precast_quantities import count
+            result = (count(elements, row.unit), ctx.ref_ifc + '. Подсчёт экземпляров изделий в модели.')
 
     if result[0] is not None:
+        if row.element_kind == 'stair':
+            flights = sum(el.component == 'flight' for el in elements)
+            landings = sum(el.component == 'landing' for el in elements)
+            result = (result[0], result[1] + f'. Состав выборки IFC: маршей {flights}, площадок {landings}. Родительские сборки не суммируются повторно.')
         return result
 
     # Данных модели нет (или работа не покрывается моделью) — ищем в документах.
@@ -364,6 +383,14 @@ def _fill_resource(row: template.TemplateRow, elements: List[Element],
     ``component`` — подтип лестницы (``flight``/``landing``).
     """
     category = mapping.classify_resource(row.name)
+    if elements and row.element_kind and row.element_kind.startswith('precast'):
+        from .precast_quantities import select_variant, count, count_factor
+        members = select_variant(elements, row.name)
+        if count_factor(row.unit) is not None:
+            return (count(members, row.unit), ctx.ref_ifc + '. Подсчёт экземпляров изделий в модели.') if members else (None, None)
+        if row.unit.replace('³', '3').replace(' ', '').rstrip('.') == 'м3' and mapping.detect_kind(row.name) == row.element_kind:
+            volume = _concrete_volume(members, None)
+            return (round(volume, 2), ctx.ref_ifc) if volume is not None else (None, None)
 
     if category == "concrete":
         grade = mapping.parse_concrete_grade(row.name)
@@ -431,13 +458,14 @@ def _output_row(row: template.TemplateRow,
     """Строка итогового ВОР по рассчитанным значениям."""
     volume, justification = fills.get(row.index, (None, None))
     return template.OutputRow(src_index=row.index, label=label,
-                              volume=volume, justification=justification)
+                              volume=volume, justification=justification,
+                              name_override=row.name if mapping.stair_component(row.name) == 'combined' else None)
 
 
 def _fill_rows(rows: List[template.TemplateRow], elements: List[Element],
                ctx: _Context, kind: Optional[str] = None,
                part: Optional[str] = None, share: float = 1.0,
-               thickness: Optional[int] = None) -> List[template.OutputRow]:
+               thickness: Optional[int] = None, _banded=False) -> List[template.OutputRow]:
     """Заполняет строки (работы + ресурсы) одного блока/подраздела.
 
     Строки-работы арматуры («…стержней» / «…каркасов») и бетонирования получают
@@ -455,6 +483,25 @@ def _fill_rows(rows: List[template.TemplateRow], elements: List[Element],
     ``share`` — доля группы в общем объёме конструкций (при разбивке по
     геометрии); ``thickness`` — толщина конструкции блока (мм).
     """
+    from .stair_grouping import needs_bands, source_band, element_band, band_heading, band_rebar, adapt_template
+    source_rows = documents.customer_rows(ctx.docs)
+    scoped_source = [row for row in source_rows if row.kind == kind and (not part or not row.part or row.part == part)]
+    if not _banded and rows and needs_bands(source_rows, kind, part):
+        from dataclasses import replace
+        bands = {source_band(row.section) for row in scoped_source} | {element_band(el) for el in elements}
+        output = []
+        for band in ('first', 'upper', 'general'):
+            if band not in bands:
+                continue
+            members = [el for el in elements if element_band(el) == band]
+            band_source = [row for row in scoped_source if source_band(row.section) == band]
+            band_docs = replace(ctx.docs, rebar=band_rebar(ctx.docs.rebar, band),
+                                vor_rows=[row for row in ctx.docs.vor_rows if source_band(row.get('section')) == band],
+                                prepared_customer_rows=band_source)
+            output.append(band_heading(rows, band))
+            output.extend(_fill_rows(adapt_template(rows, band_source), members,
+                                     _Context(ctx.index, band_docs, ctx.ifc_name), kind, part, share, thickness, _banded=True))
+        return output
     agg = aggregate(elements)
     buckets = documents.rebar_buckets(ctx.docs.rebar, kind, part, thickness, share)
     rows = template.with_release_work(rows, buckets)
@@ -483,11 +530,13 @@ def _fill_rows(rows: List[template.TemplateRow], elements: List[Element],
     subsets: Dict[str, Tuple[List[Element], Dict[str, object]]] = {"": (elements, agg)}
 
     def subset(component: str) -> Tuple[List[Element], Dict[str, object]]:
+        if component == 'combined':
+            return elements, agg
         if component not in subsets:
             if any(el.component for el in elements):
                 sub = [el for el in elements if el.component == component]
             else:
-                sub = elements
+                sub = []  # An unidentified assembly cannot be both a flight and a landing.
             subsets[component] = (sub, aggregate(sub))
         return subsets[component]
 
@@ -594,7 +643,7 @@ def _fill_rows(rows: List[template.TemplateRow], elements: List[Element],
         ref = ctx.ref_vor if category == "rebar" else ctx.ref_ifc
         output.append(template.OutputRow(src_index=row.index,
                                          label=row.number if mapping.rebar_bucket(row.name) == 'releases' else None,
-                                         name_override=row.name if mapping.rebar_bucket(row.name) == 'releases' else None,
+                                         name_override=row.name if mapping.stair_component(row.name) == 'combined' or mapping.rebar_bucket(row.name) == 'releases' else None,
                                          volume=round(sum(items.values()), 2) if items else None,
                                          justification=ref if items else None))
         sample = _resource_sample(children, category) or row.index
@@ -618,6 +667,10 @@ def _fill_rows(rows: List[template.TemplateRow], elements: List[Element],
             output.append(_output_row(child, fills, label))
         i = j
 
+    from .stair_grouping import mixed_rows
+    output.extend(mixed_rows(rows, documents.customer_rows(ctx.docs), kind, part, ctx.ref_ifc, generated=True))
+    from .estimate_parameters import fill
+    fill(output, rows, elements)
     return output
 
 
@@ -666,6 +719,10 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
     if index is None:
         index = ElementIndex.from_raw_dump(elements_json_path)
         index.apply_vor_foundation_changes(docs.vor_rows)
+    from .stair_grouping import adapt_template, route_landings
+    source_rows = documents.customer_rows(docs)
+    route_landings(index, source_rows)
+    rows = adapt_template(rows, source_rows)
     ctx = _Context(index, docs, ifc_name)
 
     by_index = {r.index: r for r in rows}

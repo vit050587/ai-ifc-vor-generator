@@ -1345,7 +1345,8 @@ def _load_rebar_mass_by_gid(run_dir: str) -> Dict[str, float]:
         if not gid:
             continue
         ratio = safe_float(row.get("ReinforcementVolumeRatio"), default=0.0)
-        volume = safe_float(row.get(volume_col), default=0.0)
+        from .ifc_quantities import resolve_volume
+        volume = resolve_volume(row).value or 0.0
         if ratio > 0 and volume > 0:
             masses[gid] = masses.get(gid, 0.0) + ratio * volume
     logger.info(f"Расход арматуры определён для {len(masses)} элементов")
@@ -1383,7 +1384,8 @@ def _assign_rebar_volume(selected_works: List[Dict[str, Any]],
 def _calc_rebar_mass_t(element_payload: Dict[str, Any]) -> Optional[float]:
     el = element_payload.get("element", {}) or {}
     ratio = _lookup(el, *_RATIO_KEYS)
-    volume = _lookup(el, *_VOLUME_KEYS)
+    from .ifc_quantities import resolve_volume
+    volume = resolve_volume(el).value
     if not ratio or not volume:
         return None
     return round(ratio * volume / 1000.0, 4)
@@ -1437,7 +1439,8 @@ def _enrich_quantity(q, element):
     element = element or {}
 
     if _pick_quantity(result, "volume_m3") is None:
-        v = _lookup(element, *_VOLUME_KEYS)
+        from .ifc_quantities import resolve_volume
+        v = resolve_volume(element).value
         if v and v > 0:
             result["volume_m3"] = float(v)
 
@@ -2107,7 +2110,7 @@ def _group_quantity_from_aggregates(group: Dict[str, Any],
         return quantity
     volume = safe_float(group.get("total_volume"))
     if volume > 0:
-        quantity["volume_m3"] = float(round(volume, 2))
+        quantity["volume_m3"] = float(volume)
     area = _pick_group_area_m2(group.get("total_areas"))
     if area > 0:
         quantity["area_m2"] = area
@@ -2659,6 +2662,8 @@ def build_final_works_xlsx(result_elements, xlsx_path):
             f"A1:{chr(64 + len(df_for_excel.columns))}{len(df_for_excel) + 1}"
         )
 
+    from .work_list_view import build as build_work_list_view
+    build_work_list_view(xlsx_path)
     logger.info(f"Excel сохранён: {xlsx_path}")
     return xlsx_path
 

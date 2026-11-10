@@ -20,6 +20,8 @@ from typing import Dict, List, Optional, Tuple
 
 from src.core.logger import setup_logger
 from . import mapping
+from ..ifc_quantities import resolve_volume
+from ..construction_method import construction_method
 
 logger = setup_logger(__name__)
 
@@ -59,11 +61,13 @@ _QUANTITY_KEYS = {
         "QTO::Qto_WallBaseQuantities::Height",
     ),
     "formwork_area": (
-        "QTO_geom::Площадь_опалубки_м2",
         "QTO::Qto_BeamBaseQuantities::FormworkArea",
         "QTO::Qto_ColumnBaseQuantities::FormworkArea",
         "Свойство::Formwork::Area",
+        "QTO_geom::Площадь_опалубки_м2",
     ),
+    "projection_area": ("QTO_geom::Горизонтальная_проекция_м2",),
+    "gross_projection_area": ("QTO_geom::Горизонтальная_проекция_без_отверстий_м2",),
     "underside_area": ("QTO_geom::Площадь_низа_м2",),
     "edge_area": ("QTO_geom::Площадь_торцов_м2",),
     "surface_area": (
@@ -172,6 +176,9 @@ class Element:
     component: str = ""            # подтип лестницы: flight (марш)|landing (площадка)
     quantity_sources: Dict[str, str] = field(default_factory=dict)
     guid: str = ""
+    construction_method: str = 'unknown'
+    landing_role: str = 'unknown'
+    model_section: str = ''
 
     def quantity(self, name: str) -> float:
         return float(self.quantities.get(name) or 0.0)
@@ -244,13 +251,15 @@ def _element_kind(ifc_class: str, mge_name: str, name: str = "",
         # («Монолитная лестница:Лестница:<номер> Landing N»); относится к
         # подразделу лестниц, а не к плитам перекрытий.
         if (re.search(r'лестничн\w*\s+площад|\blanding\b', text)
-                or 'площадк' in name_low and ('перекрыт' in name_low or 'лестниц' in name_low)):
+                or 'площадк' in name_low and 'лестниц' in name_low):
             return "precast" if "сборн" in text else "stair"
         return "slab"
     if ifc_class == "IfcCovering":
         if "термовкладыш" in name_low:
             return "thermoliner"
         return "insulation"
+    if ifc_class in ('IfcBuildingElementProxy', 'IfcBuildingElementPart', 'IfcMember', 'IfcPlate'):
+        return mapping.detect_kind(text)
     return None
 
 
@@ -263,13 +272,9 @@ def _element_component(ifc_class: str, name: str, group_name: str) -> str:
     элементов возвращается пустая строка.
     """
     text = f"{(name or '').lower()} {(group_name or '').lower()}"
-    if re.search(r"площад[ко]|\blanding\b", text):
-        return "landing"
-    if "марш" in text or re.search(r"\brun\b", text):
-        return "flight"
     if ifc_class == "IfcStairFlight":
         return "flight"
-    return ""
+    return mapping.stair_component(text) or ''
 
 
 def _storey_part(storey: str, elevation) -> tuple:
@@ -330,7 +335,7 @@ class ElementIndex:
 
     # -----------------------------------------------------------------
     @classmethod
-    def from_raw_dump(cls, path: str) -> "ElementIndex":
+    def from_raw_dump(cls, path: str, *, ifc_path=None) -> "ElementIndex":
         """Строит индекс из файла сырого дампа IFC."""
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Не найден сырой дамп IFC: {path}")
@@ -340,6 +345,12 @@ class ElementIndex:
             raise ValueError("Некорректный формат сырого дампа IFC")
 
         elements: List[Element] = []
+        from .stair_grouping import landing_role
+        levels_by_building = {}
+        for raw_row in raw:
+            elevation = raw_row.get('Отметка_этажа_м')
+            if isinstance(elevation, (float, int)):
+                levels_by_building.setdefault(raw_row.get('Здание_IFC_ID', ''), set()).add(elevation)
         stair_parents = _stair_parent_storeys(raw)
         assemblies = set()
         for row in raw:
@@ -375,10 +386,25 @@ class ElementIndex:
             )
             if kind is None:
                 continue
+            method = construction_method(row)
+            if method == 'precast' and not kind.startswith('precast'):
+                kind = {'stair': 'precast', 'wall': 'precast_panel',
+                        'parapet': 'precast_parapet'}.get(kind, 'precast_' + kind)
+            elif method == 'monolithic' and kind == 'precast':
+                kind = 'stair'
+            elif method == 'conflicting':
+                kind = 'unresolved_' + kind
 
             quantities: Dict[str, float] = {}
             quantity_sources = {}
             for qname, keys in _QUANTITY_KEYS.items():
+                if qname == 'volume':
+                    resolved = resolve_volume(row)
+                    if resolved.value is not None:
+                        quantities[qname] = resolved.value
+                    quantity_sources[qname] = resolved.source
+                    quantity_sources['volume_status'] = resolved.status
+                    continue
                 for key in keys:
                     value = _num(row.get(key))
                     if value is not None and (qname != 'perimeter' or value > 0):
@@ -430,6 +456,10 @@ class ElementIndex:
                 concrete_grade=grade,
                 quantities=quantities,
                 quantity_sources=quantity_sources,
+                construction_method=method,
+                landing_role=landing_role(row, levels_by_building.get(row.get('Здание_IFC_ID', ''), set()))
+                if kind in ('stair', 'precast') else 'unknown',
+                model_section=_first_key(row, 'MGE_Section'),
                 geometry=geometry,
                 name=name,
                 group_name=group_name,
@@ -438,7 +468,7 @@ class ElementIndex:
                     _text(row.get("Свойство::ExpCheck_MaterialConcrete::MGE_WaterResist")),
                     _text(row.get("Свойство::ExpCheck_MaterialConcrete::MGE_FreezeDurability")),
                 ),
-                component=_element_component(ifc_class, name, group_name)
+                component=_element_component(ifc_class, name + ' ' + mge_name, group_name)
                 if kind in ("stair", "precast") else "",
             ))
 
@@ -451,7 +481,10 @@ class ElementIndex:
                     el.part = "underground"
 
         logger.info("Индекс элементов IFC построен: элементов %d", len(elements))
-        return cls(elements)
+        index = cls(elements)
+        from ..stair_formwork import hydrate_index
+        hydrate_index(index, path, ifc_path)
+        return index
 
     # -----------------------------------------------------------------
     @staticmethod

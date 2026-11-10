@@ -35,7 +35,7 @@ KIND_RULES = (
     # шахты лифтов, вентблоки) выделяются в отдельные типы: у каждого подраздела
     # свой состав элементов, поэтому они не должны получать количество сборных
     # лестниц.
-    ("precast", (r"лестниц\w*[^.;]*сборн", r"сборн\w*[^.;]*лестниц",
+    ("precast", (r"лестни[цч]\w*[^.;]*сборн", r"сборн\w*[^.;]*лестни[цч]",
                  r"\bмарш\w*[^.;]*сборн", r"сборн\w*[^.;]*\bмарш")),
     ("precast_panel", (r"сборн\w*[^.;]*панел", r"панел\w*[^.;]*сборн")),
     ("precast_parapet", (r"сборн\w*[^.;]*парапет", r"парапет\w*[^.;]*сборн")),
@@ -67,6 +67,9 @@ def detect_kind(text: Optional[str]) -> Optional[str]:
     s = (text or "").lower()
     if not s:
         return None
+    # A staircase location does not turn its floor slab into a stair flight.
+    if re.search(r'перекрыти|плит\w*\s+покрыти', s) and not re.search(r'марш|\brun\b', s):
+        return 'precast_slab' if 'сборн' in s else 'slab'
     for kind, patterns in KIND_RULES:
         for pattern in patterns:
             if re.search(pattern, s):
@@ -164,9 +167,13 @@ def stair_component(text: Optional[str]) -> Optional[str]:
     s = (text or "").lower()
     if not s:
         return None
-    if re.search(r"площад[ко]", s):
+    flight = bool(re.search(r'марш|\brun\b|лестничн\w*\s+прол[её]т', s))
+    landing = bool(re.search(r'(?<!полу)площад[ко]|\blanding\b', s))
+    if flight and landing:
+        return 'combined'
+    if landing:
         return "landing"
-    if "марш" in s or re.search(r"\brun\b", s):
+    if flight:
         return "flight"
     return None
 

@@ -22,6 +22,8 @@ from openpyxl.utils import get_column_letter
 
 from src.core.cache_manager import CacheManager
 from src.core.logger import setup_logger
+from .ifc_quantities import resolve_volume
+from .construction_method import construction_method, LABELS as METHOD_LABELS
 
 logger = setup_logger(__name__)
 memory = CacheManager.memory
@@ -536,14 +538,8 @@ def _find_volume_columns(columns) -> List[str]:
     — стеновая), поэтому объёмы плит/балок/лестниц/покрытий терялись
     (в стеновой колонке у них «-»).
     """
-    cols = []
-    for col in columns:
-        col_lower = str(col).lower()
-        if 'netvolume' in col_lower or (
-            ('объём' in col_lower or 'объем' in col_lower) and 'м3' in col_lower
-        ):
-            cols.append(col)
-    return cols
+    from .ifc_quantities import volume_columns
+    return volume_columns(columns)
 
 
 def _prioritize_volume_col(volume_cols: List[str], volume_col) -> List[str]:
@@ -614,16 +610,38 @@ def _element_formwork_area_m2(row: Dict[str, Any], perim_cols: List[str],
     равен нулю.
     """
     name_lower = str(row.get('Имя', '')).lower()
-    if 'сборн' in name_lower:
+    from .construction_method import construction_method
+    if construction_method(row) in ('precast', 'conflicting'):
         return 0.0
     if str(row.get('Тип элемента') or '') in ('IfcWall', 'IfcWallStandardCase'):
         return _first_nonzero(row, ['QTO_Qto_WallBaseQuantities_Площадь_GrossSideArea_м2',
                                    'Площадь_GrossSideArea_м2', 'QTO_Qto_WallBaseQuantities_Площадь_NetSideArea_м2',
                                    'Площадь_NetSideArea_м2', 'Площадь, м2'])
+    is_beam = str(row.get('Тип элемента') or '') == 'IfcBeam' or bool(re.search(r'балк|ригел', name_lower, re.I))
+    if is_beam:
+        from .ifc_quantities import number
+        for key, value in row.items():
+            if (re.search(r'опалуб|formwork', str(key), re.I) and re.search(r'площад|area', str(key), re.I)
+                    and not re.search(r'геометрия|qto_geom|мм2|mm2', str(key), re.I)):
+                explicit = number(value)
+                if explicit is not None:
+                    return explicit
+    from .vor_generation.elements import _element_component, _element_kind
+    stair_name = str(row.get('Имя') or '') + ' ' + ' '.join(
+        str(value or '') for key, value in row.items() if str(key).lower().endswith('mge_name'))
+    component = _element_component(str(row.get('Тип элемента') or ''),
+                                   stair_name, str(row.get('Наименование') or ''))
+    stair_kind = _element_kind(str(row.get('Тип элемента') or ''), '',
+                               name=stair_name)
+    if stair_kind == 'stair' and component in ('flight', 'landing'):
+        from .stair_formwork import NORMAL_NET, NORMAL_GROSS
+        from .ifc_quantities import number
+        value = number(row.get(NORMAL_GROSS if component == 'landing' else NORMAL_NET))
+        return value if value is not None else 0.0
     geometric = _first_nonzero(row, ['Геометрия_Площадь_опалубки_м2'])
     if geometric > 0:
         return geometric
-    if str(row.get('Тип элемента') or '') == 'IfcBeam' or re.search(r'балк|ригел', name_lower, re.I):
+    if is_beam:
         # Net/GrossSurfaceArea includes faces that do not contact formwork.
         explicit = [key for key in row if re.search(r'опалуб|formwork', str(key), re.I)
                     and re.search(r'площад|area', str(key), re.I)
@@ -686,25 +704,11 @@ def _create_group(name: str, level: int, group_df, rows: List[Dict[str, Any]],
     """
     indices = sorted(group_df.index.tolist())
 
-    # Объём группы: по каждой строке берём первое ненулевое значение среди
-    # ВСЕХ колонок-источников (coalesce). Колонки дублируют одно и то же
-    # значение в старом/новом формате имён, поэтому суммировать по колонкам
-    # нельзя — берётся первое ненулевое. Приоритет — volume_col, затем
-    # остальные колонки в порядке заголовков.
-    volume_cols = _prioritize_volume_col(
-        _find_volume_columns(group_df.columns), volume_col
-    )
-    vol_series = None
-    if volume_cols:
-        for col in volume_cols:
-            col_series = pd.to_numeric(group_df[col], errors='coerce').fillna(0)
-            if vol_series is None:
-                vol_series = col_series
-            else:
-                vol_series = vol_series.where(vol_series > 0, col_series)
-        volume = float(round(float(vol_series.sum()), 2))
-    else:
-        volume = 0.0
+    # Select the physical volume once per element, with the same rules as VOR
+    # and the viewer. Alternative columns must never be summed together.
+    resolved = [resolve_volume(row) for row in group_df.to_dict('records')]
+    vol_series = pd.Series([q.value if q.value is not None else 0. for q in resolved], index=group_df.index)
+    volume = float(vol_series.sum())
 
     areas = {}
     for col in sum_columns:
@@ -731,6 +735,8 @@ def _create_group(name: str, level: int, group_df, rows: List[Dict[str, Any]],
     return {
         'name': name, 'level': level, 'indices': indices,
         'total_volume': volume, 'total_areas': areas,
+        'volume_missing': sum(q.value is None for q in resolved),
+        'volume_sources': sorted({q.source for q in resolved if q.source}),
         'total_reinforcement': reinforcement,
         'first_element': dict(first_elem), 'count': len(indices),
         'children': children or []
@@ -1137,6 +1143,19 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
     промежуточную основную геометрическую группу (например «Периметр: до 1200 мм»)
     и вкладывает подгруппы sub_ranges («Сторона: ≤ 300 мм») внутрь неё.
     """
+    methods = defaultdict(list)
+    for element in elems:
+        methods[construction_method(element.row)].append(element)
+    if len(methods) > 1:
+        for method, members in sorted(methods.items()):
+            # Keep technology in the path shown in tables, exports and the viewer.
+            group = _create_group(METHOD_LABELS[method], parent_group['level'] + 1,
+                                  pd.DataFrame([e.row for e in members], index=[e.index for e in members]),
+                                  {e.index: e.row for e in elems}, volume_col, [])
+            _add_geometry_groups(group, members, headers, volume_col, use_new_grouping,
+                                 level_offset + 1, nest_sub_ranges)
+            parent_group['children'].append(group)
+        return
     mat_level = 6 + level_offset
     conc_level = 7 + level_offset
     # Уровни геометрии для use_new_grouping=True с nest_sub_ranges:
@@ -1144,20 +1163,8 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
     geo_level = 5 + level_offset
     sub_level = 6 + level_offset
 
-    # Колонки-источники объёма: у элементов разных IFC-типов объём лежит
-    # в разных колонках (Qto_Wall/Qto_Slab/Qto_Beam/..._NetVolume) —
-    # берём первое ненулевое значение по строке (coalesce), а не одну
-    # фиксированную колонку.
-    volume_cols = _prioritize_volume_col(
-        _find_volume_columns(headers), volume_col
-    )
-
     def get_volume(elem):
-        for col in volume_cols:
-            val = safe_parse_float(elem.row.get(col, 0))
-            if val > 0:
-                return val
-        return 0.0
+        return resolve_volume(elem.row).value or 0.0
     
     def get_geometry_value(rule, elem):
         if not rule or not rule.get('field'):
@@ -1214,7 +1221,8 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
         return {
             'name': name, 'level': level, 'indices': indices,
             # НОВАЯ ВЕРСИЯ: float() — чтобы значения корректно сериализовались в JSON
-            'total_volume': float(round(volume, 2)), 'total_areas': areas,
+            'total_volume': float(volume), 'total_areas': areas,
+            'volume_missing': sum(resolve_volume(e.row).value is None for e in elems_list),
             'total_reinforcement': float(round(reinforcement, 2)),
             'formwork_area': formwork_area,
             'first_element': dict(elems_list[0].row) if elems_list else {},

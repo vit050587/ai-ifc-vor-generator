@@ -39,6 +39,8 @@ ABS_TOL = 0.005
 MODELLED = {"formwork", "concrete", "thermoliner", "volume", "hydro_area", "count"}
 
 VERDICTS = OrderedDict([
+    ("parameters", ("Различаются сметные параметры", "FFF2CC")),
+    ("parameters_missing", ("Нет значений сметных параметров", "EDEDED")),
     ("match", ("✅ Совпадает", "C6EFCE")),
     ("ours", ("🟢 Вероятно верен сформированный объём", "E2EFDA")),
     ("customer", ("🟡 Вероятно верно у исполнителя", "FFF2CC")),
@@ -93,6 +95,15 @@ def _explain(row: dict) -> None:
     def put(verdict: str, why: str) -> None:
         row["verdict"], row["why"] = verdict, why
 
+    parameters = row.get('parameterComparison') or {}
+    if status == 'quantity_estimate':
+        put('info', 'Показана геометрическая оценка площади, а не подтверждённая площадь контакта с опалубкой. Для балок учитываются низ и вертикальные грани; примыкания к соседним конструкциям не исключены. Численная разница приведена справочно.')
+        return
+    if parameters.get('status') in ('mismatch', 'missing_data'):
+        from ..estimate_parameter_comparison import explanation
+        put('parameters' if parameters['status'] == 'mismatch' else 'parameters_missing', explanation(parameters))
+        return
+
     if g is None and c is None:
         row["verdict"] = None
         return
@@ -109,6 +120,10 @@ def _explain(row: dict) -> None:
     if status in ("ifc_quantity_incomplete", "project_quantity_incomplete"):
         side = "в модели" if status == "ifc_quantity_incomplete" else "у исполнителя"
         put("check", f"Неполные данные {side} — объём посчитан частично, сравнение неточное.")
+        return
+
+    if status == 'group_composition_difference':
+        put('split', 'Итоговые количества равны, но у заказчика объединены разные толщины. Распределение по толщинам не сравнивается.')
         return
 
     if g is not None and c is not None:
@@ -130,8 +145,13 @@ def _explain(row: dict) -> None:
                 put("ours", f"У исполнителя {d}. По модели объём больше — вероятно, исполнитель учёл не все "
                             f"конструкции этой группы.")
         elif cat == "formwork":
-            put("check", f"У исполнителя {d}. Площадь опалубки зависит от методики подсчёта (торцы, проёмы, "
-                         f"нижняя поверхность плит) — сверьте методику.")
+            if 'ТСН-2001.3-6, п. 2.8' in (row.get('modelReason') or ''):
+                put("check", f"У исполнителя {d}. В модели принята горизонтальная проекция лестничных конструкций "
+                             "по ТСН-2001.3-6, п. 2.8; вертикальные грани и наклонный низ не прибавляются. "
+                             "Состав выборки и источники указаны в обосновании объёма.")
+            else:
+                put("check", f"У исполнителя {d}. Площадь опалубки зависит от методики подсчёта (торцы, проёмы, "
+                             f"нижняя поверхность плит) — сверьте методику.")
         elif cat == "hydro_area":
             put("check", f"У исполнителя {d}. В гидроизоляции часто учитывают нахлёсты, заходы на стены и "
                          f"несколько слоёв — проверьте по узлам.")

@@ -8,7 +8,7 @@ from openpyxl import load_workbook
 from .works_comparison.units import normalize_positions
 from .vor_generation.quantity import source_summary
 
-VERSION = 18
+VERSION = 22
 FILES = ('typical_generated.xlsx', 'typical_customer.xlsx')
 NATIVE_FILES = ('Сформированный_ВОР.xlsx', 'ВОР_заказчика.xlsx')
 
@@ -23,8 +23,8 @@ def read_typical_workbook(path):
         sheet = workbook['ВОР КР_ЖС']
         part = section = subsection = group = parent = parking = component = ''
         result = []
-        for index, values in enumerate(sheet.iter_rows(min_row=4, max_col=6, values_only=True), 4):
-            number, name, unit, quantity, calculation, reason = values
+        for index, values in enumerate(sheet.iter_rows(min_row=4, max_col=8, values_only=True), 4):
+            number, name, unit, quantity, calculation, reason, parameters, parameter_values = values
             number = str(number).strip() if number is not None else ''
             name = str(name).strip() if name is not None else ''
             if number and not name:
@@ -58,7 +58,8 @@ def read_typical_workbook(path):
                     from .vor_generation.mapping import stair_component
                     detected = stair_component(name)
                     if detected:
-                        component = {'flight':'Лестничные марши','landing':'Лестничные площадки'}[detected]
+                        component = {'flight':'Лестничные марши','landing':'Лестничные площадки',
+                                     'combined':'Лестничные марши и площадки'}[detected]
             if component:
                 context['elementGroup'] = ' → '.join(filter(None,[group,component]))
             value = None
@@ -73,7 +74,9 @@ def read_typical_workbook(path):
             result.append({**context, 'sourceRow': index, 'code': number, 'work': name,
                            'kind': kind, 'parentWork': parent if kind != 'work' else '',
                            'unit': normalized_unit, 'quantity': value, 'reason': str(reason or ''),
-                           'quantityStatus': 'partial_data' if 'Неполные данные:' in str(reason or '') else 'calculated' if value is not None else 'missing_data',
+                           'estimateParameters': str(parameters or ''),
+                           'estimateParameterValues': str(parameter_values or ''),
+                           'quantityStatus': 'partial_data' if 'Неполные данные:' in str(reason or '') else 'estimated' if 'Оценка площади поверхностей' in str(reason or '') else 'calculated' if value is not None else 'missing_data',
                            'sourceFile': Path(path).name})
             result[-1]['calculation'] = str(calculation or '')
         return result
@@ -94,8 +97,8 @@ def group_aliases(generated, customer):
     """Match a unique area-labelled slab group within the same subsection.
 
     Area is a calculated total in the heading, not a slab type or thickness.
-    Also pair the unique model crane plate at 1400 mm with the customer's
-    combined 1400/1600 mm position, preserving both source scopes and quantities.
+    Also pair a unique crane plate with a combined thickness group containing
+    that plate's thickness, preserving both source scopes and quantities.
     Never guess when either side contains several groups of this family.
     """
     families = {'generated': defaultdict(set), 'customer': defaultdict(set)}
@@ -123,10 +126,12 @@ def group_aliases(generated, customer):
             continue
         gkey, ckey = next(iter(gkeys)), next(iter(ckeys))
         model_thickness = mapping.thickness_values(gkey[-1])
-        if not model_thickness and re.search(r'(?:^|[\s_:])1400\s*мм\b', gkey[-1]):
-            model_thickness = (1400,)
-        combined = re.search(r'толщин\w*\s+(1400)\s*(?:/\s*(1600)|\(\s*(1600)\s*\))\s*мм', ckey[-1])
-        if model_thickness == (1400,) and combined:
+        if not model_thickness:
+            found = re.search(r'(?:^|[\s_:])(\d{2,4})\s*мм\b', gkey[-1])
+            model_thickness = (int(found[1]),) if found else ()
+        combined = re.search(r'толщин\w*\s+((?:\d{2,4}\s*[/()]\s*)+\d{2,4})\s*\)?\s*мм', ckey[-1])
+        combined_values = set(map(int, re.findall(r'\d+', combined[1]))) if combined else set()
+        if len(model_thickness) == 1 and len(combined_values) > 1 and model_thickness[0] in combined_values:
             aliases[ckey] = gkey
     return aliases
 
@@ -193,13 +198,30 @@ def compare_rows(generated, customer):
             comments = source_summary((c or {}).get('reason', ''))
             if crane_alias:
                 comments = '. '.join(filter(None, [comments,
-                    'Сравнение фундамента башенного крана: модель — 1400 мм; ВОР заказчика — общая позиция 1400/1600 мм. Объём заказчика не распределён по толщинам']))
+                    'Сравнение единственной группы фундамента башенного крана с объединённой группой заказчика. Объём заказчика не распределён по толщинам']))
             difference = None if gv is None or cv is None or partial_g or partial_c else round(cv - gv, 6)
             status = 'only_project' if g is None else 'only_ifc' if c is None else 'ifc_quantity_incomplete' if partial_g else 'project_quantity_incomplete' if partial_c else 'no_quantity' if gv is None or cv is None else 'matched' if abs(difference) < 1e-6 else 'quantity_mismatch'
+            if crane_alias and status == 'matched':
+                status = 'group_composition_difference'
+            from .estimate_parameter_comparison import compare as compare_parameters, explanation
+            quantity_status = status
+            if g and c and gv is not None and cv is not None and any(r.get('quantityStatus') == 'estimated' for r in (g, c)):
+                status = 'quantity_estimate'
+                quantity_status = status
+            parameters = compare_parameters(g, c)
+            if status == 'matched' and parameters['status'] in ('mismatch', 'missing_data'):
+                status = 'parameters_mismatch' if parameters['status'] == 'mismatch' else 'parameters_missing'
+            if parameters['status'] in ('mismatch', 'missing_data'):
+                comments = '. '.join(filter(None, [comments, explanation(parameters)]))
             result.append({**source, 'elementGroup': display_group,
-                           'isDifferent': status != 'matched' and not (g and c and gv is None and cv is None and not partial_g and not partial_c),
+                           'isDifferent': parameters['status'] in ('mismatch', 'missing_data') or (status != 'matched' and not (g and c and gv is None and cv is None and not partial_g and not partial_c)),
+                           'quantityComparisonStatus': quantity_status, 'parameterComparison': parameters,
                            'generatedCalculation': (g or {}).get('calculation', ''),
                            'customerCalculation': (c or {}).get('calculation', ''),
+                           'generatedEstimateParameters': (g or {}).get('estimateParameters', ''),
+                           'customerEstimateParameters': (c or {}).get('estimateParameters', ''),
+                           'generatedEstimateParameterValues': (g or {}).get('estimateParameterValues', ''),
+                           'customerEstimateParameterValues': (c or {}).get('estimateParameterValues', ''),
                            'generatedElementGroup': (g or {}).get('elementGroup'),
                            'customerElementGroup': (c or {}).get('elementGroup'),
                            'generatedWork': g['work'] if g else '', 'customerWork': c['work'] if c else '',
@@ -207,6 +229,8 @@ def compare_rows(generated, customer):
                            'differencePercent': None if difference is None or gv == 0 else difference / abs(gv) * 100,
                            'generatedSourceRow': (g or {}).get('sourceRow'), 'customerSourceRow': (c or {}).get('sourceRow'),
                            'modelReason': source_summary((g or {}).get('reason', '')), 'comments': comments,
+                           'generatedVolumeSource': source_summary((g or {}).get('reason', '')),
+                           'customerVolumeSource': source_summary((c or {}).get('reason', '')),
                            'status': status, 'comparisonConfidence': 'Одинаковая работа; единственная группа фундамента башенного крана' if crane_alias else 'Одинаковая работа в одной группе' if g and c else 'Пара отсутствует', 'detail': {}})
     return result
 
@@ -262,6 +286,10 @@ def build_typical_comparison(folder, models=None, projects=None, raw_paths=(), d
                     except (ValueError, TypeError):pass
                 return False
             from .ifc_raw_dump import _is_foundation_plate, _surface_formwork_kind
+            if (row.get('IfcClass') in ('IfcSlab', 'IfcStairFlight')
+                    and _surface_formwork_kind(row.get('IfcClass'), row.get('Name'), row.get('ObjectType'))
+                    and 'QTO_geom::Горизонтальная_проекция_м2' not in row):
+                return True
             if (_surface_formwork_kind(row.get('IfcClass'), row.get('Name'), row.get('ObjectType'))
                     and not positive('QTO_geom::Площадь_опалубки_м2')):
                 return True

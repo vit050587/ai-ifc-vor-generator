@@ -137,6 +137,9 @@ def _pick(row: dict) -> Optional[float]:
 
 def _unit_family(unit: str) -> str:
     """Семейство единиц измерения (``m3``/``m2``/``t``/``m``/``pcs``)."""
+    from .precast_quantities import count_factor
+    if count_factor(unit) is not None:
+        return 'pcs'
     u = documents.norm_unit(unit).rstrip(".")
     if not u:
         return ""
@@ -210,6 +213,8 @@ def _has_token(text: str, tokens) -> bool:
 def _detect_category(name: str, unit: str) -> str:
     """Вид объёма строки ВОР заказчика."""
     s = (name or "").lower()
+    if _unit_family(unit) == 'pcs':
+        return 'count'
     if "опалубк" in s:
         return "formwork"
     if mapping.is_rebar_text(name) or _REBAR_CHILD_RX.match(name or ""):
@@ -324,12 +329,17 @@ def collect_rows(rows: List[dict]) -> List[CustomerRow]:
             # из строки блока/секции («… толщиной N мм …»), чтобы отнести позицию
             # к нужному геометрическому блоку (плита толщиной N мм).
             thickness = thickness_map.get((section, block))
+        quantity = documents.source_quantity(volume, row)
+        from .precast_quantities import count_factor
+        factor = count_factor(unit)
+        if factor is not None:
+            quantity = quantity * factor
         result.append(CustomerRow(
             section=section,
             block=block,
             name=name,
             unit=unit,
-            volume=documents.source_quantity(volume, row),
+            volume=quantity,
             unit_family=_unit_family(unit),
             part=_detect_part(section, block),
             kind=_detect_kind(name, f'{section} {block}'),
@@ -511,11 +521,11 @@ def _pick_total(primary: List[CustomerRow], categories, unit_family: str,
     геометрическими группами пропорционально доле группы (``share``).
     """
     total = _sum_rows(primary, categories, unit_family)
-    if total:
+    if total or any(row.category in categories and (not unit_family or row.unit_family == unit_family) for row in primary):
         return total
     if fallback:
         total = _sum_rows(fallback, categories, unit_family)
-        if total:
+        if total or any(row.category in categories and (not unit_family or row.unit_family == unit_family) for row in fallback):
             return total * share
     return None
 
@@ -560,6 +570,10 @@ def _fill_work(row: template.TemplateRow, group_rows: List[CustomerRow],
         # работы сопоставляются по наименованию с наименованиями заказчика.
         if qk == "formwork":
             total = _pick_total(group_rows, {"formwork"}, family, fallback_rows, share)
+        elif family == 'pcs' and kind and kind.startswith('precast'):
+            from .precast_quantities import select_variant
+            total = _pick_total(select_variant(group_rows, row.name), {'count'}, family,
+                                select_variant(fallback_rows, row.name), share)
         elif qk == "concrete":
             total = _pick_total(group_rows, {"concrete"}, family or "m3", fallback_rows, share)
 
@@ -575,6 +589,9 @@ def _fill_work(row: template.TemplateRow, group_rows: List[CustomerRow],
             if total is not None:
                 total *= share
 
+    if total is not None and family == 'pcs':
+        from .precast_quantities import count_factor
+        total = total * (1 / count_factor(row.unit))
     return (round(total, 2), ctx.ref_vor) if total is not None else (None, None)
 
 
@@ -607,6 +624,15 @@ def _fill_resource(row: template.TemplateRow, group_rows: List[CustomerRow],
     """Объём и обоснование для строки-ресурса типового ВОР (кроме бетона)."""
     category = mapping.classify_resource(row.name)
     family = _unit_family(row.unit)
+
+    if family == 'pcs' and kind and kind.startswith('precast'):
+        from .precast_quantities import select_variant
+        total = _pick_total(select_variant(group_rows, row.name), {'count'}, family,
+                            select_variant(fallback_rows, row.name), share)
+        if total is not None:
+            from .precast_quantities import count_factor
+            total = total * (1 / count_factor(row.unit))
+        return (round(total, 2), ctx.ref_vor) if total is not None else (None, None)
 
     if category == "rebar":
         diameter, rebar_class = mapping.parse_rebar_spec(row.name)
@@ -679,7 +705,7 @@ def _resource_sample(children: List[template.TemplateRow], category: str) -> Opt
 def _fill_rows(children: List[template.TemplateRow], group_rows: List[CustomerRow],
                fallback_rows: List[CustomerRow], ctx: _Context,
                kind: Optional[str], part: Optional[str],
-               share: float, thickness: Optional[int] = None) -> List[template.OutputRow]:
+               share: float, thickness: Optional[int] = None, _banded=False) -> List[template.OutputRow]:
     """Заполняет строки одного блока/подраздела типового ВОР.
 
     Строки-работы арматуры («…стержней» / «…каркасов»), бетонирования и
@@ -690,6 +716,20 @@ def _fill_rows(children: List[template.TemplateRow], group_rows: List[CustomerRo
     (пластины, уголки и т. п.). Статические строки шаблона под этими работами
     заменяются.
     """
+    from .stair_grouping import needs_bands, source_band, band_heading, band_rebar, adapt_template
+    if not _banded and children and needs_bands([*group_rows, *fallback_rows], kind, part):
+        bands = {source_band(row.section) for row in [*group_rows, *fallback_rows]}
+        output = []
+        for band in ('first', 'upper', 'general'):
+            if band not in bands:
+                continue
+            members = [row for row in group_rows if source_band(row.section) == band]
+            fallback = [row for row in fallback_rows if source_band(row.section) == band]
+            output.append(band_heading(children, band))
+            output.extend(_fill_rows(adapt_template(children, members), members, fallback,
+                                     _Context(band_rebar(ctx.rebar, band), ctx.ref_vor),
+                                     kind, part, share, thickness, _banded=True))
+        return output
     buckets = documents.rebar_buckets(ctx.rebar, kind, part, thickness, share)
     children = template.with_release_work(children, buckets)
     embedded_specs = _embedded_specs(group_rows)
@@ -717,6 +757,9 @@ def _fill_rows(children: List[template.TemplateRow], group_rows: List[CustomerRo
 
     def subset(component: str) -> Tuple[List[CustomerRow], List[CustomerRow]]:
         """Строки заказчика группы по подтипу лестницы (марш/площадка)."""
+        if component == 'combined':
+            return ([r for r in group_rows if r.component in ('', 'combined')],
+                    [r for r in fallback_rows if r.component in ('', 'combined')])
         if component not in subsets:
             has_components = any(r.component for r in group_rows)
             sub = [r for r in group_rows if r.component == component] \
@@ -834,7 +877,7 @@ def _fill_rows(children: List[template.TemplateRow], group_rows: List[CustomerRo
 
         output.append(template.OutputRow(src_index=row.index,
                                          label=row.number if mapping.rebar_bucket(row.name) == 'releases' else None,
-                                         name_override=row.name if mapping.rebar_bucket(row.name) == 'releases' else None,
+                                         name_override=row.name if mapping.stair_component(row.name) == 'combined' or mapping.rebar_bucket(row.name) == 'releases' else None,
                                          volume=round(sum(items.values()), 2) if items else None,
                                          justification=ctx.ref_vor if items else None))
         sample = _resource_sample(kids, category) or row.index
@@ -868,6 +911,10 @@ def _fill_rows(children: List[template.TemplateRow], group_rows: List[CustomerRo
             output.append(_output_row(child, fills, label))
         i = j
 
+    from .stair_grouping import mixed_rows
+    output.extend(mixed_rows(children, group_rows, kind, part, ctx.ref_vor))
+    from .estimate_parameters import fill
+    fill(output, children, group_rows)
     return output
 
 
@@ -877,7 +924,8 @@ def _output_row(row: template.TemplateRow,
     """Строка итогового ВОР по рассчитанным значениям."""
     volume, justification = fills.get(row.index, (None, None))
     return template.OutputRow(src_index=row.index, label=label,
-                              volume=volume, justification=justification)
+                              volume=volume, justification=justification,
+                              name_override=row.name if mapping.stair_component(row.name) == 'combined' else None)
 
 
 # =====================================================================
@@ -997,6 +1045,8 @@ def build_customer_vor(vor_path: str, output_path: str, template_path: str = Non
             logger.warning("ВОР заказчика: не удалось построить индекс модели: %s", exc)
 
     trows = prepared_template if prepared_template is not None else template.parse_template(template_path, sheet_name)
+    from .stair_grouping import adapt_template
+    trows = adapt_template(trows, rows)
     by_index = {r.index: r for r in trows}
     pos_by_index = {r.index: k for k, r in enumerate(trows)}
 

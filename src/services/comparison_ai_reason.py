@@ -70,6 +70,7 @@ def _payload(identifier, row, verdict):
                 'modelReason','comments','generatedCalculation','customerCalculation'):
         result[key] = str(row.get(key) or '')[:1000]
     result.update(id=identifier, ruleConclusion=verdict.get('why',''))
+    result['parameterComparison'] = row.get('parameterComparison')
     return result
 
 

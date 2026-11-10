@@ -112,9 +112,7 @@ def _element_quantities(run_dir: str, filename: str = "filtered_elements.xlsx", 
     )
 
     cols = [str(c) for c in df.columns]
-    vol_cols = [c for c in cols if ("объём" in c.lower() or "volume" in c.lower())
-                and "литр" not in c.lower()]
-    vol_cols.sort(key=lambda c: 0 if "netvolume" in c.lower() else 1 if "объём, м3" in c.lower() else 2)
+    from .ifc_quantities import resolve_volume
     area_main = "Площадь, м2" if "Площадь, м2" in cols else None
     area_cols = [c for c in cols if "площад" in c.lower() and "м2" in c and not c.startswith('Геометрия_')]
     rebar_col = next((c for c in cols if "reinforcementvolumeratio" in c.lower()), None)
@@ -141,7 +139,8 @@ def _element_quantities(run_dir: str, filename: str = "filtered_elements.xlsx", 
     out = []
     df.columns = cols
     for _, r in df.iterrows():
-        vol = next((num(r, c) for c in vol_cols if num(r, c) > 0), 0.0)
+        resolved_volume = resolve_volume(r)
+        vol = resolved_volume.value if resolved_volume.value is not None else 0.0
         area = num(r, area_main) if area_main else 0.0
         if not area and area_cols:
             area = max(num(r, c) for c in area_cols)
@@ -149,6 +148,8 @@ def _element_quantities(run_dir: str, filename: str = "filtered_elements.xlsx", 
         name = str(r.get("Имя") or "").lower()
         formwork_known = fw > 0 or (str(r.get("Тип элемента") or "") != "IfcBeam" and not re.search(r"балк|ригел|плит|перекрыт", name) and area > 0)
         out.append({"volume": vol, "area": area, "fw_hint": fw,
+                    "volume_source": resolved_volume.source, "volume_status": resolved_volume.status,
+                    "volume_missing": int(resolved_volume.value is None),
                     "area_missing": int(area <= 0), "formwork_missing": int(not formwork_known),
                     "rebar_kg": rebar_ratio(r, rebar_col) * vol if rebar_col else 0.0})
     return out
@@ -574,6 +575,9 @@ def _write_xlsx(results: List[Dict[str, Any]], path: str) -> None:
         ws.column_dimensions[col].width = width
     ws.auto_filter.ref = f"A1:H{ws.max_row}"
     wb.save(path)
+    wb.close()
+    from .work_list_view import build as build_work_list_view
+    build_work_list_view(path)
 
 
 

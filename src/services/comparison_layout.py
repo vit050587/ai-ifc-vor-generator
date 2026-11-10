@@ -106,8 +106,13 @@ def typical_views(typical):
             ancestors[level] = len(records)
         records.append(dict(cells=cells, dimension=copy(sheet.row_dimensions[number]), source=number,
                             comparison=by_source.get(number), ancestors=list(ancestors.values())))
-    # Customer-only works remain visible, with their own original headings and styles.
-    previous = None
+    # Keep unmatched resources beside their owning operation. A different
+    # concrete grade is a real discrepancy, not a reason to move it to the tail.
+    display_order = list(range(len(records)))
+    generated_indices = {record['source']: i for i, record in enumerate(records)}
+    generated_rows = [(i, row) for i, row in enumerate(rows) if row.get('generatedSourceRow') is not None]
+    insertions = {}
+    contexts = {}
     customer_sheet = customer['ВОР КР_ЖС']
     customer_headings = {}
     active_headings = {}
@@ -118,29 +123,62 @@ def typical_views(typical):
             active_headings = {key: index for key, index in active_headings.items() if key < level}
             active_headings[level] = number
         customer_headings[number] = list(active_headings.values())
-    for row in rows:
+    def context_of(row):
+        return tuple(row.get(key) or '' for key in ('part', 'section', 'subsection', 'elementGroup'))
+
+    for position, row in enumerate(rows):
         if row.get('generatedSourceRow') is not None or row.get('customerSourceRow') is None or row.get('isSeparator'):
             continue
-        context = tuple(row.get(key) for key in ('part', 'section', 'subsection', 'elementGroup'))
-        if context != previous:
-            ancestors = {}
-            for level, heading in enumerate(customer_headings[row['customerSourceRow']]):
+        context = context_of(row)
+        exact = [(i, candidate) for i, candidate in generated_rows if context_of(candidate) == context]
+        prefix = 4
+        candidates = exact
+        while not candidates and prefix:
+            prefix -= 1
+            candidates = [(i, candidate) for i, candidate in generated_rows if context_of(candidate)[:prefix] == context[:prefix]]
+        previous = [(i, candidate) for i, candidate in candidates if i < position]
+        anchor_row = (previous[-1] if previous else candidates[0]) if candidates else None
+        after = bool(previous) or prefix < 4
+        if prefix < 4 and candidates:
+            anchor_row = candidates[-1]
+        anchor = generated_indices[anchor_row[1]['generatedSourceRow']] if anchor_row else len(display_order)-1
+        insertion_key = (anchor, after)
+        additions = insertions.setdefault(insertion_key, [])
+        context_key = (context, insertion_key)
+        if context_key not in contexts:
+            ancestors = {_heading_level(str(records[index]['cells'][0].value or '')):index
+                         for index in records[anchor]['ancestors']
+                         if _heading_level(str(records[index]['cells'][0].value or '')) < prefix}
+            for heading in customer_headings[row['customerSourceRow']]:
+                level = _heading_level(str(customer_sheet.cell(heading, 1).value or ''))
+                if level < prefix:
+                    continue
                 cells = [copy(customer_sheet.cell(heading, col)) for col in range(1, 7)]
                 ancestors[level] = len(records)
+                additions.append(len(records))
                 records.append(dict(cells=cells, dimension=copy(customer_sheet.row_dimensions[heading]),
                                     source=None, comparison=None, ancestors=list(ancestors.values())))
-            previous = context
+            contexts[context_key] = dict(ancestors)
+        ancestors = contexts[context_key]
         cells = [copy(customer_sheet.cell(row['customerSourceRow'], col)) for col in range(1, 7)]
         cells[3].value = None
         cells[4].value = None
         cells[5].value = None
+        additions.append(len(records))
         records.append(dict(cells=cells, dimension=copy(customer_sheet.row_dimensions[row['customerSourceRow']]),
                             source=None, comparison=row, ancestors=list(ancestors.values())))
+    display_order = [index for original in display_order
+                     for index in [*insertions.get((original, False), []), original, *insertions.get((original, True), [])]]
     merges = list(sheet.merged_cells.ranges)
     different = set(range(min(3, len(records))))
+    populated = set(different)
     for index, record in enumerate(records):
         row = record['comparison']
-        if row and row.get('isDifferent', row.get('status') != 'matched'):
+        has_quantity = row and (row.get('generatedQuantity') is not None or row.get('customerQuantity') is not None)
+        if has_quantity:
+            populated.add(index)
+            populated.update(record['ancestors'])
+        if has_quantity and row.get('isDifferent', row.get('status') != 'matched'):
             different.add(index)
             different.update(record['ancestors'])
     full = book.copy_worksheet(sheet)
@@ -150,7 +188,8 @@ def typical_views(typical):
     full.print_title_cols = sheet.print_title_cols
     if sheet.print_area:
         full.print_area = str(sheet.print_area)
-    for target, indices in ((sheet, sorted(different)), (full, list(range(len(records))))):
+    for target, indices in ((sheet, [i for i in display_order if i in different]),
+                            (full, [i for i in display_order if i in populated])):
         for merged in list(target.merged_cells.ranges):
             target.unmerge_cells(str(merged))
         target.delete_rows(1, target.max_row)
@@ -208,16 +247,54 @@ def typical_views(typical):
             target.cell(2, column).value = title
             alignment = copy(target.cell(2, column).alignment); alignment.wrap_text = True
             target.cell(2, column).alignment = alignment
-        if include_ai:
-            from .comparison_ai_reason import reason_text
-            target.cell(2, 9).value = 'Обоснование ИИ'
-            copy_cell_style(target.cell(2, 8), target.cell(2, 9))
-            target.column_dimensions['I'].width = 85
+        for column, field, title in ((9, 'generatedVolumeSource', 'Источник объёма сформированного ВОР'),
+                                     (10, 'customerVolumeSource', 'Источник объёма ВОР заказчика')):
+            copy_cell_style(target.cell(2, 8), target.cell(2, column))
+            target.cell(2, column).value = title
+            target.column_dimensions[get_column_letter(column)].width = 65
             for number, index in enumerate(indices, 1):
                 row = records[index]['comparison']
                 if not row:
                     continue
-                cell = target.cell(number, 9)
+                cell = target.cell(number, column)
+                copy_cell_style(target.cell(number, 8), cell)
+                cell.value = row.get(field) or (row.get('modelReason') if column == 9 and row.get('generatedSourceRow') is not None else '')
+                cell.data_type = 's'
+                alignment = copy(cell.alignment); alignment.wrap_text = True; alignment.vertical = 'top'
+                cell.alignment = alignment
+                if cell.value:
+                    target.row_dimensions[number].height = max(target.row_dimensions[number].height or 30,
+                                                              min(300, 18 * (len(cell.value) // 55 + 2)))
+        from .estimate_parameter_comparison import explanation
+        parameter_columns = (
+            (11, 'Параметр от ВОР к ТСН', lambda r: '\n'.join(dict.fromkeys(filter(None, (
+                r.get('generatedEstimateParameters'), r.get('customerEstimateParameters')))))),
+            (12, 'Значения параметров сформированного ВОР', lambda r: r.get('generatedEstimateParameterValues')),
+            (13, 'Значения параметров ВОР заказчика', lambda r: r.get('customerEstimateParameterValues')),
+            (14, 'Сравнение сметных параметров', lambda r: explanation(r.get('parameterComparison') or {'status':'not_applicable'})),
+        )
+        for column, title, value in parameter_columns:
+            copy_cell_style(target.cell(2, 8), target.cell(2, column))
+            target.cell(2, column, title)
+            target.column_dimensions[get_column_letter(column)].width = 45
+            for number, index in enumerate(indices, 1):
+                row = records[index]['comparison']
+                if row:
+                    cell = target.cell(number, column)
+                    copy_cell_style(target.cell(number, 8), cell)
+                    cell.value = value(row) or None
+                    cell.data_type = 's'
+                    cell.alignment = copy(target.cell(number, 9).alignment)
+        if include_ai:
+            from .comparison_ai_reason import reason_text
+            target.cell(2, 15).value = 'Обоснование ИИ'
+            copy_cell_style(target.cell(2, 8), target.cell(2, 15))
+            target.column_dimensions['O'].width = 85
+            for number, index in enumerate(indices, 1):
+                row = records[index]['comparison']
+                if not row:
+                    continue
+                cell = target.cell(number, 15)
                 copy_cell_style(target.cell(number, 8), cell)
                 cell.value = reason_text(row)
                 cell.data_type = 's'
@@ -226,15 +303,15 @@ def typical_views(typical):
                 if cell.value:
                     target.row_dimensions[number].height = max(target.row_dimensions[number].height or 30,
                                                               min(300, 18 * (len(cell.value) // 65 + 2)))
-            for merged in list(target.merged_cells.ranges):
-                if merged.min_col == 1 and merged.max_col == 8 and merged.min_row == merged.max_row:
-                    target.unmerge_cells(str(merged))
-                    target.merge_cells(start_row=merged.min_row, end_row=merged.max_row, start_column=1, end_column=9)
+        for merged in list(target.merged_cells.ranges):
+            if merged.min_col == 1 and merged.max_col == 8 and merged.min_row == merged.max_row:
+                target.unmerge_cells(str(merged))
+                target.merge_cells(start_row=merged.min_row, end_row=merged.max_row, start_column=1, end_column=15 if include_ai else 14)
         target.column_dimensions['G'].width = 60
         for column in ('D', 'E', 'F'):
             target.column_dimensions[column].width = 24
         if target.print_area:
-            target.print_area = f"A1:{'I' if include_ai else 'H'}{target.max_row}"
+            target.print_area = f"A1:{'O' if include_ai else 'N'}{target.max_row}"
     customer.close()
     book.active = 0
     return book

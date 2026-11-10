@@ -65,7 +65,9 @@ def load_json_file(file_path: Path) -> Optional[Dict]:
 def load_excel_file(file_path: Path) -> Optional[pd.DataFrame]:
     """Загрузка Excel-файла."""
     try:
-        return pd.read_excel(file_path, dtype=str)
+        with pd.ExcelFile(file_path) as workbook:
+            sheet = 'Данные' if 'Данные' in workbook.sheet_names else workbook.sheet_names[0]
+            return pd.read_excel(workbook, sheet_name=sheet, dtype=str)
     except Exception as e:
         print(f"  Ошибка загрузки Excel {file_path.name}: {e}")
         return None

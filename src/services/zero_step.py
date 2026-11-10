@@ -521,18 +521,11 @@ def get_all_quantities(element):
                                             quantities[f'Площадь_GROSS_м2'] = float(value)
                                 
                                 elif qty_type == 'IfcQuantityVolume':
-                                    value = safe_get_attr(qty, 'VolumeValue')
-                                    if value and value != '-':
-                                        if qty_name.lower() == 'netvolume':
-                                            # НОВЫЙ формат
-                                            quantities[f'QTO_{qto_set_name}_Объём_{qty_name}_м3'] = float(value)
-                                            # СТАРЫЙ формат
-                                            quantities[f'Объём_{qty_name}_м3'] = float(value)
-                                        else:
-                                            # НОВЫЙ формат
-                                            quantities[f'QTO_{qto_set_name}_Объём_{qty_name}_литры'] = float(value)
-                                            # СТАРЫЙ формат
-                                            quantities[f'Объём_{qty_name}_литры'] = float(value)
+                                    from .ifc_quantities import ifc_volume_value
+                                    value = ifc_volume_value(qty, element.file)
+                                    if value is not None:
+                                        quantities[f'QTO_{qto_set_name}_Объём_{qty_name}_м3'] = value
+                                        quantities[f'Объём_{qty_name}_м3'] = value
                                 
                                 elif qty_type == 'IfcQuantityCount':
                                     value = safe_get_attr(qty, 'CountValue')
@@ -894,6 +887,9 @@ def get_element_info(element, processing_type: str = "KR"):
             info['Геометрия_Площадь_опалубки_м2'] = surface['formwork_m2']
             info['Геометрия_Площадь_низа_м2'] = surface['underside_m2']
             info['Геометрия_Площадь_торцов_м2'] = surface['edges_m2']
+            if 'projection_m2' in surface:
+                info['Геометрия_Горизонтальная_проекция_м2'] = surface['projection_m2']
+                info['Геометрия_Горизонтальная_проекция_без_отверстий_м2'] = surface['gross_projection_m2']
     if ifc_class in ('IfcSlab', 'IfcStairFlight'):
         perim_present = _has_positive_qto_value(
             info, ('Длина_Perimeter_мм',
@@ -948,6 +944,10 @@ def get_element_info(element, processing_type: str = "KR"):
         if code in ('СТ 00 15 01', 'СТ 00 15 02'):
             info['Материал'] = name
 
+    from .ifc_quantities import stamp_ifc_volume
+    stamp_ifc_volume(info, element)
+    from .construction_method import FIELD, construction_method
+    info[FIELD] = construction_method(info)
     from .ifc_raw_dump import enrich_work_height
     return enrich_work_height(info, element)
 
@@ -1925,7 +1925,8 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
     df['Высота, мм'] = df.apply(lambda row: get_geometry_value(row, 'ВЫСОТА'), axis=1)
     df['Периметр, мм'] = df.apply(lambda row: get_geometry_value(row, 'ПЕРИМЕТР', convert_to_m=False), axis=1)
     df['Площадь, м2'] = df.apply(lambda row: get_geometry_value(row, 'ПЛОЩАДЬ'), axis=1)
-    df['Объём, м3'] = df.apply(lambda row: get_geometry_value(row, 'ОБЪЕМ', convert_to_m3=True), axis=1)
+    from .ifc_quantities import resolve_volume
+    df['Объём, м3'] = df.apply(lambda row: resolve_volume(row).value, axis=1)
     df['ReinforcementVolumeRatio'] = df.apply(lambda row: get_geometry_value(row, 'ReinforcementVolumeRatio'), axis=1)
     
     # В pandas 3.0 столбцы из одних строк (например, '-' из get_geometry_value)
@@ -2112,6 +2113,11 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
 
     from .work_height import HEIGHT_FIELDS
     smetchik_cols.extend(col for col in HEIGHT_FIELDS if col in df.columns)
+    from .ifc_quantities import VALUE, SOURCE, STATUS
+    smetchik_cols.extend(col for col in (VALUE, SOURCE, STATUS) if col in df.columns and col not in smetchik_cols)
+    from .construction_method import FIELD
+    if FIELD in df.columns:
+        smetchik_cols.append(FIELD)
 
     existing_cols = [col for col in smetchik_cols if col in df.columns]
 

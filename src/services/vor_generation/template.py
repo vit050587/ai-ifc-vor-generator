@@ -71,8 +71,8 @@ def resolve_template_path(data_dir: str = None, filename: str = TEMPLATE_FILENAM
 # Путь к типовому шаблону по умолчанию.
 DEFAULT_TEMPLATE_PATH = resolve_template_path()
 
-# Количество колонок шаблона (A..F).
-COLUMNS = 6
+# Количество колонок итогового ВОР (A..H).
+COLUMNS = 8
 # Первая строка с данными (строки 1–3 — шапка таблицы).
 FIRST_DATA_ROW = 4
 
@@ -277,7 +277,7 @@ def render_template(output_rows: List[OutputRow], path: str = None,
 
         # Переносим стили строки-образца (и высоту строки).
         for col in range(1, COLUMNS + 1):
-            src_cell = sample[col - 1]
+            src_cell = src_ws.cell(row=row.src_index, column=col)
             dst_cell = ws.cell(row=target, column=col)
             dst_cell._style = copy.copy(src_cell._style)
         ws.row_dimensions[target].height = src_ws.row_dimensions[row.src_index].height
@@ -303,6 +303,16 @@ def render_template(output_rows: List[OutputRow], path: str = None,
             write_text(target, 6, source_summary(row.justification, row.volume.sources))
         for col, value in row.extra.items():
             ws.cell(row=target, column=col).value = value
+        from .stair_grouping import BAND_NAMES
+        if row.name_override == '' and row.label in BAND_NAMES.values():
+            from openpyxl.styles import Alignment
+            ws.merge_cells(start_row=target, end_row=target, start_column=1, end_column=COLUMNS)
+            heading = ws.cell(target, 1)
+            font = copy.copy(heading.font)
+            font.bold = True
+            heading.font = font
+            heading.alignment = Alignment(wrap_text=True, vertical='center')
+            ws.row_dimensions[target].height = 28
         guids = getattr(row.volume, 'element_guids', ())
         if guids:
             model_links.append({'row': target, 'number': str(ws.cell(target, 1).value or ''),
@@ -311,6 +321,21 @@ def render_template(output_rows: List[OutputRow], path: str = None,
                                 'quantity': float(row.volume), 'guids': list(guids),
                                 'relation': 'quantity_contribution'})
 
+    ws.cell(2, 7, 'Параметр\nот ВОР к ТСН')
+    ws.cell(2, 8, 'Значения параметров')
+    for column in (7, 8):
+        ws.cell(2, column)._style = copy.copy(ws.cell(2, 6)._style)
+    ws.column_dimensions['G'].width = 28
+    ws.column_dimensions['H'].width = 55
+    from openpyxl.styles import Alignment
+    for cells in ws.iter_rows(min_row=2, min_col=7, max_col=8):
+        for cell in cells:
+            cell.alignment = Alignment(wrap_text=True, vertical='top')
+            if cell.value:
+                width = 28 if cell.column == 7 else 55
+                lines = sum(max(1, (len(line) + width - 1) // width) for line in str(cell.value).splitlines())
+                ws.row_dimensions[cell.row].height = max(ws.row_dimensions[cell.row].height or 15, lines * 15)
+    ws.print_area = f'A1:H{ws.max_row}'
     os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
     out.remove(src_ws)
     out.save(output_path)

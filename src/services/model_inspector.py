@@ -2,8 +2,10 @@
 
 import json
 import math
+from dataclasses import asdict
 from functools import lru_cache
 from pathlib import Path
+from .ifc_quantities import resolve_volume
 
 
 def _present(value):
@@ -122,7 +124,8 @@ def element_details(session_dir, guid, ifc_path=None):
         units = dict(index.get(guid, {}))
         if length_unit:
             units['Отметка_этажа'] = length_unit
-    return {"guid": guid, "fields": fields, "units":{key:value for key,value in units.items() if key in fields and value}}
+    return {"guid": guid, "fields": fields, "units":{key:value for key,value in units.items() if key in fields and value},
+            "volume": asdict(resolve_volume(row, units))}
 
 
 def model_quantities(session_dir, ifc_path=None):
@@ -153,7 +156,8 @@ def model_quantities(session_dir, ifc_path=None):
                 fields[key] = numeric
         if fields:
             result[guid] = {'fields': fields, 'units': {
-                key: value for key, value in units.get(guid, {}).items() if key in fields}}
+                key: value for key, value in units.get(guid, {}).items() if key in fields},
+                'volume': asdict(resolve_volume(row, units.get(guid, {})))}
     return result
 
 
@@ -189,7 +193,8 @@ def model_groups(run_folder, processing_type):
             groups.append(_group_record(len(groups), [str(part) for part in path if part], rows))
     else:
         frame = pd.read_excel(rows_path, sheet_name="Данные", usecols=lambda col: col in (
-            "GlobalId", "Имя", "Тип элемента", "Этаж")).fillna("")
+            "GlobalId", "Имя", "Тип элемента", "Этаж", "Материал", "Технология конструкции")
+            or 'constructionmethod' in str(col).lower()).fillna("")
         rows = frame.to_dict("records")
         groups = []
 
@@ -216,7 +221,11 @@ def _group_record(index, path, rows):
             members[guid] = {"guid": guid, "name": str(row.get("Имя") or guid),
                              "ifcClass": str(row.get("Тип элемента") or ""),
                              "storey": str(row.get("Этаж") or "")}
-    return {"id": str(index), "path": path, "members": list(members.values())}
+    from .work_sections import catalog, group_facts
+    section = catalog().resolve(group_facts(rows), path)
+    standard_path = [*section.path, path[-1]] if section and path else list(section.path) if section else path
+    return {"id": str(index), "path": standard_path, "sourcePath": path,
+            "sectionPath": list(section.path) if section else [], "members": list(members.values())}
 
 
 def model_relations(run_folder, processing_type):

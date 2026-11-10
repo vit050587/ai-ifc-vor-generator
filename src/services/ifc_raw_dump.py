@@ -1447,8 +1447,12 @@ def _surface_formwork_from_mesh(verts, faces, kind):
     formwork = underside + edges
     if formwork <= 0:
         return {}
-    return {'underside_m2': underside,
-            'edges_m2': edges, 'formwork_m2': formwork}
+    result = {'underside_m2': underside,
+              'edges_m2': edges, 'formwork_m2': formwork}
+    if kind in ('slab', 'flight'):
+        from .stair_formwork import horizontal_projection
+        result.update(horizontal_projection(vertices, np.asarray(faces).reshape(-1, 3)))
+    return result
 
 
 def warm_formwork_surface_cache(model, elements=None):
@@ -1562,12 +1566,17 @@ def enrich_formwork_quantities(row, element):
             row.pop(key, None)
         return row
     if (_surface_formwork_kind(row.get('IfcClass'), row.get('Name'), row.get('ObjectType'))
-            and not row.get('QTO_geom::Площадь_опалубки_м2')):
+            and (not row.get('QTO_geom::Площадь_опалубки_м2')
+                 or (_surface_formwork_kind(row.get('IfcClass'), row.get('Name'), row.get('ObjectType')) in ('slab', 'flight')
+                     and 'QTO_geom::Горизонтальная_проекция_м2' not in row))):
         surface = _compute_surface_formwork_quantities(element)
         if surface:
             row['QTO_geom::Площадь_опалубки_м2'] = surface['formwork_m2']
             row['QTO_geom::Площадь_низа_м2'] = surface['underside_m2']
             row['QTO_geom::Площадь_торцов_м2'] = surface['edges_m2']
+            if 'projection_m2' in surface:
+                row['QTO_geom::Горизонтальная_проекция_м2'] = surface['projection_m2']
+                row['QTO_geom::Горизонтальная_проекция_без_отверстий_м2'] = surface['gross_projection_m2']
     if row.get('IfcClass') not in ('IfcSlab', 'IfcStairFlight'):
         return row
     def positive(key):
@@ -1678,6 +1687,8 @@ def _collect_element_data(element, compute_bbox_qto=False):
         for key, value in _compute_bbox_quantities(element).items():
             row[key] = _truncate(value)
 
+    from .ifc_quantities import stamp_ifc_volume
+    stamp_ifc_volume(row, element)
     enrich_work_height(row, element)
     return enrich_formwork_quantities(row, element)
 

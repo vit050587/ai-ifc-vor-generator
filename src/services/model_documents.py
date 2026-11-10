@@ -126,6 +126,10 @@ def saved_estimate(folder, positions):
     for index, values in enumerate(rows, 1):
         if str(values[0] or '').startswith('Раздел: '):
             group = str(values[0])[len('Раздел: '):]
+        elif index >= 19 and values[0] and not values[1]:
+            title = str(values[0])
+            if not title.startswith(('Раздел ', 'Подраздел ', 'Итого', 'ИТОГО')) and 'часть здания' not in title.lower():
+                group = title
         if len(values) > 4 and values[1] and values[2]:
             key = (group, str(values[1]), str(values[2]), number(values[4]))
             candidates.setdefault(key, []).append(index)
@@ -337,6 +341,19 @@ def document_groups(folder, items):
                     context = [title]
                     boundaries.append((index, None, list(context)))
                     title = None
+            elif kind == 'estimate' and index >= 19 and first and not second:
+                value = str(first).strip()
+                if 'часть здания' in value.lower():
+                    context = [value]
+                    boundaries.append((index, None, list(context)))
+                elif value.startswith('Раздел '):
+                    context = context[:1] + [value]
+                    boundaries.append((index, None, list(context)))
+                elif value.startswith('Подраздел '):
+                    context = context[:2] + [value]
+                    boundaries.append((index, None, list(context)))
+                elif not value.startswith(('Итого', 'ИТОГО')):
+                    title = value
             elif kind == 'vor' and index > 2 and first and not second:
                 value = str(first).strip()
                 if value.startswith('Раздел ') or 'часть здания' in value.lower():

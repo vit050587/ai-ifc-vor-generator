@@ -20,6 +20,7 @@ import ifcopenshell
 import pandas as pd
 
 from src.core.logger import setup_logger
+from .construction_method import construction_method
 
 # Переиспользуем функции из существующих модулей
 from src.services.zero_step import (
@@ -275,6 +276,9 @@ def _is_precast_element(element_data: dict, path=None) -> bool:
         True, если элемент сборный.
     """
     # 1. Сырой материал элемента
+    method = construction_method(element_data)
+    if method != 'unknown':
+        return method in ('precast', 'conflicting')
     material = str(element_data.get('Материал', '') or '').lower()
     if 'сборн' in material:
         return True
@@ -1204,13 +1208,9 @@ def _recompute_group_aggregates(
     """
 
     def _row_volume(row: Dict[str, Any]) -> float:
-        # Первое ненулевое значение среди колонок-источников объёма
-        # (coalesce — та же логика, что в _create_group/group_elements)
-        for col in volume_cols:
-            val = safe_parse_float(row.get(col, 0))
-            if val > 0:
-                return val
-        return 0.0
+        # Use the same per-element choice as the original grouping and VOR.
+        from .ifc_quantities import resolve_volume
+        return resolve_volume(row).value or 0.0
 
     volume = float(round(sum(_row_volume(r) for r in sub_rows), precision))
     areas: Dict[str, float] = {}
@@ -1273,8 +1273,8 @@ def split_leaf_groups_by_name(
 
     for group in leaf_groups:
         # Раскладываем элементы группы по типу (имя без ID + материал)
-        rows_by_key: Dict[Tuple[str, str], List[int]] = {}
-        keys_order: List[Tuple[str, str]] = []
+        rows_by_key: Dict[Tuple[str, str, str], List[int]] = {}
+        keys_order: List[Tuple[str, str, str]] = []
         for idx in group.get('indices') or []:
             try:
                 idx = int(idx)
@@ -1286,6 +1286,7 @@ def split_leaf_groups_by_name(
             key = (
                 _element_type_key(row.get('Имя', '')),
                 str(row.get('Материал', '') or ''),
+                construction_method(row),
             )
             if key not in rows_by_key:
                 rows_by_key[key] = []

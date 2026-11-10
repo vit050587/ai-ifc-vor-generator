@@ -83,7 +83,7 @@ def _build(run_dir, output_path=None, template_path=None, session=None, llm=None
             section=str(row.get('section') or ''), source='ВОР', file_name=docs.file_names['vor'])])
 
     from .elements import ElementIndex
-    index = ElementIndex.from_raw_dump(str(raw))
+    index = ElementIndex.from_raw_dump(str(raw), ifc_path=session.get('ifc_file_path'))
     index.apply_vor_foundation_changes(vor_rows)
     prepared_rows = documents.customer_rows(docs)
     prepared_template = template.parse_template(template_path)

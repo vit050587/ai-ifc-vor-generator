@@ -39,7 +39,12 @@ def fingerprint(folder, template_path, session):
     inputs.extend(package.glob('*.py'))
     inputs.extend(package.parent / name for name in (
         'comparison_typical.py','comparison_layout.py','comparison_ai_reason.py','comparison_wording.py',
-        'doc_pdf_parser.py','vor_parser.py','vor_comparison.py','pd_parser.py'))
+        'doc_pdf_parser.py','vor_parser.py','vor_comparison.py','pd_parser.py','ifc_quantities.py','construction_method.py',
+        'estimate_parameter_comparison.py','stair_formwork.py'))
+    from ..stair_formwork import find_ifc
+    raw = vc._find_session_dir(str(folder), 'IFC_исходные_параметры.json')
+    if raw:
+        inputs.append(find_ifc(raw, (session or {}).get('ifc_file_path')))
     records = []
     for path in sorted({str(Path(p).resolve()) for p in inputs if p and Path(p).is_file()}):
         records.append((path, digest(path)))

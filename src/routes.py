@@ -1765,6 +1765,8 @@ def preview_result(session_id: str, filename: str):
         return _err(ErrorResponse(detail="Файл не найден"), 404)
 
     try:
+        from .services.work_list_view import ensure_current
+        ensure_current(path)
         MAX_PREVIEW = 100
 
         if path.endswith(".csv"):
@@ -1974,6 +1976,8 @@ def download_file(session_id: str, filename: str):
     if not path or not os.path.exists(path):
         return _err(ErrorResponse(detail="Файл не найден"), 404)
 
+    from .services.work_list_view import ensure_current
+    ensure_current(path)
     directory, name = os.path.split(path)
     return send_file(path, as_attachment=True, download_name=name, mimetype="application/octet-stream")
 
@@ -2028,6 +2032,8 @@ def download_all(session_id: str):
             fname = f.get("filename", "file")
             if fp and os.path.exists(fp):
                 try:
+                    from .services.work_list_view import ensure_current
+                    ensure_current(fp)
                     zf.write(fp, arcname=fname)
                 except Exception as e:
                     logger.warning(f"Ошибка добавления файла в архив {fname}: {e}")
@@ -2985,6 +2991,45 @@ def export_session_estimate(session_id):
     except Exception as exc:
         logger.error("Сметная форма: %s",exc,exc_info=True)
         return _pd_jsonify({"status":"error","detail":str(exc)}), 500
+
+
+@bp.route("/api/session/<session_id>/estimate/compare", methods=["POST"])
+def compare_session_estimate(session_id):
+    """Compare a customer estimate separately from the customer's VOR."""
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+    from src.services import estimate_export, estimate_comparison
+    manager = _get_manager()
+    try:
+        session = manager.get(session_id)
+    except KeyError:
+        session = None
+    if not session:
+        return _pd_jsonify({"status": "error", "detail": "Сессия не найдена"}), 404
+    upload = request.files.get("estimate")
+    suffix = Path(upload.filename or "").suffix.lower() if upload else ""
+    if suffix not in (".xlsx", ".json"):
+        return _pd_jsonify({"status": "error", "detail": "Загрузите смету в формате XLSX или расчётный JSON сметы"}), 400
+    base = os.path.join(manager.output_folder, session_id)
+    run_dir = _vor_comparison_run_dir(base, session_id)
+    if not run_dir:
+        return _pd_jsonify({"status": "none", "detail": "Сначала сформируйте перечень работ"}), 400
+    try:
+        estimate_export.build(run_dir, project_name=session.get("ifc_file_name") or session.get("original_filename") or "")
+        with TemporaryDirectory(prefix="estimate_comparison_") as temporary:
+            customer_path = Path(temporary) / ("customer" + suffix)
+            upload.save(customer_path)
+            result = estimate_comparison.build(run_dir, customer_path, customer_name=Path(upload.filename).name)
+        manager.register_file(session_id, result["file"])
+        manager.register_file(session_id, result["data_file"])
+        result.update(status="ready", file=estimate_comparison.FILENAME, data_file=estimate_comparison.DATA_FILENAME,
+                      download_url=f"/ifc-vor/api/session/{session_id}/download/{estimate_comparison.FILENAME}")
+        return _pd_jsonify(result)
+    except (ValueError, OSError) as exc:
+        return _pd_jsonify({"status": "error", "detail": str(exc)}), 400
+    except Exception:
+        logger.exception("Сравнение смет")
+        return _pd_jsonify({"status": "error", "detail": "Не удалось прочитать и сравнить сметы"}), 500
 
 
 @bp.route("/api/session/<session_id>/typical_vor", methods=["GET"])

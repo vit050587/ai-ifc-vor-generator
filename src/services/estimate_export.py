@@ -50,6 +50,12 @@ def _norm(value):
     return re.sub(r'\s+', ' ', str(value or '')).strip().casefold()
 
 
+def public_group_name(header):
+    """Remove calculation height bands and band counts from a source group."""
+    header = re.sub(r'\s*\[(?:Высота от земли:|Этажи:).*\]\s*$', '', str(header or ''))
+    return re.sub(r'\s*Кол-во:\s*\d+', '', header).strip()
+
+
 def _metadata(folder):
     data = _json(folder / 'Финальный_перечень_работ.json')
     records = []
@@ -62,12 +68,17 @@ def _metadata(folder):
             header += '  [' + label(group['height_context']) + ']'
         for work in group.get('rows', []):
             records.append((header, work, {'name':group.get('element'),
-                           'height_context':group.get('height_context'), **(group.get('quantity') or {})}))
+                           'part':group.get('part'), 'path':group.get('path') or [],
+                           **(group.get('el') or {}),
+                           'height_context':group.get('height_context'),
+                           'work_list_group':public_group_name(header), **(group.get('quantity') or {})}))
     for entry in data.get('elements', []):
         el = entry.get('element') or {}
         facts = dict(el.get('row') or {}, **{k:v for k,v in el.items() if k != 'row'})
         facts['part'] = entry.get('part')
+        facts['path'] = entry.get('group_path') or (entry.get('group') or {}).get('path') or []
         facts['height_context'] = entry.get('height_context')
+        facts['work_list_group'] = public_group_name(entry.get('group_header') or el.get('name'))
         for work in entry.get('selected_works', []):
             records.append((entry.get('group_header') or el.get('name'), work, facts))
     return data, records
@@ -92,6 +103,7 @@ def _rows(path, metadata):
         if not all(name in header for name in required):
             raise ValueError('Не распознаны столбцы сформированного перечня')
         group = ''
+        part = ''
         group_id = 0
         rows = []
         for source_row, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), 2):
@@ -99,6 +111,8 @@ def _rows(path, metadata):
             code, title = str(d['Шифр ТСН'] or '').strip(), str(d['Наименование расценки/ресурса'] or '').strip()
             if not code:
                 if title and not title.upper().startswith('ИТОГО'):
+                    if re.fullmatch(r'(?:ПОДЗЕМНАЯ|НАДЗЕМНАЯ|ЦОКОЛЬНАЯ|ЦОКОЛЬ)\s*(?:ЧАСТЬ)?', title.upper()):
+                        part = title
                     group = title
                     group_id = source_row
                     rows.append({'heading':title})
@@ -107,6 +121,9 @@ def _rows(path, metadata):
             if len(matches) > 1:
                 matches = [(w,f) for w,f in matches if _norm(w.get('title')) == _norm(title)]
             work, facts = matches[0] if len(matches) == 1 else ({}, {'name':group})
+            facts = dict(facts)
+            if not facts.get('part'):
+                facts['part'] = part
             rows.append({'code':code,'title':title,'unit':d['Ед. изм.'],
                          'quantity_exact':float(number(d['Объём работ'])) if number(d['Объём работ']) is not None else None,
                          'amounts':{k:money(number(d[c])) for k,c in [('labor','ЗП'),('machines','ЭМ'),('materials','МР')]},
@@ -235,6 +252,13 @@ def _resource_matches_work(resource, work):
 
 def _position_groups(rows):
     """Resolve catalog links first, then unambiguous material/operation pairs."""
+    if any('estimate_id' in row for row in rows):
+        children = {}
+        for row in rows:
+            if row.get('estimate_parent_id') is not None:
+                children.setdefault(row['estimate_parent_id'], []).append(row)
+        return [(row, children.get(row.get('estimate_id'), [])) for row in rows
+                if row.get('estimate_parent_id') is None]
     links = _resource_links()
     groups = []
     section = []
@@ -396,6 +420,8 @@ def prepare(folder, *, project_name='', detail_provider=None, coefficient_provid
                    unit_rates={key:_unit_rate(row,detail,key) for key in factors},
                    driver_unit_rate=0 if resource else detail.get('curSalaryDrivers'))
         records.append(row)
+    from .estimate_consolidation import consolidate
+    records = consolidate(records)
     result = {'source':str(source),'project_name':project_name,'period':period,'rows':records,
               'warnings':list(dict.fromkeys(warnings))}
     from .estimate_formulas import round_costs
@@ -457,11 +483,15 @@ def write_workbook(data, path):
             i+=2
             section_totals.clear()
     layout = []
-    for record, resources in _position_groups(data['rows']):
+    from .work_sections import sectioned_positions
+    for record, resources in sectioned_positions(_position_groups(data['rows']), show_groups=False):
         if 'heading' in record:
-            finish_section()
+            level = record.get('heading_level', 'source')
+            if level != 'group':
+                finish_section()
             sheet.merge_cells(start_row=i,start_column=1,end_row=i,end_column=11)
-            sheet.cell(i,1,'Раздел: '+record['heading']).font=Font(name='Arial',size=11,bold=True)
+            title = record['heading'] if level in ('part', 'section', 'subsection', 'group') else 'Раздел: '+record['heading']
+            sheet.cell(i,1,title).font=Font(name='Arial',size=10 if level == 'group' else 11,bold=True)
             sheet.cell(i,1).alignment=Alignment(wrap_text=True,vertical='center')
             sheet.row_dimensions[i].height=32
             i+=1
@@ -486,6 +516,8 @@ def write_workbook(data, path):
         _comment(sheet.cell(i,5),f"Количество уже приведено к единице расценки в исходном перечне, строка {record['source_row']}. Повторное умножение на объём и норму расхода не выполняется.")
         i+=1
         _,comment_notes=_corrections(record.get('decisions',[]),record)
+        for key in comment_notes:
+            comment_notes[key] = list(dict.fromkeys([*comment_notes[key], *record['components'][key].get('notes', [])]))
         for key,label in [('labor','ЗП'),('machines','ЭМ'),('materials','МР')]:
             item=record['components'][key]
             sheet.cell(i,3,label)
@@ -509,6 +541,8 @@ def write_workbook(data, path):
                 sheet.cell(i,column,value)
             sheet.row_dimensions[i].height=max(42,14*(len(resource['title'])//45+1))
             _,resource_notes=_corrections(resource.get('decisions',[]),resource)
+            resource_notes['materials'] = list(dict.fromkeys([
+                *resource_notes['materials'], *resource['components']['materials'].get('notes', [])]))
             _comment(sheet.cell(i,7),'\n\n'.join(resource_notes['materials']))
             _comment(sheet.cell(i,2),'Отдельно учтённый ресурс работы «'+record['title']+'». '+resource.get('resource_parent_basis','')+' Включён в общий итог этой работы один раз; накладные расходы и сметная прибыль на стоимость ресурса не начисляются.')
             resource['estimate_row'] = i
@@ -583,7 +617,9 @@ def _fingerprint(folder, project_name):
     names = ('Финальный_перечень_работ.json','Подобранные_работы.json','Подобранные_таблицы_работ.json','period.json',
              'works_constants.json','IFC_глобальные_константы.json','ПОС_глобальные_константы.json',
              'ПЗ_глобальные_константы.json','pd_full.json','.estimate_rate_details.json')
-    paths = {source_file(folder),Path(__file__),Path(__file__).with_name('estimate_calculation.py'),Path(__file__).with_name('estimate_formulas.py'),Path(__file__).with_name('work_height.py'),Path(tsn_coeffs.__file__)}
+    from .work_sections import template
+    paths = {source_file(folder),Path(__file__),Path(__file__).with_name('estimate_calculation.py'),Path(__file__).with_name('estimate_formulas.py'),Path(__file__).with_name('work_height.py'),Path(tsn_coeffs.__file__),
+             Path(__file__).with_name('work_sections.py'),Path(__file__).with_name('estimate_consolidation.py'),Path(__file__).with_name('construction_method.py'),Path(template.DEFAULT_TEMPLATE_PATH)}
     paths.update(p/name for p in (folder,folder.parent) for name in names if (p/name).is_file())
     paths.update(Path(tsn_coeffs.TSN_DIR).glob('*.json'))
     from src.core.config import load_config

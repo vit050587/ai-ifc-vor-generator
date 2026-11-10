@@ -180,6 +180,7 @@ def apply(book, data, layout):
     sheet['L17'] = 12
     sheet.column_dimensions['F'].width = 23
     sheet.column_dimensions['L'].width = 20
+    sheet.column_dimensions['L'].hidden = True
     sheet['A12'] = 'Расчёт по '+METHOD+'. Стоимость рассчитана в базисных ценах и ценах выбранного периода с учётом поправок и зимнего удорожания.'
     sheet['A13'] = 'Денежные суммы округляются до копеек после вычислений. Цены сохраняют исходную точность, отображаются с двумя знаками.'
     sheet['A14'] = 'Синие значения можно менять — связанные суммы пересчитаются. Если данных недостаточно, в итог включены известные суммы; недостающие затраты отмечены в пояснениях.'
@@ -214,7 +215,8 @@ def apply(book, data, layout):
         sheet[quantity].font = Font(name='Arial',size=10,color=BLUE)
         if sheet[quantity].data_type == 'f':
             sheet[quantity].number_format = '0.00########'
-        _comment(sheet[quantity],f"Количество единиц расценки из строки {record['source_row']} сформированного перечня. "+
+        source_rows = ', '.join(str(row) for row in record.get('source_rows', [record['source_row']]))
+        _comment(sheet[quantity],f"Количество единиц расценки из строк {source_rows} сформированного перечня. "+
                  ('Объём не определён: укажите количество для расчёта.' if record['quantity_exact'] is None else 'Повторное деление на 100 и норму расхода не выполняется.')+
                  ' Объём редактируемый; оба уровня цен пересчитываются.')
         if parent is not None and sheet[f'E{p}'].data_type == 'f':
@@ -371,7 +373,7 @@ def apply(book, data, layout):
     for col in ('V','AA','AB','AC','AD','AE'):
         sheet.column_dimensions[col].hidden = True
     sheet['V16'] = 'Расход ресурса на единицу работы по исходным количествам'
-    sheet.print_area = f'A1:L{sheet.max_row}'
+    sheet.print_area = f'A1:K{sheet.max_row}'
     for row in sheet:
         for cell in row:
             if cell.column in (6,9,11):

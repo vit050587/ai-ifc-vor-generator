@@ -232,6 +232,8 @@ def row_components(rows: List[dict]) -> Dict[Tuple[str, str, str], str]:
         block = str(row.get("block") or "").strip()
         key = (section, block)
         component = mapping.stair_component(str(row.get("name") or ""))
+        if not component and mapping.detect_kind(str(row.get('name') or '')) in ('stair', 'precast'):
+            component = 'combined'
         if component:
             current[key] = component
         else:

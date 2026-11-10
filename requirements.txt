@@ -92,7 +92,7 @@ ultralytics==8.4.75
 supervision==0.29.1
 transformers==5.5.4
 accelerate==1.14.0
-hatchfinder==0.1.0
+hatchfinder==0.2.1
 
 # Валидация данных
 pydantic==2.13.4
@@ -113,3 +113,6 @@ python-dotenv==1.2.2
 numpy==2.4.6
 joblib==1.5.3
 langchain-core==1.4.7
+
+# Horizontal projection geometry (TSN stair quantities)
+shapely==2.1.2

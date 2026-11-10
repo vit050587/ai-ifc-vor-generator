@@ -1386,6 +1386,8 @@ def build_final_works_from_api(
         # Добавляем автофильтр для удобства
         worksheet.auto_filter.ref = f"A1:{chr(64 + len(df_for_excel.columns))}{len(df_for_excel) + 1}"
 
+    from .work_list_view import build as build_work_list_view
+    build_work_list_view(output_path)
     logger.info(
         f"Финальный перечень работ из API сохранён: {output_path} "
         f"({len(df_for_excel)} строк)"

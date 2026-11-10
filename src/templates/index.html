@@ -4718,7 +4718,7 @@ function reset3DProperties(message = 'Нажмите на элемент мод�
     document.getElementById('viewer3dPropertySearch').disabled = true;
 }
 
-function element3DQuantities(fields, units = {}) {
+function element3DQuantities(fields, units = {}, volumeInfo = null) {
     const entries = Object.entries(fields).filter(([,value]) =>
         value !== null && value !== '' && typeof value !== 'boolean' && Number.isFinite(Number(String(value).replace(',', '.'))));
     const find = patterns => {
@@ -4734,7 +4734,10 @@ function element3DQuantities(fields, units = {}) {
     const metric = (label, entry, unit) => ({label, source:entry?.[0], value:entry?.[1],
         unit:entry && /^QTO::/.test(entry[0]) ? (units[entry[0]] || 'единица не указана') : unit});
     const areaLabel = area && /SideArea/.test(area[0]) ? 'Площадь боковой поверхности' : area && /SurfaceArea|поверхности/.test(area[0]) ? 'Площадь поверхности' : 'Площадь';
-    return [metric('Объём',volume,'м³'),metric(areaLabel,area,'м²'),
+    const physicalVolume = volumeInfo ? {label:'Объём', source:volumeInfo.source,
+        value:volumeInfo.value === null ? undefined : volumeInfo.value, unit:'м³', status:volumeInfo.status}
+        : metric('Объём',volume,'м³');
+    return [physicalVolume,metric(areaLabel,area,'м²'),
         ...(formwork ? [metric('Площадь опалубки',formwork,'м²')] : [])];
 }
 
@@ -4752,7 +4755,7 @@ function render3DTotals(state) {
     for (const guid of guids) {
         const data = state._quantityData[guid];
         if (!data) continue;
-        for (const metric of element3DQuantities(data.fields, data.units)) {
+        for (const metric of element3DQuantities(data.fields, data.units, data.volume)) {
             if (metric.value === undefined) continue;
             const value = Number(String(metric.value).replace(',', '.'));
             const unit = metric.unit.replace(/m/g, 'м').replace(/3/g, '³').replace(/2/g, '²');
@@ -4773,7 +4776,7 @@ function render3DTotals(state) {
     line('По параметрам IFC; каждый элемент учтён один раз.');
 }
 
-function render3DProperties(fields, units = {}) {
+function render3DProperties(fields, units = {}, volumeInfo = null) {
     const root = document.getElementById('viewer3dPropertiesContent');
     const summary = document.getElementById('viewer3dElementSummary');
     root.replaceChildren(); summary.replaceChildren();
@@ -4819,11 +4822,12 @@ function render3DProperties(fields, units = {}) {
     }
     const quantities = document.createElement('details'); quantities.open = true;
     const title = document.createElement('summary'); title.textContent = 'Объём и площадь элемента'; quantities.appendChild(title);
-    for (const metric of element3DQuantities(fields, units)) {
+    for (const metric of element3DQuantities(fields, units, volumeInfo)) {
         const row = document.createElement('div'); row.className = 'viewer3d-property';
         const label = document.createElement('dt'); label.textContent = metric.label;
         const value = document.createElement('dd');
-        value.textContent = metric.value === undefined ? 'Нет данных' : `${metric.value} ${metric.unit}`;
+        const statuses = {conflicting_data:'Противоречивые объёмы в IFC', missing_units:'Не указана единица объёма'};
+        value.textContent = metric.value === undefined ? (statuses[metric.status] || 'Нет данных') : `${metric.value} ${metric.unit}` + (metric.status === 'estimated' ? ' (оценка по геометрии)' : '');
         row.append(label,value);
         if (metric.source) { const source = document.createElement('small'); source.textContent = metric.source; row.appendChild(source); }
         row.dataset.search = `${metric.label} ${metric.source || ''} ${value.textContent}`.toLocaleLowerCase();
@@ -5407,7 +5411,7 @@ function init3DInspector(state, sessionId, runId = null) {
             }
             if (viewer3d !== state || selectionNumber !== number) return;
             document.getElementById('viewer3dPropertiesStatus').textContent = (next.length > 1 ? `Выбрано ${next.length}. Свойства: ` : '') + (data.fields.Name || 'Выбранный элемент');
-            render3DProperties(data.fields, data.units);
+            render3DProperties(data.fields, data.units, data.volume);
             if (next.length > 1) {
                 for (const section of [...document.getElementById('viewer3dElementSummary').children,
                     ...document.getElementById('viewer3dPropertiesContent').children]) section.open = false;
@@ -6290,7 +6294,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   watch();
 
-  const V={match:'✅ Совпадает',ours:'🟢 Вероятно верен сформированный объём',customer:'🟡 Вероятно верно у исполнителя',check:'❗ Решение за сметчиком',split:'🔵 Разная разбивка',info:'ℹ️ Не сравнивается'};
+  const V={parameters:'Различаются сметные параметры',parameters_missing:'Нет значений сметных параметров',match:'✅ Совпадает',ours:'🟢 Вероятно верен сформированный объём',customer:'🟡 Вероятно верно у исполнителя',check:'❗ Решение за сметчиком',split:'🔵 Разная разбивка',info:'ℹ️ Не сравнивается'};
   const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const num=v=>v==null?'—':Number(v).toLocaleString('ru-RU',{maximumFractionDigits:2});
   function compareButton(){
@@ -6298,11 +6302,34 @@ document.addEventListener('DOMContentLoaded', () => {
     const box=document.createElement('div'); box.id='vorCmpBtnBox'; box.style.cssText='margin:0 0 16px';
     box.innerHTML='<button class="btn btn-primary" id="vorCmpBtn">⚖️ Сравнить с ВОР исполнителя</button> <span id="vorCmpMsg" style="color:#718096;font-size:13px;margin-left:8px">сформированный перечень ↔ ВОР исполнителя: где совпадает, кто прав и почему</span>'
       +'<div style="margin-top:8px"><button class="btn btn-primary" id="typVorBtn">📋 Разложить в типовую ВОР и сравнить</button> <span id="typVorMsg" style="color:#718096;font-size:13px;margin-left:8px">оба типовых ВОР по модели IFC и документам, с общей сверкой</span></div>'
-      +'<div style="margin-top:8px"><button class="btn btn-primary" id="estimateBtn">📄 Смета по сформированному перечню</button> <span id="estimateMsg" style="color:#718096;font-size:13px;margin-left:8px">отдельный Excel в сметной форме; обоснования коэффициентов — в комментариях</span></div>';
+      +'<div style="margin-top:8px"><button class="btn btn-primary" id="estimateBtn">📄 Смета по сформированному перечню</button> <span id="estimateMsg" style="color:#718096;font-size:13px;margin-left:8px">отдельный Excel в сметной форме; обоснования коэффициентов — в комментариях</span></div>'
+      +'<div style="margin-top:8px"><button class="btn btn-primary" id="estimateCompareBtn">⚖️ Сравнить смету заказчика с нашей ЛСР</button><input type="file" id="estimateCompareFile" accept=".xlsx,.json" hidden> <span id="estimateCompareMsg" style="color:#718096;font-size:13px;margin-left:8px">смета XLSX или расчётный JSON; объёмы, стоимость и начисления</span></div>';
     const title=card.querySelector('.step-title'); (title||card.firstChild).after(box);
     $('vorCmpBtn').onclick=showCompare;
     $('typVorBtn').onclick=showTypical;
     $('estimateBtn').onclick=showEstimate;
+    $('estimateCompareBtn').onclick=()=>$('estimateCompareFile').click();
+    $('estimateCompareFile').onchange=compareEstimate;
+  }
+  async function compareEstimate(){
+    const input=$('estimateCompareFile'),file=input.files[0];if(!file)return;
+    const sid=currentSessionId,run=currentViewRun(),generation=viewGeneration;
+    if(!sid)return;
+    const btn=$('estimateCompareBtn'),msg=$('estimateCompareMsg');
+    btn.disabled=true;msg.textContent='Сравниваю сметы…';
+    try{
+      const data=new FormData();data.append('estimate',file);
+      const response=await fetch(`${API_BASE}/session/${sid}/estimate/compare`,{method:'POST',body:data});
+      const d=await response.json();if(!viewIsCurrent(sid,run,generation))return;
+      if(!response.ok || d.status!=='ready')throw new Error(d.detail||'Не удалось сравнить сметы');
+      if($('estimateCompareCard'))$('estimateCompareCard').remove();
+      const card=document.createElement('div');card.id='estimateCompareCard';card.className='file-info';
+      const label=document.createElement('span');label.textContent='Сравнение нашей ЛСР и сметы заказчика';
+      const link=document.createElement('a');link.className='btn btn-sm btn-primary';link.textContent='Скачать сравнение';link.href=d.download_url;link.setAttribute('download','');
+      card.append(label,link);$('vorCmpBtnBox').after(card);
+      msg.textContent=`Сопоставление завершено: ${d.positions} строк.`+(d.priceBasisComparable?'':' Периоды или уровни цен различаются либо не указаны; итоги показаны отдельно.');
+    }catch(error){if(viewIsCurrent(sid,run,generation))msg.textContent=error.message;}
+    finally{btn.disabled=false;input.value='';}
   }
   async function showEstimate(){
     const btn=$('estimateBtn'),msg=$('estimateMsg');
@@ -6407,7 +6434,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const viewIsCurrent=(sid,run,generation)=>generation===viewGeneration && sid===currentSessionId && run===currentViewRun();
   window.resetVorComparisons=function(){
     ++viewGeneration;
-    ['vorCmpCard','typVorCard','estimateCard','vorCmpBtnBox'].forEach(id=>{if($(id)) $(id).remove();});
+    ['vorCmpCard','typVorCard','estimateCard','estimateCompareCard','vorCmpBtnBox'].forEach(id=>{if($(id)) $(id).remove();});
     compareButton();
   };
   window.restoreVorComparisons=async function(){
