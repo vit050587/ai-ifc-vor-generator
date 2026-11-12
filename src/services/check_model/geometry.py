@@ -70,6 +70,7 @@ _SLAB_CLASSES = {
 _STAIR_CLASSES = {"IfcStair", "IfcStairFlight"}
 _OPENING_CLASSES = {"IfcOpeningElement", "IfcOpeningStandardCase"}
 _COLUMN_CLASSES = {"IfcColumn", "IfcPile"}
+_BEAM_CLASSES = {"IfcBeam", "IfcMember"}
 
 # Колонки дампа.
 _BBOX_LENGTH = "QTO_bbox::Длина_мм"
@@ -139,6 +140,8 @@ def _class_group(ifc_class: Optional[str]) -> str:
         return "opening"
     if name in _COLUMN_CLASSES:
         return "column"
+    if name in _BEAM_CLASSES:
+        return "beam"
     return "other"
 
 
@@ -215,6 +218,24 @@ def _raw_length_mm(row: Dict[str, Any], group: str) -> Optional[float]:
             row,
             (_BBOX_LENGTH, r"^QTO::.*Slab.*::Length$", r"^QTO::.*::Length$"),
         )
+    if group == "column":
+        # Для колонны длина — вертикальный габарит; QTO Length в разных
+        # моделях может означать размер профиля.
+        return _first(
+            row,
+            (_BBOX_HEIGHT, r"^QTO::.*Column.*::Length$"),
+        )
+    if group == "beam":
+        # Длина элемента: QTO точнее габарита bbox (для наклонных элементов
+        # bbox занижает длину).
+        return _first(
+            row,
+            (
+                r"^QTO::.*(?:Beam|Member).*::Length$",
+                r"^QTO::.*::Length$",
+                _BBOX_LENGTH,
+            ),
+        )
     return _first(row, (_BBOX_LENGTH, r"^QTO::.*::Length$"))
 
 
@@ -240,6 +261,18 @@ def _raw_width_mm(row: Dict[str, Any], group: str) -> Optional[float]:
         return _value(row, _BBOX_WIDTH)
     if group == "column":
         return _first(row, (r"^QTO::.*Column.*::Width$", _BBOX_WIDTH))
+    if group == "beam":
+        # Габариты bbox отсортированы по убыванию: наименьший — ширина
+        # сечения, средний — высота сечения.
+        return _first(
+            row,
+            (
+                r"^QTO::.*Beam.*::Width$",
+                r"^QTO::.*Member.*::Width$",
+                _BBOX_HEIGHT,
+                _BBOX_WIDTH,
+            ),
+        )
     return _first(row, (_BBOX_WIDTH, r"^QTO::.*::Width$"))
 
 
@@ -259,12 +292,24 @@ def _raw_height_mm(row: Dict[str, Any], group: str) -> Optional[float]:
             (r"^QTO::.*Opening.*::Height$", r"^QTO::BaseQuantities::Height$"),
         )
     if group == "column":
+        # Высота сечения — больший горизонтальный габарит (для колонн
+        # QTO_bbox::Длина_мм — это max(X, Y)).
         return _first(
             row,
             (
+                _BBOX_LENGTH,
+                r"^QTO::.*Column.*::Height$",
                 r"^QTO::.*Column.*::Length$",
-                _BBOX_HEIGHT,
-                r"^QTO::.*::Height$",
+            ),
+        )
+    if group == "beam":
+        # Высота сечения — средний габарит bbox.
+        return _first(
+            row,
+            (
+                r"^QTO::.*Beam.*::Height$",
+                r"^QTO::.*Member.*::Height$",
+                _BBOX_WIDTH,
             ),
         )
     if group == "slab":
@@ -361,6 +406,13 @@ def _area_m2(row: Dict[str, Any], group: str) -> Optional[float]:
         if length and width:
             return length * width / 1_000_000.0
     if group == "opening":
+        # Площадь проёма = ширина × высота. Ширина/высота берутся из QTO
+        # (Qto_OpeningElementBaseQuantities / BaseQuantities), а при их
+        # отсутствии — из габаритов bbox.
+        width = _raw_width_mm(row, group)
+        height = _raw_height_mm(row, group)
+        if width and height:
+            return width * height / 1_000_000.0
         box = _opening_box(row)
         if box:
             return box[0] * box[1] / 1_000_000.0

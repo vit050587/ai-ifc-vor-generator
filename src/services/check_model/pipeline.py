@@ -32,9 +32,11 @@ from .mapping import (
 )
 from .requirements import (
     Requirement,
+    element_mssk_code,
     group_by_ifc_class,
     iter_required_attributes,
     load_requirements,
+    row_text,
     select_requirement,
 )
 
@@ -47,12 +49,22 @@ CHECK_MODEL_REPORT_JSON = "Проверка_ЦИМ_модели_отчет.json"
 CHECK_MODEL_MAPPING_JSON = "Сопоставление_параметров.json"
 
 # Фактические IFC-классы, которые наследуются от классов из справочника.
+# Проектировщики выгружают как «обычные», так и *StandardCase/*ElementedCase
+# варианты, поэтому все они приводятся к классу требований.
 _CLASS_ALIASES = {
     "IfcWallStandardCase": "IfcWall",
     "IfcWallElementedCase": "IfcWall",
     "IfcSlabStandardCase": "IfcSlab",
     "IfcSlabElementedCase": "IfcSlab",
+    "IfcOpeningStandardCase": "IfcOpeningElement",
+    "IfcColumnStandardCase": "IfcColumn",
 }
+
+# Классы-«заглушки», которые проектировщики часто используют вместо
+# типизированных элементов (например, лестничный марш как
+# IfcBuildingElementProxy). Для них требования определяются по коду МССК или
+# точному наименованию элемента из справочника.
+_PROXY_CLASSES = {"IfcBuildingElementProxy"}
 
 ProgressCallback = Callable[[int, str], None]
 
@@ -87,6 +99,40 @@ def _requirement_class(ifc_class: str, grouped: Dict[str, List[Requirement]]) ->
     if alias and alias in grouped:
         return alias
     return None
+
+
+def _infer_proxy_requirement(
+    row: Dict[str, Any],
+    requirements: Dict[str, Requirement],
+) -> Optional[Requirement]:
+    """Определить требования для класса-заглушки по коду МССК или наименованию.
+
+    Используется только для ``IfcBuildingElementProxy``: такие элементы
+    не имеют собственного набора требований, но могут быть лестничным маршем,
+    стеной и т. п. Сопоставление консервативное — точный код МССК или полное
+    наименование элемента из справочника в тексте элемента. Догадки по
+    отдельным словам не принимаются, чтобы не подменить один тип другим.
+    """
+    text = row_text(row)
+    code = element_mssk_code(row).replace(" ", "").upper()
+    best: Optional[Requirement] = None
+    best_score = 0.0
+    for requirement in requirements.values():
+        score = 0.0
+        if code:
+            for mssk in requirement.mssk_codes:
+                normalized = mssk.replace(" ", "").upper()
+                if code == normalized:
+                    score = max(score, 100.0)
+                elif code.startswith(normalized):
+                    score = max(score, 40.0)
+        element = requirement.element.strip().lower()
+        if element and element in text:
+            score = max(score, 50.0)
+        if score > best_score:
+            best_score = score
+            best = requirement
+    return best if best_score >= 50.0 else None
 
 
 def _read_raw_dump(session_dir: Path) -> List[Dict[str, Any]]:
@@ -203,15 +249,22 @@ def run_check_model(
     for row in raw_rows:
         ifc_class = str(row.get("IfcClass") or "")
         requirement_class = _requirement_class(ifc_class, grouped)
-        if not requirement_class:
+        if requirement_class:
+            requirement = select_requirement(row, grouped[requirement_class])
+        elif ifc_class in _PROXY_CLASSES:
+            # Класс-заглушка: требования определяются по коду МССК/названию.
+            requirement = _infer_proxy_requirement(row, requirements)
+            if requirement is None:
+                skipped_classes[ifc_class] = skipped_classes.get(ifc_class, 0) + 1
+                continue
+        else:
             skipped_classes[ifc_class or "—"] = (
                 skipped_classes.get(ifc_class or "—", 0) + 1
             )
             continue
-        dump_class_counts[requirement_class] = (
-            dump_class_counts.get(requirement_class, 0) + 1
+        dump_class_counts[requirement.ifc_class] = (
+            dump_class_counts.get(requirement.ifc_class, 0) + 1
         )
-        requirement = select_requirement(row, grouped[requirement_class])
         group = groups.setdefault(
             requirement.code,
             {

@@ -43,6 +43,7 @@ TRANSFORM_MM2_TO_M2 = "mm2_to_m2"
 TRANSFORM_MM3_TO_M3 = "mm3_to_m3"
 TRANSFORM_STOREY_SUB = "storey_sub"
 TRANSFORM_STOREY_LEVEL = "storey_level"
+TRANSFORM_STOREY_OBJECT = "storey_object"
 TRANSFORM_CONCRETE_GRADE = "extract_concrete_grade"
 TRANSFORM_STEEL_GRADE = "extract_steel_grade"
 TRANSFORM_WATER_RESIST = "extract_water_resist"
@@ -56,6 +57,7 @@ ALLOWED_TRANSFORMS = {
     TRANSFORM_MM3_TO_M3,
     TRANSFORM_STOREY_SUB,
     TRANSFORM_STOREY_LEVEL,
+    TRANSFORM_STOREY_OBJECT,
     TRANSFORM_CONCRETE_GRADE,
     TRANSFORM_STEEL_GRADE,
     TRANSFORM_WATER_RESIST,
@@ -95,7 +97,7 @@ _NOISY_COLUMNS = {
 
 # Версия промпта и правил разбора ответа: входит в ключ кэша, чтобы правки
 # инструкции не давали результаты, построенные по старым правилам.
-PROMPT_VERSION = 4
+PROMPT_VERSION = 6
 
 # Поля элемента, которые показываются LLM как контекст (не как источники).
 _CONTEXT_COLUMNS = (
@@ -261,80 +263,146 @@ def deterministic_mapping(
         source = _pick_column(columns, patterns, preferred=preferred)
         mapping[name] = _entry(source, transform)
 
-    # Общие данные / маркировка.
-    put("RUS_MSSK_Element_Code", [r"::MGE_ElementCode$"])
-    put("RUS_MSSK_Material_Code", [r"::MGE_MaterialCode$"])
-    put("RUS_Name", [r"::MGE_Name$", r"^Name$"])
-    put("RUS_MSSK_Element_Name", [r"::MGE_Name$", r"^Name$"])
-    put("RUS_MSSK_Material_Name", [r"::MGE_Material$", r"^Материал$"])
-    put("RUS_Standard", [r"::MGE_Gost$", r"::Gost$", r"ГОСТ"])
-    put("RUS_Position", [r"::MGE_Position$", r"Марка"])
-    put("RUS_StrengthClass", [r"::MGE_ConcreteGrade$"])
-    put("RUS_SteelGrade", [r"::MGE_ReinforceStrengthClass$"])
-    put("RUS_ReinforcementVolumeRatio", [r"::ReinforcementVolumeRatio$"])
+    # Общие данные / маркировка. В моделях разных проектировщиков одни и те же
+    # данные лежат либо в свойствах MGE_* (наборы ExpCheck_*), либо в свойствах
+    # RUS_* (наборы RusSet_*), поэтому поддерживаются оба варианта имён.
+    put("RUS_MSSK_Element_Code", [r"::MGE_ElementCode$", r"::RUS_MSSK_Element_Code$"])
+    put("RUS_MSSK_Material_Code", [r"::MGE_MaterialCode$", r"::RUS_MSSK_Material_Code$"])
+    put("RUS_Name", [r"::MGE_Name$", r"::RUS_Name$", r"^Name$"])
+    put(
+        "RUS_MSSK_Element_Name",
+        [r"::MGE_Name$", r"::RUS_MSSK_Element_Name$", r"^Name$"],
+    )
+    put(
+        "RUS_MSSK_Material_Name",
+        [r"::MGE_Material$", r"::RUS_MSSK_Material_Name$", r"^Материал$"],
+    )
+    put("RUS_Standard", [r"::MGE_Gost$", r"::RUS_Standard$", r"::Gost$", r"ГОСТ"])
+    put("RUS_Position", [r"::MGE_Position$", r"::RUS_Position$", r"Марка"])
+    put("RUS_StrengthClass", [r"::MGE_ConcreteGrade$", r"::RUS_StrengthClass$"])
+    put(
+        "RUS_SteelGrade",
+        [
+            r"::MGE_ReinforceStrengthClass$",
+            r"::RUS_ReinforcementStrengthClass$",
+            r"::MGE_SteelGrade$",
+            r"::RUS_SteelGrade$",
+        ],
+    )
+    put(
+        "RUS_ReinforcementVolumeRatio",
+        [r"::ReinforcementVolumeRatio$", r"::RUS_ReinforcementVolumeRatio$"],
+    )
     put(
         "RUS_WaterResist",
-        [r"::MGE_WaterResist$", r"WaterResist", r"Водонепрониц"],
+        [
+            r"::MGE_WaterResist$",
+            r"::RUS_WaterImpermeability$",
+            r"::RUS_WaterResist$",
+            r"WaterResist",
+            r"Водонепрониц",
+        ],
         TRANSFORM_WATER_RESIST,
     )
     put(
         "RUS_FreezeDurability",
-        [r"::MGE_FreezeDurability$", r"FreezeDurability", r"Морозостой"],
+        [
+            r"::MGE_FreezeDurability$",
+            r"::RUS_FreezeDurability$",
+            r"FreezeDurability",
+            r"Морозостой",
+        ],
         TRANSFORM_FREEZE_DURABILITY,
     )
 
-    # Местоположение.
+    # Местоположение. Номер объекта (корпуса) и подобъекта (секции) может быть
+    # как отдельным свойством, так и префиксом имени этажа.
     put("RUS_Level", [r"^Этаж$"], TRANSFORM_STOREY_LEVEL)
-    put("RUS_Object_Sub", [r"^Этаж$"], TRANSFORM_STOREY_SUB)
-    mapping.setdefault("RUS_Object", _entry(None))
+    put(
+        "RUS_Object",
+        [r"::MGE_Object$", r"::RUS_Object$", r"::Object$", r"::Объект$"],
+    )
+    put(
+        "RUS_Object_Sub",
+        [r"::MGE_ObjectSub$", r"::RUS_Object_Sub$", r"::Object_Sub$"],
+    )
+    if (
+        mapping.get("RUS_Object_Sub", _entry(None)).source is None
+        and "Этаж" in columns
+    ):
+        mapping["RUS_Object_Sub"] = _entry("Этаж", TRANSFORM_STOREY_SUB)
+    if mapping.get("RUS_Object", _entry(None)).source is None and "Этаж" in columns:
+        mapping["RUS_Object"] = _entry("Этаж", TRANSFORM_STOREY_OBJECT)
 
-    # Количественные параметры.
-    put("RUS_Length", [r"Qto_.*::Length$", r"::Length$", r"Длина"])
-    put("RUS_Width", [r"Qto_.*::Width$", r"::Width$", r"Ширина"])
-    put("RUS_Height", [r"Qto_.*::Height$", r"::Height$", r"Высота"])
-    put("RUS_Diameter", [r"::Diameter$", r"Диаметр"])
-    put("RUS_Perimeter", [r"Qto_.*::Perimeter$", r"::Perimeter$", r"Периметр"])
-    put("RUS_PitchAngle", [r"::PitchAngle$", r"::Slope$", r"Уклон", r"Угол"])
-    put("RUS_Slope", [r"::Slope$", r"::PitchAngle$", r"Уклон", r"Угол"])
-    put("RUS_RequiredSlope", [r"::Slope$", r"::PitchAngle$", r"Уклон", r"Угол"])
-    put("RUS_Area", [r"::NetArea$", r"::GrossArea$", r"::NetSideArea$",
-                     r"::NetFootprintArea$", r"Площадь"])
-    put("RUS_NetFootprintArea", [r"::NetFootprintArea$", r"::GrossFootprintArea$"])
-    put("RUS_NetSideArea", [r"::NetSideArea$", r"::GrossSideArea$"])
-    put("RUS_NetSurfaceArea", [r"::NetSurfaceArea$", r"::GrossSurfaceArea$",
-                               r"Площадь_поверхности"])
-    put("RUS_Volume", [r"::NetVolume$", r"Количество::Объём_м3", r"::GrossVolume$",
-                       r"QTO_geom::Объём_м3", r"QTO_bbox::Объём_м3"])
-    put("RUS_GrossVolume", [r"::GrossVolume$", r"QTO_bbox::Габаритный_объём_м3"])
-    put("RUS_Weight", [r"::Weight$", r"Weight$", r"Масса"])
+    # Количественные параметры. Помимо QTO поддерживаются свойства, которые
+    # уже названы как требуемые (наборы RusSet_Quantities в моделях,
+    # выгруженных этим сервисом).
+    put("RUS_Length", [r"Qto_.*::Length$", r"::RUS_Length$", r"::Length$", r"Длина"])
+    put("RUS_Width", [r"Qto_.*::Width$", r"::RUS_Width$", r"::Width$", r"Ширина"])
+    put("RUS_Height", [r"Qto_.*::Height$", r"::RUS_Height$", r"::Height$", r"Высота"])
+    put("RUS_Diameter", [r"::RUS_Diameter$", r"::Diameter$", r"Диаметр"])
+    put("RUS_Perimeter", [r"Qto_.*::Perimeter$", r"::RUS_Perimeter$",
+                          r"::Perimeter$", r"Периметр"])
+    put("RUS_PitchAngle", [r"::RUS_PitchAngle$", r"::PitchAngle$", r"::Slope$",
+                           r"Уклон", r"Угол"])
+    put("RUS_Slope", [r"::RUS_Slope$", r"::Slope$", r"::PitchAngle$", r"Уклон", r"Угол"])
+    put("RUS_RequiredSlope", [r"::RUS_RequiredSlope$", r"::Slope$",
+                              r"::PitchAngle$", r"Уклон", r"Угол"])
+    if ifc_class in ("IfcOpeningElement", "IfcOpeningStandardCase"):
+        # Площадь проёма — площадь отверстия, а не площадь поверхности:
+        # QTO_bbox::Площадь_поверхности_м2 учитывает ещё и боковые грани.
+        put("RUS_Area", [r"QTO::.*Opening.*::Area$", r"QTO::BaseQuantities::Area$",
+                         r"::RUS_Area$"])
+    else:
+        put("RUS_Area", [r"::RUS_Area$", r"::NetArea$", r"::GrossArea$",
+                         r"::NetSideArea$", r"::NetFootprintArea$", r"Площадь"])
+    put("RUS_NetFootprintArea", [r"::RUS_NetFootprintArea$",
+                                 r"::NetFootprintArea$", r"::GrossFootprintArea$"])
+    put("RUS_NetSideArea", [r"::RUS_NetSideArea$", r"::NetSideArea$",
+                            r"::GrossSideArea$"])
+    put("RUS_NetSurfaceArea", [r"::RUS_NetSurfaceArea$", r"::NetSurfaceArea$",
+                               r"::GrossSurfaceArea$", r"Площадь_поверхности"])
+    put("RUS_Volume", [r"::NetVolume$", r"::RUS_Volume$", r"Количество::Объём_м3",
+                       r"::GrossVolume$", r"QTO_geom::Объём_м3", r"QTO_bbox::Объём_м3"])
+    put("RUS_GrossVolume", [r"::RUS_GrossVolume$", r"::GrossVolume$",
+                            r"QTO_bbox::Габаритный_объём_м3"])
+    put("RUS_Weight", [r"::RUS_Weight$", r"::Weight$", r"Weight$", r"Масса"])
 
     # Толщина зависит от класса элемента.
     if ifc_class in ("IfcWall", "IfcWallStandardCase"):
-        put("RUS_Thickness", [r"Qto_WallBaseQuantities::Width$", r"Толщина",
-                              r"::Width$", r"::Depth$"])
-    elif ifc_class in ("IfcSlab", "IfcPlate"):
+        put("RUS_Thickness", [r"Qto_WallBaseQuantities::Width$", r"::RUS_Thickness$",
+                              r"Толщина", r"::Width$", r"::Depth$"])
+    elif ifc_class in ("IfcSlab", "IfcSlabStandardCase", "IfcPlate"):
         put("RUS_Thickness", [r"Qto_(?:Slab|Plate)BaseQuantities::Depth$",
-                              r"Толщина", r"::Depth$"])
+                              r"::RUS_Thickness$", r"Толщина",
+                              r"QTO_bbox::Высота_мм$", r"::Depth$"])
     else:
-        put("RUS_Thickness", [r"::Depth$", r"Толщина", r"::Width$"])
+        put("RUS_Thickness", [r"::RUS_Thickness$", r"::Depth$", r"Толщина",
+                              r"::Width$"])
 
-    # Для колонн высота часто хранится в Length (длина колонны).
-    if ifc_class == "IfcColumn":
-        if mapping.get("RUS_Height", _entry(None)).source is None:
-            source = _pick_column(columns, [r"Qto_.*::Length$", r"Длина"])
-            if source:
-                mapping["RUS_Height"] = _entry(source)
+    if ifc_class in ("IfcColumn", "IfcPile"):
+        # Qto_ColumnBaseQuantities::Length в разных моделях означает либо
+        # вертикальную длину, либо размер профиля. Габариты bbox для колонн
+        # однозначны: длина — вертикальный габарит, ширина/высота — размеры
+        # сечения (меньший/больший горизонтальный габарит).
+        put("RUS_Length", [r"::RUS_Length$", r"QTO_bbox::Высота_мм$",
+                           r"Qto_.*Column.*::Length$", r"::Length$", r"Длина"])
+        put("RUS_Width", [r"::RUS_Width$", r"QTO_bbox::Ширина_мм$",
+                          r"Qto_.*Column.*::Width$", r"::Width$", r"Ширина"])
+        put("RUS_Height", [r"::RUS_Height$", r"QTO_bbox::Длина_мм$",
+                           r"Qto_.*Column.*::Height$", r"::Height$", r"Высота"])
     if ifc_class in ("IfcBeam", "IfcMember"):
-        # Ширина/высота сечения — габариты bbox (Length — это длина элемента,
-        # её нельзя подставлять в высоту сечения).
-        if mapping.get("RUS_Width", _entry(None)).source is None:
-            source = _pick_column(columns, [r"QTO_bbox::Ширина_мм$", r"Ширина"])
-            if source:
-                mapping["RUS_Width"] = _entry(source)
-        if mapping.get("RUS_Height", _entry(None)).source is None:
-            source = _pick_column(columns, [r"QTO_bbox::Высота_мм$", r"Высота"])
-            if source:
-                mapping["RUS_Height"] = _entry(source)
+        # Length — длина элемента; ширина/высота — размеры сечения. В QTO_bbox
+        # габариты отсортированы по убыванию, поэтому для балок высота сечения —
+        # средний габарит, ширина — наименьший.
+        put("RUS_Length", [r"Qto_.*::Length$", r"::RUS_Length$", r"::Length$",
+                           r"QTO_bbox::Длина_мм$", r"Длина"])
+        put("RUS_Width", [r"::RUS_Width$", r"Qto_.*Beam.*::Width$",
+                          r"Qto_.*Member.*::Width$", r"QTO_bbox::Высота_мм$",
+                          r"::Width$", r"Ширина"])
+        put("RUS_Height", [r"::RUS_Height$", r"Qto_.*Beam.*::Height$",
+                           r"Qto_.*Member.*::Height$", r"QTO_bbox::Ширина_мм$",
+                           r"::Height$", r"Высота"])
 
     # В карте оставляем только параметры, требуемые этим набором требований.
     allowed = set(requirement.attribute_names)
@@ -449,18 +517,22 @@ def _build_prompt(
         "колонок (свойств, наборов, QTO) произвольны и в каждом файле свои. "
         "Сопоставляй по СМЫСЛУ характеристики, типу значения и единицам, а не "
         "по совпадению названия. Наименование элемента тоже может подсказывать "
-        "смысл (например, «Плита перекрытия», «Фундаментная плита»).\n\n"
+        "смысл (например, «Плита перекрытия», «Фундаментная плита»). "
+        "В части моделей свойства уже названы как требуемые параметры "
+        "(колонки с суффиксом RUS_*) — такие колонки можно использовать напрямую.\n\n"
         "Сопоставь КАЖДЫЙ требуемый параметр с одной колонкой модели. "
         "Если значение требует преобразования, укажи transform одним из значений: "
-        "none, mm_to_m, mm2_to_m2, mm3_to_m3, storey_sub, storey_level, "
-        "extract_concrete_grade, extract_steel_grade, extract_water_resist, "
-        "extract_freeze_durability, first_number.\n"
+        "none, mm_to_m, mm2_to_m2, mm3_to_m3, storey_object, storey_sub, "
+        "storey_level, extract_concrete_grade, extract_steel_grade, "
+        "extract_water_resist, extract_freeze_durability, first_number.\n"
         "Правила:\n"
         "- source — ТОЧНОЕ имя колонки из списка выше, ничего не придумывай;\n"
         "- если соответствия нет, верни source: null (не подставляй похожее по "
         "имени, но другое по смыслу значение);\n"
-        "- для RUS_Level и RUS_Object_Sub используй колонку «Этаж» с transform "
-        "storey_level / storey_sub;\n"
+        "- RUS_Object — номер объекта (корпуса), RUS_Object_Sub — номер "
+        "подобъекта (секции), RUS_Level — уровень (этаж). Если отдельных колонок "
+        "нет, используй колонку «Этаж» с transform storey_object / storey_sub / "
+        "storey_level соответственно;\n"
         "- для класса бетона используй колонку с классом бетона (например, "
         "MGE_ConcreteGrade), для стали — с классом арматуры (например, "
         "MGE_ReinforceStrengthClass); если таких колонок нет — извлекай из "
@@ -472,12 +544,57 @@ def _build_prompt(
         "другими данными (класс бетона, материал), укажи transform "
         "extract_water_resist / extract_freeze_durability;\n"
         "- не подставляй площади вместо объёмов и наоборот, не подставляй длину "
-        "элемента вместо размера сечения;\n"
+        "элемента вместо размера сечения; для проёма площадь — это площадь "
+        "отверстия (Qto_OpeningElementBaseQuantities::Area или ширина × высота), "
+        "а не площадь поверхности;\n"
+        "- производные величины (площадь опалубки, площадь торцов/низа, "
+        "горизонтальная проекция) — это НЕ площадь и НЕ объём элемента; "
+        "имена типов и коды — это НЕ наименование элемента;\n"
         "- не применяй mm_to_m / mm2_to_m2 / mm3_to_m3, если колонка уже в "
         "метрах, квадратных или кубических метрах.\n\n"
         "Ответ строго JSON без пояснений:\n"
         '{"RUS_Length": {"source": "QTO::...", "transform": "none"}, ...}'
     )
+
+
+# Признаки колонок, которые нельзя подставлять в требуемый параметр, даже если
+# LLM сочла их подходящими: производные величины опалубки/проекции — это не
+# площадь и не объём элемента, а имена типов и коды — не наименование.
+_DERIVED_AREA_MARKERS = ("опалубк", "formwork", "торцов", "низа", "проекц")
+_CODE_MARKERS = ("code", "код")
+
+
+def _llm_source_rejected(name: str, source: str) -> bool:
+    """Отклонить заведомо неверную колонку из ответа LLM."""
+    lower = source.lower()
+    if name in (
+        "RUS_Area",
+        "RUS_NetSurfaceArea",
+        "RUS_NetSideArea",
+        "RUS_NetFootprintArea",
+    ) and any(marker in lower for marker in _DERIVED_AREA_MARKERS):
+        return True
+    if name in ("RUS_Volume", "RUS_GrossVolume") and (
+        "площад" in lower or "area" in lower
+    ):
+        return True
+    if name in (
+        "RUS_Length",
+        "RUS_Width",
+        "RUS_Height",
+        "RUS_Thickness",
+        "RUS_Diameter",
+    ) and ("периметр" in lower or "perimeter" in lower):
+        return True
+    if name.endswith("_Name") and any(
+        marker in lower for marker in ("type", "тип", *_CODE_MARKERS)
+    ):
+        return True
+    if name in ("RUS_MSSK_Element_Code", "RUS_MSSK_Material_Code") and not any(
+        marker in lower for marker in _CODE_MARKERS
+    ):
+        return True
+    return False
 
 
 def _parse_llm_mapping(
@@ -519,16 +636,48 @@ def _parse_llm_mapping(
         if not source:
             continue
 
-        # Разбор этажа имеет смысл только для колонки «Этаж».
-        if transform in (TRANSFORM_STOREY_SUB, TRANSFORM_STOREY_LEVEL):
-            if "Этаж" in candidates:
-                source = "Этаж"
+        # Разбор этажа имеет смысл только для колонки «Этаж», причём смысл
+        # преобразования зависит от требуемого параметра.
+        if source == "Этаж":
+            if name == "RUS_Object":
+                transform = TRANSFORM_STOREY_OBJECT
+            elif name == "RUS_Object_Sub":
+                transform = TRANSFORM_STOREY_SUB
+            elif name == "RUS_Level":
+                transform = TRANSFORM_STOREY_LEVEL
             else:
                 transform = TRANSFORM_NONE
+        elif transform in (
+            TRANSFORM_STOREY_SUB,
+            TRANSFORM_STOREY_LEVEL,
+            TRANSFORM_STOREY_OBJECT,
+        ):
+            transform = TRANSFORM_NONE
+
+        # Площадь проёма — площадь отверстия, а не площадь поверхности.
+        if (
+            name == "RUS_Area"
+            and requirement.ifc_class
+            in ("IfcOpeningElement", "IfcOpeningStandardCase")
+            and ("surface" in source.lower() or "поверхности" in source.lower())
+        ):
+            continue
 
         # Наименование элемента — колонка Name, а не ObjectType.
         if name == "RUS_Name" and source == "ObjectType" and "Name" in candidates:
             source = "Name"
+
+        current = fallback.get(name)
+        if (
+            current is not None
+            and current.source
+            and current.source.endswith(f"::{name}")
+        ):
+            # Свойство уже названо как требуемый параметр (наборы RusSet_*):
+            # это самое надёжное соответствие, ответ LLM его не заменяет.
+            continue
+        if _llm_source_rejected(name, source):
+            continue
 
         mapping[name] = _entry(source, transform)
 
@@ -564,8 +713,8 @@ def build_mapping(
                 transform = TRANSFORM_NONE
             if source in candidates:
                 mapping[name] = _entry(source, transform)
-            elif source is None:
-                mapping[name] = _entry(None, transform)
+            # source: null в кэше означает «LLM не нашла соответствие» —
+            # оставляем детерминированный fallback (как и при первом разборе).
         return MappingResult(
             mapping=mapping,
             candidates=candidates,
@@ -692,6 +841,8 @@ def _apply_transform(
         return storey_parts(row)["object_sub"]
     if transform == TRANSFORM_STOREY_LEVEL:
         return storey_parts(row)["level"]
+    if transform == TRANSFORM_STOREY_OBJECT:
+        return storey_parts(row)["object"]
     if transform == TRANSFORM_CONCRETE_GRADE:
         return extract_concrete_grade(value)
     if transform == TRANSFORM_STEEL_GRADE:
@@ -721,29 +872,47 @@ def _fallback_value(attribute: RequiredAttribute, row: Dict[str, Any]) -> Any:
         return storey_parts(row)["level"]
     if attribute.name == "RUS_StrengthClass":
         return extract_concrete_grade(
-            _first_present(row, ("::MGE_ConcreteGrade",))
+            _first_present(row, ("::MGE_ConcreteGrade", "::RUS_StrengthClass"))
             or row.get("Материал")
             or row.get("Name")
         )
     if attribute.name == "RUS_SteelGrade":
         return extract_steel_grade(
-            _first_present(row, ("::MGE_ReinforceStrengthClass",))
+            _first_present(
+                row,
+                (
+                    "::MGE_ReinforceStrengthClass",
+                    "::RUS_ReinforcementStrengthClass",
+                    "::MGE_SteelGrade",
+                    "::RUS_SteelGrade",
+                ),
+            )
             or row.get("Name")
         )
     if attribute.name == "RUS_WaterResist":
         return extract_water_resist(
-            _first_present(row, ("::MGE_WaterResist",))
+            _first_present(
+                row,
+                (
+                    "::MGE_WaterResist",
+                    "::RUS_WaterImpermeability",
+                    "::RUS_WaterResist",
+                ),
+            )
             or row.get("Материал")
             or row.get("Name")
         )
     if attribute.name == "RUS_FreezeDurability":
         return extract_freeze_durability(
-            _first_present(row, ("::MGE_FreezeDurability",))
+            _first_present(row, ("::MGE_FreezeDurability", "::RUS_FreezeDurability"))
             or row.get("Материал")
             or row.get("Name")
         )
     if attribute.name == "RUS_Object":
-        return _first_present(row, ("::MGE_Object", "::Object", "::Объект"))
+        return _first_present(
+            row,
+            ("::MGE_Object", "::RUS_Object", "::Object", "::Объект"),
+        ) or storey_parts(row)["object"]
     return ""
 
 

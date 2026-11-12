@@ -723,12 +723,33 @@ class SessionManager:
                 RAW_DUMP_FILENAME,
                 RAW_DUMP_JSON_FILENAME,
             )
+            from src.services.check_model.requirements import (
+                group_by_ifc_class,
+                load_requirements,
+            )
+            requirement_groups = group_by_ifc_class(load_requirements())
+            # Для проверки ЦИМ габариты нужны и там, где QTO содержит объём и
+            # площадь, но не содержит размеров сечения (балки, пластины,
+            # колонны). Наследники IFC-классов добавляются явно: element.is_a()
+            # в дампе возвращает конкретный класс.
+            dimension_classes = set(requirement_groups) | {
+                "IfcWallStandardCase",
+                "IfcWallElementedCase",
+                "IfcSlabStandardCase",
+                "IfcSlabElementedCase",
+                "IfcOpeningStandardCase",
+                # Прокси-элементы могут быть сопоставлены требованиям по
+                # коду МССК/наименованию (например, лестничный марш).
+                "IfcBuildingElementProxy",
+            }
             raw_path = dump_ifc_elements_raw(
                 ifc_path,
                 session_dir,
                 model=ifc_model,
                 # Для проверки ЦИМ нужны и проёмы (IfcOpeningElement).
                 exclude_classes=(),
+                compute_dimensions=True,
+                dimension_classes=dimension_classes,
             )
 
             # Количество элементов каждого IFC-класса в самом файле — для
@@ -736,11 +757,7 @@ class SessionManager:
             # и наследников (например, IfcWallStandardCase для IfcWall).
             file_class_totals: dict = {}
             try:
-                from src.services.check_model.requirements import (
-                    group_by_ifc_class,
-                    load_requirements,
-                )
-                for ifc_class in group_by_ifc_class(load_requirements()):
+                for ifc_class in requirement_groups:
                     try:
                         file_class_totals[ifc_class] = len(
                             ifc_model.by_type(ifc_class)

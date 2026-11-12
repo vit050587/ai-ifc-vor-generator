@@ -409,10 +409,33 @@ def find_storey(element):
     return None
 
 
+def _opening_storey(element):
+    """Этаж проёма по его элементу-основанию.
+
+    ``IfcOpeningElement`` не входит в пространственную структуру здания
+    (``ContainedInStructure``), поэтому его этаж определяется через связь
+    ``IfcRelVoidsElement`` → ``RelatingBuildingElement`` (стена/плита).
+    Используется только для проёмов, которые попадают в дамп проверки ЦИМ.
+    """
+    try:
+        for relation in getattr(element, "VoidsElements", ()) or ():
+            host = getattr(relation, "RelatingBuildingElement", None)
+            if host is None:
+                continue
+            container = find_storey(host)
+            if container is not None:
+                return container
+    except Exception as exc:
+        logger.debug(f"Ошибка извлечения этажа проёма: {exc}")
+    return None
+
+
 def _get_storey(element):
     """Возвращает (имя_этажа, отметка_этажа) без нормализации."""
     try:
         container = find_storey(element)
+        if container is None and element.is_a("IfcOpeningElement"):
+            container = _opening_storey(element)
         if container is not None:
             name = getattr(container, "Name", None)
             elevation = getattr(container, "Elevation", None)
@@ -1512,13 +1535,17 @@ def enrich_work_height(row, element):
     return row
 
 
-def _collect_element_data(element, compute_bbox_qto=True):
+def _collect_element_data(element, compute_bbox_qto=True, compute_dimensions=False):
     """Собирает все параметры одного элемента в словарь (колонка -> значение).
 
     Args:
         element: элемент IFC (IfcElement).
         compute_bbox_qto: вычислять отсутствующие параметры этого элемента
             из геометрии независимо от наличия других QTO.
+        compute_dimensions: дополнительно вычислять из геометрии недостающие
+            габариты (длину/ширину/высоту). Нужно проверке ЦИМ: в моделях
+            QTO может содержать объём и площадь, но не содержать размеров
+            сечения (балки, пластины, колонны).
     """
     row = {}
 
@@ -1552,7 +1579,11 @@ def _collect_element_data(element, compute_bbox_qto=True):
 
     if compute_bbox_qto:
         from .ifc_geometry_quantities import fill_missing
-        fill_missing(row, element, compute_fn=_compute_bbox_quantities)
+        required = ("volume", "area")
+        if compute_dimensions:
+            required = ("volume", "area", "length", "width", "height")
+        fill_missing(row, element, compute_fn=_compute_bbox_quantities,
+                     required=required)
 
     from .ifc_quantities import stamp_ifc_volume
     stamp_ifc_volume(row, element)
@@ -1569,6 +1600,8 @@ def dump_ifc_elements_raw(
     output_folder: str,
     model=None,
     exclude_classes=("IfcOpeningElement", "IfcBuildingElementProxy"),
+    compute_dimensions: bool = False,
+    dimension_classes=None,
 ) -> str:
     """Сохраняет XLSX со всеми элементами IFC и их сырыми параметрами.
 
@@ -1581,6 +1614,13 @@ def dump_ifc_elements_raw(
             умолчанию исключаются вырезы и прокси-элементы (поведение режимов
             ЦС/ИИ). Режим «Проверка ЦИМ модели» передаёт пустой кортеж, чтобы
             проверить и проёмы (``IfcOpeningElement``).
+        compute_dimensions: вычислять из геометрии недостающие габариты
+            (длину/ширину/высоту) для классов из ``dimension_classes``.
+            Используется проверкой ЦИМ; по умолчанию выключено, поэтому
+            поведение режимов ЦС/ИИ не меняется.
+        dimension_classes: IFC-классы, для которых нужны габариты (например,
+            классы требований ЦИМ). ``None`` — для всех элементов (не
+            рекомендуется для больших моделей).
 
     Returns:
         Путь к созданному XLSX-файлу или пустая строка, если элементов нет.
@@ -1629,7 +1669,16 @@ def dump_ifc_elements_raw(
     seen_columns = set()
 
     for element in elements:
-        row = _collect_element_data(element, compute_bbox_qto=compute_bbox_qto)
+        element_class = element.is_a()
+        needs_dimensions = bool(
+            compute_dimensions
+            and (dimension_classes is None or element_class in dimension_classes)
+        )
+        row = _collect_element_data(
+            element,
+            compute_bbox_qto=compute_bbox_qto,
+            compute_dimensions=needs_dimensions,
+        )
         rows.append(row)
         # Накапливаем колонки в порядке первого появления.
         for key in row.keys():

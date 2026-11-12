@@ -24,6 +24,12 @@ SERVICE_COLUMNS = ("Код_требований_ЦИМ", "Элемент_ЦИМ"
 
 _ATTR_SUFFIX_RE = re.compile(r"\s*\*+\s*$")
 _STOREY_PREFIX_RE = re.compile(r"^([A-Za-zА-Яа-я]{1,6}\d{1,6})[_\-\s]+(.+)$")
+# Невидимые управляющие символы, которые некоторые CAD-системы добавляют в
+# имена этажей (LTR/RTL-марки, BOM). Из-за них префикс этажа не распознавался.
+_INVISIBLE_RE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]")
+# Префикс номера объекта (корпуса) и подобъекта (секции) в имени этажа.
+_OBJECT_PREFIX_RE = re.compile(r"^[КK]")
+_OBJECT_SUB_PREFIX_RE = re.compile(r"^[СC]")
 _CONCRETE_GRADE_RE = re.compile(r"[BВ]\s?(\d{1,3}(?:[.,]\d+)?)", re.IGNORECASE)
 _STEEL_GRADE_RE = re.compile(
     r"\b([AА]\s?\d{3}(?:[.,]\d+)?(?:\s?[CС])?)\b", re.IGNORECASE
@@ -186,17 +192,40 @@ def row_text(row: Dict[str, Any]) -> str:
         value = row.get(key)
         if value not in (None, ""):
             parts.append(str(value))
-    # Коды МССК из любых свойств MGE_ElementCode.
+    # Коды и наименования МССК из любых свойств (в разных моделях они могут
+    # называться MGE_* или RUS_*).
     for key, value in row.items():
-        if str(key).endswith("::MGE_ElementCode") and value not in (None, ""):
+        if value in (None, ""):
+            continue
+        name = str(key)
+        if name.endswith(
+            (
+                "::MGE_ElementCode",
+                "::RUS_MSSK_Element_Code",
+                "::MGE_Name",
+                "::RUS_MSSK_Element_Name",
+                "::RUS_Name",
+            )
+        ):
             parts.append(str(value))
     return " ".join(parts).lower()
 
 
 def element_mssk_code(row: Dict[str, Any]) -> str:
-    """Найти код элемента МССК в строке сырого дампа."""
+    """Найти код элемента МССК в строке сырого дампа.
+
+    Поддерживаются оба варианта имени свойства: ``MGE_ElementCode``
+    (модели с наборами ``ExpCheck_*``) и ``RUS_MSSK_Element_Code``
+    (модели с наборами ``RusSet_*``).
+    """
     for key, value in row.items():
-        if str(key).endswith("::MGE_ElementCode") and value not in (None, ""):
+        if value in (None, ""):
+            continue
+        name = str(key)
+        if name.endswith(("::MGE_ElementCode", "::RUS_MSSK_Element_Code")) or name in (
+            "MGE_ElementCode",
+            "RUS_MSSK_Element_Code",
+        ):
             return str(value).strip()
     return ""
 
@@ -233,15 +262,31 @@ def _score_requirement(row: Dict[str, Any], requirement: Requirement) -> float:
     # Уточнение по PredefinedType для плит.
     predefined = str(row.get("PredefinedType") or "").upper()
     element_lower = requirement.element.lower()
+    # Точное наименование элемента в тексте — сильный признак (например,
+    # «Лестничный марш», «Фундаментная плита»).
+    if element_lower and element_lower in text:
+        score += 30.0
     if "фундамент" in element_lower and predefined in ("BASESLAB", "FOUNDATION"):
         score += 25.0
-    if "перекрыт" in element_lower and predefined in ("FLOOR", "ROOF"):
+    if "перекрыт" in element_lower and predefined in ("FLOOR", "ROOF", "LANDING"):
         score += 25.0
     if "фундамент" in element_lower and any(
-        word in text for word in ("фундамент", "ростверк", "подготовк")
+        word in text
+        for word in (
+            "фундамент",
+            "ростверк",
+            "подготовк",
+            "foundation",
+            "raft",
+            "base slab",
+            "baseslab",
+        )
     ):
-        score += 20.0
-    if "перекрыт" in element_lower and "перекрыт" in text:
+        score += 30.0
+    if "перекрыт" in element_lower and any(
+        word in text
+        for word in ("перекрыт", "покрыт", "floor", "roof", "ceiling")
+    ):
         score += 20.0
 
     return score
@@ -274,18 +319,33 @@ def select_requirement(
 
 
 def storey_parts(row: Dict[str, Any]) -> Dict[str, str]:
-    """Разобрать этаж на номер подобъекта и уровень.
+    """Разобрать этаж на номер объекта, подобъекта и уровень.
 
-    Пример: ``С02_1_этаж_основной`` → ``{"object_sub": "С02",
-    "level": "1_этаж_основной"}``.
+    В разных моделях префикс этажа обозначает либо корпус (``К01``), либо
+    секцию (``С01``). Поэтому префикс раскладывается по смыслу:
+
+    * ``К01_1_этаж_основной`` → ``{"object": "К01",
+      "object_sub": "", "level": "1_этаж_основной"}``;
+    * ``С02_1_этаж_основной`` → ``{"object": "",
+      "object_sub": "С02", "level": "1_этаж_основной"}``.
+
+    Невидимые управляющие символы (LTR/RTL-марки, BOM) удаляются: некоторые
+    CAD-системы добавляют их в начало имени этажа.
     """
-    storey = str(row.get("Этаж") or "").strip()
+    storey = _INVISIBLE_RE.sub("", str(row.get("Этаж") or "")).strip()
     if not storey:
-        return {"object_sub": "", "level": ""}
+        return {"object": "", "object_sub": "", "level": ""}
     match = _STOREY_PREFIX_RE.match(storey)
     if match:
-        return {"object_sub": match.group(1), "level": match.group(2).strip()}
-    return {"object_sub": "", "level": storey}
+        prefix = match.group(1).strip()
+        level = match.group(2).strip()
+        if _OBJECT_PREFIX_RE.match(prefix):
+            return {"object": prefix, "object_sub": "", "level": level}
+        if _OBJECT_SUB_PREFIX_RE.match(prefix):
+            return {"object": "", "object_sub": prefix, "level": level}
+        # Неизвестный префикс — сохраняем прежнее поведение (подобъект).
+        return {"object": "", "object_sub": prefix, "level": level}
+    return {"object": "", "object_sub": "", "level": storey}
 
 
 def extract_concrete_grade(value: Any) -> str:

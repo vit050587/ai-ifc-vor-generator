@@ -3035,6 +3035,7 @@ _finalize_before_mix_norms = finalize_rows
 def finalize_rows(el, q, works, subs):
     rows = _finalize_before_mix_norms(el, q, works, subs)
     from .works_cost import _get_corrected_volume, safe_float
+    import pandas as pd
     frame = pd.DataFrame([{'Шифр ТСН': r['pressmark'],
                            'Наименование расценки/ресурса': r['title'],
                            'Объём работ': r['volume'],

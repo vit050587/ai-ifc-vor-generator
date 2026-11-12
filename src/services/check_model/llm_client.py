@@ -48,13 +48,20 @@ class CheckModelLLM:
         self.timeout = float(
             timeout or os.getenv("CHECK_MODEL_LLM_TIMEOUT", "900")
         )
+        # Промпты сопоставления короткие (несколько тысяч токенов), поэтому
+        # контекст 16k достаточен. Больший контекст (32k) заставляет Ollama
+        # перезагружать модель и вытеснять слои из видеопамяти — один запрос
+        # вместо ~20 с занимает минуты.
+        self.num_ctx = int(
+            os.getenv("CHECK_MODEL_LLM_NUM_CTX", "16384") or 16384
+        )
 
     def chat_json(
         self,
         prompt: str,
         system: Optional[str] = None,
         *,
-        num_ctx: int = 32768,
+        num_ctx: Optional[int] = None,
         num_predict: int = 4096,
     ) -> Dict[str, Any]:
         """Отправить запрос и вернуть разобранный JSON-объект.
@@ -75,7 +82,7 @@ class CheckModelLLM:
             "messages": messages,
             "options": {
                 "temperature": 0,
-                "num_ctx": num_ctx,
+                "num_ctx": num_ctx or self.num_ctx,
                 "num_predict": num_predict,
             },
         }
