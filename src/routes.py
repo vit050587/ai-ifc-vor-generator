@@ -31,8 +31,8 @@ from src.schemas import (
     UploadResponse, StatusResponse, DeleteResponse,
     PreviewResponse, RestoreResponse, HealthResponse,
     SelectRowsResponse, FilterHeightResponse, NewRunResponse,
-    RunSwitchResponse, RunsListResponse, ReferenceAcceptedResponse,
-    ReferenceBuildResponse, PositionLinksResponse,
+    RunSwitchResponse, RunsListResponse, PositionLinksResponse,
+    CheckModelFile, CheckModelResultResponse,
     FinalJsonBuildResponse, FinalJsonStatusResponse, FinalJsonResultResponse,
     WorksConstantsResponse, PosUploadResponse,
 )
@@ -437,13 +437,14 @@ def upload_ifc():
         return _err(ErrorResponse(detail=f"Внутренняя ошибка: {str(e)}"), 500)
 
 
-@bp.route("/api/reference", methods=["POST"])
-def build_reference():
+@bp.route("/api/check_model", methods=["POST"])
+@bp.route("/api/check-model", methods=["POST"])
+def check_model_upload():
     """
-    Запуск построения JSON-справочников из IFC или PDF.
+    Загрузка IFC-файла и запуск проверки ЦИМ модели.
     ---
     tags:
-      - reference
+      - check_model
     consumes:
       - multipart/form-data
     parameters:
@@ -451,29 +452,24 @@ def build_reference():
         in: formData
         type: file
         required: true
-        description: IFC-файл (.ifc) или PDF-чертёж (.pdf), максимум 500 МБ
-      - name: processingType
-        in: formData
-        type: string
-        required: false
-        default: "CS"
-        description: Режим обработки — CS (ЦС, цифровой сборник), AI (ИИ,
-          искусственный интеллект) или ARCH (Архитектура); легаси-коды KR/AR
-          также принимаются
+        description: IFC-файл (.ifc), максимум 500 МБ
     responses:
       202:
-        description: Файл принят, построение запущено
+        description: Файл принят, проверка запущена
         schema:
           type: object
           properties:
             sessionId:
               type: string
-            sourceType:
-              type: string
-              enum: [ifc, pdf]
             status:
               type: string
-              example: reference_processing
+              example: check_model_processing
+            sourceType:
+              type: string
+              example: ifc
+            processingType:
+              type: string
+              example: CS
             message:
               type: string
       400:
@@ -491,8 +487,11 @@ def build_reference():
         return _err(ErrorResponse(detail="Пустое имя файла"), 400)
 
     extension = os.path.splitext(uploaded_file.filename)[1].lower()
-    if extension not in (".ifc", ".pdf"):
-        return _err(ErrorResponse(detail="Поддерживаются файлы .ifc и .pdf"), 400)
+    if extension != ".ifc":
+        return _err(
+            ErrorResponse(detail="Для проверки ЦИМ модели поддерживается только .ifc"),
+            400,
+        )
 
     uploaded_file.seek(0, 2)
     size = uploaded_file.tell()
@@ -507,39 +506,40 @@ def build_reference():
             413,
         )
 
-    # Получаем режим обработки для справочников (легаси-коды KR/AR
-    # принимаются как синонимы CS/AI)
-    processing_type = to_pipeline_type(request.form.get("processingType"))
-
-    logger.info(
-        f"Запуск построения справочников: {uploaded_file.filename}, режим: "
-        f"{mode_name(processing_type)} ({to_public_type(processing_type)})"
-    )
-
     try:
-        result = _get_manager().build_reference(
-            uploaded_file, uploaded_file.filename, processing_type
+        result = _get_manager().process_check_model(
+            uploaded_file, uploaded_file.filename
         )
-        response = _ok(ReferenceAcceptedResponse(**result), status=202)
+        response = _ok(
+            UploadResponse(
+                session_id=result["session_id"],
+                status=result["status"],
+                source_type="ifc",
+                processing_type="CS",
+                message=result["message"],
+            ),
+            status=202,
+        )
         response.headers["Location"] = (
-            f"/ifc-vor/api/session/{result['session_id']}/reference"
+            f"/ifc-vor/api/check_model/{result['session_id']}"
         )
         response.headers["Retry-After"] = "2"
         return response
     except ValueError as exc:
         return _err(ErrorResponse(detail=str(exc)), 400)
     except Exception as exc:
-        logger.error(f"Ошибка запуска построения справочника: {exc}", exc_info=True)
+        logger.error("Ошибка запуска проверки ЦИМ модели: %s", exc, exc_info=True)
         return _err(ErrorResponse(detail=f"Внутренняя ошибка: {exc}"), 500)
 
 
-@bp.route("/api/session/<session_id>/reference", methods=["GET"])
-def get_reference_result(session_id: str):
+@bp.route("/api/check_model/<session_id>", methods=["GET"])
+@bp.route("/api/check-model/<session_id>", methods=["GET"])
+def check_model_result(session_id: str):
     """
-    Получение результата построения JSON-справочников.
+    Результат проверки ЦИМ модели.
     ---
     tags:
-      - reference
+      - check_model
     parameters:
       - name: session_id
         in: path
@@ -547,30 +547,32 @@ def get_reference_result(session_id: str):
         required: true
     responses:
       200:
-        description: Оба JSON-справочника готовы
+        description: Проверка завершена
         schema:
           type: object
           properties:
             sessionId:
               type: string
-            sourceType:
+            status:
               type: string
-            ifcElementsOutput:
-              type: array
-              items:
-                type: object
-            ifcRawElementsGrouped:
+            progress:
+              type: integer
+            progressMessage:
+              type: string
+            report:
+              type: object
+            files:
               type: array
               items:
                 type: object
       202:
-        description: Обработка ещё выполняется
+        description: Проверка ещё выполняется
       404:
         description: Сессия не найдена
       409:
-        description: Сессия создана не справочной ручкой
+        description: Сессия не относится к проверке ЦИМ
       422:
-        description: Ошибка фоновой обработки
+        description: Ошибка проверки
     """
     if not session_id or len(session_id) < 8:
         return _err(ErrorResponse(detail="Некорректный ID сессии"), 400)
@@ -579,42 +581,70 @@ def get_reference_result(session_id: str):
     session = manager.get(session_id)
     if not session:
         return _err(ErrorResponse(detail="Сессия не найдена"), 404)
-    if not session.get("is_reference_session"):
+    if session.get("session_type") != "check_model":
         return _err(
-            ErrorResponse(detail="Сессия не относится к построению справочников"),
+            ErrorResponse(detail="Сессия не относится к проверке ЦИМ модели"),
             409,
         )
     if session.get("status") == "error":
         return _err(
             ErrorResponse(
-                detail=session.get("error") or "Ошибка построения справочников"
+                detail=session.get("error") or "Ошибка проверки ЦИМ модели"
             ),
             422,
         )
 
-    try:
-        result = manager.get_reference_result(session_id)
-        if result is None:
-            response = _ok(
-                ReferenceAcceptedResponse(
-                    session_id=session_id,
-                    source_type=session.get("source_type", ""),
-                    status=session.get("status", "reference_processing"),
-                    message=session.get(
-                        "progress_message",
-                        "Формирование JSON-справочников выполняется",
-                    ),
-                ),
-                status=202,
+    if session.get("status") != "completed":
+        response = _ok(
+            CheckModelResultResponse(
+                session_id=session_id,
+                status=session.get("status", "check_model_processing"),
+                progress=session.get("progress", 0),
+                progress_message=session.get("progress_message", ""),
+            ),
+            status=202,
+        )
+        response.headers["Retry-After"] = "2"
+        return response
+
+    session_dir = os.path.join(manager.output_folder, session_id)
+    report = session.get("check_model_report")
+    if not isinstance(report, dict):
+        report_path = os.path.join(session_dir, "Проверка_ЦИМ_модели_отчет.json")
+        if os.path.isfile(report_path):
+            try:
+                with open(report_path, "r", encoding="utf-8") as stream:
+                    report = json.load(stream)
+            except (OSError, ValueError):
+                report = None
+
+    files = []
+    for item in session.get("files", []):
+        if not isinstance(item, dict):
+            continue
+        filename = item.get("filename") or os.path.basename(item.get("path", ""))
+        if not filename:
+            continue
+        files.append(
+            CheckModelFile(
+                filename=filename,
+                size=int(item.get("size") or 0),
+                download_url=item.get("download_url")
+                or f"/ifc-vor/api/session/{session_id}/download/{filename}",
             )
-            response.headers["Retry-After"] = "2"
-            return response
-        return _ok(ReferenceBuildResponse(**result))
-    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
-        logger.warning(f"Не удалось получить JSON-справочники: {exc}", exc_info=True)
-        return _err(ErrorResponse(detail=str(exc)), 422)
-    except KeyError:
-        return _err(ErrorResponse(detail="Сессия не найдена"), 404)
+        )
+
+    return _ok(
+        CheckModelResultResponse(
+            session_id=session_id,
+            status=session.get("status", "completed"),
+            progress=session.get("progress", 100),
+            progress_message=session.get("progress_message", ""),
+            report=report,
+            files=files,
+        )
+    )
+
 
 
 @bp.route("/api/sessions", methods=["GET"])
@@ -736,6 +766,7 @@ def get_status(session_id: str):
     status_mapping = {
         "ifc_processing": "processing",
         "pdf_processing": "processing",
+        "check_model_processing": "processing",
         "reference_processing": "processing",
         "ifc_processed": "selecting_rows",
         "selecting_rows": "selecting_rows",

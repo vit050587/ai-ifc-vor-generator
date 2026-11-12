@@ -58,6 +58,10 @@ PDF-чертежи, различается набор извлекаемых э�
   `Дерево_проекта*` и др.
 - **JSON-справочники** элементов и групп для внешних баз (`ifc_elements_output.json`,
   `ifc_raw_elements_grouped.json`).
+- **Проверка ЦИМ модели** (отдельная вкладка): IFC-модель → `IFC_исходные_параметры.json/.xlsx`
+  → требуемые параметры по `data/parametrs_name.json` заполняются значениями модели
+  (сопоставление параметров выполняет LLM `qwen3.8:27b`) → `Проверка_ЦИМ_модели.json/.xlsx`.
+  Подбор работ не выполняется. Подробности — [readme_check_model.md](./readme_check_model.md).
 - **Просмотр и скачивание** всех промежуточных и финальных файлов, выгрузка архивом.
 - **3D-модель (GLB)** из IFC — формируется по запросу (`/api/session/<id>/3d_model`).
 - **Множественные запуски** (runs) в рамках одной сессии — можно повторно обрабатывать
@@ -134,6 +138,9 @@ ai-ifc-vor-generator/
 │       ├── comparison_vor.py       # Сравнение ВОР: компактный отчёт сравнения
 │       ├── vor_parser.py           # Сравнение ВОР: локальный парсер ВОР заказчика (PDF/XLSX)
 │       ├── works_comparison/  # Пакет сравнения позиций (LLM-валидация) — см. ниже
+│       ├── check_model/       # «Проверка ЦИМ модели»: требования data/parametrs_name.json
+│       │                      #   + сопоставление параметров через LLM (см. readme_check_model.md)
+│       │                      #   requirements.py, llm_client.py, mapping.py, pipeline.py
 │       └── serializer.py      # Экспорт IFC → GLB (3D модель)
 │
 │   # src/services/works_comparison/ — сравнение позиций смет заказчика и IFC
@@ -297,6 +304,7 @@ ai-ifc-vor-generator/
 | `data/selection_parameters.json`, `selection_parameters_mapping.json` | Шаблон параметров подбора и карта соответствия (сырой дамп IFC → параметры) — режим АР |
 | `data/tsn/*.json` | Разобранные сборники ТСН (поправочные коэффициенты, состав норм) — режим АР |
 | `data/comparison_vor_template.xlsx` | Шаблон стандартной иерархии ВОР для отчёта сравнения |
+| `data/parametrs_name.json` | Требования к параметрам ЦИМ по IFC-классам (наборы атрибутов `RusSet_*`) — режим «Проверка ЦИМ модели» |
 | `data/*.json` (кеши) | `kb_cache.json`, `tsn_decisions_cache.json`, `pd_full_cache_v2.json`, `doc_facts_cache.json`, `local_works.json`, `local_resources.json`, `local_norms.json` — кеши LLM-решений и локальных расценок |
 
 Новые/изменённые файлы-результаты в `outputs/<session_id>/`:
@@ -321,6 +329,14 @@ ai-ifc-vor-generator/
 Режим «Архитектура» (ARCH) создаёт те же файлы, что и ИИ, плюс
 `final_result_ARCH.json`; набор элементов ограничен архитектурными IFC-классами
 (см. [readme_architecture.md](./readme_architecture.md)).
+
+Вкладка «Проверка ЦИМ модели» (`session_type='check_model'`) создаёт в
+`outputs/<session_id>/`: `IFC_исходные_параметры.json/.xlsx`,
+`Проверка_ЦИМ_модели.json/.xlsx` (элементы с заполненными требуемыми параметрами),
+`Проверка_ЦИМ_модели_отчет.json` (сводка по классам, заполненным/пустым значениям,
+ошибкам LLM) и `Сопоставление_параметров.json` (карта «требуемый параметр →
+колонка модели»). Подбор работ не выполняется
+(см. [readme_check_model.md](./readme_check_model.md)).
 
 Архивные файлы прежнего отдельного сравнения (каталог `outputs/<comparison_id>/`): `models.json`,
 `estimates.json`, `model_analytics.json`, `result.json`, `result.xlsx`,
@@ -354,7 +370,7 @@ ai-ifc-vor-generator/
 Все вызовы API (кроме `/login`, `/logout`, `/docs`) **требуют авторизации**:
 по cookie сессии (фронтенд) или возвращают `401` для `/ifc-vor/api/*`.
 
-Обработка **асинхронная**: `upload_ifc` / `reference` сразу возвращают `sessionId`
+Обработка **асинхронная**: `upload_ifc` / `check_model` сразу возвращают `sessionId`
 и `status`, далее статус опрашивается через `GET /api/session/<id>/status`.
 
 ### Авторизация и здоровье
@@ -368,8 +384,8 @@ ai-ifc-vor-generator/
 | Метод | Путь | Описание |
 |-------|------|----------|
 | POST | `/ifc-vor/api/upload_ifc` | Загрузка IFC/PDF + `processingType` (CS/AI/ARCH; легаси KR/AR), async. Ответ: `sessionId, status, sourceType, processingType, message` |
-| POST | `/ifc-vor/api/reference` | Только построение JSON-справочников из IFC/PDF (202). Возвращает `Location` и `Retry-After` |
-| GET | `/ifc-vor/api/session/<id>/reference` | Результат построения справочников (200 готово / 202 в процессе / 422 ошибка) |
+| POST | `/ifc-vor/api/check_model` (алиас `/api/check-model`) | «Проверка ЦИМ модели»: загрузка **только IFC** (multipart, поле `file`), async (202, `Location`, `Retry-After`). Ответ: `sessionId, status, sourceType, message` |
+| GET | `/ifc-vor/api/check_model/<session_id>` (алиас `/api/check-model/<session_id>`) | Статус и результат проверки: `status`, `progress`, `progressMessage`, `result` (сводка по классам, файлы) |
 
 ### Сессии
 | Метод | Путь | Описание |
@@ -390,7 +406,8 @@ ai-ifc-vor-generator/
 | POST | `/ifc-vor/api/session/<id>/filter_height` | Обновить высоту здания |
 
 Статусы сессии: `ifc_processing` / `pdf_processing` / `selecting_rows` / `processing` /
-`completed` / `error` (маппинг в краткий `status`: `processing`, `selecting_rows`, ...).
+`check_model_processing` / `completed` / `error` (маппинг в краткий `status`: `processing`,
+`selecting_rows`, ...).
 
 ### Константы подбора работ и документы (режимы ИИ и Архитектура)
 | Метод | Путь | Описание |
@@ -511,6 +528,31 @@ ai-ifc-vor-generator/
 расхождение с процентами и пояснения. Оба типовых ВОР можно просмотреть и
 скачать отдельно. При восстановлении сессии кнопки и отчёты появляются
 без повторного расчёта.
+
+### 7. Проверка ЦИМ модели (отдельная вкладка)
+
+Не относится к режимам ЦС/ИИ: подбор работ не выполняется. Вкладка «Проверка
+ЦИМ модели» принимает **только IFC** и выполняет:
+
+1. **Сырой дамп** — `ifc_raw_dump.dump_ifc_elements_raw` (тот же шаг, что в ЦС;
+   проёмы `IfcOpeningElement` включены) → `IFC_исходные_параметры.json/.xlsx`.
+2. **Требования** — `check_model.requirements.load_requirements` выбирает по
+   IFC-классу элемент(ы) `data/parametrs_name.json` (при нескольких, например
+   `IfcSlab` В.2/В.3, — по коду МССК, `PredefinedType` и наименованию).
+3. **Сопоставление параметров** — `check_model.mapping.build_mapping`: LLM
+   `qwen3.8:27b` (`CHECK_MODEL_LLM_MODEL` → `LLM_MODEL`) получает требуемые
+   `RUS_*`, колонки модели с примерами значений и контекст элемента, возвращает
+   карту «требуемый параметр → колонка + преобразование» (мм→м, извлечение класса
+   бетона/стали, разбор этажа и т. п.). Сопоставление идёт по смыслу: имена
+   свойств у разных проектировщиков произвольны. Карта кэшируется в
+   `cache/check_model/mapping_cache.json`; при недоступности LLM используется
+   детерминированный fallback.
+4. **Заполнение** — `check_model.pipeline.run_check_model` добавляет требуемые
+   параметры к параметрам элемента и заполняет их значениями модели →
+   `Проверка_ЦИМ_модели.json/.xlsx` + `Проверка_ЦИМ_модели_отчет.json` +
+   `Сопоставление_параметров.json`.
+
+Подробности — [readme_check_model.md](./readme_check_model.md).
 
 ## Запуск и развертывание
 

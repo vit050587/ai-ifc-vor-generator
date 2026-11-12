@@ -5,13 +5,13 @@ from pathlib import Path
 from . import builder, customer_vor, documents, template
 
 
-def _copy_source(book, path, title):
+def _copy_source(book, path, title, source_sheet=template.DEFAULT_SHEET):
     from copy import copy
     from openpyxl import load_workbook
     from ..comparison_layout import copy_cell_style
     source_book = load_workbook(path)
     try:
-        source = source_book[template.DEFAULT_SHEET]
+        source = source_book[source_sheet]
         target = book.create_sheet(title)
         for row in source:
             for cell in row:
@@ -51,6 +51,11 @@ def _compare_sources(generated, customer, output_path, llm):
     try:
         _copy_source(book, generated, 'Сформированная ВОР')
         _copy_source(book, customer, 'ВОР заказчика')
+        from .stair_report import read_records, write_comparison
+        stair_generated = read_records(generated)
+        stair_customer = read_records(customer)
+        if stair_generated is not None:
+            write_comparison(book, stair_generated, stair_customer or [])
         reconcile.write_excel(display_rows, summary, str(output_path), workbook=book)
     finally:
         book.close()

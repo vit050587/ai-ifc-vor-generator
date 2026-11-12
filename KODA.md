@@ -93,6 +93,7 @@
 - **Хранилище без СУБД**: состояние сессий — JSON-файл `outputs/sessions.json` (потокобезопасный, атомарная запись); файлы результатов — файловая система `outputs/<session_id>/`.
 - **Сравнение ведомостей объёмов работ** (отдельный режим, вкладка «Сравнение ведомостей объёмов работ»): несколько моделей/чертежей (ЦС/ИИ) + ВОР заказчика → сопоставление работ и объёмов сформированного ВОР и ВОР заказчика (`comparison_manager`, `works_comparison/`) → отчёт JSON/Excel; см. §5.5.
 - **Формирование ВОР по типовому шаблону** (отдельный функционал, вкладка «Формирование ВОР», пакет `src/services/vor_generation/`): IFC-модель + документы (ВОР застройщика, ПОС, ПЗ, ПД) → заполненный по типовому шаблону `data/Типовой ВОР по КР.xlsx` файл `Сформированный_ВОР.xlsx` (заполняются только объём и обоснование; подбор работ **не** выполняется); не относится к режимам ЦС/ИИ; см. §5.6 и `readme_vor.md`.
+- **Проверка ЦИМ модели** (отдельный функционал, вкладка «Проверка ЦИМ модели», пакет `src/services/check_model/`): IFC-модель → `IFC_исходные_параметры.json/.xlsx` (тот же шаг, что в ЦС) → требуемые параметры по `data/parametrs_name.json` сопоставляются с параметрами модели через LLM (`qwen3.8:27b`) → `Проверка_ЦИМ_модели.json/.xlsx`; подбор работ **не** выполняется; не относится к режимам ЦС/ИИ; см. §5.7 и [`readme_check_model.md`](./readme_check_model.md).
 - **Авторизация** через flask-login (встроенные пользователи) + защита API.
 - Развёртывание — **Docker Compose** (`web` + `ollama`), GPU NVIDIA.
 
@@ -178,7 +179,7 @@ ai-ifc-vor-generator/
 │   │   └── keycloak.py        # Провайдер Bearer-токена Keycloak (client_credentials)
 │   └── services/              # Бизнес-логика и пайплайн
 │       ├── session_manager.py # SessionManager: сессии, runs, фоновые потоки, sessions.json,
-│       │                      #   справочные сессии (reference_only), пересборка final JSON,
+│       │                      #   проверка ЦИМ модели (process_check_model), пересборка final JSON,
 │       │                      #   разбор ПОС/ПЗ, position_links, 3D-GLB
 │       ├── zero_step.py       # Извлечение элементов из IFC (КР/АР), нормализация, XLSX
 │       ├── ifc_raw_dump.py    # «Сырой» дамп свойств/QTO/материалов + расчёт по bbox
@@ -238,6 +239,15 @@ ai-ifc-vor-generator/
 │           ├── customer_vor.py # Приведение ВОР заказчика (PDF) к структуре типового ВОР → ВОР_заказчика.xlsx
 │           ├── manager.py     # VorGenerationManager: жизненный цикл задачи (фон, статусы, артефакты)
 │           └── __init__.py    # Экспорт VorGenerationManager, build_vor
+│       └── check_model/       # Пакет «Проверка ЦИМ модели» (вкладка «Проверка ЦИМ модели»)
+│           │                  #   IFC → IFC_исходные_параметры.json/.xlsx → требуемые параметры
+│           │                  #   по data/parametrs_name.json → Проверка_ЦИМ_модели.json/.xlsx;
+│           │                  #   подбор работ НЕ выполняется, не относится к режимам ЦС/ИИ — см. §5.7 и readme_check_model.md
+│           ├── requirements.py # Загрузка требований, выбор набора по IFC-классу/МССК/PredefinedType
+│           ├── llm_client.py   # Клиент Ollama (qwen3.8:27b) для сопоставления параметров
+│           ├── mapping.py      # Карта «требуемый RUS_* → колонка модели + преобразование» (LLM + fallback)
+│           ├── pipeline.py     # Оркестратор проверки и формирование отчёта
+│           └── __init__.py     # Экспорт run_check_model, load_requirements
 │
 ├── ai-blueprint-to-ifc/       # Пайплайн машинного зрения для PDF-чертежей
 │   ├── config.py              # Settings (Pydantic BaseSettings), профили YOLO, пороги
@@ -384,7 +394,7 @@ make clean     # остановить и удалить volumes (внимани�
 - Конвертация PDF → изображения/тайлы, детекция стен (YOLO OBB), layout, легенды.
 - Анализ штриховок и расшифровка материалов (DINO + VLM Qwen3-VL), масштабы/легенды.
 - Результат — те же Excel/JSON, что и для IFC, плюс размеченный чертёж (`blueprint_painted.png`) и условные обозначения (`materials_colors.md`).
-- Объединение номерных листов (`Данные_N` → `Данные`), режим `reference_only` (только JSON-справочники).
+- Объединение номерных листов (`Данные_N` → `Данные`); параметр `reference_only` сохранён в `pdf_processor`, но отдельный эндпоинт построения справочников удалён (вкладка «JSON-справочники» больше не существует).
 
 ### 5.4. Подбор работ
 
@@ -482,6 +492,43 @@ make clean     # остановить и удалить volumes (внимани�
 задачи помечаются `error`. Справочник `data/Типовой ВОР по КР.xlsx` — только
 чтение. Подробное описание — [`readme_vor.md`](./readme_vor.md).
 
+### 5.7. Проверка ЦИМ модели (отдельный функционал)
+
+Не относится к режимам ЦС/ИИ (подбор работ **не** выполняется). Пакет
+`src/services/check_model/`, оркестрация — `SessionManager.process_check_model` /
+`_process_check_model_bg`; сессия — запись `session_type='check_model'` в
+`outputs/sessions.json`, файлы — в `outputs/<session_id>/`. Вход — **IFC-модель**
+(только `.ifc`). Статус обработки — `check_model_processing`.
+
+1. **Сырой дамп IFC** — тот же шаг, что в режиме ЦС:
+   `ifc_raw_dump.dump_ifc_elements_raw` → `IFC_исходные_параметры.json/.xlsx`.
+   Для проверки ЦИМ дамп формируется с `exclude_classes=()` (включая
+   `IfcOpeningElement`); в ЦС/ИИ поведение по умолчанию не изменилось.
+2. **Требования по IFC-классу** — `requirements.load_requirements` читает
+   `data/parametrs_name.json`; для класса выбирается набор требований (при
+   нескольких записях, например `IfcSlab` В.2/В.3, — по коду МССК,
+   `PredefinedType` и наименованию).
+3. **Сопоставление параметров** — `mapping.build_mapping`: LLM
+   (`qwen3.8:27b`, `CHECK_MODEL_LLM_MODEL`/`LLM_MODEL`) получает список
+   требуемых `RUS_*`, все непустые колонки модели с примерами значений и
+   контекст элемента (`Name`, `ObjectType`, `Description`, `Материал`, `Этаж`)
+   и возвращает карту «требуемый параметр → колонка + преобразование».
+   Сопоставление по смыслу (а не по имени колонки) — принципиальное требование:
+   модели приходят от разных проектировщиков, и одни и те же данные лежат в
+   свойствах с произвольными названиями. Ответ валидируется (точное имя колонки,
+   допустимые преобразования, `storey_*` только для «Этаж», `RUS_Name` → `Name`),
+   при недоступности LLM используется детерминированный fallback. Карта
+   кэшируется в `cache/check_model/mapping_cache.json` с учётом версии промпта
+   (`PROMPT_VERSION`) и набора колонок модели.
+4. **Заполнение и результат** — `pipeline.run_check_model` дополняет элементы
+   требуемыми параметрами и сохраняет `Проверка_ЦИМ_модели.json/.xlsx`,
+   `Проверка_ЦИМ_модели_отчет.json` (сводка по классам, заполненным/пустым
+   значениям, ошибкам LLM) и `Сопоставление_параметров.json` (использованная
+   карта). Элементы классов, отсутствующих в справочнике, в результат не
+   попадают — их количество указано в отчёте (`skipped_classes`).
+
+Подробное описание — [`readme_check_model.md`](./readme_check_model.md).
+
 ---
 
 ## 6. Хранилища и справочники
@@ -511,8 +558,8 @@ make clean     # остановить и удалить volumes (внимани�
 
 - Здоровье: `GET /api/health`
 - Авторизация: `GET/POST /login`, `GET /logout`
-- Загрузка: `POST /api/upload_ifc` (file + processingType `CS|AI`, для ИИ — `posFile`/`pzFile`), `POST /api/reference` (справочная сессия `reference_only`)
-- Справочные сессии: `GET /api/session/<id>/reference` (результат построения JSON-справочников; 202 — ещё строится)
+- Загрузка: `POST /api/upload_ifc` (file + processingType `CS|AI`, для ИИ — `posFile`/`pzFile`), `POST /api/check_model` (алиас `/api/check-model`; только IFC, async 202 + `Location`/`Retry-After`)
+- Проверка ЦИМ модели: `GET /api/check_model/<session_id>` (алиас `/api/check-model/<session_id>`; статус, прогресс и результат проверки)
 - Сессии: `GET /api/sessions`, `GET /api/session/<id>`, `GET /api/session/<id>/status`, `POST /api/session/<id>/restore` (восстановление интерфейса), `DELETE /api/session/<id>`
 - Обработка: `POST /api/session/<id>/select_rows`, `POST /api/session/<id>/new_run`, `GET /api/session/<id>/runs`, `POST /api/session/<id>/switch_run/<run_id>`, `POST /api/session/<id>/filter_height`
 - Документы и константы (только ИИ): `POST /api/session/<id>/upload_pos`, `POST /api/session/<id>/upload_pz`, `POST /api/session/<id>/upload_vor`, `POST /api/session/<id>/upload_pd`, `GET /api/session/<id>/works_constants` (схема констант + автоподстановка), `GET /api/session/<id>/pd_full`, `GET /api/session/<id>/doc_facts`, `GET /api/session/<id>/analytic`, `GET /api/session/<id>/compare_vor` (сравнение ВОР и перечня), `GET /api/session/<id>/tsn_mode` / `/pd_mode` (переключатели), `GET /api/tsn/docs` (список сборников ТСН)

@@ -167,22 +167,13 @@ def rebar_buckets(rebar: Optional[RebarData], kind: Optional[str], part: Optiona
                   thickness: Optional[int] = None,
                   share: float = 1.0,
                   component: str = "") -> Dict[str, Dict[Tuple, float]]:
-    """Раскладка арматуры по категориям с учётом толщины и доли группы.
-
-    Если строки арматуры подраздела привязаны к толщине конструкции и известна
-    толщина блока, тоннаж берётся точно по этому блоку (``share`` не применяется).
-    Иначе тоннаж распределяется пропорционально доле группы (``share``).
-    ``component`` — подтип лестницы (``flight``/``landing``).
-    """
+    """Исходные тоннажи ВОР по категории и толщине; доля IFC не применяется."""
     if rebar is None or not rebar.rows:
         return {"bars": {}, "frames": {}, "releases": {}}
     if thickness is not None and rebar.has_thickness(kind, part):
         buckets = rebar.buckets(kind, part, thickness, component)
         return buckets
     result = rebar.buckets(kind, part, None, component)
-    if share != 1.0:
-        result = {bucket: {key: value * share for key, value in items.items()}
-                  for bucket, items in result.items()}
     return result
 
 

@@ -572,6 +572,10 @@ def _fill_work(row: template.TemplateRow, group_rows: List[CustomerRow],
     """
     qk = mapping.classify_work(row.name)
     family = _unit_family(row.unit)
+    if 'подготовк' in row.name.lower() and 'бетон' in row.name.lower():
+        # Revised wording must never borrow the main foundation concrete.
+        total = _pick_total(group_rows, {'preparation'}, family or 'm3', fallback_rows, share)
+        return (round(total, 5), ctx.ref_vor) if total is not None else (None, None)
     orientation = _context_orientation(row.subsection)
 
     if qk in ('concrete','formwork') and any(r.normalized_scope for r in group_rows+fallback_rows):
@@ -580,7 +584,7 @@ def _fill_work(row: template.TemplateRow, group_rows: List[CustomerRow],
         return (round(total,2),ctx.ref_vor) if total is not None else (None,None)
     if qk == "rebar":
         t = documents.rebar_thickness(ctx.rebar, kind, part, thickness)
-        total = ctx.rebar.section_total(kind, part, t, component) * share
+        total = ctx.rebar.section_total(kind, part, t, component)
         return (round(total, 5), ctx.ref_vor) if total > 0 else (None, None)
 
     # Явные соответствия наименований (`_NAME_ALIASES`) имеют приоритет: для этих
@@ -660,10 +664,10 @@ def _fill_resource(row: template.TemplateRow, group_rows: List[CustomerRow],
         diameter, rebar_class = mapping.parse_rebar_spec(row.name)
         t = documents.rebar_thickness(ctx.rebar, kind, part, thickness)
         total = ctx.rebar.diameter_class(diameter, rebar_class, kind=kind, part=part,
-                                         thickness=t, component=component) * share
+                                         thickness=t, component=component)
         if total <= 0 and diameter is None and rebar_class:
             total = ctx.rebar.diameter_class(None, rebar_class, kind=kind, part=part,
-                                             thickness=t, component=component) * share
+                                             thickness=t, component=component)
         return (round(total, 5), ctx.ref_vor) if total > 0 else (None, None)
 
     orientation = _context_orientation(row.subsection)
@@ -1204,11 +1208,15 @@ def build_customer_vor(vor_path: str, output_path: str, template_path: str = Non
 
     from .customer_scope import preserve_remaining, fill_product_counts
     fill_product_counts(output, rows, trows, ctx.ref_vor)
-    mapped_sources, preserved_sources = preserve_remaining(output, rows, trows, ctx.ref_vor)
+    mapped_sources, preserved_sources = preserve_remaining(output, [r for r in rows if r.category != 'rebar'], trows, ctx.ref_vor)
+    filled = sum(item.volume is not None for item in output)
+    from .source_rebar import copy_rebar
+    copy_rebar(output, trows, rebar, ctx.ref_vor)
     filled = sum(item.volume is not None for item in output)
     _say(progress, "Запись ВОР заказчика по типовому шаблону")
+    from .stair_report import customer_records
     template.render_template(output, path=template_path, sheet_name=sheet_name,
-                             output_path=output_path)
+                             output_path=output_path, stair_rows=customer_records(rows))
 
     stats = {
         "rows": len(output),

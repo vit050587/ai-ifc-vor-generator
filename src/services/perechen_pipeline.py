@@ -168,6 +168,8 @@ def _divisor(unit: str) -> float:
 def _element_kind(el: Dict[str, Any]) -> str:
     """Вид конструкции — по имени (IFC-класс в моделях часто неточен), затем по классу."""
     n = str(el.get("name") or "").lower()
+    if re.search(r"пилон|колонн", n):
+        return "column"
     for kind, words in (("wall", ("стена", "стен", "приямок", "приямк", "парапет")), ("column", ("колонн", "пилон")),
                         ("beam", ("балк", "ригел")), ("stair", ("лестн", "марш")),
                         ("slab", ("перекрыт", "плита", "покрыт", "площадк", "фундамент"))):
@@ -202,7 +204,7 @@ def _formwork_area(el: Dict[str, Any], q: Dict[str, float]) -> float:
     if fw > 0:
         return fw
     name = str(el.get("name") or "").lower()
-    if "плит" in name or "перекрыт" in name or re.search(r"балк|ригел", name) or el.get("ifc_class") == "IfcBeam":
+    if re.search(r"плит|перекрыт|балк|ригел|лестн|марш|площадк", name) or el.get("ifc_class") in ("IfcBeam", "IfcSlab", "IfcStair", "IfcStairFlight", "IfcFooting"):
         return 0.0
     return float(q.get("area") or 0.0)
 
@@ -226,8 +228,7 @@ def _layers(el: Dict[str, Any]) -> int:
     return max(1, min(int(m.group(1)), 4)) if m else 1
 
 
-# Типовые нормы армирования, кг/м3 — если в модели нет ReinforcementVolumeRatio
-REBAR_NORM = {"stair": 100, "slab": 110, "wall": 90, "beam": 150, "column": 180}
+# Арматура в перечне берётся только из ВОР заказчика.
 
 
 def _volume(rate: Dict[str, Any], el: Dict[str, Any], q: Dict[str, float], trace=None) -> Optional[float]:
@@ -252,10 +253,11 @@ def _volume(rate: Dict[str, Any], el: Dict[str, Any], q: Dict[str, float], trace
     elif tokens and tokens[-1] == "т":
         if rate["is_resource"] or "отдельных стержней" not in title:
             return None
-        kg = q["rebar_kg"] or REBAR_NORM.get(_element_kind(el), 100) * q["volume"]
+        if not q.get("rebar_from_customer"):
+            return None
+        kg = q.get("rebar_kg") or 0
         base = kg / 1000.0
-        source = (origins.get('rebar_kg') or 'quantity.rebar_kg') if q['rebar_kg'] else (
-            f"ОЦЕНКА: {origins.get('volume') or 'quantity.volume'} × типовая норма армирования {REBAR_NORM.get(_element_kind(el), 100)} кг/м³")
+        source = origins.get('rebar_kg') or 'ВОР заказчика: исходный тоннаж (т → кг)'
         source += ' / 1000 (кг → т)'
     elif "шт" in unit:
         if rate["is_resource"]:
@@ -455,7 +457,11 @@ def build_final_from_perechen(tables_json_path: str, run_dir: str, progress=None
         buckets: Dict[Tuple[str, str], List[int]] = {}
         for i in idx:
             el = elements[i].get("element", {})
-            buckets.setdefault((kb.type_key(el.get("name")), str(el.get("material") or "")), []).append(i)
+            from .vor_generation.elements import _element_kind as quantity_kind
+            kind = quantity_kind(el.get('ifc_class') or '', '', el.get('name') or '')
+            name = str(el.get('name') or '')
+            tkey = re.sub(r':\d+(?::\d+)?$', '', name) if kind in ('slab', 'foundation_slab') else kb.type_key(name)
+            buckets.setdefault((tkey, str(el.get("material") or "")), []).append(i)
         single = len(buckets) == 1
 
         for (tkey, material), ids in buckets.items():
@@ -533,6 +539,8 @@ def build_final_from_perechen(tables_json_path: str, run_dir: str, progress=None
 
     _progress("Справка: проверка документов и противоречий", 1.0)
     results.sort(key=lambda g: PART_ORDER.index(g["part"]) if g["part"] in PART_ORDER else 9)
+    from .final_quantity_rules import apply_legacy_rebar
+    apply_legacy_rebar(results, run_dir)
     with open(os.path.join(run_dir, FINAL_JSON), "w", encoding="utf-8") as fh:
         json.dump({"source": "perechen_kr", "building_height_m": height, "groups": results},
                   fh, ensure_ascii=False, indent=2)
@@ -848,10 +856,8 @@ PROJECT_CONSTANTS = {}
 
 
 def _cold_season():
-    vals = [str(v).lower() for k, v in PROJECT_CONSTANTS.items()
-            if any(x in str(k).lower() for x in ("curing", "season", "сезон"))]
-    vals.append(os.getenv("CURING_SEASON", "").lower())
-    return any(("холод" in v or "зим" in v or "cold" in v) for v in vals)
+    # Meeting rule: concrete curing is always priced for summer.
+    return False
 
 
 _finalize_rows_v2 = finalize_rows
@@ -859,16 +865,19 @@ _finalize_rows_v2 = finalize_rows
 
 def finalize_rows(el, q, works, subs):
     rows = _finalize_rows_v2(el, q, works, subs)
-    if not _cold_season():
-        return rows
-    for i, r in enumerate(rows):
-        if r["pressmark"].startswith("3.6-98-"):
-            loc = _local_rate("3.6-61-1") or {}
-            rate = {"pressmark": "3.6-61-1", "unit": loc.get("unitOfMeasure") or "100 м2 поверхности",
-                    "title": loc.get("title") or "Уход за бетоном с применением тепловлагозащитного покрытия",
-                    "is_resource": False, "formula": ""}
-            rows[i] = _row(rate, el, q, "Уход за бетоном в холодный период (тепловлагозащита, по ПОС)")
-    return rows
+    result, seen = [], False
+    for row in rows:
+        if str(row['pressmark']).startswith(('3.6-98-', '3.6-61-')):
+            if seen:
+                continue
+            seen = True
+            local = _local_rate('3.6-98-1') or {}
+            rate = {'pressmark': '3.6-98-1', 'unit': local.get('unitOfMeasure') or '1 м3',
+                    'title': local.get('title') or 'Уход за бетоном в летний период',
+                    'is_resource': False, 'formula': ''}
+            row = _row(rate, el, q, 'Уход за бетоном в летний период (правило проекта)')
+        result.append(row)
+    return result
 
 
 _build_base = build_final_from_perechen
@@ -1071,9 +1080,9 @@ def _an_build(run_dir):
         if h:
             hv = (PD_FULL.get("height") or {}).get("value", "")
             ok.append(f"Высота здания {h} м — расценки взяты из таблиц ТСН для этой высоты" + (f" (ПОС: {hv[:60]})." if hv else "."))
-    n_w = sum(1 for s in st for pm, t in s["rows"] if pm.startswith("3.6-61"))
+    n_w = sum(1 for s in st for pm, t in s["rows"] if pm.startswith("3.6-98"))
     if n_w:
-        ok.append(f"Холодный период по ПОС — уход за бетоном заменён на тепловлагозащиту (3.6-61-1): {n_w} поз.")
+        ok.append(f"Уход за бетоном в летний период по правилу проекта (3.6-98-1): {n_w} поз.")
     n_pump = sum(1 for s in st for pm, t in s["rows"] if "бетононасосом (по пос)" in t)
     n_bucket = sum(1 for s in st for pm, t in s["rows"] if "кран-бадья" in t)
     sup = " ".join(str((PD_FULL.get(k) or {}).get("value", "")) for k in ("concrete_supply_under", "concrete_supply_above")).lower()
@@ -1173,9 +1182,9 @@ def _an_build(run_dir):
         hv = re.search(r"\d+[.,]?\d*\s*м", (PD_FULL.get("height") or {}).get("value", ""))
         if h:
             ok.append(f"Высота здания{' ' + hv.group(0) if hv else ''} ({_an_ref('height') or 'ПОС'}) → расценки для зданий {h} м.")
-        n_w = cnt(lambda pm, t: pm.startswith("3.6-61"))
+        n_w = cnt(lambda pm, t: pm.startswith("3.6-98"))
         if n_w:
-            ok.append(f"Холодный период (ПОС) → уход за бетоном с тепловлагозащитой: {n_w} поз.")
+            ok.append(f"Уход за бетоном в летний период по правилу проекта: {n_w} поз.")
         n_pump = cnt(lambda pm, t: "бетононасосом (по пос)" in t)
         if n_pump:
             ok.append(f"Подача бетона насосом ({_an_ref('concrete_supply_under') or 'ПОС'}) → расценки на бетононасос: {n_pump} поз.")
@@ -2052,7 +2061,7 @@ def _rebar_vor_rows(q):
         a["d"].append(d)
     rows = []
     for pm, a in agg.items():
-        mass = round(a["mass"], 4)
+        mass = a["mass"]
         if mass <= 0:
             continue
         _, _, mr, total = _costs({"pressmark": pm, "is_resource": True}, mass)
@@ -2416,15 +2425,11 @@ DOC = None
 _DOC_GROUPS = []
 _DOC_STATS = {"bwf": 0, "volumes": 0, "rebar": 0}
 DOC_SRC = "Сверка с ВОР и ПД"
-# Удельный расход арматуры (т/м3) по видам конструкций из ВОР: суммарная масса
-# арматуры конструкции делится на суммарный объём бетона этой конструкции в
-# модели — так объёмы групп складываются ровно в расход по ВОР.
-_DOC_REBAR_NORM: Dict[str, float] = {}
-# Удельный расход арматуры (т/м3) по видам конструкций **и диаметрам** из ВОР:
-# {(класс, диаметр_мм): т/м3}. Раскладка массы ВОР по группам перечня —
-# пропорционально объёму бетона конструкции (как и `_DOC_REBAR_NORM`).
+# Готовый тоннаж ВОР по видам конструкций и диаметрам. Не зависит от IFC.
+_DOC_REBAR_TONNES: Dict[str, float] = {}
 _DOC_REBAR_BY_D: Dict[str, Dict[Any, float]] = {}
 _DOC_REBAR_SRC: Dict[str, Dict[str, Any]] = {}
+_DOC_REBAR_COPIED = set()
 # Суммарный объём бетона конструкций каждого вида (м3) — знаменатель для
 # раскладки объёмов из ВОР по группам перечня (объём ВОР относится к
 # конструкции целиком, а в перечне она представлена несколькими группами).
@@ -2450,18 +2455,10 @@ def _docs_load(run_dir):
 
 
 def _doc_prepare_rebar(tables_json_path, run_dir):
-    """Считает удельный расход арматуры (т/м3) по видам конструкций из ВОР.
-
-    В ВОР арматура привязана к конструкциям (разделы «Монолитные ж/б
-    конструкции. Фундаменты / Стены … / Плиты перекрытия …»), причём внутри
-    раздела она разбита по блокам/захваткам и секциям/этажам, а по каждому
-    элементу — по диаметрам («D12», «D20», …). Поэтому масса из ВОР
-    раскладывается по группам перечня пропорционально объёму бетона конструкции
-    в модели — **отдельно по каждому классу и диаметру** (`_DOC_REBAR_BY_D`),
-    чтобы подобрать работу нужного диаметра (1.3-4-21 … 1.3-4-27).
-    """
-    global _DOC_REBAR_NORM, _DOC_REBAR_BY_D, _DOC_REBAR_SRC, _DOC_KIND_VOL
-    _DOC_REBAR_NORM, _DOC_REBAR_BY_D, _DOC_REBAR_SRC, _DOC_KIND_VOL = {}, {}, {}, {}
+    """Загружает готовые тоннажи ВОР, без нормирования на объём модели."""
+    global _DOC_REBAR_TONNES, _DOC_REBAR_BY_D, _DOC_REBAR_SRC, _DOC_KIND_VOL
+    _DOC_REBAR_TONNES, _DOC_REBAR_BY_D, _DOC_REBAR_SRC, _DOC_KIND_VOL = {}, {}, {}, {}
+    _DOC_REBAR_COPIED.clear()
     if DOC is None:
         return
     try:
@@ -2482,66 +2479,64 @@ def _doc_prepare_rebar(tables_json_path, run_dir):
             vol_by_kind[kind] = vol_by_kind.get(kind, 0.0) + float(per_el[i].get("volume") or 0.0)
         _DOC_KIND_VOL = {k: round(v, 4) for k, v in vol_by_kind.items() if v > 0}
         for kind, vol in vol_by_kind.items():
-            if vol <= 0:
-                continue
             by_d = DOC.rebar_by_diameter(kind)          # {(класс, диаметр): масса т} из ВОР
             if by_d:
-                _DOC_REBAR_BY_D[kind] = {k: v / vol for k, v in by_d.items()}
-                mass = round(sum(by_d.values()), 4)
-                _DOC_REBAR_NORM[kind] = mass / vol
+                _DOC_REBAR_BY_D[kind] = dict(by_d)
+                mass = sum(by_d.values())
+                _DOC_REBAR_TONNES[kind] = mass
                 _DOC_REBAR_SRC[kind] = {"mass": mass, "volume": round(vol, 2),
                                         "diameters": {f"{c} D{d}": round(v, 2)
                                                       for (c, d), v in sorted(by_d.items(),
                                                                              key=lambda x: x[0][1])}}
                 logger.info(f"арматура по ВОР: {kind} — {mass} т на {round(vol, 1)} м3 "
-                            f"({round(mass / vol * 1000, 1)} кг/м3), диаметры: "
+                            f"(исходный тоннаж), диаметры: "
                             + ", ".join(f"{c} D{d} {round(v, 1)}т"
                                         for (c, d), v in sorted(by_d.items())))
                 continue
             mass = DOC.rebar_mass(kind)                 # резерв: LLM-разбор ВОР (без диаметров)
             if not mass:
                 continue
-            _DOC_REBAR_NORM[kind] = mass / vol
+            _DOC_REBAR_TONNES[kind] = mass
             _DOC_REBAR_SRC[kind] = {"mass": mass, "volume": round(vol, 2)}
             logger.info(f"арматура по ВОР: {kind} — {mass} т на {round(vol, 1)} м3 "
-                        f"({round(mass / vol * 1000, 1)} кг/м3)")
+                        f"(исходный тоннаж)")
     except Exception as e:
         logger.warning(f"норма арматуры по ВОР: {e}")
 
 
 def _doc_fill_rebar(el, q):
-    """Масса арматуры элемента — по удельному расходу из ВОР (если он известен).
+    """Исходная масса ВОР копируется один раз для каждого вида конструкции.
 
     Если по ВОР известна разбивка по диаметрам, в ``q["rebar_by_diameter"]``
     кладётся масса (кг) по каждому классу и диаметру — из неё блок REBAR_STEEL
     формирует отдельные работы нужного диаметра.
     """
-    if DOC is None or not _DOC_REBAR_NORM:
+    if DOC is None or not _DOC_REBAR_TONNES:
         return
     from src.services import doc_facts
     if kb.is_precast(el):
         return
     kind = doc_facts.primary_kind(doc_facts.el_text(el))
-    norm = _DOC_REBAR_NORM.get(kind)
-    if not norm:
+    tonnes = _DOC_REBAR_TONNES.get(kind)
+    if not tonnes:
         return
-    vol = float(q.get("volume") or 0.0)
-    if vol <= 0:
+    q['rebar_from_customer'] = True
+    if kind in _DOC_REBAR_COPIED:
+        q['rebar_kg'] = 0.0
+        q['rebar_by_diameter'] = []
         return
+    _DOC_REBAR_COPIED.add(kind)
     by_d = _DOC_REBAR_BY_D.get(kind)
     if by_d:
-        # Список (а не словарь с кортежными ключами) — `q` попадает в JSON перечня.
-        items = [{"cls": c, "diameter": int(d), "kg": round(vol * n * 1000, 2)}
-                 for (c, d), n in sorted(by_d.items(), key=lambda x: (x[0][1], str(x[0][0])))]
-        q["rebar_by_diameter"] = items
-        q["rebar_kg"] = round(sum(x["kg"] for x in items), 2)
+        items = [{'cls': c, 'diameter': int(d), 'kg': mass * 1000}
+                 for (c, d), mass in sorted(by_d.items(), key=lambda x: (x[0][1], str(x[0][0])))]
+        q['rebar_by_diameter'] = items
+        q['rebar_kg'] = sum(item['kg'] for item in items)
     else:
-        q["rebar_kg"] = round(vol * norm * 1000, 2)
-    q.setdefault('_sources', {})['rebar_kg'] = f"ВОР заказчика: расход армирования ({norm * 1000:g} кг/м³); {q.get('_sources', {}).get('volume') or 'quantity.volume'} × расход"
-    _DOC_STATS["rebar"] = _DOC_STATS.get("rebar", 0) + 1
-    logger.info(f"арматура по ВОР: {_an_short(el.get('name'))} — "
-                f"{round(q['rebar_kg'] / 1000, 2)} т (по {round(norm * 1000, 1)} кг/м3)"
-                + (f", диаметров {len(by_d)}" if by_d else ""))
+        q['rebar_kg'] = tonnes * 1000
+    q.setdefault('_sources', {})['rebar_kg'] = 'ВОР заказчика: исходный тоннаж, без распределения по объёму бетона (т → кг)'
+    _DOC_STATS['rebar'] = _DOC_STATS.get('rebar', 0) + 1
+
 
 
 # --- (1) класс бетона: если в модели его нет — берём по конструкции из ВОР/ПД ---
@@ -2799,14 +2794,12 @@ def _an_build(run_dir):
     if _DOC_REBAR_SRC:
         parts = []
         for kind, src in _DOC_REBAR_SRC.items():
-            line = (f"{_KIND_RU.get(kind, kind)} — {_num_ru(src['mass'])} т "
-                    f"({_num_ru(round(src['mass'] / src['volume'] * 1000, 1))} кг/м³ "
-                    f"на {_num_ru(src['volume'])} м³ бетона)")
+            line = f"{_KIND_RU.get(kind, kind)} — {_num_ru(src['mass'])} т (скопировано из ВОР заказчика)"
             if src.get("diameters"):
                 line += ": " + ", ".join(f"{k} — {_num_ru(v)} т"
                                          for k, v in src["diameters"].items())
             parts.append(line)
-        vor_items.append("Расход арматуры по ВОР: " + "; ".join(parts) + ".")
+        vor_items.append("Тоннаж арматуры по ВОР: " + "; ".join(parts) + ".")
     if _DOC_STATS["volumes"]:
         vor_items.append(f"Объёмы работ, которых нет в модели (гидрошпонка, "
                          f"уплотнители/герметизация швов и т.п.), взяты из ВОР — "
@@ -3034,3 +3027,27 @@ def _an_build(run_dir):
     with open(os.path.join(run_dir, 'analytic.json'), 'w', encoding='utf-8') as stream:
         json.dump(result, stream, ensure_ascii=False, indent=1)
     return result
+
+
+_finalize_before_mix_norms = finalize_rows
+
+
+def finalize_rows(el, q, works, subs):
+    rows = _finalize_before_mix_norms(el, q, works, subs)
+    from .works_cost import _get_corrected_volume, safe_float
+    frame = pd.DataFrame([{'Шифр ТСН': r['pressmark'],
+                           'Наименование расценки/ресурса': r['title'],
+                           'Объём работ': r['volume'],
+                           'Источник объёма': r.get('volume_source', ''),
+                           '_material_base': q.get('volume') if r['is_resource'] and re.search(r'смесь бетон|^бетон', r['title'], re.I) else None} for r in rows])
+    if not frame.empty:
+        corrected = _get_corrected_volume(frame)
+        for row, (_, result) in zip(rows, corrected.iterrows()):
+            if row['is_resource']:
+                previous = row['volume']
+                row['volume'] = safe_float(result['Объём работ'], default=None)
+                row['volume_source'] = result['Источник объёма']
+                if previous != row['volume']:
+                    row['zp'], row['em'], row['mr'], row['total'] = _costs(
+                        {'pressmark': row['pressmark'], 'is_resource': True}, row['volume'])
+    return rows

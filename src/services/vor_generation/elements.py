@@ -51,6 +51,7 @@ _QUANTITY_KEYS = {
         "QTO::Qto_CoveringBaseQuantities::NetArea",
         "QTO::Qto_CoveringBaseQuantities::GrossArea",
     ),
+    "gross_area": ("QTO::Qto_SlabBaseQuantities::GrossArea",),
     "side_area": (
         "QTO::Qto_WallBaseQuantities::GrossSideArea",
         "QTO::Qto_WallBaseQuantities::NetSideArea",
@@ -226,6 +227,8 @@ def _element_kind(ifc_class: str, mge_name: str, name: str = "",
     if mapping.detect_kind(text) == "crane_foundation":
         return "crane_foundation"
     if ifc_class in ("IfcWall", "IfcWallStandardCase"):
+        if re.search(r"\bпилон|\bколонн", text):
+            return "column"
         if "парапет" in text:
             return "parapet"
         if storey_type == "Кровля" and height and height <= _PARAPET_MAX_HEIGHT:

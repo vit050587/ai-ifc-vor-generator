@@ -92,7 +92,7 @@ def _get_corrected_volume(df):
         resource = str(rule.get(resource_code_col) or "").strip() if resource_code_col else parent
         norm = safe_float(rule.get("Норма расхода"), default=None)
         if norm is not None and norm > 0:
-            norms.setdefault((parent, resource, name), set()).add(norm / 100 if norm > 100 else norm)
+            norms.setdefault((parent, resource, name), set()).add(norm / 100 if norm >= 100 else norm)
     groups = {}
     for _, row in df_copy.iterrows():
         group = row.get("_norm_group", 0)
@@ -102,10 +102,26 @@ def _get_corrected_volume(df):
     for position, (index, row) in enumerate(df_copy.iterrows()):
         key = (str(row.get("Шифр ТСН") or "").strip(), str(row.get("Наименование расценки/ресурса") or "").strip())
         group = row.get("_norm_group", 0)
+        # Document reinforcement is a finished mass, never a consumption base.
+        if re.search(r'арматур|стержн|каркас|выпуск', key[1], re.I):
+            continue
         factors = set()
         for (parent, resource, name), values in norms.items():
-            if resource == key[0] and name == key[1] and (not resource_code_col or parent in groups[group]):
+            if resource == key[0] and (resource_code_col or name == key[1]) and (not resource_code_col or parent in groups[group]):
                 factors.update(values)
+        # A replacement concrete grade may use another code from the same open
+        # resource group. Accept its parent norm only when it is unambiguous.
+        if not factors and key[0].startswith('1.') and re.search(r'смесь бетон|^бетон', key[1], re.I):
+            for (parent, resource, name), values in norms.items():
+                if parent in groups[group] and re.search(r'смесь бетон|^бетон', name, re.I):
+                    factors.update(values)
+        # koefs.xlsx contains representative positions for a TSN table.
+        # Other positions in that SAME table share its unambiguous mix norm.
+        if not factors and key[0].startswith('1.') and re.search(r'смесь бетон|^бетон', key[1], re.I):
+            tables = {code.rsplit('-', 1)[0] for code in groups[group] if code.startswith('3.')}
+            for (parent, resource, name), values in norms.items():
+                if parent.rsplit('-', 1)[0] in tables and re.search(r'смесь бетон|^бетон', name, re.I):
+                    factors.update(values)
         if len(factors) > 1:
             logger.warning("Противоречивые нормы расхода для %s; объём оставлен без изменения", key)
             continue
@@ -118,14 +134,20 @@ def _get_corrected_volume(df):
         marker = (index, *key)
         if applied.get(marker) == (value, factor):
             continue
-        corrected = value * factor
+        origin = str(row.get('Источник объёма') or '')
+        basis = safe_float(row.get('_material_base'), default=None)
+        # Local resource norms and persisted exports already contain consumption.
+        if basis is None and ('koefs.xlsx:' in origin or '× норма расхода' in origin):
+            continue
+        base = basis if basis is not None else value
+        corrected = base * factor
         df_copy.iat[position, df_copy.columns.get_loc("Объём работ")] = corrected
         applied[marker] = (corrected, factor)
         if 'Источник объёма' in df_copy.columns:
             from .quantity_provenance import text
-            origin = text(row.get('Источник объёма'))
+            origin = text(row.get('Источник объёма')).split('; koefs.xlsx:', 1)[0]
             df_copy.iat[position, df_copy.columns.get_loc('Источник объёма')] = (
-                f"{origin}; koefs.xlsx: норма расхода для {key[0]} × {factor:g}; {value:g} × {factor:g} = {corrected:g}")
+                f"{origin}; koefs.xlsx: норма расхода для {key[0]} × {factor:g}; {base:g} × {factor:g} = {corrected:g}")
     df_copy.attrs["volume_norms_applied"] = applied
 
     return df_copy
@@ -315,3 +337,24 @@ def add_total_row(df):
         total_row[col] = format_money(total)
 
     return pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
+
+
+def typical_mix_factor(preparation=False):
+    """Read the unambiguous mix allowance for the typical VOR's work family.
+
+    The typical VOR has no TSN position codes. Its monolithic work families
+    use the corresponding tables; preparation has its own separate norm.
+    """
+    koefs = pd.read_excel(KOEFS_FILE)
+    name = 'Наименование открытой группы ресурсов/\nресурса в составе открытой группы'
+    tables = {'3.6-1'} if preparation else {'3.6-73', '3.6-77', '3.6-81', '3.6-85', '3.6-89', '3.6-93', '3.6-97'}
+    factors, parents = set(), set()
+    for _, row in koefs.iterrows():
+        parent = str(row.get('Шифр ТСН') or '')
+        if parent.rsplit('-', 1)[0] not in tables or not re.search(r'смесь бетон|^бетон', str(row.get(name) or ''), re.I):
+            continue
+        norm = safe_float(row.get('Норма расхода'), default=None)
+        if norm is not None and norm > 0:
+            factors.add(norm / 100 if norm >= 100 else norm)
+            parents.add(parent)
+    return (next(iter(factors)), ', '.join(sorted(parents))) if len(factors) == 1 else (None, '')

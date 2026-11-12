@@ -384,10 +384,10 @@ def get_ifc_type(type_ru: str, name: str) -> str:
     if any(w in name_lower for w in ['плм', 'лмн', 'площадк']):
         return 'IfcSlab'
     
-    if any(w in name_lower for w in ['стен', 'парапет']):
-        return 'IfcWall'
     if any(w in name_lower for w in ['колонн', 'пилон']):
         return 'IfcColumn'
+    if any(w in name_lower for w in ['стен', 'парапет']):
+        return 'IfcWall'
     if any(w in name_lower for w in ['балк', 'ригел', 'перемычк']):
         return 'IfcBeam'
     if any(w in name_lower for w in ['лестн', 'марш']):
@@ -594,20 +594,10 @@ def _first_nonzero(row: Dict[str, Any], cols: List[str]) -> float:
 def _element_formwork_measure(row: Dict[str, Any], perim_cols: List[str],
                               depth_cols: List[str],
                               area_cols: List[str] | None = None) -> float:
-    """Площадь опалубки одного элемента-плиты (м²) по правилам КР:
+    """Опалубка: перекрытия — GrossArea, иначе низ; лестницы — проекция.
 
-      * фундаментная плита («фундамент» в имени элемента) — опалубка
-        только боковых граней: периметр × толщина;
-      * перекрытие («перекрыт» в имени) — боковые грани + нижняя
-        поверхность: периметр × толщина + площадь плиты;
-      * прочие плиты (лестницы, приямки и т.п.) — боковые грани:
-        периметр × толщина.
-
-    Периметр и толщина в таблице — в миллиметрах, поэтому произведение
-    делится на 1e6 (мм² → м²). Если у плиты IfcSlab нет QTO-толщины,
-    толщина берётся из имени элемента («Перекрытие_200мм_…»).
-    У элементов без периметра/толщины (стены, балки и т.п.) вклад
-    равен нулю.
+    Фундаментные плиты используют торцы (периметр × толщина), балки и
+    колонны — площадь контакта с опалубкой, стены — площадь стороны.
     """
     def first(columns):
         for key in columns:
@@ -620,7 +610,8 @@ def _element_formwork_measure(row: Dict[str, Any], perim_cols: List[str],
     from .construction_method import construction_method
     if construction_method(row) in ('precast', 'conflicting'):
         return 0.0, ''
-    if str(row.get('Тип элемента') or '') in ('IfcWall', 'IfcWallStandardCase'):
+    if (str(row.get('Тип элемента') or '') in ('IfcWall', 'IfcWallStandardCase')
+            and not re.search(r'пилон|колонн', name_lower)):
         return first(['QTO_Qto_WallBaseQuantities_Площадь_GrossSideArea_м2',
                                    'Площадь_GrossSideArea_м2', 'QTO_Qto_WallBaseQuantities_Площадь_NetSideArea_м2',
                                    'Площадь_NetSideArea_м2', 'Площадь, м2'])
@@ -640,11 +631,17 @@ def _element_formwork_measure(row: Dict[str, Any], perim_cols: List[str],
                                    stair_name, str(row.get('Наименование') or ''))
     stair_kind = _element_kind(str(row.get('Тип элемента') or ''), '',
                                name=stair_name)
-    if stair_kind == 'stair' and component in ('flight', 'landing'):
+    if stair_kind == 'stair':
         from .stair_formwork import NORMAL_NET, NORMAL_GROSS
         from .ifc_quantities import number
         value = number(row.get(NORMAL_GROSS if component == 'landing' else NORMAL_NET))
         return (value, NORMAL_GROSS if component == 'landing' else NORMAL_NET) if value is not None else (0.0, '')
+    is_floor = (stair_kind == 'slab' or bool(re.search(r'перекрыт|покрыти', name_lower)))
+    if is_floor:
+        return first(['QTO_Qto_SlabBaseQuantities_Площадь_GrossArea_м2',
+                      'Площадь_GrossArea_м2', 'Площадь_GROSS_м2',
+                      'QTO::Qto_SlabBaseQuantities::GrossArea',
+                      'Геометрия_Площадь_низа_м2', 'QTO_geom::Площадь_низа_м2'])
     geometric, geometric_source = first(['Геометрия_Площадь_опалубки_м2'])
     if geometric > 0:
         return geometric, geometric_source

@@ -68,18 +68,19 @@ class UploadResponse(CamelModel):
     auto_legend: Optional[bool] = None
 
 
-class ReferenceAcceptedResponse(CamelModel):
+class CheckModelFile(CamelModel):
+    filename: str
+    size: int
+    download_url: Optional[str] = None
+
+
+class CheckModelResultResponse(CamelModel):
     session_id: str
-    source_type: str
     status: str
-    message: str
-
-
-class ReferenceBuildResponse(CamelModel):
-    session_id: str
-    source_type: str
-    ifc_elements_output: List[Dict[str, Any]]
-    ifc_raw_elements_grouped: List[Dict[str, Any]]
+    progress: int = 0
+    progress_message: str = ""
+    report: Optional[Dict[str, Any]] = None
+    files: List[CheckModelFile] = []
 
 
 class SelectRowsRequest(CamelModel):

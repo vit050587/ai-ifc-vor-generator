@@ -34,4 +34,4 @@ outputs/sessions.json
 
 data/*
 !data/
-!data/**
+!data/**data/ifc_models/

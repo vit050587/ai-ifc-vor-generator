@@ -668,40 +668,6 @@
             color: #2b6cb0;
             font-size: 13px;
         }
-        .reference-results-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 16px;
-            margin-top: 16px;
-        }
-        .reference-json-panel {
-            min-width: 0;
-            border: 1px solid #e2e8f0;
-            border-radius: 10px;
-            overflow: hidden;
-            background: #1a202c;
-        }
-        .reference-json-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 8px;
-            padding: 12px 14px;
-            background: #f7fafc;
-            border-bottom: 1px solid #e2e8f0;
-        }
-        .reference-json-header strong { font-size: 14px; color: #2d3748; }
-        .reference-json-panel pre {
-            margin: 0;
-            padding: 16px;
-            max-height: 520px;
-            overflow: auto;
-            color: #e2e8f0;
-            font: 12px/1.5 Consolas, Monaco, monospace;
-            white-space: pre;
-            tab-size: 2;
-        }
         #sessionJsonContent {
             max-height: 70vh;
             overflow: auto;
@@ -746,7 +712,6 @@
             .viewer3d-container { height: auto; flex: 1; min-height: 0; width: 100%; }
             .viewer3d-layout { flex-direction: column; }
             .viewer3d-properties { width: 100%; flex: 0 0 35%; min-height: 0; box-sizing: border-box; max-height: none; border-left: 0; border-top: 1px solid #e2e8f0; }
-            .reference-results-grid { grid-template-columns: 1fr; }
             .processing-type-label { padding: 10px 14px; }
             .pt-text { font-size: 13px; }
             .legend-item { flex-wrap: wrap; }
@@ -780,7 +745,7 @@
         </header>
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('process')">🔄 Обработка</button>
-            <button class="tab-btn" onclick="switchTab('reference')">🧪 JSON-справочники</button>
+            <button class="tab-btn" onclick="switchTab('checkmodel')">🧩 Проверка ЦИМ модели</button>
             <button class="tab-btn" onclick="switchTab('history')">📚 История</button>
         </div>
 
@@ -1012,92 +977,68 @@
             </div>
         </div>
 
-        <div class="tab-content" id="referenceTab">
+        <!-- Вкладка Проверка ЦИМ модели -->
+        <div class="tab-content" id="checkmodelTab">
             <div class="card">
                 <div class="step-title">
-                    <span class="step-number">🧪</span>
-                    Тестирование JSON-справочников
+                    <span class="step-number">🧩</span>
+                    Проверка ЦИМ модели
                 </div>
-                <div class="processing-type-selector" id="referenceTypeSelector">
-                    <label class="processing-type-label active" id="refPtLabelCS">
-                        <input type="radio" name="referenceProcessingType" value="CS" checked>
-                        <span class="pt-icon">🏗️</span>
-                        <span class="pt-text">ЦС</span>
-                        <span class="pt-badge">Цифровой сборник</span>
-                    </label>
-                    <label class="processing-type-label" id="refPtLabelAI">
-                        <input type="radio" name="referenceProcessingType" value="AI">
-                        <span class="pt-icon">🏛️</span>
-                        <span class="pt-text">ИИ</span>
-                        <span class="pt-badge">Искусственный интеллект</span>
-                    </label>
-                    <label class="processing-type-label" id="refPtLabelARCH">
-                        <input type="radio" name="referenceProcessingType" value="ARCH">
-                        <span class="pt-icon">📐</span>
-                        <span class="pt-text">Архитектура</span>
-                        <span class="pt-badge">Только архитектурные решения</span>
-                    </label>
+                <p style="font-size:13px;color:#718096;margin-bottom:14px;">
+                    Загрузите IFC-модель. Сервис выгрузит параметры элементов
+                    (<code>IFC_исходные_параметры.json/.xlsx</code>), определит требования
+                    к каждому IFC-классу по справочнику <code>data/parametrs_name.json</code>
+                    и с помощью LLM заполнит требуемые параметры ЦИМ значениями из модели.
+                </p>
+                <div class="upload-area" id="checkModelUploadArea">
+                    <input type="file" id="checkModelFileInput" accept=".ifc" hidden>
+                    <div class="icon">📁</div>
+                    <div class="text">Нажмите или перетащите IFC-файл</div>
+                    <div class="hint">Поддерживается только формат .ifc</div>
                 </div>
-                <div class="upload-area" id="referenceUploadArea">
-                    <input type="file" id="referenceFileInput" accept=".ifc,.pdf" hidden>
-                    <div class="icon">📚</div>
-                    <div class="text">Нажмите или перетащите IFC/PDF</div>
-                </div>
-                <div id="referenceFileInfo" style="display:none;" class="file-info">
+                <div id="checkModelFileInfo" style="display:none;" class="file-info">
                     <span>📄</span>
-                    <span class="name" id="referenceFileName"></span>
-                    <button class="btn btn-sm btn-danger" onclick="resetReferenceTest()">✕</button>
+                    <span class="name" id="checkModelFileName"></span>
+                    <button class="btn btn-sm btn-danger" onclick="resetCheckModel()">✕</button>
                 </div>
                 <div class="flex mt-12">
-                    <button class="btn btn-primary" id="referenceStartBtn" onclick="startReferenceBuild()" disabled>
-                        🚀 Сформировать справочники
+                    <button class="btn btn-primary" id="checkModelStartBtn" onclick="startCheckModel()" disabled>
+                        🚀 Проверить модель
                     </button>
-                    <button class="btn btn-secondary" id="referenceRefreshBtn" onclick="refreshReferenceResult()" style="display:none;">
+                    <button class="btn btn-secondary" id="checkModelRefreshBtn" onclick="refreshCheckModelResult()" style="display:none;">
                         🔄 Проверить сейчас
                     </button>
                 </div>
-                <div class="reference-status" id="referenceStatusBox">
+                <div class="reference-status" id="checkModelStatusBox">
                     <div class="reference-meta">
-                        <div>Сессия: <code id="referenceSessionId">—</code></div>
-                        <div>Статус: <strong id="referenceStatusText">Ожидание</strong></div>
+                        <div>Сессия: <code id="checkModelSessionId">—</code></div>
+                        <div>Статус: <strong id="checkModelStatusText">Ожидание</strong></div>
                     </div>
                     <div class="progress-wrap" style="margin:8px 0;">
-                        <div class="progress-bar" id="referenceProgressBar"></div>
+                        <div class="progress-bar" id="checkModelProgressBar"></div>
                     </div>
-                    <div class="progress-text" id="referenceProgressText"></div>
+                    <div class="progress-text" id="checkModelProgressText"></div>
                 </div>
             </div>
-            <div class="card" id="referenceResultsCard" style="display:none;">
+            <div class="card" id="checkModelResultsCard" style="display:none;">
                 <div class="flex-between">
                     <div class="step-title" style="margin-bottom:0;">
                         <span class="step-number done">✓</span>
-                        Справочники готовы
+                        Результат проверки ЦИМ модели
                     </div>
-                    <div class="flex gap-8">
-                        <button class="btn btn-sm btn-secondary" onclick="copyReferenceJson('elements')">📋 Копировать элементы</button>
-                        <button class="btn btn-sm btn-secondary" onclick="copyReferenceJson('grouped')">📋 Копировать группы</button>
-                    </div>
+                    <button class="btn btn-sm btn-success" onclick="downloadAllCheckModel()">📥 Скачать всё</button>
                 </div>
                 <div class="reference-meta mt-12">
-                    <div>Элементов: <strong id="referenceElementsCount">0</strong></div>
-                    <div>Групп: <strong id="referenceGroupsCount">0</strong></div>
+                    <div>Элементов в модели: <strong id="checkModelElementsTotal">0</strong></div>
+                    <div>Проверено элементов: <strong id="checkModelElementsCount">0</strong></div>
+                    <div>Требуемых параметров: <strong id="checkModelParamsCount">0</strong></div>
+                    <div>Заполнено значений: <strong id="checkModelFilledCount">0</strong></div>
+                    <div>Пустых значений: <strong id="checkModelEmptyCount">0</strong></div>
+                    <div>Классов без требований: <strong id="checkModelSkippedCount">0</strong></div>
+                    <div>Сопоставление параметров: <strong id="checkModelLlmInfo">—</strong></div>
                 </div>
-                <div class="reference-results-grid">
-                    <div class="reference-json-panel">
-                        <div class="reference-json-header">
-                            <strong>ifc_elements_output.json</strong>
-                            <button class="btn btn-sm btn-success" onclick="downloadReferenceJson('elements')">Скачать</button>
-                        </div>
-                        <pre id="referenceElementsJson"></pre>
-                    </div>
-                    <div class="reference-json-panel">
-                        <div class="reference-json-header">
-                            <strong>ifc_raw_elements_grouped.json</strong>
-                            <button class="btn btn-sm btn-success" onclick="downloadReferenceJson('grouped')">Скачать</button>
-                        </div>
-                        <pre id="referenceGroupedJson"></pre>
-                    </div>
-                </div>
+                <div id="checkModelFiles" class="mt-12"></div>
+                <div id="checkModelClasses" class="mt-12"></div>
             </div>
         </div>
 
@@ -1923,83 +1864,71 @@ function showToast(message, type = 'info') {
     setTimeout(() => toast.remove(), 5000);
 }
 
-// ========== Тестирование JSON-справочников ==========
-const referenceUploadArea = document.getElementById('referenceUploadArea');
-const referenceFileInput = document.getElementById('referenceFileInput');
-let referenceSelectedFile = null;
-let referenceSessionId = null;
-let referencePollTimer = null;
-let referencePollGeneration = 0;
-let referenceResultData = null;
+// ========== Проверка ЦИМ модели ==========
+const checkModelUploadArea = document.getElementById('checkModelUploadArea');
+const checkModelFileInput = document.getElementById('checkModelFileInput');
+let checkModelSelectedFile = null;
+let checkModelSessionId = null;
+let checkModelPollTimer = null;
+let checkModelPollGeneration = 0;
 
-referenceUploadArea.addEventListener('click', () => referenceFileInput.click());
-referenceUploadArea.addEventListener('dragover', (event) => {
+checkModelUploadArea.addEventListener('click', () => checkModelFileInput.click());
+checkModelUploadArea.addEventListener('dragover', (event) => {
     event.preventDefault();
-    referenceUploadArea.classList.add('dragover');
+    checkModelUploadArea.classList.add('dragover');
 });
-referenceUploadArea.addEventListener('dragleave', () => referenceUploadArea.classList.remove('dragover'));
-referenceUploadArea.addEventListener('drop', (event) => {
+checkModelUploadArea.addEventListener('dragleave', () => checkModelUploadArea.classList.remove('dragover'));
+checkModelUploadArea.addEventListener('drop', (event) => {
     event.preventDefault();
-    referenceUploadArea.classList.remove('dragover');
-    if (event.dataTransfer.files.length) selectReferenceFile(event.dataTransfer.files[0]);
+    checkModelUploadArea.classList.remove('dragover');
+    if (event.dataTransfer.files.length) selectCheckModelFile(event.dataTransfer.files[0]);
 });
-referenceFileInput.addEventListener('change', (e) => { if (e.target.files.length) selectReferenceFile(e.target.files[0]); });
-
-// Обработчик переключения типа для reference-вкладки
-document.querySelectorAll('input[name="referenceProcessingType"]').forEach(radio => {
-    radio.addEventListener('change', function() {
-        document.querySelectorAll('#referenceTypeSelector .processing-type-label').forEach(label => {
-            label.classList.toggle('active', label.querySelector('input').checked);
-        });
-    });
+checkModelFileInput.addEventListener('change', (e) => {
+    if (e.target.files.length) selectCheckModelFile(e.target.files[0]);
 });
 
-function getReferenceProcessingType() {
-    const selected = document.querySelector('input[name="referenceProcessingType"]:checked');
-    return selected ? selected.value : 'CS';
+function isSupportedCheckModelFile(file) {
+    return (file?.name || '').toLowerCase().endsWith('.ifc');
 }
 
-function isSupportedReferenceFile(file) {
-    const name = (file?.name || '').toLowerCase();
-    return name.endsWith('.ifc') || name.endsWith('.pdf');
+function stopCheckModelPolling() {
+    checkModelPollGeneration++;
+    if (checkModelPollTimer) { clearTimeout(checkModelPollTimer); checkModelPollTimer = null; }
 }
 
-function stopReferencePolling() {
-    referencePollGeneration++;
-    if (referencePollTimer) { clearTimeout(referencePollTimer); referencePollTimer = null; }
+function selectCheckModelFile(file) {
+    if (!isSupportedCheckModelFile(file)) {
+        showToast('Для проверки ЦИМ модели поддерживается только .ifc', 'error');
+        return;
+    }
+    stopCheckModelPolling();
+    checkModelSelectedFile = file;
+    checkModelSessionId = null;
+    document.getElementById('checkModelFileName').textContent = file.name;
+    document.getElementById('checkModelFileInfo').style.display = 'flex';
+    document.getElementById('checkModelStartBtn').disabled = false;
+    document.getElementById('checkModelStartBtn').innerHTML = '🚀 Проверить модель';
+    document.getElementById('checkModelRefreshBtn').style.display = 'none';
+    document.getElementById('checkModelStatusBox').style.display = 'none';
+    document.getElementById('checkModelResultsCard').style.display = 'none';
 }
 
-function selectReferenceFile(file) {
-    if (!isSupportedReferenceFile(file)) { showToast('Поддерживаются файлы .ifc и .pdf', 'error'); return; }
-    stopReferencePolling();
-    referenceSelectedFile = file;
-    referenceSessionId = null;
-    referenceResultData = null;
-    document.getElementById('referenceFileName').textContent = file.name;
-    document.getElementById('referenceFileInfo').style.display = 'flex';
-    document.getElementById('referenceStartBtn').disabled = false;
-    document.getElementById('referenceStartBtn').innerHTML = '🚀 Сформировать справочники';
-    document.getElementById('referenceRefreshBtn').style.display = 'none';
-    document.getElementById('referenceStatusBox').style.display = 'none';
-    document.getElementById('referenceResultsCard').style.display = 'none';
-}
-
-function resetReferenceTest() {
-    stopReferencePolling();
-    referenceSelectedFile = null;
-    referenceSessionId = null;
-    referenceResultData = null;
-    referenceFileInput.value = '';
-    document.getElementById('referenceFileInfo').style.display = 'none';
-    document.getElementById('referenceStartBtn').disabled = true;
-    document.getElementById('referenceStartBtn').innerHTML = '🚀 Сформировать справочники';
-    document.getElementById('referenceRefreshBtn').style.display = 'none';
-    document.getElementById('referenceStatusBox').style.display = 'none';
-    document.getElementById('referenceStatusBox').className = 'reference-status';
-    document.getElementById('referenceProgressBar').style.width = '0%';
-    document.getElementById('referenceResultsCard').style.display = 'none';
-    document.getElementById('referenceElementsJson').textContent = '';
-    document.getElementById('referenceGroupedJson').textContent = '';
+function resetCheckModel() {
+    stopCheckModelPolling();
+    checkModelSelectedFile = null;
+    checkModelSessionId = null;
+    checkModelFileInput.value = '';
+    document.getElementById('checkModelFileInfo').style.display = 'none';
+    document.getElementById('checkModelStartBtn').disabled = true;
+    document.getElementById('checkModelStartBtn').innerHTML = '🚀 Проверить модель';
+    document.getElementById('checkModelRefreshBtn').style.display = 'none';
+    document.getElementById('checkModelStatusBox').style.display = 'none';
+    document.getElementById('checkModelStatusBox').className = 'reference-status';
+    document.getElementById('checkModelProgressBar').style.width = '0%';
+    document.getElementById('checkModelProgressText').textContent = '';
+    document.getElementById('checkModelResultsCard').style.display = 'none';
+    document.getElementById('checkModelFiles').innerHTML = '';
+    document.getElementById('checkModelClasses').innerHTML = '';
 }
 
 async function parseApiError(response, fallback) {
@@ -2007,173 +1936,271 @@ async function parseApiError(response, fallback) {
     try { const data = JSON.parse(text); return data.detail || fallback; } catch { return text || fallback; }
 }
 
-async function startReferenceBuild() {
-    if (!referenceSelectedFile) return;
+async function startCheckModel() {
+    if (!checkModelSelectedFile) return;
 
-    stopReferencePolling();
-    const generation = referencePollGeneration;
-    const button = document.getElementById('referenceStartBtn');
+    stopCheckModelPolling();
+    const generation = checkModelPollGeneration;
+    const button = document.getElementById('checkModelStartBtn');
     button.disabled = true;
     button.innerHTML = '<span class="spinner"></span> Загрузка...';
-    document.getElementById('referenceResultsCard').style.display = 'none';
+    document.getElementById('checkModelResultsCard').style.display = 'none';
 
     const formData = new FormData();
-    formData.append('file', referenceSelectedFile);
-    formData.append('processingType', getReferenceProcessingType());
+    formData.append('file', checkModelSelectedFile);
 
     try {
-        const response = await fetch(`${API_BASE}/reference`, {
+        const response = await fetch(`${API_BASE}/check_model`, {
             method: 'POST',
             body: formData
         });
-        if (!response.ok) throw new Error(await parseApiError(response, 'Ошибка запуска'));
+        if (!response.ok) throw new Error(await parseApiError(response, 'Ошибка запуска проверки'));
 
         const data = await response.json();
-        if (generation !== referencePollGeneration) return;
-        referenceSessionId = data.sessionId;
-        document.getElementById('referenceSessionId').textContent = referenceSessionId;
-        document.getElementById('referenceStatusBox').style.display = 'block';
-        document.getElementById('referenceStatusBox').className = 'reference-status';
-        document.getElementById('referenceStatusText').textContent = 'В обработке';
-        document.getElementById('referenceProgressText').textContent = data.message || 'Обработка запущена';
-        document.getElementById('referenceProgressBar').style.width = '10%';
-        document.getElementById('referenceRefreshBtn').style.display = 'inline-block';
-        button.innerHTML = '⏳ Формирование...';
-        showToast('Формирование справочников запущено', 'success');
-        await pollReferenceSession(generation);
+        if (generation !== checkModelPollGeneration) return;
+        checkModelSessionId = data.sessionId;
+        document.getElementById('checkModelSessionId').textContent = checkModelSessionId;
+        document.getElementById('checkModelStatusBox').style.display = 'block';
+        document.getElementById('checkModelStatusBox').className = 'reference-status';
+        document.getElementById('checkModelStatusText').textContent = 'В обработке';
+        document.getElementById('checkModelProgressText').textContent = data.message || 'Проверка запущена';
+        document.getElementById('checkModelProgressBar').style.width = '5%';
+        document.getElementById('checkModelRefreshBtn').style.display = 'inline-block';
+        button.innerHTML = '⏳ Проверка...';
+        showToast('Проверка ЦИМ модели запущена', 'success');
+        await pollCheckModelSession(generation);
     } catch (error) {
         button.disabled = false;
-        button.innerHTML = '🚀 Сформировать справочники';
+        button.innerHTML = '🚀 Проверить модель';
         showToast(error.message, 'error');
     }
 }
 
-function scheduleReferencePoll(generation) {
-    if (generation !== referencePollGeneration || !referenceSessionId) return;
-    referencePollTimer = setTimeout(() => pollReferenceSession(generation), 1500);
+function scheduleCheckModelPoll(generation) {
+    if (generation !== checkModelPollGeneration || !checkModelSessionId) return;
+    checkModelPollTimer = setTimeout(() => pollCheckModelSession(generation), 2000);
 }
 
-async function pollReferenceSession(generation = referencePollGeneration) {
-    if (!referenceSessionId || generation !== referencePollGeneration) return;
-    if (referencePollTimer) {
-        clearTimeout(referencePollTimer);
-        referencePollTimer = null;
+async function pollCheckModelSession(generation = checkModelPollGeneration) {
+    if (!checkModelSessionId || generation !== checkModelPollGeneration) return;
+    if (checkModelPollTimer) {
+        clearTimeout(checkModelPollTimer);
+        checkModelPollTimer = null;
     }
 
     try {
-        const response = await fetch(`${API_BASE}/session/${referenceSessionId}/status`);
+        const response = await fetch(`${API_BASE}/session/${checkModelSessionId}/status`);
         if (!response.ok) throw new Error(await parseApiError(response, 'Ошибка получения статуса'));
         const status = await response.json();
-        if (generation !== referencePollGeneration) return;
+        if (generation !== checkModelPollGeneration) return;
 
         const progress = Number.isFinite(Number(status.progress)) ? Number(status.progress) : 0;
-        document.getElementById('referenceProgressBar').style.width = `${Math.max(0, Math.min(100, progress))}%`;
-        document.getElementById('referenceProgressText').textContent = status.progressMessage || `Обработка: ${progress}%`;
-        if (status.status === 'error') { showReferenceError(status.error || 'Неизвестная ошибка обработки'); return; }
-        if (status.status === 'completed') { await loadReferenceResult(generation); return; }
-        document.getElementById('referenceStatusText').textContent = 'В обработке';
-        scheduleReferencePoll(generation);
+        document.getElementById('checkModelProgressBar').style.width = `${Math.max(0, Math.min(100, progress))}%`;
+        document.getElementById('checkModelProgressText').textContent = status.progressMessage || `Обработка: ${progress}%`;
+        if (status.status === 'error') { showCheckModelError(status.error || 'Неизвестная ошибка проверки'); return; }
+        if (status.status === 'completed') { await loadCheckModelResult(generation); return; }
+        document.getElementById('checkModelStatusText').textContent = 'В обработке';
+        scheduleCheckModelPoll(generation);
     } catch (error) {
-        if (generation !== referencePollGeneration) return;
-        document.getElementById('referenceProgressText').textContent = `Ошибка проверки: ${error.message}. Повторяем...`;
-        scheduleReferencePoll(generation);
+        if (generation !== checkModelPollGeneration) return;
+        document.getElementById('checkModelProgressText').textContent = `Ошибка проверки: ${error.message}. Повторяем...`;
+        scheduleCheckModelPoll(generation);
     }
 }
 
-async function loadReferenceResult(generation = referencePollGeneration) {
-    const response = await fetch(`${API_BASE}/session/${referenceSessionId}/reference`);
-    if (generation !== referencePollGeneration) return;
+async function loadCheckModelResult(generation = checkModelPollGeneration) {
+    const response = await fetch(`${API_BASE}/check_model/${checkModelSessionId}`);
+    if (generation !== checkModelPollGeneration) return;
     if (response.status === 202) {
-        scheduleReferencePoll(generation);
+        scheduleCheckModelPoll(generation);
         return;
     }
     if (!response.ok) {
-        showReferenceError(await parseApiError(response, 'Ошибка получения результата'));
+        showCheckModelError(await parseApiError(response, 'Ошибка получения результата'));
         return;
     }
 
-    referenceResultData = await response.json();
-    const elements = referenceResultData.ifcElementsOutput || [];
-    const grouped = referenceResultData.ifcRawElementsGrouped || [];
-    document.getElementById('referenceElementsCount').textContent = elements.length;
-    document.getElementById('referenceGroupsCount').textContent = grouped.length;
-    document.getElementById('referenceElementsJson').textContent = JSON.stringify(elements, null, 2);
-    document.getElementById('referenceGroupedJson').textContent = JSON.stringify(grouped, null, 2);
-    document.getElementById('referenceProgressBar').style.width = '100%';
-    document.getElementById('referenceProgressText').textContent = 'Оба JSON успешно сформированы';
-    document.getElementById('referenceStatusText').textContent = 'Завершено';
-    document.getElementById('referenceStatusBox').className = 'reference-status completed';
-    document.getElementById('referenceResultsCard').style.display = 'block';
-    document.getElementById('referenceRefreshBtn').style.display = 'none';
-    document.getElementById('referenceStartBtn').innerHTML = '✅ Готово';
-    stopReferencePolling();
-    showToast('JSON-справочники готовы', 'success');
+    const data = await response.json();
+    renderCheckModelResult(data);
+    document.getElementById('checkModelProgressBar').style.width = '100%';
+    document.getElementById('checkModelProgressText').textContent = 'Проверка ЦИМ модели завершена';
+    document.getElementById('checkModelStatusText').textContent = 'Завершено';
+    document.getElementById('checkModelStatusBox').className = 'reference-status completed';
+    document.getElementById('checkModelResultsCard').style.display = 'block';
+    document.getElementById('checkModelRefreshBtn').style.display = 'none';
+    document.getElementById('checkModelStartBtn').innerHTML = '✅ Готово';
+    stopCheckModelPolling();
+    showToast('Проверка ЦИМ модели завершена', 'success');
 }
 
-function showReferenceError(message) {
-    stopReferencePolling();
-    document.getElementById('referenceStatusBox').style.display = 'block';
-    document.getElementById('referenceStatusBox').className = 'reference-status error';
-    document.getElementById('referenceStatusText').textContent = 'Ошибка';
-    document.getElementById('referenceProgressText').textContent = message;
-    document.getElementById('referenceRefreshBtn').style.display = 'none';
-    const button = document.getElementById('referenceStartBtn');
-    button.disabled = !referenceSelectedFile;
-    button.innerHTML = referenceSelectedFile ? '🔄 Запустить повторно' : '❌ Ошибка сессии';
+function _cmEscape(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[char]));
+}
+
+function renderCheckModelResult(data) {
+    const report = data.report || {};
+    const total = Number(report.elements_total ?? report.elementsTotal ?? 0);
+    const checked = Number(report.elements_checked ?? report.elementsChecked ?? 0);
+    const params = Number(report.required_attributes ?? report.requiredAttributes ?? 0);
+    const filled = Number(report.filled_values ?? report.filledValues ?? 0);
+    const empty = Number(report.empty_values ?? report.emptyValues ?? 0);
+    const skippedClasses = report.skipped_classes || report.skippedClasses || {};
+    const skipped = Object.keys(skippedClasses).length;
+    const skippedElements = Object.values(skippedClasses)
+        .reduce((sum, value) => sum + Number(value || 0), 0);
+
+    document.getElementById('checkModelElementsTotal').textContent = total;
+    document.getElementById('checkModelElementsCount').textContent =
+        total ? `${checked} из ${total}` : checked;
+    document.getElementById('checkModelParamsCount').textContent = params;
+    document.getElementById('checkModelFilledCount').textContent = filled;
+    document.getElementById('checkModelEmptyCount').textContent = empty;
+    document.getElementById('checkModelSkippedCount').textContent = skipped
+        ? `${skipped} (${skippedElements} эл.)`
+        : 0;
+
+    const llmEnabled = Boolean(report.llm_enabled ?? report.llmEnabled);
+    const llmModel = report.llm_model || report.llmModel || '';
+    const llmErrors = report.llm_errors || report.llmErrors || {};
+    const llmErrorsCount = Object.keys(llmErrors).length;
+    const llmInfo = document.getElementById('checkModelLlmInfo');
+    if (llmInfo) {
+        if (llmEnabled) {
+            llmInfo.textContent = llmErrorsCount
+                ? `LLM ${llmModel} (ошибок: ${llmErrorsCount})`
+                : `LLM ${llmModel}`;
+        } else {
+            llmInfo.textContent = 'детерминированные правила (LLM недоступна)';
+        }
+    }
+
+    const files = data.files || [];
+    const filesBox = document.getElementById('checkModelFiles');
+    if (!files.length) {
+        filesBox.innerHTML = '<p style="color:#718096;">Файлы результата ещё не сформированы.</p>';
+    } else {
+        filesBox.innerHTML = '<div style="font-weight:600;margin-bottom:8px;">Файлы результата</div>' +
+            '<div class="flex gap-8" style="flex-wrap:wrap;">' +
+            files.map((file) => {
+                const name = file.filename || '';
+                return `<button class="btn btn-sm btn-success" onclick="downloadCheckModelFile('${_cmEscape(name)}')">📥 ${_cmEscape(name)}</button>`;
+            }).join('') +
+            '</div>';
+    }
+
+    const classes = report.classes || {};
+    const rows = [];
+    Object.values(classes).forEach((cls) => {
+        const requirements = cls.requirements || {};
+        Object.values(requirements).forEach((req) => {
+            const attributes = req.attributes || [];
+            const filledMap = req.filled || {};
+            const elements = Number(req.elements || 0);
+            const elementsTotal = Number(req.elements_total ?? req.elementsTotal ?? cls.elements_total ?? cls.elementsTotal ?? 0);
+            const elementsLabel = elementsTotal > elements ? `${elements} из ${elementsTotal}` : String(elements);
+            const elementsTitle = elementsTotal > elements
+                ? `Проверено по этим требованиям: ${elements} из ${elementsTotal} элементов класса ${cls.ifc_class || ''} в файле IFC (остальные могут быть проверены по другим наборам требований)`
+                : `Все элементы класса ${cls.ifc_class || ''}, для которых определены требования: ${elements}`;
+
+            const emptyAttributes = [];
+            const summary = attributes.map((name) => {
+                const count = Number(filledMap[name] || 0);
+                const isEmpty = count < elements;
+                if (isEmpty) emptyAttributes.push(`${name} (${count}/${elements})`);
+                const itemTitle = isEmpty
+                    ? `Не заполнено: ${name} — ${count} из ${elements} (пусто ${elements - count})`
+                    : `Заполнено: ${name} — ${count} из ${elements}`;
+                const style = isEmpty
+                    ? 'color:#c53030;font-weight:600;'
+                    : 'color:#4a5568;';
+                return `<span style="${style}" title="${_cmEscape(itemTitle)}">${_cmEscape(name)}: ${count}/${elements}</span>`;
+            }).join('; ');
+            const cellTitle = emptyAttributes.length
+                ? `Не заполнены параметры (${emptyAttributes.length}): ${emptyAttributes.join(', ')}`
+                : 'Все требуемые параметры заполнены';
+
+            rows.push(
+                `<tr><td>${_cmEscape(cls.ifc_class || '')}</td>` +
+                `<td>${_cmEscape(req.code || '')}</td>` +
+                `<td>${_cmEscape(req.element || '')}</td>` +
+                `<td title="${_cmEscape(elementsTitle)}">${elementsLabel}</td>` +
+                `<td style="font-size:12px;" title="${_cmEscape(cellTitle)}">${summary}</td></tr>`
+            );
+        });
+    });
+
+    const classesBox = document.getElementById('checkModelClasses');
+    if (!rows.length) {
+        classesBox.innerHTML = '<p style="color:#718096;">Нет элементов, для которых определены требования ЦИМ.</p>';
+    } else {
+        const skippedNote = skipped
+            ? '<div style="margin-top:8px;font-size:12px;color:#975a16;background:#fffaf0;' +
+              'border:1px solid #f6e05e;border-radius:6px;padding:8px 10px;">' +
+              'Не проверены элементы классов, отсутствующих в справочнике требований ' +
+              '(<code>data/parametrs_name.json</code>): ' +
+              Object.entries(skippedClasses)
+                  .map(([name, count]) => `${_cmEscape(name)} — ${count} эл.`)
+                  .join(', ') +
+              ` Поэтому проверено ${checked} из ${total} элементов модели.</div>`
+            : '';
+        classesBox.innerHTML =
+            '<div style="font-weight:600;margin-bottom:8px;">Заполнение по классам и требованиям</div>' +
+            '<div class="table-wrap"><table><thead><tr>' +
+            '<th>IFC-класс</th><th>Требования</th><th>Элемент ЦИМ</th>' +
+            '<th title="Проверено из общего числа элементов этого IFC-класса в файле">Элементов</th>' +
+            '<th title="Красным выделены параметры, не заполненные хотя бы у части элементов; наведите курсор на параметр для подробностей">Заполнено</th>' +
+            '</tr></thead><tbody>' + rows.join('') + '</tbody></table></div>' + skippedNote;
+    }
+}
+
+function showCheckModelError(message) {
+    stopCheckModelPolling();
+    document.getElementById('checkModelStatusBox').style.display = 'block';
+    document.getElementById('checkModelStatusBox').className = 'reference-status error';
+    document.getElementById('checkModelStatusText').textContent = 'Ошибка';
+    document.getElementById('checkModelProgressText').textContent = message;
+    document.getElementById('checkModelRefreshBtn').style.display = 'none';
+    const button = document.getElementById('checkModelStartBtn');
+    button.disabled = !checkModelSelectedFile;
+    button.innerHTML = checkModelSelectedFile ? '🔄 Запустить повторно' : '❌ Ошибка сессии';
     showToast(message, 'error');
 }
 
-function refreshReferenceResult() {
-    if (!referenceSessionId) return;
-    if (referencePollTimer) clearTimeout(referencePollTimer);
-    referencePollTimer = null;
-    pollReferenceSession(referencePollGeneration);
+function refreshCheckModelResult() {
+    if (!checkModelSessionId) return;
+    if (checkModelPollTimer) clearTimeout(checkModelPollTimer);
+    checkModelPollTimer = null;
+    pollCheckModelSession(checkModelPollGeneration);
 }
 
-function openReferenceSession(sessionId) {
-    stopReferencePolling();
-    referenceSelectedFile = null;
-    referenceResultData = null;
-    referenceSessionId = sessionId;
-    switchTab('reference');
-    document.getElementById('referenceFileInfo').style.display = 'none';
-    document.getElementById('referenceResultsCard').style.display = 'none';
-    document.getElementById('referenceStatusBox').style.display = 'block';
-    document.getElementById('referenceStatusBox').className = 'reference-status';
-    document.getElementById('referenceSessionId').textContent = sessionId;
-    document.getElementById('referenceStatusText').textContent = 'Проверка статуса';
-    document.getElementById('referenceProgressText').textContent = 'Загрузка данных сессии...';
-    document.getElementById('referenceRefreshBtn').style.display = 'inline-block';
-    document.getElementById('referenceStartBtn').disabled = true;
-    document.getElementById('referenceStartBtn').innerHTML = '⏳ Существующая сессия';
-    pollReferenceSession(referencePollGeneration);
+function openCheckModelSession(sessionId) {
+    stopCheckModelPolling();
+    checkModelSelectedFile = null;
+    checkModelSessionId = sessionId;
+    switchTab('checkmodel');
+    document.getElementById('checkModelFileInfo').style.display = 'none';
+    document.getElementById('checkModelResultsCard').style.display = 'none';
+    document.getElementById('checkModelStatusBox').style.display = 'block';
+    document.getElementById('checkModelStatusBox').className = 'reference-status';
+    document.getElementById('checkModelSessionId').textContent = sessionId;
+    document.getElementById('checkModelStatusText').textContent = 'Проверка статуса';
+    document.getElementById('checkModelProgressText').textContent = 'Загрузка данных сессии...';
+    document.getElementById('checkModelRefreshBtn').style.display = 'inline-block';
+    document.getElementById('checkModelStartBtn').disabled = true;
+    document.getElementById('checkModelStartBtn').innerHTML = '⏳ Существующая сессия';
+    pollCheckModelSession(checkModelPollGeneration);
 }
 
-function referenceJsonByKind(kind) {
-    if (!referenceResultData) return null;
-    return kind === 'elements' ? referenceResultData.ifcElementsOutput : referenceResultData.ifcRawElementsGrouped;
+function downloadCheckModelFile(filename) {
+    if (!checkModelSessionId || !filename) return;
+    window.location.href = `${API_BASE}/session/${checkModelSessionId}/download/${encodeURIComponent(filename)}`;
 }
 
-function downloadReferenceJson(kind) {
-    const data = referenceJsonByKind(kind);
-    if (!data) return;
-    const filename = kind === 'elements' ? 'ifc_elements_output.json' : 'ifc_raw_elements_grouped.json';
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-}
-
-async function copyReferenceJson(kind) {
-    const data = referenceJsonByKind(kind);
-    if (!data) return;
-    const text = JSON.stringify(data, null, 2);
-    try { await navigator.clipboard.writeText(text); }
-    catch {
-        const ta = document.createElement('textarea'); ta.value = text;
-        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
-    }
-    showToast('JSON скопирован', 'success');
+function downloadAllCheckModel() {
+    if (!checkModelSessionId) return;
+    window.location.href = `${API_BASE}/session/${checkModelSessionId}/download_all`;
 }
 
 // ========== Загрузка файла ==========
@@ -5794,20 +5821,21 @@ async function loadHistory() {
             return;
         }
         container.innerHTML = data.sessions.map(s => {
-            const cls = {ifc_processing:'status-processing',ifc_processed:'status-waiting',selecting_rows:'status-waiting',processing:'status-processing',completed:'status-completed',error:'status-error',reference_processing:'status-processing',models_processing:'status-processing',comparing:'status-processing',models_ready:'status-waiting',parameters_required:'status-waiting'}[s.status]||'status-waiting';
-            const txt = {ifc_processing:'Обработка IFC...',ifc_processed:'IFC обработан',selecting_rows:'Выбор строк',processing:'Обработка...',completed:'✅ Завершена',error:'❌ Ошибка',reference_processing:'JSON-справочники...',models_processing:'Обработка моделей...',models_ready:'ВОР готовы — загрузите ВОР заказчика',parameters_required:'Проверьте параметры расчёта',comparing:'Сравнение...'}[s.status]||s.status;
+            const cls = {ifc_processing:'status-processing',ifc_processed:'status-waiting',selecting_rows:'status-waiting',processing:'status-processing',check_model_processing:'status-processing',completed:'status-completed',error:'status-error',reference_processing:'status-processing',models_processing:'status-processing',comparing:'status-processing',models_ready:'status-waiting',parameters_required:'status-waiting'}[s.status]||'status-waiting';
+            const txt = {ifc_processing:'Обработка IFC...',ifc_processed:'IFC обработан',selecting_rows:'Выбор строк',processing:'Обработка...',check_model_processing:'Проверка ЦИМ...',completed:'✅ Завершена',error:'❌ Ошибка',reference_processing:'JSON-справочники...',models_processing:'Обработка моделей...',models_ready:'ВОР готовы — загрузите ВОР заказчика',parameters_required:'Проверьте параметры расчёта',comparing:'Сравнение...'}[s.status]||s.status;
             const ptLabel = normalizeProcessingType(s.processingType || s.processing_type);
             const ptIcon = ptLabel === 'AI' ? '🏛️' : '🏗️';
             const isComparison = s.sessionType === 'comparison';
             const isVorGeneration = s.sessionType === 'vor_generation';
+            const isCheckModel = s.sessionType === 'check_model';
             const isReference = s.isReferenceSession;
-            const isArchivedWorkflow = isComparison || isVorGeneration;
-            const primaryAction = isArchivedWorkflow
-                ? ((s.files||[]).length ? `<button class="btn btn-sm btn-primary" onclick="downloadAllFiles('${s.sessionId}')">Скачать результаты</button>` : '<span class="progress-text">Архивная сессия</span>')
-                : isReference
-                    ? `<button class="btn btn-sm btn-primary" onclick="openReferenceSession('${s.sessionId}')">Открыть JSON</button>`
+            const isArchivedWorkflow = isComparison || isVorGeneration || isReference;
+            const primaryAction = isCheckModel
+                ? `<button class="btn btn-sm btn-primary" onclick="openCheckModelSession('${s.sessionId}')">Открыть проверку</button>`
+                : isArchivedWorkflow
+                    ? ((s.files||[]).length ? `<button class="btn btn-sm btn-primary" onclick="downloadAllFiles('${s.sessionId}')">Скачать результаты</button>` : '<span class="progress-text">Архивная сессия</span>')
                     : `<button class="btn btn-sm btn-primary" onclick="restoreSession('${s.sessionId}')">Восстановить</button>`;
-            return `<div class="session-item"><div class="top"><span class="id">${s.sessionId.substring(0,8)}…</span><span class="status ${cls}">${txt}</span></div><div class="info"><span>📅 ${new Date(s.createdAt).toLocaleString('ru-RU')}</span>${s.ifcFileName?` · 📄 ${s.ifcFileName}`:''}${s.buildingHeight?` · 📏 ${s.buildingHeight}м`:''}${(s.files||[]).length?` · 📦 ${s.files.length} файлов`:''} · ${ptIcon} ${ptLabel}${isComparison?' · ⚖️ Сравнение':isReference?' · 🧪 Справочник':''}</div><div class="actions">${primaryAction}${!isArchivedWorkflow&&(s.files||[]).length?`<button class="btn btn-sm btn-success" onclick="downloadAllFiles('${s.sessionId}')">Скачать всё</button>`:''}<button class="btn btn-sm btn-danger" onclick="deleteSession('${s.sessionId}')">Удалить</button></div></div>`;
+            return `<div class="session-item"><div class="top"><span class="id">${s.sessionId.substring(0,8)}…</span><span class="status ${cls}">${txt}</span></div><div class="info"><span>📅 ${new Date(s.createdAt).toLocaleString('ru-RU')}</span>${s.ifcFileName?` · 📄 ${s.ifcFileName}`:''}${s.buildingHeight?` · 📏 ${s.buildingHeight}м`:''}${(s.files||[]).length?` · 📦 ${s.files.length} файлов`:''} · ${ptIcon} ${ptLabel}${isComparison?' · ⚖️ Сравнение':isReference?' · 🧪 Справочник':isCheckModel?' · 🧩 Проверка ЦИМ':''}</div><div class="actions">${primaryAction}${!isArchivedWorkflow&&(s.files||[]).length?`<button class="btn btn-sm btn-success" onclick="downloadAllFiles('${s.sessionId}')">Скачать всё</button>`:''}<button class="btn btn-sm btn-danger" onclick="deleteSession('${s.sessionId}')">Удалить</button></div></div>`;
         }).join('');
     } catch (e) { container.innerHTML = `<p style="color:#fc8181;">Ошибка: ${e.message}</p>`; }
 }
@@ -5819,6 +5847,10 @@ async function restoreSession(sessionId) {
         const response = await fetch(`${API_BASE}/session/${sessionId}/restore`, { method: 'POST' });
         if (!response.ok) { const error = await response.json(); throw new Error(error.detail || 'Ошибка'); }
         const data = await response.json();
+        if (data.sessionType === 'check_model') {
+            openCheckModelSession(sessionId);
+            return;
+        }
         if (['comparison','vor_generation'].includes(data.sessionType) || data.sourceType === 'comparison') {
             if ((data.files || []).length) downloadAllFiles(sessionId);
             showToast('Файлы архивной сессии доступны в истории. Новые расчёты выполняются во вкладке «Обработка».', 'info');
@@ -5878,13 +5910,6 @@ async function deleteSession(sessionId) {
 document.addEventListener('DOMContentLoaded', () => {
     loadHistory();
     updateProcessingTypeBadges();
-    document.querySelectorAll('input[name="referenceProcessingType"]').forEach(radio => {
-        radio.addEventListener('change', function() {
-            document.querySelectorAll('#referenceTypeSelector .processing-type-label').forEach(label => {
-                label.classList.toggle('active', label.querySelector('input').checked);
-            });
-        });
-    });
     document.getElementById('previewModal').addEventListener('click', function(e) { if (e.target === this) closePreview(); });
     init3DModalInput();
     document.getElementById('viewer3dModal').addEventListener('click', function(e) { if (e.target === this) close3DViewer(); });

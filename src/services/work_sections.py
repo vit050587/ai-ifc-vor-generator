@@ -6,7 +6,7 @@ Unknown objects keep their original group instead of inventing a classification.
 This module never changes quantities, resource ownership or group membership.
 """
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 
@@ -53,6 +53,10 @@ class SectionCatalog:
                 _, resolved = _storey_part(storey, facts.get('Отметка_этажа', ''))
                 part = resolved
         kind = mapping.detect_kind(text)
+        if re.search(r'лестничн.*(?:площад|клетк)|(?:площад|клетк).*лестничн', norm(text)):
+            kind = 'stair'
+        if re.search(r'приям', norm(text)):
+            kind = 'foundation_slab'
         if not kind:
             cls = facts.get('IfcClass') or facts.get('Тип элемента') or facts.get('ifc_class') or facts.get('ifcClass')
             kind = {'IfcWall': 'wall', 'IfcWallStandardCase': 'wall', 'IfcSlab': 'slab',
@@ -66,7 +70,8 @@ class SectionCatalog:
             kind = {'wall': 'precast_panel', 'stair': 'precast', 'parapet': 'precast_parapet'}.get(kind, kind)
         if not kind or not part or method == 'conflicting':
             return None
-        candidates = [s for s in self.sections if s.kind == kind and s.part == part
+        section_kind = 'foundation_slab' if kind == 'crane_foundation' else kind
+        candidates = [s for s in self.sections if s.kind == section_kind and s.part == part
                       and (method == 'unknown' or s.method in ('unknown', method))]
         if not candidates:
             return None
@@ -80,7 +85,25 @@ class SectionCatalog:
             specific = len(tokens & set(re.findall(r'[а-яa-z]{4,}', norm(section.path[-1]))))
             return (-exact, -specific, section.order)
 
-        return min(candidates, key=score)
+        selected = min(candidates, key=score)
+        prefix = re.match(r'Подраздел\s+\d+[.]?\s*', selected.path[-1], re.I)
+        prefix = prefix.group(0) if prefix else ''
+        if kind in ('foundation_slab', 'crane_foundation'):
+            path = (*selected.path[:-1], prefix + 'Фундаментная плита')
+            if kind == 'crane_foundation':
+                path += ('Фундамент под башенный кран',)
+            elif re.search(r'приям', norm(text)):
+                path += ('Приямки',)
+            return replace(selected, path=path)
+        if kind in ('stair', 'precast'):
+            path = (*selected.path[:-1], prefix + 'Лестницы')
+            cls = facts.get('ifc_class') or facts.get('IfcClass') or facts.get('ifcClass')
+            if re.search(r'марш|\brun\b', norm(text)) or cls == 'IfcStairFlight':
+                path += ('Лестничные марши',)
+            elif re.search(r'площад|клетк|\blanding\b', norm(text)) or cls == 'IfcSlab':
+                path += ('Лестничные площадки',)
+            return replace(selected, path=path)
+        return selected
 
 
 @lru_cache(maxsize=4)
@@ -157,7 +180,7 @@ def sectioned_positions(positions, section_catalog=None, *, show_groups=True):
         blocks.append((section, heading, record, resources))
     retain_empty()
     # Unclassified source groups retain their original order and heading.
-    blocks.sort(key=lambda b: b[0].order if b[0] else len(section_catalog.sections))
+    blocks.sort(key=lambda b: (b[0].order, b[0].path) if b[0] else (len(section_catalog.sections), ()))
     previous_path, previous_group = (), None
     for section, heading, record, resources in blocks:
         path = section.path if section else ()
@@ -166,7 +189,7 @@ def sectioned_positions(positions, section_catalog=None, *, show_groups=True):
             while common < min(len(path), len(previous_path)) and path[common] == previous_path[common]:
                 common += 1
             for level in range(common, len(path)):
-                yield {'heading': path[level], 'heading_level': ('part', 'section', 'subsection')[level]}, []
+                yield {'heading': path[level], 'heading_level': ('part', 'section', 'subsection', 'subgroup')[min(level, 3)]}, []
             previous_group = None
         group_key = (path, (record or {}).get('group_id'), heading)
         if heading and (show_groups or not section) and (group_key != previous_group or record is None):

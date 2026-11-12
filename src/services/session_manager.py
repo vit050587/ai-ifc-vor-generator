@@ -360,173 +360,6 @@ class SessionManager:
         
         return s.get("excel_file_path")
     
-    @staticmethod
-    def _read_reference_json(path: str) -> List[Dict[str, Any]]:
-        if not os.path.isfile(path):
-            raise RuntimeError(f"Не сформирован файл {os.path.basename(path)}")
-        with open(path, "r", encoding="utf-8") as stream:
-            data = json.load(stream)
-        if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
-            raise RuntimeError(f"Файл {os.path.basename(path)} должен содержать массив объектов")
-        return data
-    
-    # =====================================================================
-    #  JSON-СПРАВОЧНИКИ (reference)
-    # =====================================================================
-    
-    def build_reference(self, file, original_name: str, processing_type: str = "KR") -> Dict[str, Any]:
-        """Запуск построения JSON-справочников из IFC или PDF."""
-        if not file or not original_name:
-            raise ValueError("Отсутствует файл или имя файла")
-
-        extension = os.path.splitext(original_name)[1].lower()
-        if extension not in (".ifc", ".pdf"):
-            raise ValueError("Поддерживаются файлы .ifc и .pdf")
-
-        processing_type = processing_type.upper()
-        if processing_type not in ("KR", "AR", "ARCH"):
-            processing_type = "KR"
-
-        source_type = extension[1:]
-        safe_name = secure_filename(original_name) or f"uploaded_file{extension}"
-        session_id = str(uuid.uuid4())
-        session_dir = os.path.join(self.output_folder, session_id)
-        os.makedirs(session_dir, exist_ok=True)
-
-        source_path = os.path.join(session_dir, f"original_{safe_name}")
-        try:
-            file.save(source_path)
-            if not os.path.isfile(source_path) or os.path.getsize(source_path) == 0:
-                raise ValueError("Ошибка сохранения файла")
-        except Exception:
-            logger.error("Ошибка сохранения файла для справочника", exc_info=True)
-            raise
-
-        session = {
-            "session_id": session_id,
-            "created_at": datetime.utcnow().isoformat() + "Z",
-            "source_type": source_type,
-            "status": "reference_processing",
-            "processing_type": processing_type,
-            "ifc_file_name": original_name if source_type == "ifc" else None,
-            "ifc_file_path": source_path if source_type == "ifc" else None,
-            "pdf_file_name": original_name if source_type == "pdf" else None,
-            "pdf_file_path": source_path if source_type == "pdf" else None,
-            "excel_file_name": None,
-            "excel_file_path": None,
-            "selected_rows": None,
-            "construction_types": {},
-            "construction_materials": {},
-            "grouped_data": {},
-            "building_height": None,
-            "files": [],
-            "runs": [],
-            "current_run_id": None,
-            "error": None,
-            "progress": 10,
-            "progress_message": "Формирование JSON-справочников...",
-            "has_results": False,
-            "is_reference_session": True,
-        }
-
-        with self._state_lock:
-            self._sessions[session_id] = session
-            self._save()
-
-        thread = threading.Thread(
-            target=self._build_reference_bg,
-            args=(session_id, source_path, source_type, processing_type),
-            daemon=True,
-            name=f"Reference-{source_type.upper()}-{session_id[:8]}",
-        )
-        try:
-            thread.start()
-        except Exception as exc:
-            self._update(
-                session_id,
-                status="error",
-                error=f"{type(exc).__name__}: {exc}",
-                progress_message="Не удалось запустить фоновую обработку",
-            )
-            raise
-
-        return {
-            "session_id": session_id,
-            "source_type": source_type,
-            "status": "reference_processing",
-            "message": "Файл принят, формирование JSON-справочников запущено",
-        }
-
-    def _build_reference_bg(self, session_id: str, source_path: str, source_type: str, processing_type: str = "KR") -> None:
-        try:
-            session_dir = os.path.join(self.output_folder, session_id)
-            self._update_progress(session_id, 20, "Извлечение и группировка элементов...")
-
-            if source_type == "ifc":
-                from src.services.ifc_reference_builder import build_reference_from_ifc
-                build_reference_from_ifc(source_path, session_dir, processing_type)
-            else:
-                process_pdf(
-                    source_path,
-                    output_folder=session_dir,
-                    reference_only=True,
-                    processing_type=processing_type,
-                )
-
-            elements_path = os.path.join(session_dir, "ifc_elements_output.json")
-            grouped_path = os.path.join(session_dir, "ifc_raw_elements_grouped.json")
-            self._read_reference_json(elements_path)
-            self._read_reference_json(grouped_path)
-
-            files = [
-                {"path": elements_path, "filename": "ifc_elements_output.json", "size": os.path.getsize(elements_path)},
-                {"path": grouped_path, "filename": "ifc_raw_elements_grouped.json", "size": os.path.getsize(grouped_path)},
-            ]
-
-            with self._state_lock:
-                current = self._sessions.get(session_id)
-                if current is not None:
-                    current["status"] = "completed"
-                    current["files"] = files
-                    current["progress"] = 100
-                    current["progress_message"] = "JSON-справочники сформированы"
-                    current["has_results"] = True
-                    self._save()
-        except Exception as exc:
-            error_msg = f"{type(exc).__name__}: {exc}"
-            logger.error(f"Ошибка построения JSON-справочников для сессии {session_id}", exc_info=True)
-            self._update(
-                session_id,
-                status="error",
-                error=error_msg,
-                progress_message="Ошибка формирования JSON-справочников",
-            )
-
-    def get_reference_result(self, session_id: str) -> Optional[Dict[str, Any]]:
-        session = self.get(session_id)
-        if not session:
-            raise KeyError("Сессия не найдена")
-        if not session.get("is_reference_session"):
-            raise ValueError("Сессия не относится к построению справочников")
-        if session.get("status") == "reference_processing":
-            return None
-        if session.get("status") == "error":
-            raise RuntimeError(session.get("error") or "Ошибка построения справочников")
-        if session.get("status") != "completed":
-            return None
-
-        session_dir = os.path.join(self.output_folder, session_id)
-        return {
-            "session_id": session_id,
-            "source_type": session.get("source_type", ""),
-            "ifc_elements_output": self._read_reference_json(
-                os.path.join(session_dir, "ifc_elements_output.json")
-            ),
-            "ifc_raw_elements_grouped": self._read_reference_json(
-                os.path.join(session_dir, "ifc_raw_elements_grouped.json")
-            ),
-        }
-
     # =====================================================================
     #  ОБРАБОТКА IFC
     # =====================================================================
@@ -793,6 +626,208 @@ class SessionManager:
             logger.error(f"Ошибка обработки IFC для сессии {session_id}:\n{traceback.format_exc()}")
             self._update(session_id, status="error", error=error_msg)
     
+    # =====================================================================
+    #  ПРОВЕРКА ЦИМ МОДЕЛИ
+    # =====================================================================
+
+    def process_check_model(self, file, original_name: str) -> Dict[str, Any]:
+        """Принять IFC-файл и запустить проверку ЦИМ модели.
+
+        Пайплайн: выгрузка сырого дампа IFC тем же шагом, что и в режиме ЦС
+        (``IFC_исходные_параметры.json/.xlsx``), затем сопоставление требуемых
+        параметров из ``data/parametrs_name.json`` с параметрами модели через
+        LLM и формирование ``Проверка_ЦИМ_модели.json/.xlsx``.
+        """
+        if not file or not original_name:
+            raise ValueError("Отсутствует файл или имя файла")
+
+        extension = os.path.splitext(original_name)[1].lower()
+        if extension != ".ifc":
+            raise ValueError("Для проверки ЦИМ модели поддерживается только IFC-файл (.ifc)")
+
+        safe_name = secure_filename(original_name) or "uploaded_file.ifc"
+        session_id = str(uuid.uuid4())
+        session_dir = os.path.join(self.output_folder, session_id)
+        os.makedirs(session_dir, exist_ok=True)
+
+        ifc_filename = f"original_{safe_name}"
+        ifc_path = os.path.join(session_dir, ifc_filename)
+        try:
+            file.save(ifc_path)
+            if not os.path.exists(ifc_path) or os.path.getsize(ifc_path) == 0:
+                raise ValueError("Ошибка сохранения файла")
+        except Exception:
+            logger.error("Ошибка сохранения IFC файла для проверки ЦИМ", exc_info=True)
+            raise
+
+        session = {
+            "session_id": session_id,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "session_type": "check_model",
+            "source_type": "ifc",
+            "status": "check_model_processing",
+            "processing_type": "KR",
+            "ifc_file_name": original_name,
+            "ifc_file_path": ifc_path,
+            "excel_file_name": None,
+            "excel_file_path": None,
+            "selected_rows": None,
+            "construction_types": {},
+            "construction_materials": {},
+            "grouped_data": {},
+            "building_height": None,
+            "files": [],
+            "runs": [],
+            "current_run_id": None,
+            "error": None,
+            "progress": 0,
+            "progress_message": "Начало проверки ЦИМ модели...",
+            "has_results": False,
+        }
+
+        with self._state_lock:
+            self._sessions[session_id] = session
+            self._save()
+
+        thread = threading.Thread(
+            target=self._process_check_model_bg,
+            args=(session_id, ifc_path),
+            daemon=True,
+            name=f"Check-Model-{session_id[:8]}",
+        )
+        thread.start()
+
+        return {
+            "session_id": session_id,
+            "status": "check_model_processing",
+            "message": "IFC файл принят, проверка ЦИМ модели запущена",
+        }
+
+    def _process_check_model_bg(self, session_id: str, ifc_path: str) -> None:
+        try:
+            if not os.path.exists(ifc_path):
+                raise FileNotFoundError(f"IFC файл не найден: {ifc_path}")
+
+            session_dir = os.path.join(self.output_folder, session_id)
+            self._update_progress(session_id, 5, "Проверка IFC файла...")
+
+            import ifcopenshell
+            ifc_model = ifcopenshell.open(ifc_path)
+
+            self._update_progress(
+                session_id, 10,
+                "Выгрузка параметров элементов IFC (IFC_исходные_параметры)...",
+            )
+            from src.services.ifc_raw_dump import (
+                dump_ifc_elements_raw,
+                RAW_DUMP_FILENAME,
+                RAW_DUMP_JSON_FILENAME,
+            )
+            raw_path = dump_ifc_elements_raw(
+                ifc_path,
+                session_dir,
+                model=ifc_model,
+                # Для проверки ЦИМ нужны и проёмы (IfcOpeningElement).
+                exclude_classes=(),
+            )
+
+            # Количество элементов каждого IFC-класса в самом файле — для
+            # отображения «проверено X из Y» в отчёте. by_type() учитывает
+            # и наследников (например, IfcWallStandardCase для IfcWall).
+            file_class_totals: dict = {}
+            try:
+                from src.services.check_model.requirements import (
+                    group_by_ifc_class,
+                    load_requirements,
+                )
+                for ifc_class in group_by_ifc_class(load_requirements()):
+                    try:
+                        file_class_totals[ifc_class] = len(
+                            ifc_model.by_type(ifc_class)
+                        )
+                    except Exception:
+                        # Класса нет в схеме IFC или ошибка обхода — для него
+                        # количество будет взято из сырого дампа.
+                        logger.debug(
+                            "Не удалось посчитать элементы класса %s",
+                            ifc_class,
+                            exc_info=True,
+                        )
+            except Exception:
+                logger.warning(
+                    "Не удалось посчитать количество элементов по IFC-классам",
+                    exc_info=True,
+                )
+            del ifc_model
+
+            if not raw_path or not os.path.exists(raw_path):
+                raise RuntimeError("Не удалось выгрузить параметры элементов IFC")
+
+            self.register_file(session_id, raw_path, RAW_DUMP_FILENAME)
+            raw_json_path = os.path.join(session_dir, RAW_DUMP_JSON_FILENAME)
+            if os.path.isfile(raw_json_path):
+                self.register_file(session_id, raw_json_path, RAW_DUMP_JSON_FILENAME)
+            else:
+                raise RuntimeError(
+                    f"Не сформирован {RAW_DUMP_JSON_FILENAME} — проверка ЦИМ невозможна"
+                )
+
+            self._update_progress(
+                session_id, 40,
+                "Параметры выгружены. Определение требований ЦИМ и заполнение...",
+            )
+
+            from src.services.check_model.pipeline import (
+                CHECK_MODEL_MAPPING_JSON,
+                CHECK_MODEL_REPORT_JSON,
+                CHECK_MODEL_RESULT_JSON,
+                CHECK_MODEL_RESULT_XLSX,
+                run_check_model,
+            )
+            report = run_check_model(
+                session_dir,
+                progress=lambda percent, message: self._update_progress(
+                    session_id, percent, message
+                ),
+                class_totals=file_class_totals,
+            )
+
+            for filename in (
+                CHECK_MODEL_RESULT_XLSX,
+                CHECK_MODEL_RESULT_JSON,
+                CHECK_MODEL_REPORT_JSON,
+                CHECK_MODEL_MAPPING_JSON,
+            ):
+                path = os.path.join(session_dir, filename)
+                if os.path.isfile(path):
+                    self.register_file(session_id, path, filename)
+
+            with self._state_lock:
+                if session_id in self._sessions:
+                    self._sessions[session_id]["status"] = "completed"
+                    self._sessions[session_id]["progress"] = 100
+                    self._sessions[session_id]["progress_message"] = (
+                        "Проверка ЦИМ модели завершена"
+                    )
+                    self._sessions[session_id]["has_results"] = True
+                    self._sessions[session_id]["error"] = None
+                    self._sessions[session_id]["check_model_report"] = report
+                    self._save()
+        except Exception as exc:
+            import traceback
+            error_msg = f"{type(exc).__name__}: {exc}"
+            logger.error(
+                "Ошибка проверки ЦИМ модели для сессии %s:\n%s",
+                session_id,
+                traceback.format_exc(),
+            )
+            self._update(
+                session_id,
+                status="error",
+                error=error_msg,
+                progress_message="Ошибка проверки ЦИМ модели",
+            )
+
     # =====================================================================
     #  ОБРАБОТКА PDF
     # =====================================================================

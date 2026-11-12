@@ -129,6 +129,49 @@ def _classify(a: str, b: str, c: str) -> str:
     return "other"
 
 
+def _numbering_row(values):
+    """The revised template includes a printed column-number row below headers."""
+    return tuple(_text(value) for value in values[:5]) == ('1', '2', '3', '4', '5')
+
+
+def _prepare_render_layout(ws):
+    """Map the revised source columns into the existing calculated VOR output.
+
+    Source E contains justification and F contains estimate requirements. Keep
+    the source asset unchanged; output E/F/G/H remain calculation, justification,
+    requirements and actual parameters, as expected by comparison and viewers.
+    """
+    compact = 'обоснован' in _text(ws.cell(2, 5).value).lower()
+    if not compact:
+        return
+    merges = list(ws.merged_cells.ranges)
+    for area in merges:
+        ws.unmerge_cells(str(area))
+    for row in range(1, ws.max_row + 1):
+        for target, source in ((8, 7), (7, 6), (6, 5)):
+            original, destination = ws.cell(row, source), ws.cell(row, target)
+            destination.value = original.value
+            destination._style = copy.copy(original._style)
+            if original.comment:
+                destination.comment = copy.copy(original.comment)
+        ws.cell(row, 5).value = None
+    for area in merges:
+        if area.min_col >= 5:
+            ws.merge_cells(start_row=area.min_row, end_row=area.max_row,
+                           start_column=area.min_col + 1, end_column=area.max_col + 1)
+        elif area.min_row == area.max_row == 1:
+            ws.merge_cells(start_row=1, end_row=1, start_column=1, end_column=COLUMNS)
+        else:
+            ws.merge_cells(str(area))
+    ws.cell(2, 5, 'Расчёт объёма')
+    ws.cell(2, 5)._style = copy.copy(ws.cell(2, 6)._style)
+    ws.merge_cells('E2:E3')
+    ws.cell(3, 7).value = None
+    ws.cell(3, 8).value = None
+    ws.column_dimensions['E'].width = 60
+    ws.column_dimensions['F'].width = 60
+
+
 def parse_template(path: str = None, sheet_name: str = DEFAULT_SHEET) -> List[TemplateRow]:
     """Разбирает лист типового шаблона в список :class:`TemplateRow`."""
     path = path or DEFAULT_TEMPLATE_PATH
@@ -149,6 +192,8 @@ def parse_template(path: str = None, sheet_name: str = DEFAULT_SHEET) -> List[Te
     parking = False
 
     for r in range(FIRST_DATA_ROW, ws.max_row + 1):
+        if r <= 4 and _numbering_row([_cell(ws, r, c) for c in range(1, 6)]):
+            continue
         a = _text(_cell(ws, r, 1))
         b = _text(_cell(ws, r, 2))
         c = _text(_cell(ws, r, 3))
@@ -235,7 +280,7 @@ def with_kind(rows, kind):
 
 
 def render_template(output_rows: List[OutputRow], path: str = None,
-                    sheet_name: str = DEFAULT_SHEET, output_path: str = None) -> str:
+                    sheet_name: str = DEFAULT_SHEET, output_path: str = None, stair_rows=None) -> str:
     """Записывает заполненный ВОР в копию шаблона.
 
     Структура листа (заголовки, порядок разделов, форматирование) сохраняется:
@@ -251,6 +296,7 @@ def render_template(output_rows: List[OutputRow], path: str = None,
     src = load_workbook(path, data_only=False)
     out = src
     ws = out[sheet_name]
+    _prepare_render_layout(ws)
     src_ws = out.copy_worksheet(ws)
 
     def write_text(target, column, value):
@@ -289,6 +335,7 @@ def render_template(output_rows: List[OutputRow], path: str = None,
         ws.cell(row=target, column=2).value = _cell(src_ws, row.src_index, 2)
         ws.cell(row=target, column=3).value = _cell(src_ws, row.src_index, 3)
         ws.cell(row=target, column=5).value = _cell(src_ws, row.src_index, 5)
+        ws.cell(row=target, column=7).value = _cell(src_ws, row.src_index, 7)
 
         if row.label is not None:
             ws.cell(row=target, column=1).value = row.label
@@ -341,6 +388,9 @@ def render_template(output_rows: List[OutputRow], path: str = None,
     ws.print_area = f'A1:H{ws.max_row}'
     os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
     out.remove(src_ws)
+    if stair_rows is not None:
+        from .stair_report import write as write_stairs
+        write_stairs(out, stair_rows)
     out.save(output_path)
     out.close()
     from .model_links import save as save_model_links

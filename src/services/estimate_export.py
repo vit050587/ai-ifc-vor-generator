@@ -413,6 +413,9 @@ def prepare(folder, *, project_name='', detail_provider=None, coefficient_provid
             records.append(row)
             continue
         detail = details.get(row['code']) or {}
+        if row['code'].startswith('3.6-98-'):
+            detail = dict(detail, **{key: 1 for key in ('winterRisePrice', 'winterRisePriceMat',
+                           'baseWinterRisePrice', 'baseWinterRisePriceMat')})
         decisions=decisions_by_row.get(row_index,[])
         factors, notes = _corrections(decisions, row)
         if any(d.get('decision') == 'неясно' for d in decisions):
@@ -438,6 +441,12 @@ def prepare(folder, *, project_name='', detail_provider=None, coefficient_provid
     records = consolidate(records)
     result = {'source':str(source),'project_name':project_name,'period':period,'rows':records,
               'warnings':list(dict.fromkeys(warnings))}
+    from .vor_comparison import _find_session_dir
+    raw = _find_session_dir(str(folder), 'IFC_исходные_параметры.json')
+    if raw:
+        from .vor_generation.elements import ElementIndex
+        from .vor_generation.stair_report import records as stair_records
+        result['stairs'] = stair_records(ElementIndex.from_raw_dump(raw))
     from .estimate_formulas import round_costs
     round_costs(result)
     return result
@@ -504,7 +513,7 @@ def write_workbook(data, path):
             if level != 'group':
                 finish_section()
             sheet.merge_cells(start_row=i,start_column=1,end_row=i,end_column=11)
-            title = record['heading'] if level in ('part', 'section', 'subsection', 'group') else 'Раздел: '+record['heading']
+            title = record['heading'] if level in ('part', 'section', 'subsection', 'subgroup', 'group') else 'Раздел: '+record['heading']
             sheet.cell(i,1,title).font=Font(name='Arial',size=10 if level == 'group' else 11,bold=True)
             sheet.cell(i,1).alignment=Alignment(wrap_text=True,vertical='center')
             sheet.row_dimensions[i].height=32
@@ -542,6 +551,8 @@ def write_workbook(data, path):
             _comment(sheet.cell(i,7),explanation)
             winter_note=(f"Зимнее удорожание из параметров расценки {record['code']} за выбранный период {data['period']['title']}. {STATUS[item['status']]}."
                          if item.get('winter_source',item['winter'] != 1) else 'Данные зимнего удорожания выбранного периода не предоставлены. Зимний коэффициент не применялся.')
+            if record['code'].startswith('3.6-98-'):
+                winter_note = 'Уход за бетоном в летний период по правилу проекта; зимнее удорожание не применяется.'
             _comment(sheet.cell(i,8),winter_note)
             added=', '.join({'correction':'поправочный коэффициент','winter':'зимний коэффициент'}[key] for key in item['applied']) or 'нет'
             _comment(sheet.cell(i,11),f"Исходная сумма из текущего перечня: {item['source_amount']}; поправка: {item['correction']}; зимний коэффициент: {item['winter']}. {STATUS[item['status']]}. Добавленные множители: {added}.\n{explanation}")
@@ -619,6 +630,9 @@ def write_workbook(data, path):
     sheet.sheet_properties.pageSetUpPr.fitToPage=True
     from .estimate_formulas import apply, cache_results
     formula_cache = apply(book,data,layout)
+    if 'stairs' in data:
+        from .vor_generation.stair_report import write as write_stairs
+        write_stairs(book, data['stairs'])
     try:
         book.save(path)
     finally:
@@ -636,6 +650,11 @@ def _fingerprint(folder, project_name):
              Path(__file__).with_name('work_sections.py'),Path(__file__).with_name('estimate_consolidation.py'),Path(__file__).with_name('quantity_provenance.py'),Path(__file__).with_name('construction_method.py'),Path(template.DEFAULT_TEMPLATE_PATH)}
     paths.update(p/name for p in (folder,folder.parent) for name in names if (p/name).is_file())
     paths.update(Path(tsn_coeffs.TSN_DIR).glob('*.json'))
+    paths.add(Path(__file__).parent / 'vor_generation' / 'stair_report.py')
+    from .vor_comparison import _find_session_dir
+    raw = _find_session_dir(str(folder), 'IFC_исходные_параметры.json')
+    if raw:
+        paths.add(Path(raw))
     from src.core.config import load_config
     resource_catalog = Path(load_config().KOEFS_PATH)
     if resource_catalog.is_file():

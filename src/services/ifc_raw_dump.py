@@ -1294,7 +1294,7 @@ def _surface_formwork_kind(ifc_class, name, object_type=''):
     text = f'{name or ""} {object_type or ""}'.lower()
     if 'сборн' in text:
         return None
-    if ifc_class == 'IfcColumn':
+    if ifc_class == 'IfcColumn' or (ifc_class in ('IfcWall', 'IfcWallStandardCase') and any(word in text for word in ('пилон', 'колонн'))):
         return 'column'
     if ifc_class == 'IfcBeam':
         return 'beam'
@@ -1432,7 +1432,8 @@ def enrich_formwork_quantities(row, element):
     """Use the same per-element perimeter/depth fallback as zero_step."""
     if row.get("IfcClass") not in ("IfcSlab", "IfcStairFlight", "IfcWall", "IfcWallStandardCase", "IfcBeam", "IfcColumn"):
         return row
-    if row.get('IfcClass') in ('IfcWall', 'IfcWallStandardCase'):
+    if (row.get('IfcClass') in ('IfcWall', 'IfcWallStandardCase')
+            and _surface_formwork_kind(row.get('IfcClass'), row.get('Name'), row.get('ObjectType')) != 'column'):
         for key in ('QTO_geom::Площадь_опалубки_м2', 'QTO_geom::Площадь_низа_м2', 'QTO_geom::Площадь_торцов_м2'):
             row.pop(key, None)
         return row
@@ -1563,7 +1564,12 @@ def _collect_element_data(element, compute_bbox_qto=True):
 #  ГЛАВНАЯ ФУНКЦИЯ
 # =====================================================================
 
-def dump_ifc_elements_raw(ifc_file: str, output_folder: str, model=None) -> str:
+def dump_ifc_elements_raw(
+    ifc_file: str,
+    output_folder: str,
+    model=None,
+    exclude_classes=("IfcOpeningElement", "IfcBuildingElementProxy"),
+) -> str:
     """Сохраняет XLSX со всеми элементами IFC и их сырыми параметрами.
 
     Args:
@@ -1571,6 +1577,10 @@ def dump_ifc_elements_raw(ifc_file: str, output_folder: str, model=None) -> str:
         output_folder: папка, куда сохранить результат (корень сессии).
         model: необязательная уже открытая модель ifcopenshell — если задана,
             повторное открытие файла не выполняется (экономия на больших IFC).
+        exclude_classes: IFC-классы, которые не нужно включать в дамп. По
+            умолчанию исключаются вырезы и прокси-элементы (поведение режимов
+            ЦС/ИИ). Режим «Проверка ЦИМ модели» передаёт пустой кортеж, чтобы
+            проверить и проёмы (``IfcOpeningElement``).
 
     Returns:
         Путь к созданному XLSX-файлу или пустая строка, если элементов нет.
@@ -1597,16 +1607,17 @@ def dump_ifc_elements_raw(ifc_file: str, output_folder: str, model=None) -> str:
 
     warm_formwork_surface_cache(model, elements)
 
-    # В режиме АР вырезы (IfcOpeningElement) и прокси-элементы
+    # В режимах ЦС/ИИ вырезы (IfcOpeningElement) и прокси-элементы
     # (IfcBuildingElementProxy) не нужны в сыром дампе.
     # Важно: ifcopenshell entity_instance.is_a() принимает только одну строку
     # с именем типа, поэтому проверяем каждый класс отдельно.
-    _EXCLUDE_CLASSES = ("IfcOpeningElement", "IfcBuildingElementProxy")
-    elements = [el for el in elements if not any(el.is_a(c) for c in _EXCLUDE_CLASSES)]
-    logger.info(f"Элементов после исключения {', '.join(_EXCLUDE_CLASSES)}: {len(elements)}")
+    excluded = tuple(exclude_classes or ())
+    if excluded:
+        elements = [el for el in elements if not any(el.is_a(c) for c in excluded)]
+        logger.info(f"Элементов после исключения {', '.join(excluded)}: {len(elements)}")
 
     if not elements:
-        logger.warning(f"После исключения {', '.join(_EXCLUDE_CLASSES)} не осталось элементов")
+        logger.warning("После исключения классов не осталось элементов")
         return ""
 
     # Missing geometry fields are filled independently for every element.

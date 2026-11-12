@@ -449,6 +449,9 @@ def _classify_family(element_payload: Dict[str, Any]) -> Optional[str]:
     if "фундамент" in mssk:
         return "foundation_slab"
 
+    if ifc in ("ifcwall", "ifcwallstandardcase") and re.search(r"пилон|колонн", name):
+        return "column"
+
     if ifc == "ifcwall":
         if "кирпич" in material or "кладк" in material or "блок" in material:
             return "masonry"
@@ -1757,7 +1760,8 @@ def _split_final_entries_by_height(entries, rows, payloads, params_by_id):
             for i in ids):
             result.append(entry)
             continue
-        groups = work_height.partitions(ids, rows)
+        from .final_quantity_rules import slab_partitions
+        groups = [part for band in work_height.partitions(ids, rows) for part in slab_partitions(band, rows)]
         for indices in groups:
             sub = copy.deepcopy(entry)
             raw = [rows[i] for i in indices]
@@ -1787,6 +1791,13 @@ def _split_final_entries_by_height(entries, rows, payloads, params_by_id):
                     work['quantity'] = q
             else:
                 header = entry.get('group_header') or _element_header(sub)
+            from .vor_generation.elements import _element_kind
+            kind = _element_kind(str(raw[0].get('Тип элемента') or ''), '', str(raw[0].get('Имя') or ''))
+            if kind in ('slab', 'foundation_slab'):
+                type_name = _clean_revit_name(str(raw[0].get('Имя') or ''))
+                material = str(raw[0].get('Материал') or '')
+                header = type_name + (f' ({material})' if material else '') + f'  Кол-во: {len(indices)}'
+                sub['group_base_name'] = type_name
             sub['group_header'] = header + '  [' + work_height.label(ctx) + ']'
             result.append(sub)
     return result
@@ -1844,6 +1855,8 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
             logger.warning(f"Не удалось прочитать {FILTERED_XLSX_FILENAME}: {exc}")
     if elements_rows:
         leaf_groups = split_leaf_groups_by_part(leaf_groups, elements_rows)
+        from .final_quantity_rules import split_source_groups
+        leaf_groups = split_source_groups(leaf_groups, elements_rows)
         logger.info(f"Листовых групп после разделения по частям здания: "
                     f"{len(leaf_groups)}")
 
@@ -1972,6 +1985,10 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
 
     result_elements = _split_final_entries_by_height(
         result_elements, elements_rows, elements_payload, params_by_id)
+    from .final_quantity_rules import summer_curing, apply_api_rebar, api_concrete_resources
+    summer_curing(result_elements)
+    apply_api_rebar(result_elements, run_dir)
+    api_concrete_resources(result_elements)
     total_selected = sum(len(entry.get('selected_works') or []) for entry in result_elements)
     _enrich_selected_works_with_costs(result_elements, works_payload.get("period_id"))
 
@@ -2256,9 +2273,6 @@ def _calculate_work_volume(
     measure_type = (total_measure or {}).get("type", "")
     measure_value = safe_float((total_measure or {}).get("value", 0))
 
-    if measure_value <= 0:
-        return ""
-
     unit = str(work.get("unitOfMeasure", "")
                or work.get("unit_of_measure", "") or "")
     unit = unit.lower().replace(" ", "").replace("²", "2").replace("³", "3")
@@ -2275,6 +2289,14 @@ def _calculate_work_volume(
     is_ton = bool(_TON_UNIT_RE.search(unit))
 
     divisor = _work_divisor(work)
+
+    if is_area and slab_group and _is_formwork_work(work):
+        if formwork_area <= 0:
+            return ""
+        return result(formwork_area / divisor, 4 if divisor > 1 else 2, 'formwork_area', formwork_area)
+
+    if measure_value <= 0:
+        return ""
 
     if is_volume and measure_type == "volume":
         vol = measure_value / divisor
@@ -2399,7 +2421,9 @@ def _resolve_building_part(entry):
 
 def _entry_work_volume(entry, work, origins):
     base_name = str(entry.get('group_base_name') or '')
-    slab_group = any(kw in base_name.lower() for kw in ('плит', 'перекрыт'))
+    element = entry.get('element') or {}
+    cls = element.get('ifc_class') or element.get('ifcClass') or (element.get('row') or {}).get('IfcClass')
+    slab_group = cls in ('IfcSlab', 'IfcStair', 'IfcStairFlight', 'IfcFooting', 'IfcBeam') or bool(re.search(r'плит|перекрыт|лестн|марш|площадк|балк|ригел', base_name, re.I))
     group_formwork_area = safe_float(entry.get('group_formwork_area_m2'), default=0.0)
     group_rebar_kg = safe_float(entry.get('group_rebar_mass_kg'), default=0.0)
     q = work.get("quantity") or {}
@@ -2431,16 +2455,10 @@ def _entry_work_volume(entry, work, origins):
         slab_group=slab_group, trace=trace, sources=origins,
     )
 
-    # Арматура — правила КР: расход арматуры группы подставляется
-    # ТОЛЬКО в расценку «Установка отдельных стержней...» (т),
-    # прочие арматурные расценки остаются без объёма.
-    work_title_low = str(work.get("title") or "").lower()
-    if group_rebar_kg > 0 and _is_rebar_work_title(work_title_low):
-        if "отдельн" in work_title_low and "стержн" in work_title_low:
-            vol_text = f"{group_rebar_kg / 1000.0:.4f}"
-            trace['source'] = f"Рассчитан из полей: {origins.get('rebar_kg') or 'group_rebar_mass_kg'} / 1000 (кг → т) = {vol_text}"
-        else:
-            vol_text = ""
+    if _is_rebar_work_title(str(work.get('title') or '').lower()):
+        tonnes = work.get('customer_rebar_tonnes')
+        vol_text = str(tonnes / _work_divisor(work)) if tonnes is not None else ''
+        trace['source'] = work.get('volume_source', '')
 
     return vol_text, trace.get('source', '') if vol_text else ''
 
@@ -2476,7 +2494,13 @@ def build_final_works_xlsx(result_elements, xlsx_path):
 
     from pathlib import Path
     from .quantity_provenance import ar_entry_sources, normalized_rows
+    from .final_quantity_rules import summer_curing, apply_api_rebar, api_concrete_resources
+    summer_curing(result_elements)
+    apply_api_rebar(result_elements, Path(xlsx_path).parent)
+    api_concrete_resources(result_elements)
     source_rows = normalized_rows(Path(xlsx_path).parent)
+    from .final_quantity_rules import refresh_formwork
+    refresh_formwork(result_elements, source_rows)
     element_blocks = []
     for entry in result_elements:
         origins = dict(entry.get('quantity_sources') or {}, **ar_entry_sources(entry, source_rows))
@@ -2499,6 +2523,7 @@ def build_final_works_xlsx(result_elements, xlsx_path):
             work_rows.append(row)
 
         element_blocks.append({
+            "material_base": _pick_quantity(entry.get("group_quantity") or {}, "volume_m3"),
             "part": part,
             "header": header,
             "rows": work_rows,
@@ -2513,6 +2538,7 @@ def build_final_works_xlsx(result_elements, xlsx_path):
         for r in block["rows"]:
             flat_records.append({
                 "_norm_group": group_index,
+                "_material_base": block["material_base"] if re.search(r"смесь бетон|^бетон", r["Наименование расценки/ресурса"], re.I) else None,
                 "Шифр ТСН": r["Шифр ТСН"],
                 "Наименование расценки/ресурса": r["Наименование расценки/ресурса"],
                 "Объём работ": r["Объём работ"],

@@ -1081,138 +1081,9 @@ def _compute_surface_area(verts, faces):
 
 
 def _compute_bbox_quantities(element):
-    """Вычисляет количества элемента из геометрии (bbox-замена QTO).
-
-    Возвращает словарь с ключами вида ``QTO_bbox::{Параметр}``:
-      * ``Объём_м3``               — объём меша (м³);
-      * ``Длина_мм``               — длина (мм);
-      * ``Ширина_мм``              — ширина/толщина (мм);
-      * ``Высота_мм``              — высота (мм);
-      * ``Площадь_поверхности_м2`` — площадь поверхности меша (м²).
-
-    Для вертикальных элементов (IfcWall, IfcColumn, IfcPile и т.п.) высота
-    берётся по локальной оси Z, длина/ширина — по осям X/Y (ширина = меньший
-    из двух горизонтальных габаритов, т.е. толщина стены). Для остальных
-    элементов габариты сортируются по убыванию:
-    Длина (наибольший) → Ширина → Высота (наименьший).
-
-    Объём для тел выдавливания (IfcExtrudedAreaSolid) вычисляется точно
-    как ``площадь_сечения × глубина`` (с вычетом отверстий). Для
-    тесселированных мешей используется метод сигнатур тетраэдров
-    (приближённо корректный и для мешей с мелкими дефектами). Если
-    полученный объём нулевой или отрицательный — используется
-    bbox-объём (Длина × Ширина × Высота) как запасной вариант.
-
-    Все значения округлены: объём — 4 знака, габариты — 1 знак,
-    площадь — 4 знака. Если геометрия отсутствует — пустой словарь.
-    """
-    result = {}
-    try:
-        rep = getattr(element, "Representation", None)
-        if not rep:
-            return result
-
-        # ObjectPlacement элемента НЕ применяется: он лишь позиционирует
-        # элемент в проекте (сдвиг + поворот), не меняя его реальные
-        # размеры. Габариты вычисляются в локальной системе координат
-        # элемента. Трансформация IfcMappedItem (MappingTarget) применяется
-        # внутри _collect_geom_from_item — она является частью определения
-        # геометрии экземпляра (масштаб, зеркалирование и т.п.).
-
-        parts = []
-        for r in rep.Representations:
-            # Пропускаем негеометрические представления (FootPrint, Axis и т.п.),
-            # оставляем только пространственные тела/поверхности.
-            rep_type = getattr(r, "RepresentationType", None) or ""
-            if rep_type in ("Curve2D", "Curve3D", "Point", "GeometricSet"):
-                continue
-            for item in r.Items:
-                _collect_geom_from_item(item, parts)
-
-        if not parts:
-            return result
-
-        all_verts = []
-        total_volume = 0.0
-        total_area = 0.0
-
-        for verts, faces, kind, profile_area, surface_area in parts:
-            all_verts.append(verts)
-
-            if kind == 'extruded':
-                # Объём тела выдавливания: площадь сечения (с вычетом
-                # отверстий) × глубина. Глубину берём как расстояние
-                # между нижним и верхним основаниями.
-                n = len(verts)
-                half = n // 2
-                if half > 0 and profile_area is not None and profile_area > 0:
-                    v_bottom = verts[0]
-                    v_top = verts[half]
-                    depth = float(np.linalg.norm(v_top - v_bottom))
-                    total_volume += profile_area * depth
-                # Площадь поверхности — точная формула (с учётом отверстий),
-                # если она вычислена; иначе падаем на триангуляцию.
-                if surface_area is not None and surface_area > 0:
-                    total_area += surface_area
-                else:
-                    total_area += _compute_surface_area(verts, faces)
-            else:
-                # Поверхностный меш — метод тетраэдров (только замкнутые).
-                total_volume += _compute_mesh_volume(verts, faces)
-                total_area += _compute_surface_area(verts, faces)
-
-        if not all_verts:
-            return result
-
-        combined = np.vstack(all_verts)
-        # Габариты bbox по осям локальной системы координат элемента.
-        dims = combined.max(axis=0) - combined.min(axis=0)
-
-        # Для вертикальных элементов (стены, колонны, сваи) локальная ось Z —
-        # направление высоты, а габариты по X/Y — длина и толщина (ширина)
-        # сечения. Присваиваем их семантически, а не по порядку убывания:
-        # простая сортировка по убыванию записывает длину стены в «Ширину»
-        # (которая далее по конвейеру трактуется как толщина), а реальную
-        # толщину — в «Высоту». Например, для стены 2580×190×2900 вместо
-        # толщины 190 мм «Ширина» получала 2580 мм.
-        ifc_class = element.is_a() if hasattr(element, "is_a") else ""
-        if ifc_class in ("IfcWall", "IfcWallStandardCase", "IfcCurtainWall",
-                         "IfcColumn", "IfcPile"):
-            height = float(dims[2])
-            horizontal = np.sort(dims[:2])[::-1]
-            dims_sorted = np.array([horizontal[0], horizontal[1], height])
-        else:
-            # Общий случай: Длина (наибольший) → Ширина → Высота (наименьший).
-            dims_sorted = np.sort(dims)[::-1]
-
-        # Объём bbox (Длина × Ширина × Высота) — fallback на случай,
-        # если объём из геометрии получился нулевым или аномально малым
-        # (сильно «дырявый» меш, вырожденная геометрия и т.п.).
-        bbox_volume = float(dims_sorted[0] * dims_sorted[1] * dims_sorted[2])
-
-        if total_volume <= 0.0:
-            logger.debug(
-                f"Объём из геометрии для {getattr(element, 'GlobalId', '?')} "
-                f"равен {total_volume:.3f} мм³ — использую bbox-объём "
-                f"{bbox_volume:.3f} мм³."
-            )
-            total_volume = bbox_volume
-
-        # Координаты в IFC — в миллиметрах.
-        result = {
-            "QTO_bbox::Объём_м3": round(float(total_volume) / 1e9, 4),
-            "QTO_bbox::Длина_мм": round(float(dims_sorted[0]), 1),
-            "QTO_bbox::Ширина_мм": round(float(dims_sorted[1]), 1),
-            "QTO_bbox::Высота_мм": round(float(dims_sorted[2]), 1),
-            "QTO_bbox::Площадь_поверхности_м2": round(float(total_area) / 1e6, 4),
-        }
-        from .work_height import ifc_fields
-        result.update(ifc_fields(element, combined if _height_geometry_complete(element) else None))
-    except Exception as exc:
-        gid = getattr(element, "GlobalId", "?")
-        logger.debug(f"Ошибка вычисления bbox-количеств для элемента {gid}: {exc}")
-
-    return result
+    """Use the same SI geometry fallback as the main parsing pipeline."""
+    from ..ifc_geometry_quantities import compute
+    return compute(element)
 
 
 # =====================================================================
@@ -1631,13 +1502,13 @@ def enrich_work_height(row, element):
     return row
 
 
-def _collect_element_data(element, compute_bbox_qto=False):
+def _collect_element_data(element, compute_bbox_qto=True):
     """Собирает все параметры одного элемента в словарь (колонка -> значение).
 
     Args:
         element: элемент IFC (IfcElement).
-        compute_bbox_qto: если True и у элемента нет QTO,
-            количества вычисляются из геометрии (bbox).
+        compute_bbox_qto: вычислять недостающие геометрические поля
+            независимо от наличия других QTO у элемента.
     """
     row = {}
 
@@ -1666,17 +1537,14 @@ def _collect_element_data(element, compute_bbox_qto=False):
 
     # Свойства (Pset) и количества (QTO).
     propsets = _collect_propsets(element)
-    has_qto = any(k.startswith("QTO::") for k in propsets)
     for key, value in propsets.items():
         row[key] = _truncate(value)
 
-    # Если у элемента нет QTO и включён режим вычисления,
-    # вычисляем количества из геометрии (bbox).
-    # Колонки помечаются префиксом QTO_bbox:: — это маркер,
-    # что значения получены из меша, а не из оригинального IFC.
-    if compute_bbox_qto and not has_qto:
-        for key, value in _compute_bbox_quantities(element).items():
-            row[key] = _truncate(value)
+    if compute_bbox_qto:
+        from ..ifc_geometry_quantities import fill_missing
+        fill_missing(row, element, compute_fn=_compute_bbox_quantities)
+    from ..ifc_quantities import stamp_ifc_volume
+    stamp_ifc_volume(row, element)
 
     enrich_work_height(row, element)
     return enrich_formwork_quantities(row, element)
@@ -1732,17 +1600,8 @@ def dump_ifc_elements_raw(ifc_file: str, output_folder: str, model=None) -> str:
         logger.warning(f"После исключения {', '.join(_EXCLUDE_CLASSES)} не осталось элементов")
         return ""
 
-    # ПРОВЕРКА НАЛИЧИЯ QTO: если ни у одного элемента нет IfcElementQuantity,
-    # то количества (объём, габариты, площадь) вычисляются из геометрии (bbox).
-    # Колонки с вычисленными значениями получают префикс QTO_bbox::.
-    compute_bbox_qto = not _has_any_qto(elements)
-    if compute_bbox_qto:
-        logger.warning(
-            "В IFC-файле не найдено QTO (IfcElementQuantity). "
-            "Количества будут вычислены из геометрии (bbox) с префиксом QTO_bbox::."
-        )
-    else:
-        logger.info("В IFC-файле найдены QTO (IfcElementQuantity). Количества из геометрии не вычисляются.")
+    compute_bbox_qto = True
+    logger.info('Сначала используются QTO элемента; геометрия вычисляется только для недостающих величин.')
 
     rows = []
     all_columns = []

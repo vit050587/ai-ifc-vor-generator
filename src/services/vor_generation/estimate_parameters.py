@@ -14,12 +14,17 @@ def _requirements(path, modified, size):
     result = []
     try:
         for sheet in book:
-            headings = [str(value or '').replace('\n', ' ').lower() for value in next(sheet.iter_rows(min_row=2, max_row=2, values_only=True))]
-            column = next((i for i, value in enumerate(headings) if 'параметр' in value and 'тсн' in value), None)
+            headings = [[str(value or '').replace('\n', ' ').lower() for value in row]
+                        for row in sheet.iter_rows(min_row=2, max_row=3, values_only=True)]
+            column = next((i for row in headings for i, value in enumerate(row)
+                           if 'параметр' in value and ('тсн' in value or 'сметн' in value)), None)
             if column is None:
                 continue
             element_kind = part = None
             for values in sheet.iter_rows(min_row=4, values_only=True):
+                from .template import _numbering_row
+                if _numbering_row(values):
+                    continue
                 name = str(values[1] or '') if len(values) > 1 else ''
                 heading = str(values[0] or '')
                 if heading and not name:

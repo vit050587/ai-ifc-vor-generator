@@ -166,10 +166,14 @@ def _formwork_area(kind: Optional[str], agg: Dict[str, object],
         # Опалубка фундаментной плиты — только торцы (периметр × толщина).
         return _foundation_formwork_area(elements)
     def measured(el):
-        if el.component in ('flight', 'landing') and kind in ('stair', 'slab'):
+        if kind == 'stair' or el.component in ('flight', 'landing') and kind == 'slab':
             # TSN 2001.3-6 §2.8 uses horizontal projection, not skin area.
             key = 'gross_projection_area' if el.component == 'landing' else 'projection_area'
             return el.quantity(key) if key in el.quantities else None
+        if kind == 'slab':
+            if el.quantity('gross_area') > 0:
+                return el.quantity('gross_area')
+            return el.quantity('underside_area') if el.quantity('underside_area') > 0 else None
         if 'formwork_area' in el.quantities and not (kind in ('wall', 'parapet') and el.quantity_sources.get('formwork_area') == 'QTO_geom::Площадь_опалубки_м2'):
             return el.quantity('formwork_area')
         side, area, surface = (el.quantity(key) for key in ('side_area', 'area', 'surface_area'))
@@ -182,12 +186,6 @@ def _formwork_area(kind: Optional[str], agg: Dict[str, object],
             volume = el.quantity("volume")
             # Same one-face area fallback as zero_step for a wall without area QTO.
             return volume / (depth / 1000) if volume > 0 and depth > 0 else None
-        if kind == 'slab':
-            perimeter = el.quantity('perimeter')
-            depth = el.geometry.get('thickness') or 0
-            return area + perimeter * depth / 1e6 if 'area' in el.quantities and perimeter > 0 and depth > 0 else None
-        if kind == "stair":
-            return area or surface if any(key in el.quantities for key in ("area", "surface_area")) else None
         if kind == "beam":
             return el.quantity('formwork_area') if 'formwork_area' in el.quantities else None
         if kind == "column":
@@ -197,6 +195,8 @@ def _formwork_area(kind: Optional[str], agg: Dict[str, object],
     known = [_model_quantity(el, value,
               (f'{value:g} (горизонтальная проекция, ТСН-2001.3-6 п. 2.8)'
                if el.component in ('flight', 'landing') and kind in ('stair', 'slab') else
+               (f'{value:g} (GrossArea перекрытия)' if el.quantity('gross_area') > 0 else
+                f'{value:g} (нижняя поверхность перекрытия по геометрии IFC, без торцов)') if kind == 'slab' else
                f'{el.quantity("underside_area"):g} + {el.quantity("edge_area"):g}'
                if 'underside_area' in el.quantities and 'edge_area' in el.quantities else
                f'{value:g} ({", ".join(el.quantity_sources.values())})'))
@@ -291,7 +291,7 @@ def _fill_work(row: template.TemplateRow, elements: List[Element],
         # Арматура — исключительно из ВОР застройщика (по разделу ВОР).
         if ctx.vor_name:
             t = documents.rebar_thickness(ctx.docs.rebar, row.element_kind, row.part, thickness)
-            total = ctx.docs.rebar.section_total(row.element_kind, row.part, t, component) * share
+            total = ctx.docs.rebar.section_total(row.element_kind, row.part, t, component)
             if total > 0:
                 return round(total, 2), ctx.ref_vor
         return None, None
@@ -315,6 +315,9 @@ def _fill_work(row: template.TemplateRow, elements: List[Element],
                 geometry_note = ''
                 if row.element_kind not in ('wall', 'parapet') and any(el.quantity_sources.get('formwork_area') == 'QTO_geom::Площадь_опалубки_м2' for el in elements):
                     geometry_note = '. По граням IFC: стороны, торцы, откосы и низ перемычек; основание исключено.' if row.element_kind in ('wall', 'parapet') else '. По вертикальным граням IFC.' if row.element_kind == 'column' else '. По геометрии IFC: нижняя поверхность и вертикальные торцы.'
+                if row.element_kind == 'slab':
+                    fallback_count = sum(el.quantity('gross_area') <= 0 and el.quantity('underside_area') > 0 for el in elements)
+                    geometry_note = (f'. Для {fallback_count} элементов без GrossArea взята площадь нижней поверхности по геометрии IFC, без торцов и верхней грани.' if fallback_count else '')
                 stair_note = ''
                 if row.element_kind == 'stair':
                     geometry_note = '. ТСН-2001.3-6, п. 2.8: горизонтальная проекция маршей; для площадок — проекция перекрытий без вычета отверстий. Вертикальные грани и наклонная площадь низа не прибавляются.'
@@ -412,11 +415,11 @@ def _fill_resource(row: template.TemplateRow, elements: List[Element],
         t = documents.rebar_thickness(ctx.docs.rebar, row.element_kind, row.part, thickness)
         volume = ctx.docs.rebar.diameter_class(diameter, rebar_class,
                                                kind=row.element_kind, part=row.part,
-                                               thickness=t, component=component) * share
+                                               thickness=t, component=component)
         if volume <= 0 and diameter is None and rebar_class:
             volume = ctx.docs.rebar.diameter_class(None, rebar_class,
                                                    kind=row.element_kind, part=row.part,
-                                                   thickness=t, component=component) * share
+                                                   thickness=t, component=component)
         if volume <= 0:
             return None, None
         return round(volume, 2), ctx.ref_vor
@@ -743,8 +746,7 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
     route_landings(index, source_rows)
     rows = adapt_template(rows, source_rows)
     from dataclasses import replace
-    normalized_rebar = any(row.normalized_scope for row in docs.rebar.rows)
-    calculation_docs = replace(docs, rebar=replace(docs.rebar, rows=[r for r in docs.rebar.rows if not r.normalized_scope])) if normalized_rebar else docs
+    calculation_docs = replace(docs, rebar=documents.RebarData())
     ctx = _Context(index, calculation_docs, ifc_name)
 
     by_index = {r.index: r for r in rows}
@@ -852,13 +854,14 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
         output.append(template.OutputRow(src_index=row.index))
         i += 1
 
-    if normalized_rebar:
-        from .customer_scope import insert_source_rebar
-        insert_source_rebar(output, source_rows, rows, docs.rebar, ctx.ref_vor)
-        filled = sum(item.volume is not None for item in output)
+    from .source_rebar import copy_rebar
+    copy_rebar(output, rows, docs.rebar, ctx.ref_vor)
+    filled = sum(item.volume is not None for item in output)
     _say(progress, "Запись заполненного ВОР")
+    from .stair_report import records as stair_records
+    apply_mix_norms(output, rows)
     template.render_template(output, path=template_path, sheet_name=sheet_name,
-                             output_path=output_path)
+                             output_path=output_path, stair_rows=stair_records(index))
 
     stats = {
         "rows": len(output),
@@ -871,3 +874,39 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
     }
     logger.info("ВОР сформирован: строк %d, заполнено объёмов %d", len(output), filled)
     return stats
+
+
+def apply_mix_norms(output, rows):
+    """Apply mixture allowance only to generated resource rows, once."""
+    from ..works_cost import typical_mix_factor
+    by_index = {row.index: row for row in rows}
+    factors = {}
+    parent = ''
+    for item in output:
+        source = by_index[item.src_index]
+        name = item.name_override or source.name
+        if source.kind in ('part', 'section', 'subsection', 'block'):
+            parent = ''
+            continue
+        dynamic_resource = bool(item.label and '.' in item.label and item.name_override)
+        if source.kind == 'work' and not dynamic_resource:
+            parent = name
+            continue
+        if item.volume is None or source.kind != 'resource' and not dynamic_resource:
+            continue
+        if source.element_kind and source.element_kind.startswith('precast'):
+            continue
+        if mapping.classify_resource(name) != 'concrete':
+            continue
+        if 'koefs.xlsx:' in (item.justification or ''):
+            continue
+        preparation = bool(re.search(r'подготов|подстилающ', parent, re.I))
+        if preparation not in factors:
+            factors[preparation] = typical_mix_factor(preparation)
+        factor, rates = factors[preparation]
+        if factor is None:
+            item.justification = (item.justification or '') + '; koefs.xlsx: однозначная норма расхода не найдена; требуется проверка'
+            continue
+        base = item.volume
+        item.volume = round(base * factor, 2)
+        item.justification = (item.justification or '') + f'; koefs.xlsx: {rates}; объём бетонирования × {factor:g} = {float(item.volume):g} м³'
