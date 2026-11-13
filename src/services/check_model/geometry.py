@@ -31,6 +31,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Dict, Iterable, Optional, Sequence
 
@@ -214,10 +215,14 @@ def _raw_length_mm(row: Dict[str, Any], group: str) -> Optional[float]:
         box = _opening_box(row)
         return box[0] if box else None
     if group == "slab":
-        return _first(
+        value = _first(
             row,
             (_BBOX_LENGTH, r"^QTO::.*Slab.*::Length$", r"^QTO::.*::Length$"),
         )
+        if value is None:
+            plan = _slab_plan_dims_mm(row)
+            value = plan[0] if plan else None
+        return value
     if group == "column":
         # Для колонны длина — вертикальный габарит; QTO Length в разных
         # моделях может означать размер профиля.
@@ -258,7 +263,11 @@ def _raw_width_mm(row: Dict[str, Any], group: str) -> Optional[float]:
         )
     if group == "slab":
         # У плиты Qto_...SlabBaseQuantities::Width — толщина, шириной не является.
-        return _value(row, _BBOX_WIDTH)
+        value = _value(row, _BBOX_WIDTH)
+        if value is None:
+            plan = _slab_plan_dims_mm(row)
+            value = plan[1] if plan else None
+        return value
     if group == "column":
         return _first(row, (r"^QTO::.*Column.*::Width$", _BBOX_WIDTH))
     if group == "beam":
@@ -373,6 +382,40 @@ def _opening_box(row: Dict[str, Any]) -> Optional[Sequence[float]]:
 # ---------------------------------------------------------------------
 #  Площади и объёмы (м² / м³)
 # ---------------------------------------------------------------------
+
+def _slab_plan_dims_mm(row: Dict[str, Any]) -> Optional[Sequence[float]]:
+    """Длина и ширина плиты (мм) по площади и периметру QTO, без геометрии.
+
+    След плиты приводится к прямоугольнику: ``a + b = P / 2``, ``a × b = A``.
+    Так габариты в плане восстанавливаются, когда QTO содержит объём и
+    площадь, но не содержит габаритов: для таких плит ``QTO_bbox::*`` не
+    рассчитывается (см. ``ifc_geometry_quantities.fill_missing``) — расчёт
+    геометрии плиты (create_shape с вычитанием проёмов) стоит до 19 с на
+    элемент. Для непрямоугольного следа (отрицательный дискриминант) габариты
+    не восстанавливаются.
+
+    Returns:
+        ``(длина, ширина)`` в миллиметрах, длина — большая сторона.
+    """
+    area = _raw_area_m2(row, "slab")
+    perimeter = _first(
+        row,
+        (r"^QTO::.*::Perimeter$", _OUTER_PERIMETER, _BBOX_PERIMETER),
+    )
+    if not area or not perimeter:
+        return None
+    half = perimeter / 2.0
+    area_mm2 = area * 1_000_000.0
+    discriminant = half * half - 4.0 * area_mm2
+    if discriminant < 0:
+        return None
+    root = math.sqrt(discriminant)
+    length = (half + root) / 2.0
+    width = (half - root) / 2.0
+    if length <= 0 or width <= 0:
+        return None
+    return length, width
+
 
 def _raw_area_m2(row: Dict[str, Any], group: str) -> Optional[float]:
     """Площадь из QTO/проекции (без расчёта по габаритам)."""

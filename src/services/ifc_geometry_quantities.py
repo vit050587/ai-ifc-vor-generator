@@ -87,6 +87,15 @@ _FIELDS = {
     'height': ('QTO_bbox::Высота_мм',),
 }
 
+# Габариты, которые проверка ЦИМ запрашивает дополнительно (compute_dimensions).
+_DIMENSION_METRICS = frozenset(('length', 'width', 'height'))
+
+# Плиты (включая наследников) — единственный класс, у которого габариты
+# запрашиваются не для самих требований ЦИМ: в требованиях IfcSlab (В.2/В.3)
+# есть только толщина, периметр, площадь и объём, а они берутся из
+# Qto_SlabBaseQuantities (Depth, Perimeter, Net/GrossArea, Net/GrossVolume).
+_SLAB_CLASSES = ('IfcSlab', 'IfcSlabStandardCase', 'IfcSlabElementedCase')
+
 
 def _available(row, element, metric):
     """Check the requested measure, not the presence of some unrelated QTO."""
@@ -131,11 +140,21 @@ def _available(row, element, metric):
     return False
 
 
+def _is_slab(element) -> bool:
+    """True для плит, габариты которых не входят в требования ЦИМ."""
+    try:
+        return any(element.is_a(name) for name in _SLAB_CLASSES)
+    except Exception:
+        return False
+
+
 def fill_missing(row, element, compute_fn=None, required=('volume', 'area')):
     """QTO first; calculate and publish only requested missing measures.
 
     Dimensions are also available when volume itself needs geometry. A missing
     diagnostic bounding-box column is never a reason to recalculate valid QTO.
+    Slab dimensions are never calculated when QTO already has volume and area:
+    the ЦИМ requirements for ``IfcSlab`` do not contain length/width/height.
     """
     from .ifc_quantities import number
     missing = {metric for metric in required if not _available(row, element, metric)}
@@ -144,6 +163,12 @@ def fill_missing(row, element, compute_fn=None, required=('volume', 'area')):
     if 'volume' in missing:
         missing.update(metric for metric in ('length', 'width', 'height')
                        if not _available(row, element, metric))
+    elif missing <= _DIMENSION_METRICS and _is_slab(element) \
+            and _available(row, element, 'area'):
+        # Плита: объём и площадь уже в QTO, а габариты в требованиях ЦИМ для
+        # IfcSlab не используются. create_shape для плиты (вычитание проёмов)
+        # стоит до 19 с на элемент — не вызываем его ради неиспользуемых колонок.
+        return row
     allowed = {key for metric in missing for key in _FIELDS[metric]}
     if 'volume' in missing:
         allowed.add('QTO_bbox::Габаритный_объём_м3')
