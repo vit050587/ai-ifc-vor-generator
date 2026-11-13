@@ -13,8 +13,8 @@
 2. расчёт по формулам, зависящим от класса IFC:
 
    * **стена** — толщина = ширина bbox, площадь в плане = длина × толщина,
-     площадь боковой поверхности = длина × высота,
-     объём = длина × толщина × высота;
+     площадь боковой поверхности = объём / толщина (нетто; при отсутствии
+     объёма — длина × высота), объём = длина × толщина × высота;
    * **перекрытие/плита** — толщина = минимальный габарит,
      площадь = длина × ширина (или QTO-площадь), объём = площадь × толщина,
      периметр = 2 × (длина + ширина);
@@ -83,6 +83,7 @@ _BBOX_VOLUME = "QTO_bbox::Габаритный_объём_м3"
 _BBOX_SURFACE = "QTO_bbox::Площадь_поверхности_м2"
 _MESH_VOLUME = "QTO_geom::Объём_м3"
 _MESH_VOLUME_ALIAS = "QTO_bbox::Объём_м3"
+_QUANTITY_VOLUME = "Количество::Объём_м3"
 _PROJECTION_AREA = "QTO_geom::Горизонтальная_проекция_м2"
 _OUTER_PERIMETER = "QTO_geom::Внешний_периметр_мм"
 _LAYER_THICKNESS = r"IfcMaterialLayer::LayerThickness"
@@ -496,12 +497,36 @@ def _footprint_area_m2(row: Dict[str, Any], group: str) -> Optional[float]:
     return None
 
 
+def _net_volume_m3(row: Dict[str, Any]) -> Optional[float]:
+    """Нетто-объём из QTO, без расчёта по габаритам.
+
+    Габаритный объём bbox (``QTO_bbox::Габаритный_объём_м3``) сюда не входит:
+    для стены он равен ``длина × толщина × высота``, то есть брутто, и
+    восстановленная по нему площадь боковой поверхности тоже была бы брутто.
+    """
+    value = _first(row, (r"^QTO::.*::NetVolume$",))
+    if value is not None:
+        return value
+    return _value(row, _MESH_VOLUME, _MESH_VOLUME_ALIAS, _QUANTITY_VOLUME)
+
+
 def _side_area_m2(row: Dict[str, Any], group: str) -> Optional[float]:
-    """Площадь боковой поверхности (для стены — длина × высота)."""
+    """Площадь боковой поверхности (нетто).
+
+    Для стены при отсутствии ``NetSideArea``/``GrossSideArea`` площадь
+    восстанавливается как ``NetVolume / толщина`` — это точное нетто-значение:
+    ``QTO Length`` у Revit включает запас на примыкание, а ``Height`` не
+    учитывает вырезы, поэтому произведение ``длина × высота`` завышено
+    (по обследованной модели — на 4–26 % у стен без QTO).
+    """
     if group == "wall":
         value = _first(row, (r"^QTO::.*Wall.*::(Net|Gross)SideArea$",))
         if value is not None:
             return value
+        volume = _net_volume_m3(row)
+        thickness = _thickness_mm(row, group)
+        if volume and thickness:
+            return volume / (thickness / 1000.0)
         length = _raw_length_mm(row, group)
         height = _raw_height_mm(row, group)
         if length and height:

@@ -750,6 +750,9 @@ class SessionManager:
                 exclude_classes=(),
                 compute_dimensions=True,
                 dimension_classes=dimension_classes,
+                # Площадь торцов проёмов стен — для опалубки по четырём
+                # боковым поверхностям (см. check_model/formwork.py).
+                opening_ends=True,
             )
 
             # Количество элементов каждого IFC-класса в самом файле — для

@@ -247,6 +247,8 @@ ai-ifc-vor-generator/
 │           ├── llm_client.py   # Клиент Ollama (qwen3.8:27b) для сопоставления параметров
 │           ├── mapping.py      # Карта «требуемый RUS_* → колонка модели + преобразование» (LLM + fallback)
 │           ├── pipeline.py     # Оркестратор проверки и формирование отчёта
+│           ├── grouping.py     # Превью по структуре типового ВОР: часть здания → раздел → подраздел → имя элемента
+│           │                  #   (кеш Проверка_ЦИМ_модели_группы.json)
 │           └── __init__.py     # Экспорт run_check_model, load_requirements
 │
 ├── ai-blueprint-to-ifc/       # Пайплайн машинного зрения для PDF-чертежей
@@ -503,7 +505,10 @@ make clean     # остановить и удалить volumes (внимани�
 1. **Сырой дамп IFC** — тот же шаг, что в режиме ЦС:
    `ifc_raw_dump.dump_ifc_elements_raw` → `IFC_исходные_параметры.json/.xlsx`.
    Для проверки ЦИМ дамп формируется с `exclude_classes=()` (включая
-   `IfcOpeningElement`); в ЦС/ИИ поведение по умолчанию не изменилось.
+   `IfcOpeningElement`) и `opening_ends=True` — у стен сохраняются расчётные
+   колонки торцов стены и вертикальных щёк проёмов для опалубки
+   (`QTO_geom::Площадь_торцов_стены_м2`, `QTO_geom::Площадь_торцов_проёмов_м2`);
+   в ЦС/ИИ поведение по умолчанию не изменилось (`opening_ends=False`).
 2. **Требования по IFC-классу** — `requirements.load_requirements` читает
    `data/parametrs_name.json`; для класса выбирается набор требований (при
    нескольких записях, например `IfcSlab` В.2/В.3, — по коду МССК,
@@ -526,6 +531,18 @@ make clean     # остановить и удалить volumes (внимани�
    значениям, ошибкам LLM) и `Сопоставление_параметров.json` (использованная
    карта). Элементы классов, отсутствующих в справочнике, в результат не
    попадают — их количество указано в отчёте (`skipped_classes`).
+5. **Превью по типовому ВОР** — `grouping.load_grouped_preview` строит (и кеширует
+   в `Проверка_ЦИМ_модели_группы.json`) дерево проверенных элементов по
+   структуре `data/Типовой ВОР по КР.xlsx`: часть здания → раздел → подраздел →
+   наименование элемента; вид конструкции определяется по коду МССК через
+   `data/elements_mssk_nested.json`, технология (сборные/монолитные) — по
+   `ConstructionMethod`; пустые группы не показываются, элементы вне разделов
+   (например, проёмы) собираются в блок «Прочие элементы (вне разделов типового
+   ВОР)». В превью по каждой группе показывается площадь опалубки монолитного
+   ж/б (`formwork.py`; у стен — все четыре боковые поверхности: две лицевые
+   нетто, два торца стены и вертикальные щёки проёмов). Отдаётся через
+   `GET /api/check_model/<id>/groups` и кнопку «Превью по
+   типовому ВОР» в карточке результата.
 
 Подробное описание — [`readme_check_model.md`](./readme_check_model.md).
 
@@ -559,7 +576,7 @@ make clean     # остановить и удалить volumes (внимани�
 - Здоровье: `GET /api/health`
 - Авторизация: `GET/POST /login`, `GET /logout`
 - Загрузка: `POST /api/upload_ifc` (file + processingType `CS|AI`, для ИИ — `posFile`/`pzFile`), `POST /api/check_model` (алиас `/api/check-model`; только IFC, async 202 + `Location`/`Retry-After`)
-- Проверка ЦИМ модели: `GET /api/check_model/<session_id>` (алиас `/api/check-model/<session_id>`; статус, прогресс и результат проверки)
+- Проверка ЦИМ модели: `GET /api/check_model/<session_id>` (алиас `/api/check-model/<session_id>`; статус, прогресс и результат проверки), `GET /api/check_model/<session_id>/groups` (алиас `/api/check-model/...`; дерево групп по типовому ВОР, `?refresh=1` — пересчёт без кеша)
 - Сессии: `GET /api/sessions`, `GET /api/session/<id>`, `GET /api/session/<id>/status`, `POST /api/session/<id>/restore` (восстановление интерфейса), `DELETE /api/session/<id>`
 - Обработка: `POST /api/session/<id>/select_rows`, `POST /api/session/<id>/new_run`, `GET /api/session/<id>/runs`, `POST /api/session/<id>/switch_run/<run_id>`, `POST /api/session/<id>/filter_height`
 - Документы и константы (только ИИ): `POST /api/session/<id>/upload_pos`, `POST /api/session/<id>/upload_pz`, `POST /api/session/<id>/upload_vor`, `POST /api/session/<id>/upload_pd`, `GET /api/session/<id>/works_constants` (схема констант + автоподстановка), `GET /api/session/<id>/pd_full`, `GET /api/session/<id>/doc_facts`, `GET /api/session/<id>/analytic`, `GET /api/session/<id>/compare_vor` (сравнение ВОР и перечня), `GET /api/session/<id>/tsn_mode` / `/pd_mode` (переключатели), `GET /api/tsn/docs` (список сборников ТСН)

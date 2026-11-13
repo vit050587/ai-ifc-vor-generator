@@ -646,6 +646,86 @@ def check_model_result(session_id: str):
     )
 
 
+@bp.route("/api/check_model/<session_id>/groups", methods=["GET"])
+@bp.route("/api/check-model/<session_id>/groups", methods=["GET"])
+def check_model_groups(session_id: str):
+    """
+    Сгруппированное по структуре типового ВОР превью проверенных элементов.
+    ---
+    tags:
+      - check_model
+    parameters:
+      - name: session_id
+        in: path
+        type: string
+        required: true
+      - name: refresh
+        in: query
+        type: boolean
+        required: false
+        description: Пересчитать группы, игнорируя кеш сессии
+    responses:
+      200:
+        description: Дерево групп (часть здания → раздел → подраздел → имя элемента)
+        schema:
+          type: object
+          properties:
+            totalElements:
+              type: integer
+            groupedElements:
+              type: integer
+            ungroupedElements:
+              type: integer
+            groups:
+              type: array
+              items:
+                type: object
+      404:
+        description: Сессия или результат проверки не найдены
+      409:
+        description: Проверка ещё не завершена или сессия другого типа
+      500:
+        description: Ошибка построения групп
+    """
+    if not session_id or len(session_id) < 8:
+        return _err(ErrorResponse(detail="Некорректный ID сессии"), 400)
+
+    manager = _get_manager()
+    session = manager.get(session_id)
+    if not session:
+        return _err(ErrorResponse(detail="Сессия не найдена"), 404)
+    if session.get("session_type") != "check_model":
+        return _err(
+            ErrorResponse(detail="Сессия не относится к проверке ЦИМ модели"),
+            409,
+        )
+    if session.get("status") != "completed":
+        return _err(
+            ErrorResponse(detail="Проверка ЦИМ модели ещё не завершена"),
+            409,
+        )
+
+    session_dir = os.path.join(manager.output_folder, session_id)
+    refresh = str(request.args.get("refresh", "")).lower() in ("1", "true", "yes")
+    try:
+        from src.services.check_model.grouping import load_grouped_preview
+
+        payload = load_grouped_preview(session_dir, refresh=refresh)
+    except FileNotFoundError as exc:
+        return _err(ErrorResponse(detail=str(exc)), 404)
+    except Exception as exc:  # pragma: no cover - защита от повреждённых данных
+        logger.error(
+            "Ошибка построения групп проверки ЦИМ модели: %s", exc, exc_info=True
+        )
+        return _err(ErrorResponse(detail=f"Ошибка построения групп: {exc}"), 500)
+
+    return Response(
+        json.dumps(payload, ensure_ascii=False),
+        mimetype="application/json",
+    )
+
+
+
 
 @bp.route("/api/sessions", methods=["GET"])
 def list_sessions():

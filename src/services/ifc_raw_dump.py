@@ -1492,6 +1492,142 @@ def enrich_formwork_quantities(row, element):
     return row
 
 
+_WALL_OPENING_CLASSES = ('IfcWall', 'IfcWallStandardCase', 'IfcWallElementedCase')
+
+# Колонка торцов проёмов стены: площадь вертикальных щёк вырезов, м².
+OPENING_ENDS_COLUMN = 'QTO_geom::Площадь_торцов_проёмов_м2'
+# Колонка торцов самой стены: два торца на каждое тело меша, м².
+WALL_ENDS_COLUMN = 'QTO_geom::Площадь_торцов_стены_м2'
+
+
+def _number(value):
+    """Число из значения дампа (``None``, если не читается)."""
+    if isinstance(value, bool) or value in (None, ''):
+        return None
+    try:
+        return float(str(value).strip().replace(' ', '').replace(',', '.'))
+    except (TypeError, ValueError):
+        return None
+
+
+def _opening_quantities_mm(opening):
+    """Высота и глубина проёма (мм) из QTO проёма, если они выгружены."""
+    height = depth = None
+    try:
+        relations = opening.IsDefinedBy
+    except Exception:
+        relations = []
+    for relation in relations or []:
+        try:
+            if not relation.is_a('IfcRelDefinesByProperties'):
+                continue
+            definition = relation.RelatingPropertyDefinition
+            if not definition.is_a('IfcElementQuantity'):
+                continue
+            for quantity in definition.Quantities:
+                name = str(getattr(quantity, 'Name', '') or '')
+                if name == 'Height' and height is None:
+                    height = getattr(quantity, 'LengthValue', None)
+                elif name == 'Depth' and depth is None:
+                    depth = getattr(quantity, 'LengthValue', None)
+        except Exception:
+            continue
+    return height, depth
+
+
+def _body_items(element):
+    """Элементы представления Body (по ним — число отдельных тел меша)."""
+    items = []
+    representation = getattr(element, 'Representation', None)
+    for rep in getattr(representation, 'Representations', ()) or ():
+        if rep.RepresentationIdentifier not in (None, 'Body'):
+            continue
+        items.extend(getattr(rep, 'Items', ()) or ())
+    return items
+
+
+def wall_ends_area_m2(row, element):
+    """Площадь торцов стены, м²: ``2 × толщина × высота`` на каждое тело.
+
+    Стена может быть собрана из нескольких отдельных тел (разрыв на
+    деформационном шве, вставки). У каждого тела свои два торца, поэтому
+    число торцов — ``2 × число элементов Body``. Число элементов Body
+    совпадает с числом компонентов меша (проверено на модели: 5 161 стена).
+
+    Returns:
+        Площадь в м² или ``None``, если толщина/высота неизвестны.
+    """
+    thickness = _number(row.get('QTO::Qto_WallBaseQuantities::Width'))
+    if thickness is None:
+        thickness = _number(row.get('QTO_bbox::Ширина_мм'))
+    height = _number(row.get('QTO::Qto_WallBaseQuantities::Height'))
+    if height is None:
+        height = _number(row.get('QTO_bbox::Высота_мм'))
+    if not thickness or not height or thickness <= 0 or height <= 0:
+        return None
+    bodies = len(_body_items(element)) or 1
+    return 2.0 * (thickness / 1000.0) * (height / 1000.0) * bodies
+
+
+def opening_ends_area_m2(row, element):
+    """Площадь торцов (вертикальных щёк) проёмов стены, м².
+
+    При вырезании проёма в стене в геометрии остаются четыре поверхности
+    откоса; две из них — вертикальные щёки размером «глубина проёма × высота
+    проёма». Площадь лицевых граней стены они не уменьшают
+    (``NetSideArea`` — площадь по срединной плоскости), торцами стены
+    (``2 × толщина × высота``) тоже не являются, поэтому в требуемые
+    параметры стены не входят. Для опалубки это реальные щиты, поэтому сумма
+    ``2 × глубина × высота`` по всем проёмам элемента сохраняется отдельной
+    колонкой (``OPENING_ENDS_COLUMN``).
+
+    Высота берётся как вертикальный габарит проёма (``dz`` в мировых
+    координатах): QTO проёма бывает недостоверным — в модели встречаются
+    проёмы, у которых ``Height`` в QTO равен толщине стены, а ``Depth`` —
+    её высоте (перепутаны оси). QTO ``Height`` используется, только если
+    геометрию собрать не удалось. Глубина — QTO ``Depth``, но не больше
+    толщины стены (``Depth`` тоже бывает завышен); при отсутствии — толщина
+    стены.
+
+    Args:
+        row: строка сырого дампа элемента (нужна толщина стены).
+        element: элемент IFC (стена).
+
+    Returns:
+        Площадь в м² или ``None``, если у элемента нет проёмов.
+    """
+    try:
+        relations = element.HasOpenings
+    except Exception:
+        return None
+    if not relations:
+        return None
+    wall_thickness = _number(row.get('QTO::Qto_WallBaseQuantities::Width'))
+    if wall_thickness is None:
+        wall_thickness = _number(row.get('QTO_bbox::Ширина_мм'))
+    total = 0.0
+    for relation in relations:
+        opening = getattr(relation, 'RelatedOpeningElement', None)
+        if opening is None:
+            continue
+        qto_height, qto_depth = _opening_quantities_mm(opening)
+        height = None
+        box = _fast_bbox_mm(opening)
+        if box is not None:
+            height = box[2]
+        if not height or height <= 0:
+            height = qto_height
+        depth = qto_depth
+        if wall_thickness and (depth is None or depth > wall_thickness):
+            depth = wall_thickness
+        height = _number(height)
+        depth = _number(depth)
+        if not height or not depth or height <= 0 or depth <= 0:
+            continue
+        total += 2.0 * (depth / 1000.0) * (height / 1000.0)
+    return total or None
+
+
 def _height_geometry_complete(element):
     """No height conclusions from a partially supported representation.
 
@@ -1535,7 +1671,8 @@ def enrich_work_height(row, element):
     return row
 
 
-def _collect_element_data(element, compute_bbox_qto=True, compute_dimensions=False):
+def _collect_element_data(element, compute_bbox_qto=True, compute_dimensions=False,
+                          opening_ends=False):
     """Собирает все параметры одного элемента в словарь (колонка -> значение).
 
     Args:
@@ -1546,6 +1683,11 @@ def _collect_element_data(element, compute_bbox_qto=True, compute_dimensions=Fal
             габариты (длину/ширину/высоту). Нужно проверке ЦИМ: в моделях
             QTO может содержать объём и площадь, но не содержать размеров
             сечения (балки, пластины, колонны).
+        opening_ends: сохранять у стен площадь торцов проёмов
+            (``OPENING_ENDS_COLUMN``) — вертикальных щёк вырезов. Нужно
+            проверке ЦИМ для расчёта опалубки по всем четырём боковым
+            поверхностям; по умолчанию выключено, поэтому поведение режимов
+            ЦС/ИИ не меняется.
     """
     row = {}
 
@@ -1588,7 +1730,15 @@ def _collect_element_data(element, compute_bbox_qto=True, compute_dimensions=Fal
     from .ifc_quantities import stamp_ifc_volume
     stamp_ifc_volume(row, element)
     enrich_work_height(row, element)
-    return enrich_formwork_quantities(row, element)
+    row = enrich_formwork_quantities(row, element)
+    if opening_ends and element.is_a() in _WALL_OPENING_CLASSES:
+        ends = wall_ends_area_m2(row, element)
+        if ends:
+            row[WALL_ENDS_COLUMN] = round(ends, 6)
+        opening_ends_value = opening_ends_area_m2(row, element)
+        if opening_ends_value:
+            row[OPENING_ENDS_COLUMN] = round(opening_ends_value, 6)
+    return row
 
 
 # =====================================================================
@@ -1602,6 +1752,7 @@ def dump_ifc_elements_raw(
     exclude_classes=("IfcOpeningElement", "IfcBuildingElementProxy"),
     compute_dimensions: bool = False,
     dimension_classes=None,
+    opening_ends: bool = False,
 ) -> str:
     """Сохраняет XLSX со всеми элементами IFC и их сырыми параметрами.
 
@@ -1621,6 +1772,11 @@ def dump_ifc_elements_raw(
         dimension_classes: IFC-классы, для которых нужны габариты (например,
             классы требований ЦИМ). ``None`` — для всех элементов (не
             рекомендуется для больших моделей).
+        opening_ends: сохранять у стен площадь торцов проёмов
+            (``OPENING_ENDS_COLUMN``) — вертикальных щёк вырезов. Включается
+            проверкой ЦИМ для расчёта опалубки стен по всем четырём боковым
+            поверхностям; по умолчанию выключено, поэтому состав колонок
+            дампа режимов ЦС/ИИ не меняется.
 
     Returns:
         Путь к созданному XLSX-файлу или пустая строка, если элементов нет.
@@ -1678,6 +1834,7 @@ def dump_ifc_elements_raw(
             element,
             compute_bbox_qto=compute_bbox_qto,
             compute_dimensions=needs_dimensions,
+            opening_ends=opening_ends,
         )
         rows.append(row)
         # Накапливаем колонки в порядке первого появления.

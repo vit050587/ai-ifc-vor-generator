@@ -736,6 +736,14 @@
         #previewModal tr.pv-part td { background: #cbd5e0 !important; font-weight: 700; }
         #previewModal tr.pv-group td { background: #edf2f7 !important; font-weight: 600; }
         #previewModal tr.pv-total td { font-weight: 700; border-top: 2px solid #a0aec0; }
+
+        /* ===== Превью групп проверки ЦИМ по типовому ВОР (встроенный блок) =====
+           Оформление групп повторяет блок «Выбор строк и параметров обработки»
+           режима ИИ: те же фоны и цвета уровней, отступы по 30px, стрелки
+           .group-arrow, бейджи и сводки Σ Объём / Σ Площадь. Различаются только
+           набор столбцов и тексты групп (разделы/подразделы типового ВОР). */
+        #checkModelGroupsCard .table-wrap { max-height: 70vh; overflow: auto; }
+        #checkModelGroupsCard tr.cm-group { cursor: pointer; }
     </style>
 </head>
 <body>
@@ -1026,7 +1034,10 @@
                         <span class="step-number done">✓</span>
                         Результат проверки ЦИМ модели
                     </div>
-                    <button class="btn btn-sm btn-success" onclick="downloadAllCheckModel()">📥 Скачать всё</button>
+                    <div class="flex gap-8">
+                        <button class="btn btn-sm btn-secondary" id="checkModelGroupsToggleBtn" onclick="toggleCheckModelGroups()">🌳 Превью по типовому ВОР</button>
+                        <button class="btn btn-sm btn-success" onclick="downloadAllCheckModel()">📥 Скачать всё</button>
+                    </div>
                 </div>
                 <div class="reference-meta mt-12">
                     <div>Элементов в модели: <strong id="checkModelElementsTotal">0</strong></div>
@@ -1039,6 +1050,39 @@
                 </div>
                 <div id="checkModelFiles" class="mt-12"></div>
                 <div id="checkModelClasses" class="mt-12"></div>
+            </div>
+            <!-- Превью по типовому ВОР: встроенный блок под результатом проверки
+                 (аналогично блоку выбора строк в режиме ИИ), без модального окна -->
+            <div class="card" id="checkModelGroupsCard" style="display:none;">
+                <div class="flex-between">
+                    <div class="step-title" style="margin-bottom:0;">
+                        <span class="step-number">🌳</span>
+                        Превью по типовому ВОР
+                    </div>
+                    <div class="flex gap-8">
+                        <button class="btn btn-sm btn-secondary" onclick="expandAllCheckModelGroups()">Развернуть всё</button>
+                        <button class="btn btn-sm btn-secondary" onclick="collapseAllCheckModelGroups()">Свернуть всё</button>
+                        <button class="btn btn-sm btn-secondary" onclick="reloadCheckModelGroups()">🔄 Обновить</button>
+                        <button class="btn btn-sm btn-danger" onclick="closeCheckModelGroups()">✕ Скрыть</button>
+                    </div>
+                </div>
+                <p id="checkModelGroupsInfo" style="margin:12px 0; color:#718096;"></p>
+                <div class="table-wrap" id="checkModelGroupsWrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width:40px;"></th>
+                                <th>Группа / элемент</th>
+                                <th>IFC-класс</th>
+                                <th>Этаж</th>
+                                <th>Код МССК</th>
+                                <th>Объём, м³</th>
+                                <th>Площадь опалубки, м²</th>
+                            </tr>
+                        </thead>
+                        <tbody id="checkModelGroupsBody"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
@@ -1911,6 +1955,7 @@ function selectCheckModelFile(file) {
     document.getElementById('checkModelRefreshBtn').style.display = 'none';
     document.getElementById('checkModelStatusBox').style.display = 'none';
     document.getElementById('checkModelResultsCard').style.display = 'none';
+    resetCheckModelGroups();
 }
 
 function resetCheckModel() {
@@ -1929,6 +1974,7 @@ function resetCheckModel() {
     document.getElementById('checkModelResultsCard').style.display = 'none';
     document.getElementById('checkModelFiles').innerHTML = '';
     document.getElementById('checkModelClasses').innerHTML = '';
+    resetCheckModelGroups();
 }
 
 async function parseApiError(response, fallback) {
@@ -1945,6 +1991,7 @@ async function startCheckModel() {
     button.disabled = true;
     button.innerHTML = '<span class="spinner"></span> Загрузка...';
     document.getElementById('checkModelResultsCard').style.display = 'none';
+    resetCheckModelGroups();
 
     const formData = new FormData();
     formData.append('file', checkModelSelectedFile);
@@ -2182,6 +2229,7 @@ function openCheckModelSession(sessionId) {
     switchTab('checkmodel');
     document.getElementById('checkModelFileInfo').style.display = 'none';
     document.getElementById('checkModelResultsCard').style.display = 'none';
+    resetCheckModelGroups();
     document.getElementById('checkModelStatusBox').style.display = 'block';
     document.getElementById('checkModelStatusBox').className = 'reference-status';
     document.getElementById('checkModelSessionId').textContent = sessionId;
@@ -2201,6 +2249,257 @@ function downloadCheckModelFile(filename) {
 function downloadAllCheckModel() {
     if (!checkModelSessionId) return;
     window.location.href = `${API_BASE}/session/${checkModelSessionId}/download_all`;
+}
+
+// ========== Превью сгруппированных элементов проверки ЦИМ (типовой ВОР) ==========
+// Дерево: часть здания → раздел → подраздел (→ блок) → наименование элемента →
+// строки элементов. Строки элементов создаются лениво при раскрытии группы
+// наименования, чтобы не строить DOM для десятков тысяч элементов сразу.
+let checkModelGroupsData = null;
+const checkModelGroupNodes = new Map();
+let checkModelGroupsCounter = 0;
+
+function _cmFmtNumber(value) {
+    if (value === null || value === undefined || value === '') return '—';
+    const number = Number(value);
+    if (!Number.isFinite(number)) return '—';
+    return number.toLocaleString('ru-RU', { maximumFractionDigits: 3 });
+}
+
+async function openCheckModelGroups() {
+    if (!checkModelSessionId) return;
+    const card = document.getElementById('checkModelGroupsCard');
+    card.style.display = 'block';
+    _cmUpdateGroupsToggleBtn();
+    if (checkModelGroupsData) {
+        // Данные уже загружены — показываем без повторного запроса
+        if (!document.getElementById('checkModelGroupsBody').children.length) {
+            renderCheckModelGroups(checkModelGroupsData);
+        }
+        return;
+    }
+    await loadCheckModelGroups(false);
+}
+
+async function loadCheckModelGroups(refresh = false) {
+    if (!checkModelSessionId) return;
+    const info = document.getElementById('checkModelGroupsInfo');
+    const body = document.getElementById('checkModelGroupsBody');
+    info.style.color = '#718096';
+    info.textContent = 'Загрузка групп...';
+    body.innerHTML = '';
+    checkModelGroupNodes.clear();
+    const query = refresh ? '?refresh=1' : '';
+
+    try {
+        const response = await fetch(`${API_BASE}/check_model/${checkModelSessionId}/groups${query}`);
+        if (!response.ok) throw new Error(await parseApiError(response, 'Ошибка загрузки групп'));
+        const data = await response.json();
+        checkModelGroupsData = data;
+        renderCheckModelGroups(data);
+    } catch (error) {
+        info.style.color = '#c53030';
+        info.textContent = `Ошибка: ${error.message}`;
+    }
+}
+
+async function reloadCheckModelGroups() {
+    if (!checkModelSessionId) return;
+    checkModelGroupsData = null;
+    document.getElementById('checkModelGroupsCard').style.display = 'block';
+    _cmUpdateGroupsToggleBtn();
+    await loadCheckModelGroups(true);
+}
+
+function closeCheckModelGroups() {
+    document.getElementById('checkModelGroupsCard').style.display = 'none';
+    _cmUpdateGroupsToggleBtn();
+}
+
+function toggleCheckModelGroups() {
+    const card = document.getElementById('checkModelGroupsCard');
+    if (card.style.display === 'none' || !card.style.display) openCheckModelGroups();
+    else closeCheckModelGroups();
+}
+
+function _cmUpdateGroupsToggleBtn() {
+    const button = document.getElementById('checkModelGroupsToggleBtn');
+    if (!button) return;
+    const opened = document.getElementById('checkModelGroupsCard').style.display !== 'none';
+    button.textContent = opened ? '🌳 Скрыть превью по типовому ВОР' : '🌳 Превью по типовому ВОР';
+}
+
+function resetCheckModelGroups() {
+    checkModelGroupsData = null;
+    checkModelGroupNodes.clear();
+    document.getElementById('checkModelGroupsBody').innerHTML = '';
+    document.getElementById('checkModelGroupsInfo').textContent = '';
+    closeCheckModelGroups();
+}
+
+// Оформление уровней превью повторяет группы блока «Выбор строк и параметров
+// обработки» режима ИИ: те же цвета фона/текста, насыщенность и размер шрифта,
+// иконки, отступ 30px на уровень, бейдж количества и сводка Σ Объём/Σ Площадь.
+// Отличаются только набор столбцов и тексты групп (разделы/подразделы ВОР).
+const CM_LEVEL_STYLES = {
+    part:       { bg: '#e2e8f0', color: '#2d3748', weight: 700, size: '15px', icon: '🏗️', summaryColor: '#4a5568' },
+    section:    { bg: '#edf2f7', color: '#2d3748', weight: 600, size: '',     icon: '📋', summaryColor: '#4a5568' },
+    block:      { bg: '#f0fff4', color: '#276749', weight: 600, size: '',     icon: '📦', summaryColor: '#718096' },
+    subsection: { bg: '#f7fafc', color: '#4a5568', weight: 500, size: '',     icon: '📏', summaryColor: '#718096' },
+    name:       { bg: '#ffffff', color: '#2b6cb0', weight: 500, size: '',     icon: '',   summaryColor: '#718096' },
+};
+const CM_GROUP_INDENT = 30; // шаг отступа вложенности (как в блоке выбора строк ИИ)
+const CM_TABLE_COLS = 7;    // стрелка + 6 колонок данных
+
+function _cmAreaSummary(area) {
+    return area > 0 ? ` · Σ Площадь опалубки: ${area.toFixed(2)} м²` : '';
+}
+
+function _cmElementRow(element, parentId, depth) {
+    const row = document.createElement('tr');
+    row.className = 'group-row hidden-row';
+    row.dataset.parent = parentId;
+    row.dataset.level = 'element';
+    // Площадь опалубки есть только у монолитных ж/б элементов; для сборных и
+    // неконструктивных элементов подсказываем, что она не требуется.
+    const areaTitle = element.areaBasis
+        ? ` title="${_cmEscape(element.areaBasis)}"`
+        : (element.area === null || element.area === undefined ? ' title="Площадь опалубки не требуется (сборный ж/б или неконструктивный элемент)"' : '');
+    row.innerHTML =
+        '<td></td>' +
+        `<td style="padding-left:${(depth + 1) * CM_GROUP_INDENT}px;">${_cmEscape(element.name || '—')}</td>` +
+        `<td>${_cmEscape(element.ifcClass || '—')}</td>` +
+        `<td>${_cmEscape(element.storey || '—')}</td>` +
+        `<td>${_cmEscape(element.mssk || '—')}</td>` +
+        `<td>${_cmFmtNumber(element.volume)}</td>` +
+        `<td${areaTitle}>${_cmFmtNumber(element.area)}</td>`;
+    return row;
+}
+
+function renderCheckModelGroups(data) {
+    const body = document.getElementById('checkModelGroupsBody');
+    const info = document.getElementById('checkModelGroupsInfo');
+    body.innerHTML = '';
+    checkModelGroupNodes.clear();
+    checkModelGroupsCounter = 0;
+
+    const addNode = (node, parentId, depth) => {
+        const id = `cm${checkModelGroupsCounter++}`;
+        const children = node.children || [];
+        const elements = node.elements || [];
+        const hasChildren = children.length > 0;
+        const hasElements = elements.length > 0;
+        checkModelGroupNodes.set(id, { node, parentId, hasChildren, hasElements, loaded: false, depth });
+
+        const style = CM_LEVEL_STYLES[node.level] || CM_LEVEL_STYLES.section;
+        const isRoot = !parentId;
+
+        const row = document.createElement('tr');
+        row.dataset.id = id;
+        row.dataset.parent = parentId || '';
+        row.dataset.level = node.level;
+        row.dataset.hasChildren = hasChildren ? '1' : '0';
+        // Корневой уровень (часть здания) — sticky-заголовок, как L1 в режиме ИИ
+        row.className = isRoot ? 'group-header cm-group' : 'group-row cm-group hidden-row';
+        row.style.cssText = `background:${style.bg} !important; cursor:pointer;`;
+
+        const title = _cmEscape(node.title || '');
+        const count = Number(node.count || 0);
+        const volume = Number(node.volume || 0);
+        const area = Number(node.area || 0);
+        row.innerHTML =
+            `<td style="text-align:center; padding-left:${depth * CM_GROUP_INDENT}px;">` +
+                `<span class="group-arrow" id="${id}_arrow">▶</span>` +
+            '</td>' +
+            `<td colspan="${CM_TABLE_COLS - 1}" style="font-weight:${style.weight};` +
+                `${style.size ? ` font-size:${style.size};` : ''} color:${style.color}; white-space:nowrap;">` +
+                `${style.icon ? style.icon + ' ' : ''}${title}` +
+                `<span class="group-badge">×${count}</span>` +
+                `<span style="font-size:11px; color:${style.summaryColor}; margin-left:12px;">` +
+                    `Σ Объём: ${volume.toFixed(2)} м³${_cmAreaSummary(area)}` +
+                '</span>' +
+            '</td>';
+
+        row.addEventListener('click', () => toggleCheckModelGroup(id));
+        body.appendChild(row);
+
+        if (hasChildren) children.forEach((child) => addNode(child, id, depth + 1));
+    };
+
+    (data.groups || []).forEach((group) => addNode(group, '', 0));
+
+    const total = Number(data.totalElements || 0);
+    const grouped = Number(data.groupedElements || 0);
+    const ungrouped = Number(data.ungroupedElements || 0);
+    info.textContent = `Всего элементов: ${total}. Распределено по разделам типового ВОР: ${grouped}.` +
+        (ungrouped ? ` Вне разделов (проёмы и неконструктивные элементы): ${ungrouped}.` : '');
+}
+
+function _cmGroupRow(id) {
+    return document.querySelector(`#checkModelGroupsBody tr[data-id="${id}"]`);
+}
+
+function _cmDescendants(id) {
+    const result = [];
+    const walk = (parentId) => {
+        document.querySelectorAll(`#checkModelGroupsBody tr[data-parent="${parentId}"]`).forEach((row) => {
+            result.push(row);
+            if (row.dataset.hasChildren === '1') walk(row.dataset.id);
+        });
+    };
+    walk(id);
+    return result;
+}
+
+function expandCheckModelGroup(id) {
+    const info = checkModelGroupNodes.get(id);
+    const row = _cmGroupRow(id);
+    if (!info || !row) return;
+    row.classList.add('cm-expanded');
+    const arrow = row.querySelector('.group-arrow');
+    if (arrow) { arrow.classList.add('expanded'); arrow.textContent = '▼'; }
+
+    if (info.hasElements && !info.loaded) {
+        const fragment = document.createDocumentFragment();
+        info.node.elements.forEach((element) => {
+            fragment.appendChild(_cmElementRow(element, id, info.depth));
+        });
+        row.after(fragment);
+        info.loaded = true;
+    }
+
+    document.querySelectorAll(`#checkModelGroupsBody tr[data-parent="${id}"]`).forEach((child) => {
+        child.classList.remove('hidden-row');
+    });
+}
+
+function collapseCheckModelGroup(id) {
+    const row = _cmGroupRow(id);
+    if (!row) return;
+    row.classList.remove('cm-expanded');
+    const arrow = row.querySelector('.group-arrow');
+    if (arrow) { arrow.classList.remove('expanded'); arrow.textContent = '▶'; }
+    _cmDescendants(id).forEach((child) => {
+        child.classList.add('hidden-row');
+        child.classList.remove('cm-expanded');
+        const childArrow = child.querySelector('.group-arrow');
+        if (childArrow) { childArrow.classList.remove('expanded'); childArrow.textContent = '▶'; }
+    });
+}
+
+function toggleCheckModelGroup(id) {
+    const row = _cmGroupRow(id);
+    if (!row) return;
+    if (row.classList.contains('cm-expanded')) collapseCheckModelGroup(id);
+    else expandCheckModelGroup(id);
+}
+
+function expandAllCheckModelGroups() {
+    checkModelGroupNodes.forEach((_info, id) => expandCheckModelGroup(id));
+}
+
+function collapseAllCheckModelGroups() {
+    checkModelGroupNodes.forEach((_info, id) => collapseCheckModelGroup(id));
 }
 
 // ========== Загрузка файла ==========
