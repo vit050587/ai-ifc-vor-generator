@@ -75,6 +75,10 @@ class RebarRow:
     source_kind: Optional[str] = None
     source_part: Optional[str] = None
     normalized_scope: bool = False
+    thickness_spec: Optional[dict] = None
+    source_context: str = ""
+    cross_section: str = ""
+    external_scope: str = ""
 
 
 @dataclass
@@ -254,10 +258,16 @@ def extract_rebar(rows: List[dict]) -> RebarData:
     для точного отнесения арматуры к геометрическим блокам типового ВОР.
     """
     data = RebarData()
+    from .customer_vor import _section_label
+    from .thickness import parse
     components = row_components(rows)
 
-    # Толщина конструкции по (разделу, блоку) — последнее значение в блоке.
+    # A block-wide value is usable only when all declared geometries agree.
     thickness_map: Dict[Tuple[str, str], int] = {}
+    thickness_specs = {}
+    section_labels = {}
+    declared_specs = {}
+    declared_sections = {}
     for row in rows:
         name = str(row.get('name') or '')
         values = mapping.thickness_values(name)
@@ -265,6 +275,24 @@ def extract_rebar(rows: List[dict]) -> RebarData:
             key = (str(row.get("section") or "").strip(),
                    str(row.get("block") or "").strip())
             thickness_map[key] = values[0] if len(values) == 1 else None
+        if 'подготовк' not in name.lower():
+            key = (str(row.get('section') or '').strip(), str(row.get('block') or '').strip())
+            spec = parse(name)
+            if spec:
+                thickness_specs[key] = spec
+                signature = (spec['mode'],spec.get('low'),spec.get('high'),tuple(spec.get('values',())))
+                declared_specs.setdefault(key,set()).add(signature)
+            section_label = _section_label(name)
+            if section_label:
+                section_labels[key] = section_label
+                declared_sections.setdefault(key,set()).add(section_label)
+    for key, values in declared_specs.items():
+        if len(values) > 1:
+            thickness_specs[key] = None
+            thickness_map[key] = None
+    for key, values in declared_sections.items():
+        if len(values) > 1:
+            section_labels[key] = ''
 
     # Первый проход: позиции родительских строк-арматуры, их классы и наименования.
     # Ключ — (раздел, блок, позиция): нумерация позиций повторяется в каждом
@@ -335,7 +363,11 @@ def extract_rebar(rows: List[dict]) -> RebarData:
                                   group=group, thickness=thickness,
                                   component=components.get((section, block, pos), ""),
                                   source_kind=None if row.get("external_scope") else row.get("construction_kind"), source_part=row.get("building_part"),
-                                  normalized_scope=row.get("normalized_scope", False)))
+                                  normalized_scope=row.get("normalized_scope", False),
+                                  thickness_spec=row.get('thickness_spec') if row.get('normalized_scope') else thickness_specs.get((section,block)),
+                                  source_context=' / '.join(dict.fromkeys(filter(None, [section, block, row.get('construction')]))),
+                                  cross_section=(_section_label(row.get('construction') or block) or '') if row.get('normalized_scope') else section_labels.get((section,block),''),
+                                  external_scope=row.get('external_scope') or ''))
         data.by_section[section] = data.by_section.get(section, 0.0) + volume
         key = (diameter, rebar_class or "")
         data.by_diameter_class[key] = data.by_diameter_class.get(key, 0.0) + volume

@@ -10,7 +10,7 @@ def is_rebar(work):
         r'закладн|стекло|композит', str(work.get('title') or ''), re.I)
 
 
-def allocations(groups, run_dir, raw_rows=None):
+def allocations(groups, run_dir, raw_rows=None, *, return_pending=False):
     """Copy each customer row once using the same scopes as the typical VOR.
 
     Groups are not created or moved. Tonnes are never apportioned by IFC volume.
@@ -28,22 +28,26 @@ def allocations(groups, run_dir, raw_rows=None):
             template.TemplateRow(index=index + 1, kind='work', number='1', name='Устройство арматурных стержней',
                                  element_kind=kind, part=part, subsection=str(number))])
         output.extend([template.OutputRow(index, label=name), template.OutputRow(index + 1)])
-    copy_rebar(output, rows, rebar, 'ВОР заказчика: исходный тоннаж без множителей')
-    result = [{'tonnes': None, 'specs': []} for _ in groups]
+    pending = copy_rebar(output, rows, rebar, 'ВОР заказчика: исходный тоннаж без множителей', preserve_unmatched=False)
+    result = [{'tonnes': None, 'specs': [], 'categories': {}} for _ in groups]
+    bucket = 'bars'
     for item in output:
         if item.volume is None or item.src_index % 2 == 0:
             continue
         target = result[item.src_index // 2]
         if '.' in str(item.label or ''):
             target['specs'].append((item.name_override, float(item.volume)))
+            target['categories'][bucket]['specs'].append((item.name_override, float(item.volume)))
         else:
+            bucket = mapping.rebar_bucket(item.name_override)
+            target['categories'].setdefault(bucket, {'tonnes':0, 'specs':[]})['tonnes'] += float(item.volume)
             target['tonnes'] = (target['tonnes'] or 0) + float(item.volume)
     for target in result:
         totals = {}
         for name, mass in target['specs']:
             totals[name] = totals.get(name, 0) + mass
         target['specs'] = list(totals.items())
-    return result
+    return (result, pending) if return_pending else result
 
 
 def group_scope(element, name, part):
@@ -52,9 +56,7 @@ def group_scope(element, name, part):
     actual = element.get('name') or name
     name = actual + (' ' + name if actual != name else '')
     kind = _element_kind(cls, '', name, element.get('predefined_type') or '')
-    if re.search(r'приям', name, re.I):
-        kind = 'foundation_slab'
-    return name, kind or mapping.detect_kind(name), mapping.detect_part(part)
+    return name, element.get('source_kind') or kind or mapping.detect_kind(name), mapping.detect_part(part)
 
 
 def _resource(name, tonnes):
@@ -71,6 +73,15 @@ def _resource(name, tonnes):
             'pressmark': code or 'ВОР:Арматура', 'title': name, 'unit': 'т', 'volume': tonnes,
             'volume_source': 'ВОР заказчика: исходный тоннаж, сумма внутри группы без множителей',
             'is_resource': True, 'customer_rebar_tonnes': tonnes}
+
+
+def _category_work(bucket):
+    title = {'bars':'Устройство арматурных стержней', 'frames':'Устройство арматурных каркасов',
+             'releases':'Устройство арматурных выпусков'}[bucket]
+    # A missing installation rate is not replaced with another category's rate.
+    code = 'ВОР: '+{'bars':'стержни', 'frames':'каркасы', 'releases':'выпуски'}[bucket]
+    return dict(pressmark=code, title=title, unit='т', unit_of_measure='т',
+                is_resource=False, source_only=True, quantity={})
 
 
 def apply_legacy_rebar(groups, run_dir, raw_rows=None):
@@ -92,18 +103,28 @@ def apply_legacy_rebar(groups, run_dir, raw_rows=None):
         rows = group['rows']
         rows[:] = [r for r in rows if not (is_rebar(r) and r.get('is_resource'))]
         installation = [r for r in rows if is_rebar(r) and not r.get('is_resource')]
-        for i, row in enumerate(installation):
-            tonnes = amount['tonnes'] if i == 0 else None
+        categories = amount['categories']
+        for bucket in categories:
+            if not any(mapping.rebar_bucket(r['title']) == bucket for r in installation):
+                row = _category_work(bucket);rows.append(row);installation.append(row)
+        used = set()
+        for row in installation:
+            bucket = mapping.rebar_bucket(row['title'])
+            tonnes = categories.get(bucket, {}).get('tonnes') if bucket not in used else None
+            used.add(bucket)
             from .perechen_pipeline import _divisor
             row['volume'] = tonnes / _divisor(row['unit']) if tonnes is not None else None
             row['volume_source'] = 'ВОР заказчика: исходный тоннаж без множителей' if tonnes is not None else ''
             row['zp'], row['em'], row['mr'], row['total'] = _costs(row, row['volume'])
-        resources = [_resource(name, mass) for name, mass in amount['specs']]
-        for row in resources:
-            row['work'] = 'Арматура по ВОР заказчика'
-            row['zp'], row['em'], row['mr'], row['total'] = _costs(row, row['volume']) if row['pressmark'].startswith('1.') else (None,) * 4
-        at = rows.index(installation[0]) + 1 if installation else len(rows)
-        rows[at:at] = resources
+        for work in installation:
+            if work.get('volume') is None:
+                continue
+            bucket = mapping.rebar_bucket(work['title'])
+            resources = [_resource(name, mass) for name, mass in categories[bucket]['specs']]
+            for row in resources:
+                row['work'] = work['title'];row['rebar_bucket'] = bucket
+                row['zp'], row['em'], row['mr'], row['total'] = _costs(row, row['volume']) if row['pressmark'].startswith('1.') else (None,) * 4
+            at = rows.index(work)+1;rows[at:at] = resources
 
 
 def apply_api_rebar(entries, run_dir, raw_rows=None):
@@ -120,18 +141,28 @@ def apply_api_rebar(entries, run_dir, raw_rows=None):
         prior = {(w.get('pressmark'), w.get('title')): w for w in works if w.get('is_resource')}
         works[:] = [w for w in works if not (is_rebar(w) and (w.get('is_resource') or str(w.get('pressmark') or '').startswith('1.')))]
         installation = [w for w in works if is_rebar(w)]
-        for i, work in enumerate(installation):
-            work['customer_rebar_tonnes'] = amount['tonnes'] if i == 0 else None
-            work['volume_source'] = 'ВОР заказчика: исходный тоннаж без множителей' if i == 0 and amount['tonnes'] is not None else ''
-        resources = []
-        for name, mass in amount['specs']:
-            resource = _resource(name, mass)
-            previous = prior.get((resource['pressmark'], resource['title']), {})
-            resource = {**resource, **previous, 'volume': mass, 'customer_rebar_tonnes': mass}
-            resource['unit_of_measure'] = 'т'
-            resources.append(resource)
-        at = works.index(installation[0]) + 1 if installation else len(works)
-        works[at:at] = resources
+        categories = amount['categories']
+        for bucket in categories:
+            if not any(mapping.rebar_bucket(w['title']) == bucket for w in installation):
+                work = _category_work(bucket);works.append(work);installation.append(work)
+        used = set()
+        for work in installation:
+            bucket = mapping.rebar_bucket(work['title'])
+            mass = categories.get(bucket, {}).get('tonnes') if bucket not in used else None
+            used.add(bucket)
+            work['customer_rebar_tonnes'] = mass
+            work['volume_source'] = 'ВОР заказчика: исходный тоннаж без множителей' if mass is not None else ''
+            if mass is None:
+                continue
+            resources = []
+            for name, mass in categories[bucket]['specs']:
+                resource = _resource(name, mass)
+                previous = prior.get((resource['pressmark'], resource['title']), {})
+                resource = {**resource, **previous, 'volume':mass, 'customer_rebar_tonnes':mass,
+                            'volume_source':resource['volume_source'], 'unit':'т', 'unit_of_measure':'т',
+                            'is_resource':True, 'rebar_bucket':bucket, 'parent_work':work['title']}
+                resources.append(resource)
+            at = works.index(work)+1;works[at:at] = resources
         entry['selected_works'] = works
 
 
@@ -236,37 +267,35 @@ def split_source_groups(groups, rows):
 
 
 def ensure_source_scopes(entries, raw_rows):
-    """Retain customer tonnes even when the IFC has no corresponding kind.
+    """Retain source totals with missing or ambiguous model correspondence.
 
     Such rows belong to the existing template subsection, with an explicit
     missing-model reason; no geometry or installation rate is invented.
     """
-    from .vor_generation.customer_vor import _section_kind, _detect_part
     from .work_sections import catalog
-    rebar = documents.extract_rebar(raw_rows or [])
-    existing = {(scope[1], scope[2]) for scope in (
-        group_scope(e.get('element') or {}, e.get('group_base_name') or '', e.get('part') or '') for e in entries)}
+    from .vor_generation.source_rebar import source_scope, shared_heading
+    scopes = [group_scope(e.get('element') or {}, e.get('group_base_name') or '', e.get('part') or '') for e in entries]
+    _, pending = allocations(scopes, '', raw_rows, return_pending=True)
+    existing = {e.get('group_base_name') for e in entries}
     sections = catalog().sections
-    for row in rebar.rows:
-        kind, part = row.source_kind or _section_kind(row.section), row.source_part or _detect_part(row.section, '')
+    for row in pending:
+        kind, part, _ = source_scope(row)
         if not part and kind in ('foundation_slab', 'crane_foundation', 'equipment_foundation'):
             part = 'underground'
         elif not part and kind == 'parapet':
             part = 'above'
-        if not kind or not part or (kind, part) in existing:
+        name = shared_heading(row)
+        if name in existing:
             continue
         section_kind = 'foundation_slab' if kind == 'crane_foundation' else kind
         section = next((s for s in sections if s.kind == section_kind and s.part == part), None)
-        if section is None:
-            continue
-        name = re.sub(r'^Подраздел\s+\d+[.]?\s*', '', section.path[-1], flags=re.I)
-        if kind == 'crane_foundation':
-            name = 'Фундамент под башенный кран'
-        entries.append({'element': {'name': name}, 'part': 'Подземная' if part == 'underground' else 'Надземная',
-                        'group_base_name': name, 'group_header': name + ' (ВОР заказчика; соответствие в IFC не найдено)',
-                        'group_path': list(section.path), 'group_quantity': {}, 'selected_works': [],
-                        'source_only': True, 'note': 'Проверить соответствие группы ВОР заказчика элементам IFC; тоннаж скопирован без пересчёта'})
-        existing.add((kind, part))
+        part_name = {'underground':'Подземная','above':'Надземная'}.get(part,'Часть здания не указана')
+        path = list(section.path) if section else [part_name, row.external_scope or 'Исходные объёмы арматуры']
+        entries.append({'element': {'name': name, 'source_kind':kind}, 'part':part_name,
+                        'group_base_name': name, 'group_header': name,
+                        'group_path':path, 'group_quantity': {}, 'selected_works': [],
+                        'source_only': True, 'note': 'Общий объём ВОР заказчика: однозначная привязка к одной группе IFC отсутствует; тоннаж не распределён'})
+        existing.add(name)
 
 
 def api_concrete_resources(entries):

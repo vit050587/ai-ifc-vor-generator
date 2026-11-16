@@ -3,6 +3,7 @@ from collections import defaultdict
 
 from .thickness import from_row, contains
 from .group_comparison import _family
+from .source_rebar import is_shared_group
 
 
 def operation_links(generated, customer):
@@ -14,6 +15,8 @@ def operation_links(generated, customer):
     for side, rows in enumerate((generated, customer)):
         for row in rows:
             if row.get('isSeparator') or row.get('quantity') is None:
+                continue
+            if is_shared_group(row.get('elementGroup')):
                 continue
             family = _family(row)
             if family not in ('wall', 'slab', 'stair', 'precast'):

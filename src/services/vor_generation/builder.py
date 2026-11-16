@@ -77,6 +77,8 @@ def _format_header(text: str, param: Optional[str], label: Optional[str]) -> str
     Если данных для группировки нет (``label`` пуст), заполнитель заменяется
     прочерком — структура шаблона сохраняется, а отсутствие данных видно.
     """
+    if param == 'area':
+        return 'Плиты перекрытия площадью до 10 м2, свыше 10 до 20 м2 и более 20 м2 (вместе)'
     label = label or _DASH
     if param == "section":
         # «Колонны сечением ахb мм» → «Колонны сечением 400х400 мм»
@@ -119,6 +121,8 @@ def _group_header(elements: List[Element], param: Optional[str], label: Optional
     (``Фундаментная плита:ADSK_Бетон В30_1000 мм``); при отсутствии данных —
     текст шаблона с фактическим значением геометрии.
     """
+    if param == 'area':
+        return _format_header(fallback_text, param, label)
     name = _dominant_group_name(elements)
     if name:
         if param == "thickness" and label:
@@ -727,7 +731,7 @@ def _geometry_groups(elements: List[Element], param: str,
 def build_vor(elements_json_path: str, docs: Documents, output_path: str,
               template_path: str = None, sheet_name: str = template.DEFAULT_SHEET,
               ifc_name: str = "", progress: Progress = None,
-              prepared_index=None, prepared_template=None) -> Dict[str, object]:
+              prepared_index=None, prepared_template=None, shared_rebar_scopes=()) -> Dict[str, object]:
     """Собирает заполненный ВОР по типовому шаблону.
 
     Возвращает словарь со статистикой сборки (число строк, заполненных объёмов
@@ -785,9 +789,7 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
             part = row.part if row.part in ("underground", "above") else None
             elements = index.select(row.element_kind, part)
             children = block_rows.get(row.index, [])
-            # Группировка по геометрии — только для толщины и сечения
-            # (заголовки «…толщиной … мм» / «…сечением ахb мм»); «площадью … м2»
-            # заполняется одним блоком по всей группе подраздела.
+            # Slab area bands are intentionally combined in one labelled block.
             if row.geometry in ("thickness", "section") and elements:
                 groups = _geometry_groups(elements, row.geometry, index)
                 total_volume = sum(el.quantity("volume") for el in elements)
@@ -805,10 +807,6 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
                         output.append(out_row)
             else:
                 label = None
-                if row.geometry == "area" and elements:
-                    total_area = sum(el.quantity("area") for el in elements)
-                    if total_area:
-                        label = f"{round(total_area, 2)}"
                 header_label = _format_header(_block_text(row), row.geometry, label) \
                     if row.geometry else _block_text(row)
                 output.append(template.OutputRow(src_index=row.index, label=header_label))
@@ -844,6 +842,13 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
                 i += 1
             part = group[0].part if group[0].part in ("underground", "above") else None
             elements = index.select(group[0].element_kind, part)
+            if group[0].element_kind == 'beam' and elements:
+                for label, members in _geometry_groups(elements,'section',index):
+                    output.append(template.OutputRow(group[0].index,
+                        label='Балки сечением '+label+' мм' if label else 'Балки: сечение в IFC не указано',
+                        name_override='', extra={c:None for c in range(3,9)}))
+                    output.extend(_fill_rows(group,members,ctx,'beam',part))
+                continue
             for out_row in _fill_rows(group, elements, ctx, group[0].element_kind, part):
                 if out_row.volume is not None:
                     filled += 1
@@ -854,8 +859,10 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
         output.append(template.OutputRow(src_index=row.index))
         i += 1
 
-    from .source_rebar import copy_rebar
-    copy_rebar(output, rows, docs.rebar, ctx.ref_vor)
+    from .source_rebar import copy_rebar, shared_heading
+    pending_rebar = copy_rebar(output, rows, docs.rebar, ctx.ref_vor, shared_scopes=shared_rebar_scopes)
+    from .source_auxiliary import copy_auxiliary
+    copy_auxiliary(output, source_rows, rows, ctx.ref_vor)
     filled = sum(item.volume is not None for item in output)
     _say(progress, "Запись заполненного ВОР")
     from .stair_report import records as stair_records
@@ -864,6 +871,7 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
                              output_path=output_path, stair_rows=stair_records(index))
 
     stats = {
+        "shared_rebar_scopes": sorted({shared_heading(r) for r in pending_rebar}),
         "rows": len(output),
         "filled": filled,
         "elements": len(index.elements),

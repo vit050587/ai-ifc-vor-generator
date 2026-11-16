@@ -70,9 +70,9 @@ def reorder_comparison_sheet(sheet, order):
 
 def _heading_level(value):
     value = value.lower()
-    if value.startswith('подраздел '):
+    if value.startswith(('подраздел ', 'подраздел.')):
         return 2
-    if value.startswith('раздел '):
+    if value.startswith(('раздел ', 'раздел.')):
         return 1
     if value.startswith(('подземная часть', 'надземная часть', 'автостоянка', 'часть здания:')):
         return 0

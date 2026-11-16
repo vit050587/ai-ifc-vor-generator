@@ -8,7 +8,7 @@ from openpyxl import load_workbook
 from .works_comparison.units import normalize_positions
 from .vor_generation.quantity import source_summary
 
-VERSION = 25
+VERSION = 29
 FILES = ('typical_generated.xlsx', 'typical_customer.xlsx')
 NATIVE_FILES = ('Сформированный_ВОР.xlsx', 'ВОР_заказчика.xlsx')
 
@@ -18,23 +18,31 @@ def norm(value):
 
 
 def read_typical_workbook(path):
-    workbook = load_workbook(path, read_only=True, data_only=True)
+    workbook = load_workbook(path, read_only=False, data_only=True)
     try:
         sheet = workbook['ВОР КР_ЖС']
         part = section = subsection = group = parent = parking = component = ''
         result = []
         for index, values in enumerate(sheet.iter_rows(min_row=4, max_col=8, values_only=True), 4):
+            # Preserved source-audit rows are not additional construction
+            # groups. They must not make an otherwise unique match ambiguous.
+            if sheet.row_dimensions[index].hidden:
+                continue
             number, name, unit, quantity, calculation, reason, parameters, parameter_values = values
             number = str(number).strip() if number is not None else ''
             name = str(name).strip() if name is not None else ''
             if number and not name:
                 heading = norm(number)
                 parent = component = ''
-                if heading.startswith('подраздел '):
+                if heading.startswith(('подраздел ', 'подраздел.')):
                     subsection, group = number, ''
-                elif heading.startswith('раздел '):
+                elif heading.startswith(('раздел ', 'раздел.')):
                     section, subsection, group = number, '', ''
                 elif heading.startswith(('подземная часть', 'надземная часть')) or heading.startswith('часть здания:') or heading == 'автостоянка':
+                    if heading.startswith('часть здания:'):
+                        # A standalone source scope after the parking template
+                        # is not a construction belonging to that parking area.
+                        parking = ''
                     if heading == 'автостоянка':
                         parking = number
                         part, section = number, ''
@@ -96,6 +104,9 @@ def scope(row):
 def identity(row):
     # Resource numbering changes as diameters/grades are inserted; its name and owning work do not.
     def work_key(value):
+        from .vor_generation.mapping import classify_work, rebar_bucket
+        if classify_work(value) == 'rebar':
+            return 'армирование:'+rebar_bucket(value)
         return norm(re.sub(r'\bt\s*=\s*(?:\d+(?:[.,]\d+)?|не указана)?\s*мм', 't= мм', str(value or ''), flags=re.I))
     return (row.get('kind', 'work'), work_key(row.get('parentWork')), work_key(row.get('work')), norm(row.get('unit')))
 
@@ -108,6 +119,9 @@ def group_aliases(generated, customer):
     that plate's thickness, preserving both source scopes and quantities.
     Never guess when either side contains several groups of this family.
     """
+    from .vor_generation.source_rebar import is_shared_group
+    generated = [r for r in generated if not is_shared_group(r.get('elementGroup'))]
+    customer = [r for r in customer if not is_shared_group(r.get('elementGroup'))]
     families = {'generated': defaultdict(set), 'customer': defaultdict(set)}
     for side, rows in (('generated', generated), ('customer', customer)):
         for row in rows:

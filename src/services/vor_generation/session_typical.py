@@ -106,7 +106,16 @@ def _build(run_dir, output_path=None, template_path=None, session=None, llm=None
                                         prepared_index=index, prepared_template=prepared_template)
     customer_stats = customer_vor.build_customer_vor(
         str(vor_path), str(customer), template_path=template_path, elements_json_path=str(raw), raw_rows=vor_rows,
-        prepared_rows=prepared_rows, prepared_rebar=docs.rebar, prepared_index=index, prepared_template=prepared_template)
+        prepared_rows=prepared_rows, prepared_rebar=docs.rebar, prepared_index=index, prepared_template=prepared_template,
+        shared_rebar_scopes=generated_stats.get('shared_rebar_scopes', ()))
+    # A source total shared on either side must have the same explicit group
+    # in both workbooks. It cannot become a different construction by matching.
+    shared = sorted(set(generated_stats.get('shared_rebar_scopes', ())) |
+                    set(customer_stats.get('shared_rebar_scopes', ())))
+    if set(shared) != set(generated_stats.get('shared_rebar_scopes', ())):
+        generated_stats = builder.build_vor(str(raw), docs, str(generated), template_path=template_path,
+            ifc_name=session.get('original_filename') or 'Модель IFC', prepared_index=index,
+            prepared_template=prepared_template, shared_rebar_scopes=shared)
     result = _compare_sources(generated, customer, output_path or root / OUTPUT_FILENAME, llm)
     result.update(source_files=[{'kind':'generated','file':str(generated)},
                                 {'kind':'customer','file':str(customer)}],

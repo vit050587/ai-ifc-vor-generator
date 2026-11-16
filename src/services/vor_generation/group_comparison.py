@@ -3,6 +3,7 @@ from collections import defaultdict
 import re
 
 from .thickness import from_row, contains, label as thickness_label
+from .source_rebar import is_shared_group
 
 _LABELS = {'wall':'стены','slab':'перекрытия','foundation_slab':'фундаментная плита',
            'crane_foundation':'фундамент под кран','column':'колонны','beam':'балки'}
@@ -11,6 +12,10 @@ _LABELS = {'wall':'стены','slab':'перекрытия','foundation_slab':'
 def _family(row):
     from .mapping import detect_kind
     group = row.get('elementGroup', '')
+    # Pits may use the foundation template, but are a separate construction.
+    # Inspect the actual group before its broader template subsection.
+    if re.search(r'приям', group, re.I):
+        return 'pit'
     # The completed VOR subsection retains the builder's construction kind.
     # A wall type called "Пилон" must not move into columns during comparison.
     kind = detect_kind(row.get('subsection')) or detect_kind(group)
@@ -81,6 +86,7 @@ def add_totals(rows, generated, customer):
     for side, source in enumerate((generated,customer)):
         for row in source:
             if row.get('isSeparator') or row.get('quantity') is None: continue
+            if is_shared_group(row.get('elementGroup')): continue
             kind = _family(row)
             if kind not in _LABELS: continue
             context = tuple(norm(row.get(k)) for k in ('part','section','subsection'))+(kind,)

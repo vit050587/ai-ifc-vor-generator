@@ -3,6 +3,7 @@ from collections import defaultdict
 
 from .group_comparison import _family
 from .thickness import from_row
+from .source_rebar import is_shared_group
 
 
 def operation_identity(row):
@@ -22,6 +23,7 @@ def operation_links(generated, customer):
     for side,rows in enumerate((generated,customer)):
         for row in rows:
             if row.get('isSeparator') or row.get('quantity') is None: continue
+            if is_shared_group(row.get('elementGroup')): continue
             family = _family(row)
             if family not in ('foundation_slab','crane_foundation'): continue
             key = scope(row)[:3]+(family,operation_identity(row))

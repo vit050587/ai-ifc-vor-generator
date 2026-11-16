@@ -4,6 +4,7 @@ import json
 
 from .thickness import from_row, contains
 from .group_comparison import _family
+from .source_rebar import is_shared_group
 
 
 def bindings(generated, customer, aliases, row_links):
@@ -53,6 +54,8 @@ def bindings(generated, customer, aliases, row_links):
         candidates = set()
         for ckey in active[1]:
             target = groups[1][ckey]
+            if (is_shared_group(gkey[-1]) or is_shared_group(ckey[-1])) and gkey != ckey:
+                continue
             if context(ckey,target)!=ctx:
                 continue
             family = ctx[-1]
@@ -68,7 +71,7 @@ def bindings(generated, customer, aliases, row_links):
                 candidates.add(ckey)
         # Existing unique foundation/area evidence can establish the object
         # when geometry is missing or is itself a compared parameter.
-        if not candidates and len(evidence[gkey])==1:
+        if not candidates and len(evidence[gkey])==1 and not is_shared_group(gkey[-1]):
             candidates = evidence[gkey]
         if len(candidates)==1:
             target = next(iter(candidates))
