@@ -18,6 +18,7 @@ from pdf_prcoessor import PdfProcessor
 from matrix_processor import MatrixProcessor
 from polygon_converter import RegionPolygon
 from obb_converter import RegionOBB
+from utils import resize_image
 
 logger = setup_logger(__name__)
 
@@ -75,19 +76,22 @@ class HatchingDetector:
                 accumulated_matrix = torch.zeros((tile_size, tile_size), device=settings.DEVICE, dtype=torch.float16)
                 for symbol in legend_entry["legend_symbols"]:
                     symbol_image = symbol["image"]
-                    if settings.USE_TILES_CACHE:
-                        tile_matrix = self.infer_tile(tile_hash, mask_hash, symbol["hash"], model_version, tile["image"], mask_image, symbol_image)
-                    else:
-                        tile_matrix = (
-                            self.hatch_finder
-                            .infer(tile["image"], mask_image, symbol_image)
-                            .squeeze()
-                            .to(
-                                device=accumulated_matrix.device,
-                                dtype=accumulated_matrix.dtype,
+                    for scale in settings.HATCHINGS_SCALES:
+                        resized_symbol_image = resize_image(symbol_image, scale)
+                        if settings.USE_TILES_CACHE:
+                            resized_symbol_hash = self._image_hash(resized_symbol_image)
+                            tile_matrix = self.infer_tile(tile_hash, mask_hash, resized_symbol_hash, model_version, tile["image"], mask_image, resized_symbol_image)
+                        else:
+                            tile_matrix = (
+                                self.hatch_finder
+                                .infer(tile["image"], mask_image, resized_symbol_image)
+                                .squeeze()
+                                .to(
+                                    device=accumulated_matrix.device,
+                                    dtype=accumulated_matrix.dtype,
+                                )
                             )
-                        )
-                    accumulated_matrix = torch.maximum(accumulated_matrix, tile_matrix)
+                        accumulated_matrix = torch.maximum(accumulated_matrix, tile_matrix)
                 self.insert_patch(result_matrix, accumulated_matrix, channel_id, tile["x0"], tile["y0"], overlap)
 
         result_matrix = self.resize_probability_matrix(result_matrix, settings.DPI, settings.MATRIX_COMPRESSION_DPI)

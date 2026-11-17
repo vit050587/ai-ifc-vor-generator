@@ -2539,6 +2539,23 @@ function addLegendItem() {
         <input type="text" class="legend-label" placeholder="Подпись (например, «Железобетон монолитный»)">
         <button type="button" class="btn btn-sm btn-danger" title="Удалить">✕</button>
     `;
+
+    const labelInput = div.querySelector('.legend-label');
+    const fileInput = div.querySelector('.legend-file');
+
+    labelInput.addEventListener('paste', (event) => {
+        const items = Array.from(event.clipboardData?.items ?? []);
+        const imageItem = items.find(item => item.type.startsWith('image/'));
+        const file = imageItem?.getAsFile();
+
+        if (!file) return; // Обычный текст вставляется как раньше
+        event.preventDefault();
+
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        fileInput.files = transfer.files;
+    });
+    
     div.querySelector('button').onclick = () => div.remove();
     container.appendChild(div);
 }

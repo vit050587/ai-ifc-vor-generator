@@ -142,6 +142,18 @@ def base64_to_image(image_base64: str) -> Image.Image:
     image = Image.open(BytesIO(image_bytes)).convert("RGB")
     return image
 
+def resize_image(image: Image.Image, scale: float) -> Image.Image:
+    size = (
+        max(1, round(image.width * scale)),
+        max(1, round(image.height * scale)),
+    )
+    resized = image.resize(
+        size,
+        Image.Resampling.NEAREST
+    )
+    return resized
+    
+
 def execute_llm_chain(chain, params = {}, stub = {}):
     response = invoke_with_retry(chain,params)
     return _get_json_from_response(response, stub=stub)

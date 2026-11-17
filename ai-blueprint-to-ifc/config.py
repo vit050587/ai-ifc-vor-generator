@@ -148,12 +148,12 @@ class Settings(BaseSettings):
     TRAIN_TG_FILE: str = "/app/logs/train_tg.jsonl"
     TRAIN_QA_FILE: str = "/app/logs/train_qa.jsonl"
 
-    MODELS_DIR: Path = Path("models")
+    MODELS_DIR: Path = Path(__file__).resolve().parents[2] / "external" / "models"
     TG_MODEL_DIR: str = "GreenMap/qwen3-vl-4b-ru-blueprint-extractor"
-    YOLO_LAYOUT_MODEL: Path = MODELS_DIR / "yolo_layout.pt"
-    YOLO_LEGEND_LAYOUT_MODEL: Path = MODELS_DIR / "yolo_legend_layout.pt"
-    DINO_HATCHING_MODEL: Path = MODELS_DIR / "dino_hatching.pt"
-    HATCH_FINDER_MODEL: Path = MODELS_DIR / "hatch_finder.pt"
+    YOLO_LAYOUT_MODEL: Path = Field(default_factory=lambda data: data["MODELS_DIR"] / "yolo_layout.pt")
+    YOLO_LEGEND_LAYOUT_MODEL: Path = Field(default_factory=lambda data: data["MODELS_DIR"] / "yolo_legend_layout.pt")
+    DINO_HATCHING_MODEL: Path = Field(default_factory=lambda data: data["MODELS_DIR"] / "dino_hatching.pt")
+    HATCH_FINDER_MODEL: Path = Field(default_factory=lambda data: data["MODELS_DIR"] / "hatch_finder.pt")
 
     NEW_LEGEND_CREATION_SCORE_THRESHOLD: float = 0.0
     HATCHING_SCORE_THRESHOLD: float = 0.5
@@ -186,6 +186,7 @@ class Settings(BaseSettings):
     DEBUG_DPI: int = 450
     SAVE_PROBABILITY_HEATMAPS: bool = False
     PROBABILITY_HEATMAP_DEBUG_DPI: int = 350
+    HATCHINGS_SCALES: list[float] = [0.515, 0.725, 1]
     USE_TILES_CACHE: bool = True
     FALLBACK_THRESHOLD: float = 0.005
 
