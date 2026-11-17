@@ -9,9 +9,12 @@ from yolo_service import YoloService
 from rectangle_utils import get_two_points_bbox
 from debug_manager import save_layouts
 from ollama_service import OllamaService
+from logger import setup_logger
 from typing import List, Dict, Tuple, Any
 
 from config import settings
+
+logger = setup_logger(__name__)
 
 
 class LayoutProcessor:
@@ -111,10 +114,26 @@ class LayoutProcessor:
         
         result_object["overall_average_confidence"] = statistics.mean(average_confidences)
         return result_object
-            
-            
-        
 
-        
-        
+    def keep_only_buildings_drawings(self):
+        """Исключает области не являющиеся чертежом здания"""
+        drawings = self.get_drawings()
+        if not drawings:
+            return
+
+        filtered_drawings = []
+        # Эти области нужны WallsProcessor для маскирования внутри соседних планов.
+        excluded_drawings = self.layouts.setdefault("excluded_drawing_area", [])
+        for index, drawing in enumerate(drawings, start=1):
+            drawing_bbox = get_two_points_bbox(drawing["object"]["bbox"])
+            img_b64, _ = self.pdf_processor.crop_pdf_rect(drawing_bbox, zoom=settings.LAYOUT_ZOOM)
+            response = self.ollama_service.extract_from_drawing(
+                img_b64, settings.OLLAMA_MODEL_NAME, "get_type_of_drawing"
+            )
+            if isinstance(response, dict) and response.get("type") == "non_floor_plan":
+                excluded_drawings.append(drawing)
+            else:
+                filtered_drawings.append(drawing)
+
+        self.layouts["drawing_area"] = filtered_drawings
 

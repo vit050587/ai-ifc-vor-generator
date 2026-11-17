@@ -56,7 +56,13 @@ class WallDetectionPipeline:
         debug_manager.save_initial_blueprint(self.pdf_processor)
 
         if not self.layout_processor:
-           self.layout_processor = LayoutProcessor(self.pdf_processor, self.ollama_service)
+            self.layout_processor = LayoutProcessor(self.pdf_processor, self.ollama_service)
+            if self.layout_processor.get_drawings():
+                self.layout_processor.keep_only_buildings_drawings()
+
+        if self.layout_processor.get_drawings() == []:  # Все найденные области исключены.
+            logger.warning("There are no building drawings in the blueprint")
+            return {"drawings": []}
 
         result_object: dict[str, Any] = {"drawings": []}
         self.legend_row_items = None
