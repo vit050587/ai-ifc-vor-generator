@@ -1366,13 +1366,25 @@ function positionLinksHtml(nameKey, part, geo) {
     return '';
 }
 
+// Только стены PDF в ЦС: ссылка должна соответствовать именно диапазону толщины.
+// Общий fallback на другую толщину здесь недопустим.
+function csPdfThicknessLinksHtml(nameKey, part, geo) {
+    const variants = positionLinks[nameKey];
+    if (!variants || variants.length === 0) return '';
+    const exact = variants.some(v => (v.part || 'Надземная') === (part || 'Надземная') && (v.geo || '') === geo);
+    if (exact) return positionLinksHtml(nameKey, part, geo);
+    return `<span class="position-link missing" title="Для этой толщины ссылка на позицию сборника не найдена" onclick="event.stopPropagation()">${POSITION_LINK_SVG}</span>`;
+}
+
 // Расставляет иконки-ссылки по уже отрисованным заголовкам групп
 // (используется, когда ссылки загрузились после группировки таблицы).
 function applyPositionLinks() {
     document.querySelectorAll('td[data-name-key]').forEach(td => {
         const holder = td.querySelector('.pl-icons');
         if (!holder) return;
-        holder.innerHTML = positionLinksHtml(td.dataset.nameKey, td.dataset.part, td.dataset.geo);
+        holder.innerHTML = td.dataset.linkMode === 'cs-pdf-thickness'
+            ? csPdfThicknessLinksHtml(td.dataset.nameKey, td.dataset.part, td.dataset.geo)
+            : positionLinksHtml(td.dataset.nameKey, td.dataset.part, td.dataset.geo);
     });
 }
 
@@ -1792,7 +1804,7 @@ const blueprintZoom = {
     dragging: false, lastX: 0, lastY: 0, inited: false
 };
 
-// ========== Правила геометрической группировки (режим ЦС) ==========
+// ========== Правила геометрической группировки (ЦС и ИИ) ==========
 const GEOMETRY_GROUP_RULES = {
     'IfcWall': { field: 'Ширина, мм', label: 'Толщина', unit: 'мм', ranges: [
         { max: 100, label: 'до 100 мм' }, { max: 150, label: 'до 150 мм' },
@@ -2539,23 +2551,6 @@ function addLegendItem() {
         <input type="text" class="legend-label" placeholder="Подпись (например, «Железобетон монолитный»)">
         <button type="button" class="btn btn-sm btn-danger" title="Удалить">✕</button>
     `;
-
-    const labelInput = div.querySelector('.legend-label');
-    const fileInput = div.querySelector('.legend-file');
-
-    labelInput.addEventListener('paste', (event) => {
-        const items = Array.from(event.clipboardData?.items ?? []);
-        const imageItem = items.find(item => item.type.startsWith('image/'));
-        const file = imageItem?.getAsFile();
-
-        if (!file) return; // Обычный текст вставляется как раньше
-        event.preventDefault();
-
-        const transfer = new DataTransfer();
-        transfer.items.add(file);
-        fileInput.files = transfer.files;
-    });
-    
     div.querySelector('button').onclick = () => div.remove();
     container.appendChild(div);
 }
@@ -3375,6 +3370,13 @@ function determineSubsection(typeRu, name, part) {
     return '__OTHER__';
 }
 
+// Единое название материала для строк и групп предпросмотра.
+function normalizePreviewMaterial(value) {
+    const material = value == null ? '' : String(value).trim();
+    return /^(?:V\s*[-–—]\s*)?Рабочий шов бетонирования$/i.test(material)
+        ? 'Монолитный железобетон' : material;
+}
+
 // ========== Отрисовка превью ==========
 function renderPreview(data) {
     window._previewData = data;
@@ -3471,6 +3473,7 @@ function renderPreview(data) {
                 if (matInfo && matInfo.code && matInfo.name) defaultMaterial = matInfo.name;
             }
         }
+        defaultMaterial = normalizePreviewMaterial(defaultMaterial);
         rowMaterials[index] = defaultMaterial;
         const orderedRow = previewColumnHeaders.map(h => {
             const actualCol = columnMapping[h];
@@ -3775,14 +3778,9 @@ function updateSelectionUI() {
 //   L4 — IFC-тип (только если в группе материала несколько типов)
 //   L5 — Геометрические параметры (толщина, площадь, периметр+сечение и т.д.)
 //   L6 — Наименование элемента (листовая группа со строками)
-// ЦС-режим (PDF-чертёж), иерархия (часть здания по чертежу не определяется):
-//   L1 — Имя элемента (например «Стена»)
-//   L2 — Материал из таблицы (колонка «Материал», листовая группа со строками)
-    // ИИ-режим, иерархия:
-    //   L1 — Часть здания
-    //   L2 — Код МССК
-    //   L3 — Главный материал (из «Свойство::IfcMaterialLayer::Name»)
-    //   L4 — Наименование элемента (листовая группа со строками)
+// PDF-чертежи (ЦС и ИИ): Имя элемента → Материал → Геометрия → строки.
+// ИИ (IFC): Часть здания → Код МССК → Материал → IFC-тип (если несколько)
+// → Геометрия → Наименование элемента → строки.
 function groupRowsCommon(mode) {
     const data = window._previewData;
     if (!data) return;
@@ -3856,7 +3854,7 @@ function groupRowsCommon(mode) {
     const getMaterialKey = (rowIndex) => {
         if (materialColIdx === -1) return 'Материал: не указан';
         const raw = data.rows[rowIndex]?.[materialColIdx];
-        const s = raw === undefined || raw === null ? '' : String(raw).trim();
+        const s = normalizePreviewMaterial(raw);
         return (!s || s === '-') ? 'Материал: не указан' : s;
     };
 
@@ -3888,9 +3886,18 @@ function groupRowsCommon(mode) {
 
     const getGeometryValue = (rule, rowIndex) => {
         if (!rule || rule === 'default') return getVolume(rowIndex);
-        const fieldIdx = data.headers.indexOf(rule.field);
-        if (fieldIdx === -1) return getVolume(rowIndex);
-        return safeParseFloat(data.rows[rowIndex]?.[fieldIdx]);
+        let fieldIdx = data.headers.indexOf(rule.field);
+        let scale = 1;
+        // PDF отдаёт периметр в метрах, правила используют миллиметры.
+        if (isPdfSource && fieldIdx === -1 && rule.field === 'Периметр, мм') {
+            fieldIdx = data.headers.indexOf('Периметр, м');
+            scale = 1000;
+        }
+        if (fieldIdx === -1) return isPdfSource ? null : getVolume(rowIndex);
+        const raw = data.rows[rowIndex]?.[fieldIdx];
+        if (isPdfSource && (raw == null || String(raw).trim() === '' || String(raw).trim() === '-')) return null;
+        const value = safeParseFloat(raw) * scale;
+        return isPdfSource && !Number.isFinite(Number(String(raw).replace(/\s/g, '').replace(',', '.'))) ? null : value;
     };
 
     const getNameKey = (rowIndex) => {
@@ -4030,8 +4037,8 @@ function groupRowsCommon(mode) {
         });
     };
 
-    // Группировка для ИИ: после кода МССК (L1) элементы группируются
-    // по главному материалу (L2), затем по наименованию (L3).
+    // Группировка для ИИ: после части здания и кода МССК — материал,
+    // IFC-тип (если несколько), геометрия и наименование.
     // Материал берётся из data.materialsGroupMap (GlobalId → {name, order, code}):
     //   код материала не найден / нет поля → «Прочее»
     //   несколько материалов в слое         → «Многослойные»
@@ -4088,7 +4095,7 @@ function groupRowsCommon(mode) {
 
             const matId = 'MAT_' + (groupCounter++);
             groupIndexMap[matId] = matRows.map(r => r.index);
-            groupLevel[matId] = 2;
+            groupLevel[matId] = 3;
             groupParent[matId] = parentId;
             groupChildren[matId] = [];
             groupChildren[parentId].push(matId);
@@ -4127,14 +4134,11 @@ function groupRowsCommon(mode) {
             const matCb = matTr.querySelector('.group-checkbox');
             matCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(matId, this.checked); });
 
-            // Внутри группы материала — группы по наименованию элемента (L3).
-            // Геометрии в иерархии ИИ нет — контекст только по части здания.
-            addNameGroups(matId, matRows, basePadding + 30, 3,
-                matRows[0] ? matRows[0].part : '', '');
+            addGeometryAndNameGroups(matId, matRows, basePadding + 30, 1);
         });
     };
 
-    const addGeometryAndNameGroups = (parentId, rows, basePadding, levelOffset = 0) => {
+    const addGeometryAndNameGroups = (parentId, rows, basePadding, levelOffset = 0, geometryLeaves = false) => {
         const ifcGroups = {};
         rows.forEach(rd => {
             if (!ifcGroups[rd.ifcType]) ifcGroups[rd.ifcType] = [];
@@ -4174,12 +4178,19 @@ function groupRowsCommon(mode) {
                 toggleGroup(geoId);
             };
 
+            const csPdfWall = isPdfSource && mode === 'ЦС' && geometryLeaves && geoRows.every(rd => rd.ifcType === 'IfcWall');
+            const linkName = geoRows[0].nameKey;
+            const linkPart = geoRows[0].part;
+            const linkGeo = normGeoLabel(label);
+            const thicknessLinkAttrs = csPdfWall
+                ? ` data-name-key="${linkName.replace(/"/g, '&quot;')}" data-part="${linkPart}" data-geo="${linkGeo.replace(/"/g, '&quot;')}" data-link-mode="cs-pdf-thickness"` : '';
             geoTr.innerHTML = `
                 <td style="text-align:center; padding-left: ${padding}px;">
                     <span class="group-arrow" id="${geoId}_arrow">▶</span>
                     <input type="checkbox" class="group-checkbox" data-group-id="${geoId}">
                 </td>
-                <td colspan="${totalCols - 1}" style="font-weight:500; color:#4a5568;">
+                <td colspan="${totalCols - 1}" style="font-weight:500; color:#4a5568;"${thicknessLinkAttrs}>
+                    ${csPdfWall ? `<span class="pl-icons">${csPdfThicknessLinksHtml(linkName, linkPart, linkGeo)}</span>` : ''}
                     📏 ${label}
                     <span class="group-badge">×${geoRows.length}</span>
                     <span style="font-size:11px; color:#718096; margin-left:12px;">Σ Объём: ${geoVolume.toFixed(2)} м³${fmtAreaSummary(geoArea)}</span>
@@ -4190,8 +4201,23 @@ function groupRowsCommon(mode) {
             const geoCb = geoTr.querySelector('.group-checkbox');
             geoCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(geoId, this.checked); });
 
-            addNameGroups(geoId, geoRows, padding + 30, nameLevel,
-                geoRows[0] ? geoRows[0].part : '', normGeoLabel(label));
+            if (geometryLeaves) {
+                leafGroups[geoId] = true;
+                geoCb.dataset.firstIndex = geoRows[0].index;
+                geoRows.forEach(rd => {
+                    rd.tr.classList.add('group-row', 'hidden-row');
+                    rd.tr.dataset.group = geoId;
+                    const firstTd = rd.tr.querySelector('td');
+                    if (firstTd) firstTd.style.paddingLeft = (padding + 30) + 'px';
+                    const cb = rd.tr.querySelector('.row-checkbox');
+                    if (cb) { cb.style.display = 'none'; cb.checked = false; }
+                    rowElementCache.set(rd.index, rd.tr);
+                    body.appendChild(rd.tr);
+                });
+            } else {
+                addNameGroups(geoId, geoRows, padding + 30, nameLevel,
+                    geoRows[0] ? geoRows[0].part : '', normGeoLabel(label));
+            }
         };
 
         Object.keys(ifcGroups).forEach(ifcType => {
@@ -4257,11 +4283,18 @@ function groupRowsCommon(mode) {
                 return;
             }
 
+            // Не относим неизвестные размеры чертежа к самому малому диапазону.
+            const unknownRows = isPdfSource ? ifcRows.filter(rd =>
+                getGeometryValue(rule, rd.index) === null ||
+                (rule.sub_ranges && getGeometryValue(rule.sub_ranges, rd.index) === null)) : [];
+            if (unknownRows.length) addGeoGroup(currentParent, unknownRows, geoLevel, padding, 'Геометрия не указана');
+            const unknownIndices = new Set(unknownRows.map(rd => rd.index));
             const mainGroups = rule.ranges.map(r => ({
                 label: r.label, max: r.max, rows: [], indices: []
             }));
 
             ifcRows.forEach(rd => {
+                if (unknownIndices.has(rd.index)) return;
                 const value = getGeometryValue(rule, rd.index);
                 let assigned = false;
                 for (const mg of mainGroups) {
@@ -4285,10 +4318,7 @@ function groupRowsCommon(mode) {
 
                     mainGroup.rows.forEach(rd => {
                         const subFieldIdx = data.headers.indexOf(rule.sub_ranges.field);
-                        let subValue = 0;
-                        if (subFieldIdx !== -1 && data.rows[rd.index]) {
-                            subValue = safeParseFloat(data.rows[rd.index][subFieldIdx]);
-                        }
+                        const subValue = subFieldIdx === -1 && !isPdfSource ? 0 : getGeometryValue(rule.sub_ranges, rd.index);
 
                         let assigned = false;
                         for (const sg of subRanges) {
@@ -4425,10 +4455,10 @@ function groupRowsCommon(mode) {
     };
 
     // ============================================================
-    // Группировка ИИ: Часть здания (L1) → Код МССК (L2) → Материал → Наименование.
+    // Группировка ИИ (IFC): Часть здания → Код МССК → Материал → IFC → Геометрия → Наименование.
     // Часть здания определяется по колонке «Этаж» (как в бэкенде group_excel).
     // ============================================================
-    if (mode === 'ИИ') {
+    if (mode === 'ИИ' && !isPdfSource) {
         const partLabelsAR = {
             'Подземная': 'Подземная часть здания (до отм. 0,000)',
             'Цоколь': 'Цокольная часть здания (отм. 0,000)',
@@ -4543,12 +4573,10 @@ function groupRowsCommon(mode) {
     }
 
     // ============================================================
-    // Группировка для сессий из PDF-чертежей (ЦС): часть здания по чертежу
-    // определить нельзя, поэтому иерархия упрощена:
-    //   L1 — Имя элемента (например «Стена»)
-    //   L2 — Материал из таблицы (колонка «Материал», листовая группа со строками)
+    // PDF-чертежи (ЦС и ИИ): часть здания по чертежу определить нельзя.
+    // Имя элемента → Материал из таблицы → Геометрия → строки.
     // ============================================================
-    if (isPdfSource && mode === 'ЦС') {
+    if (isPdfSource) {
         // L1: группировка по имени элемента
         const pdfNameGroups = {};
         rowData.forEach(rd => {
@@ -4581,13 +4609,15 @@ function groupRowsCommon(mode) {
                 toggleGroup(nameId);
             };
 
+            const csPdfWalls = mode === 'ЦС' && nameRows.every(rd => rd.ifcType === 'IfcWall');
+            const pdfNameLinkAttrs = csPdfWalls ? '' : ` data-name-key="${nameKey.replace(/"/g, '&quot;')}" data-part="${nameRows[0] ? nameRows[0].part : ''}" data-geo=""`;
             nameTr.innerHTML = `
                 <td style="text-align:center;">
                     <span class="group-arrow" id="${nameId}_arrow">▶</span>
                     <input type="checkbox" class="group-checkbox" data-group-id="${nameId}">
                 </td>
-                <td colspan="${totalCols - 1}" style="font-weight:700; font-size:15px; color:#2d3748; white-space:nowrap;" data-name-key="${nameKey.replace(/"/g, '&quot;')}" data-part="${nameRows[0] ? nameRows[0].part : ''}" data-geo="">
-                    <span class="pl-icons">${positionLinksHtml(nameKey, nameRows[0] ? nameRows[0].part : '', '')}</span>
+                <td colspan="${totalCols - 1}" style="font-weight:700; font-size:15px; color:#2d3748; white-space:nowrap;"${pdfNameLinkAttrs}>
+                    ${csPdfWalls ? '' : `<span class="pl-icons">${positionLinksHtml(nameKey, nameRows[0] ? nameRows[0].part : '', '')}</span>`}
                     ${nameKey}
                     <span class="group-badge">×${nameRows.length}</span>
                     <span style="font-size:11px; color:#4a5568; margin-left:12px;">Σ Объём: ${nameVolume.toFixed(2)} м³${fmtAreaSummary(nameArea)}</span>
@@ -4598,7 +4628,7 @@ function groupRowsCommon(mode) {
             const nameCb = nameTr.querySelector('.group-checkbox');
             nameCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(nameId, this.checked); });
 
-            // L2: группировка по материалу из таблицы (листовые группы)
+            // L2: группировка по материалу из таблицы, затем геометрия
             const pdfMatGroups = {};
             nameRows.forEach(rd => {
                 const matKey = getMaterialKey(rd.index);
@@ -4623,9 +4653,6 @@ function groupRowsCommon(mode) {
                 groupParent[matId] = nameId;
                 groupChildren[matId] = [];
                 groupChildren[nameId].push(matId);
-                leafGroups[matId] = true;
-
-                const firstMatIndex = matRows[0].index;
 
                 const matTr = document.createElement('tr');
                 matTr.className = 'group-row hidden-row';
@@ -4640,7 +4667,7 @@ function groupRowsCommon(mode) {
                 matTr.innerHTML = `
                     <td style="text-align:center; padding-left: 30px;">
                         <span class="group-arrow" id="${matId}_arrow">▶</span>
-                        <input type="checkbox" class="group-checkbox" data-group-id="${matId}" data-first-index="${firstMatIndex}">
+                        <input type="checkbox" class="group-checkbox" data-group-id="${matId}">
                     </td>
                     <td colspan="${totalCols - 1}" style="font-weight:600; color:#276749;">
                         🧱 ${matKey}
@@ -4653,17 +4680,7 @@ function groupRowsCommon(mode) {
                 const matCb = matTr.querySelector('.group-checkbox');
                 matCb.addEventListener('change', function(e) { e.stopPropagation(); toggleGroupSelection(matId, this.checked); });
 
-                // Строки внутри группы материала
-                matRows.forEach(rd => {
-                    rd.tr.classList.add('group-row', 'hidden-row');
-                    rd.tr.dataset.group = matId;
-                    const firstTd = rd.tr.querySelector('td');
-                    if (firstTd) firstTd.style.paddingLeft = '60px';
-                    const cb = rd.tr.querySelector('.row-checkbox');
-                    if (cb) { cb.style.display = 'none'; cb.checked = false; }
-                    rowElementCache.set(rd.index, rd.tr);
-                    body.appendChild(rd.tr);
-                });
+                addGeometryAndNameGroups(matId, matRows, 60, 0, true);
             });
         });
 

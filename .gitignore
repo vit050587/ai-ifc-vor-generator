@@ -11,6 +11,7 @@
 *.pt
 *.png
 **/.DS_Store
+*.drawio
 
 #bcrk.xtybz для сервиса
 ai-ifc-vor-generator.code-workspace
