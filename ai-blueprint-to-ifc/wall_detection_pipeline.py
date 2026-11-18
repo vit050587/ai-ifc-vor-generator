@@ -57,7 +57,8 @@ class WallDetectionPipeline:
 
         if not self.layout_processor:
             self.layout_processor = LayoutProcessor(self.pdf_processor, self.ollama_service)
-            if self.layout_processor.get_drawings():
+            drawings = self.layout_processor.get_drawings()
+            if drawings and len(drawings) > 1:
                 self.layout_processor.keep_only_buildings_drawings()
 
         if self.layout_processor.get_drawings() == []:  # Все найденные области исключены.

@@ -21,7 +21,8 @@
   ``RUS_NetSideArea``);
 * **фундамент, приямок** — только по внешнему периметру и толщине плиты:
   ``RUS_Perimeter × RUS_Thickness`` (периметр — в метрах, толщина — в мм);
-* **перекрытие, лестничная площадка, пандус** — горизонтальная площадь с
+* **перекрытие** — нижняя поверхность + боковые грани (периметр × толщина);
+* **лестничная площадка, пандус** — горизонтальная площадь с
   одной стороны: ``RUS_Area`` (fallback — горизонтальная проекция меша
   ``QTO_geom::Горизонтальная_проекция_м2``, затем ``RUS_Length × RUS_Width``);
 * **лестничный марш** — площадь проекции на пол (shapely-проекция меша
@@ -92,7 +93,7 @@ BASIS = {
     "wall": "4 боковые поверхности (2 лицевые нетто + 2 торца по толщине + щёки проёмов)",
     "column": "4 боковые поверхности (периметр сечения × высота)",
     "foundation": "внешний периметр × толщина плиты",
-    "slab": "горизонтальная площадь с одной стороны",
+    "slab": "нижняя поверхность + боковые поверхности",
     "landing": "горизонтальная площадь площадки с одной стороны",
     "flight": "проекция марша на пол",
     "beam": "низ + две длинные боковые грани",
@@ -225,6 +226,20 @@ def _horizontal_area(row: Dict[str, Any]) -> Optional[float]:
     return None
 
 
+def _slab_area(row: Dict[str, Any]) -> Optional[float]:
+    """Перекрытие: нижняя поверхность и боковые грани."""
+    measured = _positive(row.get("QTO_geom::Площадь_опалубки_м2"))
+    if measured is not None:
+        return measured
+    bottom = _positive(row.get(_BEAM_UNDERSIDE)) or _horizontal_area(row)
+    edges = to_number(row.get("QTO_geom::Площадь_торцов_м2"))
+    if edges is None or edges < 0:
+        edges = _foundation_area(row)
+    if bottom is not None and edges is not None:
+        return bottom + edges
+    return None
+
+
 def _flight_area(row: Dict[str, Any]) -> Optional[float]:
     """Лестничный марш: площадь проекции на пол (shapely-проекция меша)."""
     projection = _positive(row.get(_PROJECTION))
@@ -264,7 +279,7 @@ _RULES = {
     "wall": _wall_area,
     "column": _column_area,
     "foundation": _foundation_area,
-    "slab": _horizontal_area,
+    "slab": _slab_area,
     "landing": _horizontal_area,
     "flight": _flight_area,
     "beam": _beam_area,

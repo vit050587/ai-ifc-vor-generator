@@ -190,7 +190,7 @@ def summer_curing(entries):
 
 
 def refresh_formwork(entries, rows):
-    """Recalculate saved group hints from current one-side/projection rules."""
+    """Recalculate saved group hints from current underside-and-sides/projection rules."""
     from .group_excel import _element_formwork_measure
     for entry in entries:
         indices = entry.get('source_indices') or []
@@ -215,7 +215,7 @@ def refresh_formwork(entries, rows):
                 work.setdefault('quantity', {})['area_m2'] = area
                 if any(not source for _, source in measures):
                     work['quantityStatus'] = 'partial_data' if area else 'missing_data'
-                    work['reason'] = 'Недостаточно данных: для перекрытий нет GrossArea или площади нижней поверхности, для лестниц — проекции; общая площадь не подставляется'
+                    work['reason'] = 'Недостаточно данных: для перекрытий нет площади низа и боковых поверхностей, для лестниц — проекции; общая площадь не подставляется'
 
 
 def slab_partitions(indices, rows):

@@ -594,7 +594,7 @@ def _first_nonzero(row: Dict[str, Any], cols: List[str]) -> float:
 def _element_formwork_measure(row: Dict[str, Any], perim_cols: List[str],
                               depth_cols: List[str],
                               area_cols: List[str] | None = None) -> float:
-    """Опалубка: перекрытия — GrossArea, иначе низ; лестницы — проекция.
+    """Опалубка: перекрытия — низ + боковые поверхности; лестницы — проекция.
 
     Фундаментные плиты используют торцы (периметр × толщина), балки и
     колонны — площадь контакта с опалубкой, стены — площадь стороны.
@@ -638,10 +638,35 @@ def _element_formwork_measure(row: Dict[str, Any], perim_cols: List[str],
         return (value, NORMAL_GROSS if component == 'landing' else NORMAL_NET) if value is not None else (0.0, '')
     is_floor = (stair_kind == 'slab' or bool(re.search(r'перекрыт|покрыти', name_lower)))
     if is_floor:
-        return first(['QTO_Qto_SlabBaseQuantities_Площадь_GrossArea_м2',
-                      'Площадь_GrossArea_м2', 'Площадь_GROSS_м2',
-                      'QTO::Qto_SlabBaseQuantities::GrossArea',
-                      'Геометрия_Площадь_низа_м2', 'QTO_geom::Площадь_низа_м2'])
+        geometric, source = first(['Геометрия_Площадь_опалубки_м2', 'QTO_geom::Площадь_опалубки_м2'])
+        if geometric > 0:
+            return geometric, source
+        bottom, bottom_source = first([
+            'Геометрия_Площадь_низа_м2', 'QTO_geom::Площадь_низа_м2',
+            'QTO_Qto_SlabBaseQuantities_Площадь_NetArea_м2', 'Площадь_NetArea_м2',
+            'Площадь_NET_м2', 'QTO::Qto_SlabBaseQuantities::NetArea',
+            'Площадь, м2', 'QTO_Qto_SlabBaseQuantities_Площадь_GrossArea_м2',
+            'Площадь_GrossArea_м2', 'Площадь_GROSS_м2',
+            'QTO::Qto_SlabBaseQuantities::GrossArea'])
+        edge_keys = ['Геометрия_Площадь_торцов_м2', 'QTO_geom::Площадь_торцов_м2']
+        edges, edge_source = first(edge_keys)
+        if not edge_source:
+            # A zero measured edge area is still a known quantity.
+            edge_source = next((key for key in edge_keys if row.get(key) == 0), '')
+        if not edge_source:
+            perimeter, perimeter_source = first(perim_cols)
+            depth, depth_source = first(depth_cols)
+            if not depth:
+                match = re.search(r'(\d+(?:[.,]\d+)?)\s*мм', str(row.get('Имя', '')))
+                if match:
+                    depth = float(match.group(1).replace(',', '.'))
+                    depth_source = 'Имя (толщина, мм)'
+            if perimeter and depth:
+                edges = perimeter * depth / 1e6
+                edge_source = f'{perimeter_source} × {depth_source} / 1000000 (мм² → м²)'
+        if bottom > 0 and edge_source:
+            return bottom + edges, f'{bottom_source} + {edge_source}'
+        return 0.0, ''
     geometric, geometric_source = first(['Геометрия_Площадь_опалубки_м2'])
     if geometric > 0:
         return geometric, geometric_source

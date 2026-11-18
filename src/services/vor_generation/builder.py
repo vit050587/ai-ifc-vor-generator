@@ -175,9 +175,17 @@ def _formwork_area(kind: Optional[str], agg: Dict[str, object],
             key = 'gross_projection_area' if el.component == 'landing' else 'projection_area'
             return el.quantity(key) if key in el.quantities else None
         if kind == 'slab':
-            if el.quantity('gross_area') > 0:
-                return el.quantity('gross_area')
-            return el.quantity('underside_area') if el.quantity('underside_area') > 0 else None
+            if el.quantity('formwork_area') > 0:
+                return el.quantity('formwork_area')
+            bottom = (el.quantity('underside_area') or el.quantity('area')
+                      or el.quantity('gross_area'))
+            edges = el.quantity('edge_area') if 'edge_area' in el.quantities else None
+            if edges is None:
+                perimeter = el.quantity('perimeter')  # мм
+                thickness = el.geometry.get('thickness') or 0  # мм
+                if perimeter > 0 and thickness > 0:
+                    edges = perimeter * thickness / 1e6
+            return bottom + edges if bottom > 0 and edges is not None else None
         if 'formwork_area' in el.quantities and not (kind in ('wall', 'parapet') and el.quantity_sources.get('formwork_area') == 'QTO_geom::Площадь_опалубки_м2'):
             return el.quantity('formwork_area')
         side, area, surface = (el.quantity(key) for key in ('side_area', 'area', 'surface_area'))
@@ -199,8 +207,7 @@ def _formwork_area(kind: Optional[str], agg: Dict[str, object],
     known = [_model_quantity(el, value,
               (f'{value:g} (горизонтальная проекция, ТСН-2001.3-6 п. 2.8)'
                if el.component in ('flight', 'landing') and kind in ('stair', 'slab') else
-               (f'{value:g} (GrossArea перекрытия)' if el.quantity('gross_area') > 0 else
-                f'{value:g} (нижняя поверхность перекрытия по геометрии IFC, без торцов)') if kind == 'slab' else
+               f'{value:g} (нижняя поверхность + боковые поверхности перекрытия)' if kind == 'slab' else
                f'{el.quantity("underside_area"):g} + {el.quantity("edge_area"):g}'
                if 'underside_area' in el.quantities and 'edge_area' in el.quantities else
                f'{value:g} ({", ".join(el.quantity_sources.values())})'))
@@ -320,8 +327,7 @@ def _fill_work(row: template.TemplateRow, elements: List[Element],
                 if row.element_kind not in ('wall', 'parapet') and any(el.quantity_sources.get('formwork_area') == 'QTO_geom::Площадь_опалубки_м2' for el in elements):
                     geometry_note = '. По граням IFC: стороны, торцы, откосы и низ перемычек; основание исключено.' if row.element_kind in ('wall', 'parapet') else '. По вертикальным граням IFC.' if row.element_kind == 'column' else '. По геометрии IFC: нижняя поверхность и вертикальные торцы.'
                 if row.element_kind == 'slab':
-                    fallback_count = sum(el.quantity('gross_area') <= 0 and el.quantity('underside_area') > 0 for el in elements)
-                    geometry_note = (f'. Для {fallback_count} элементов без GrossArea взята площадь нижней поверхности по геометрии IFC, без торцов и верхней грани.' if fallback_count else '')
+                    geometry_note = '. Нижняя поверхность и боковые поверхности перекрытия; при отсутствии площади граней — площадь низа + периметр × толщина.'
                 stair_note = ''
                 if row.element_kind == 'stair':
                     geometry_note = '. ТСН-2001.3-6, п. 2.8: горизонтальная проекция маршей; для площадок — проекция перекрытий без вычета отверстий. Вертикальные грани и наклонная площадь низа не прибавляются.'
