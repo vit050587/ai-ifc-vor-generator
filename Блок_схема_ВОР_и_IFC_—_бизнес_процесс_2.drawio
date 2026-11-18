@@ -1,0 +1,642 @@
+<mxfile host="65bd71144e">
+    <diagram name="Бизнес-процесс (горизонтально)" id="bp-horizontal">
+        <mxGraphModel dx="3537" dy="2616" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="827" pageHeight="1169" background="#FFFFFF" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="n1" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=26;fontStyle=1;fontColor=#263238;fontFamily=Helvetica;" syncAliases="IFC/PDF | Upload | Загрузка файлов | Режим обработки" syncAt="2026-11-18T14:48:14+00:00" syncComment="Первый шаг процесса: загрузка исходных файлов (.ifc или .pdf) с выбором режима обработки (CS, AI, ARCH). На диаграмме — входной узел, определяющий ветку выполнения." syncKey="common-upload-ifc-pdf" syncSource="ai-ifc-vor-generator / 3. Функциональность" value="Сервис формирования ВОР по IFC / PDF — бизнес-процесс" vertex="1">
+                    <mxGeometry height="40" width="1400" y="-110" as="geometry"/>
+                </mxCell>
+                <mxCell id="n2" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=14;fontColor=#607D8B;fontFamily=Helvetica;" syncAliases="ELEMENT_TYPES_KR | IFC_глобальные_константы.json | height.txt | zero_step | zero_step.py | ДЛЯ_СМЕТЧИКА | ДЛЯ_СМЕТЧИКА_исправленный.xlsx | Нормализация" syncAt="2026-11-18T14:48:14+00:00" syncComment="Модуль zero_step.py, функция zero_step. Извлекает и нормализует элементы IFC, формирует данные для сметчика. Использует переданную модель ifcopenshell. На диаграмме — ключевой шаг обработки геометрии и характеристик." syncKey="cs-module-zero-step" syncSource="§10 Режим ЦС / 3.2. zero_step.py" value="Извлечение элементов → подбор работ по Цифровому сборнику или с помощью ИИ → смета ЛСР → сравнение с типовым ВОР и ВОР заказчика" vertex="1">
+                    <mxGeometry height="26" width="1600" y="-70" as="geometry"/>
+                </mxCell>
+                <mxCell id="n3" parent="1" style="swimlane;horizontal=0;html=1;startSize=44;fillColor=#1565C0;fontColor=#FFFFFF;fontStyle=1;fontSize=15;swimlaneFillColor=#F2F7FD;strokeColor=#1565C0;rounded=1;arcSize=2;shadow=0;fontFamily=Helvetica;collapsible=0;" syncAliases="CS | KR | Конструктив | Режим КР | ЦС | Цифровой сборник" syncAt="2026-11-18T18:56:14+00:00" syncComment="Режим CS (легаси KR): обрабатывает конструктив (стены, колонны, перекрытия). Подбор работ выполняется через внешний API цифрового справочника ТСН. На диаграмме — ветка обработки конструктивных элементов." syncKey="cs-mode" syncSource="ai-ifc-vor-generator | строка 11" value="ЦС · Цифровой сборник" vertex="1">
+                    <mxGeometry height="440" width="4670" x="-1" y="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="n4" parent="1" style="swimlane;horizontal=0;html=1;startSize=44;fillColor=#455A64;fontColor=#FFFFFF;fontStyle=1;fontSize=15;swimlaneFillColor=#F5F6F7;strokeColor=#455A64;rounded=1;arcSize=2;shadow=0;fontFamily=Helvetica;collapsible=0;" value="Платформа" vertex="1">
+                    <mxGeometry height="220" width="4670" y="540" as="geometry"/>
+                </mxCell>
+                <mxCell id="n5" parent="1" style="swimlane;horizontal=0;html=1;startSize=44;fillColor=#6A1B9A;fontColor=#FFFFFF;fontStyle=1;fontSize=15;swimlaneFillColor=#F8F3FB;strokeColor=#6A1B9A;rounded=1;arcSize=2;shadow=0;fontFamily=Helvetica;collapsible=0;" syncAliases="AI | AI mode | AR | LLM подбор | Архитектурные решения | ИИ | Искусственный интеллект | Режим АР (legacy) | Режим ИИ" syncAt="2026-11-18T18:56:14+00:00" syncComment="Режим AI (легаси AR): обрабатывает конструктив и архитектуру. Подбор работ использует детерминированный алгоритм works_table_selector и LLM (works_final_selector / perechen_pipeline). На диаграмме — ветка смешанной обработки с ИИ." syncKey="ai-mode" syncSource="ai-ifc-vor-generator | строка 11" value="ИИ · Искусственный интеллект" vertex="1">
+                    <mxGeometry height="660" width="4670" x="-1" y="770" as="geometry"/>
+                </mxCell>
+                <mxCell id="n6" parent="1" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;size=18;fillColor=#546E7A;strokeColor=none;fontColor=#FFFFFF;fontStyle=1;fontSize=14;fontFamily=Helvetica;" syncAliases="POST /check_model | api/check-model | загрузка IFC" syncAt="2026-11-18T14:52:24+00:00" syncComment="Эндпоинт POST /ifc-vor/api/check_model для загрузки IFC-файла и старта проверки. На диаграмме — входной узел API." syncKey="check-model-api-start" syncSource="ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 3. API и интерфейс" value="1. Запуск и загрузка" vertex="1">
+                    <mxGeometry height="50" width="950" x="75" y="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="n7" parent="1" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;size=18;fillColor=#1E88E5;strokeColor=none;fontColor=#FFFFFF;fontStyle=1;fontSize=14;fontFamily=Helvetica;" syncAliases="ELEMENT_TYPES | ELEMENT_TYPES_AR | ifc_processing | ifcopenshell | zero_step | zero_step.py | ДЛЯ_СМЕТЧИКА_исправленный.xlsx | Загрузка и извлечение | Извлечение IFC | Извлечение элементов" syncAt="2026-11-18T18:56:14+00:00" syncComment="Этап 0 режима ИИ: zero_step.py извлекает элементы по спискам ELEMENT_TYPES_AR и ELEMENT_TYPES_KR, нормализует характеристики и QTO. Формирует файл ДЛЯ_СМЕТЧИКА_исправленный.xlsx. На диаграмме — узел «Извлечение элементов» ветки ИИ." syncKey="cs-stage0-extract-ifc" syncSource="ai-ifc-vor-generator / 3. Функциональность" value="2. Извлечение элементов" vertex="1">
+                    <mxGeometry height="50" width="1140" x="1025" y="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="s8" edge="1" parent="1" style="endArrow=none;html=1;dashed=1;dashPattern=6 6;strokeColor=#B0BEC5;strokeWidth=1;">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1025" y="90" as="sourcePoint"/>
+                        <mxPoint x="1025" y="1430" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="n9" parent="1" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;size=18;fillColor=#F9A825;strokeColor=none;fontColor=#FFFFFF;fontStyle=1;fontSize=14;fontFamily=Helvetica;" value="3. Уточнение и запуск" vertex="1">
+                    <mxGeometry height="50" width="570" x="2165" y="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="s10" edge="1" parent="1" style="endArrow=none;html=1;dashed=1;dashPattern=6 6;strokeColor=#B0BEC5;strokeWidth=1;">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="2165" y="90" as="sourcePoint"/>
+                        <mxPoint x="2165" y="1430" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="n11" parent="1" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;size=18;fillColor=#8E24AA;strokeColor=none;fontColor=#FFFFFF;fontStyle=1;fontSize=14;fontFamily=Helvetica;" syncAliases="API ТСН | LLM подбор | WORKS_SELECTOR" syncAt="2026-11-18T18:56:14+00:00" syncComment="Автоматический подбор работ: через API ТСН для режима CS, детерминированный алгоритм + LLM для AI/ARCH, или по перечню сметчиков. Ключевой этап формирования сметы." syncKey="common-works-selection" syncSource="ai-ifc-vor-generator / 3. Функциональность" value="4. Подбор работ и расценок" vertex="1">
+                    <mxGeometry height="50" width="760" x="2735" y="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="s12" edge="1" parent="1" style="endArrow=none;html=1;dashed=1;dashPattern=6 6;strokeColor=#B0BEC5;strokeWidth=1;">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="2735" y="90" as="sourcePoint"/>
+                        <mxPoint x="2735" y="1430" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="n13" parent="1" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;size=18;fillColor=#2E7D32;strokeColor=none;fontColor=#FFFFFF;fontStyle=1;fontSize=14;fontFamily=Helvetica;" syncAliases="Подобранные_таблицы_работ.json | результат подбора АР" syncAt="2026-11-18T18:56:14+00:00" syncComment="Основной результат подбора в режиме АР. Содержит таблицы работ, подобранные для элементов." syncKey="ai-selected-work-tables" syncSource="ai-ifc-vor-generator / 11. Режим ИИ (AI) / 8. Полный список создаваемых файлов (ИИ/АР) | строка 3096" value="5. Результат" vertex="1">
+                    <mxGeometry height="50" width="570" x="3495" y="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="s14" edge="1" parent="1" style="endArrow=none;html=1;dashed=1;dashPattern=6 6;strokeColor=#B0BEC5;strokeWidth=1;">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="3495" y="90" as="sourcePoint"/>
+                        <mxPoint x="3495" y="1430" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="n15" parent="1" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;size=18;fillColor=#00897B;strokeColor=none;fontColor=#FFFFFF;fontStyle=1;fontSize=14;fontFamily=Helvetica;" syncAliases="vor_comparison.py | ВОР | Сравнение ВОР | Сравнение_ВОР_и_перечня.xlsx | Финальный_перечень_работ.json | сравнение объемов | сравнение с ВОР" syncAt="2026-11-18T18:56:14+00:00" syncComment="Модуль vor_comparison.py для сравнения ведомости объемов работ заказчика (ВОР) с сформированным перечнем работ. Определяет расхождения в объемах и наличии работ. На диаграмме — узел сравнения/валидации." syncKey="ai-vor-comparison" syncSource="ai-ifc-vor-generator / 11. Режим ИИ (AI) / 4. Опционально — разбор ПОС и пояснительной записки ПЗ (pd_parser.py) / 4.1. Разбор ВОР и ПД (doc_pdf_parser.py)" value="6. Сравнение с ВОР" vertex="1">
+                    <mxGeometry height="50" width="570" x="4065" y="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="s16" edge="1" parent="1" style="endArrow=none;html=1;dashed=1;dashPattern=6 6;strokeColor=#B0BEC5;strokeWidth=1;">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="4065" y="90" as="sourcePoint"/>
+                        <mxPoint x="4065" y="1430" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="n17" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#37474F;strokeColor=#263238;fontColor=#FFFFFF;fontStyle=1;shadow=1;fontFamily=Helvetica;fontSize=12;" value="Пользователь:&lt;br&gt;выбор режима" vertex="1">
+                    <mxGeometry height="80" width="130" x="105" y="610" as="geometry"/>
+                </mxCell>
+                <mxCell id="n18" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#EF6C00;strokeWidth=1.5;shadow=1;fontStyle=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Режим?" vertex="1">
+                    <mxGeometry height="100" width="130" x="295" y="600" as="geometry"/>
+                </mxCell>
+                <mxCell id="n19" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF8E1;strokeColor=#F9A825;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="POST /api/upload_ifc | upload_ifc | Загрузка модели" syncAt="2026-11-18T18:56:14+00:00" syncComment="Эндпоинт POST /api/upload_ifc для приёма входных файлов (IFC или PDF) с параметром processingType=CS. На диаграмме — входной узел процесса ЦС." syncKey="cs-api-upload-ifc" syncSource="§10 Режим ЦС (CS) / 1. Входные данные / 1.1. Основной файл модели" value="Загрузка IFC-модели&lt;br&gt;или PDF-чертежа" vertex="1">
+                    <mxGeometry height="100" width="160" x="470" y="370" as="geometry"/>
+                </mxCell>
+                <mxCell id="n20" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF8E1;strokeColor=#F9A825;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="IFC_исходные_параметры.json | Документы ПОС ПЗ ПД | Типовой ВОР по КР.xlsx" syncAt="2026-11-18T18:56:14+00:00" syncComment="Входные данные для формирования типовых ведомостей: IFC_исходные_параметры.json, загруженный ВОР заказчика, документы ПОС/ПЗ/ПД и шаблон data/Типовой ВОР по КР.xlsx. Эти файлы являются входом для модуля builder.build_vor." syncKey="typical-vor-data-sources" syncSource="ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Формирование типовых ведомостей" value="Загрузка IFC / PDF&lt;br&gt;+ документы ПОС, ПЗ, ВОР, ПД" vertex="1">
+                    <mxGeometry height="100" width="160" x="470" y="830" as="geometry"/>
+                </mxCell>
+                <mxCell id="n21" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#546E7A;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Сохранение файлов" vertex="1">
+                    <mxGeometry height="70" width="160" x="660" y="615" as="geometry"/>
+                </mxCell>
+                <mxCell id="n22" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#546E7A;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Фоновая обработка&lt;br&gt;(статус виден в интерфейсе)" vertex="1">
+                    <mxGeometry height="100" width="160" x="850" y="600" as="geometry"/>
+                </mxCell>
+                <mxCell id="e23" edge="1" parent="1" source="n17" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n18" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e24" edge="1" parent="1" source="n18" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;entryX=0;entryY=0.5;" target="n19" value="ЦС">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e25" edge="1" parent="1" source="n18" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" target="n20" value="ИИ">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e26" edge="1" parent="1" source="n19" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" target="n21" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e27" edge="1" parent="1" source="n20" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=1;" target="n21" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e28" edge="1" parent="1" source="n21" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n22" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="n29" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#1E88E5;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Обработка ЦС" vertex="1">
+                    <mxGeometry height="60" width="160" x="1040" y="280" as="geometry"/>
+                </mxCell>
+                <mxCell id="n30" parent="1" style="shape=note;whiteSpace=wrap;html=1;size=14;fillColor=#FFFDE7;strokeColor=#BDB76B;dashed=0;align=left;spacingLeft=8;fontStyle=2;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="formwork.py | Монолитный ЖБ | Площадь опалубки | Сборный ЖБ" syncAt="2026-11-18T18:56:14+00:00" syncComment="Правило расчета: площадь опалубки считается только для монолитного ЖБ. Для сборного ЖБ и неконструктивных элементов значение равно 0. На диаграмме — условие в ветке расчета показателей." syncKey="ai-ifc-formwork-rules" syncSource="ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 3. API и интерфейс / Площадь опалубки в превью (formwork.py)" value="Только монолитные конструкции;&lt;br&gt;сборный ЖБ не подбирается" vertex="1">
+                    <mxGeometry height="50" width="260" x="1030" y="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="n31" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#EF6C00;strokeWidth=1.5;shadow=1;fontStyle=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Тип входа?" vertex="1">
+                    <mxGeometry height="100" width="130" x="1245" y="260" as="geometry"/>
+                </mxCell>
+                <mxCell id="n32" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#1E88E5;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Разбор элементов и параметров: тип, материал, код, этаж, геометрия, объёмы" vertex="1">
+                    <mxGeometry height="100" width="160" x="1420" y="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="n33" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#EDE7F6;strokeColor=#5E35B1;strokeWidth=2;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="DINO VLM | PDF Vision | YOLO OBB | Распознавание чертежей" syncAt="2026-11-18T18:56:14+00:00" syncComment="Машинное зрение для PDF-чертежей: детекция стен (YOLO OBB), layout, легенд, анализ штриховок и расшифровка материалов (DINO + VLM). Используется в режимах AI и ARCH." syncKey="ai-pdf-extraction-vision" syncSource="ai-ifc-vor-generator / 3. Функциональность" value="Распознавание чертежа: стены, легенда, штриховки, материалы, масштаб" vertex="1">
+                    <mxGeometry height="100" width="160" x="1420" y="370" as="geometry"/>
+                </mxCell>
+                <mxCell id="n34" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#1E88E5;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Только конструктив: стены, колонны, перекрытия, балки, фундаменты, сваи, лестницы, изоляция&lt;br&gt;(PDF — только стены)" vertex="1">
+                    <mxGeometry height="130" width="160" x="1610" y="245" as="geometry"/>
+                </mxCell>
+                <mxCell id="n35" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#1E88E5;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="?group= | workGroups | высота здания | диапазоны высоты" syncAt="2026-11-18T18:56:14+00:00" syncComment="Правило формирования ссылки на позицию с параметром ?group= для работ, сгруппированных по диапазонам высоты здания. Имя группы берется из поля group ответа API. На диаграмме — логика формирования URL ссылок." syncKey="cs-stage0-height-grouping-rule" syncSource="ai-ifc-vor-generator / 10. Режим ЦС (CS) / 3. Этап 0 — загрузка файла и извлечение элементов / 3.5. `position_links.py` — ссылки на позиции цифрового сборника (только КР)" value="Определение высоты здания" vertex="1">
+                    <mxGeometry height="70" width="160" x="1800" y="275" as="geometry"/>
+                </mxCell>
+                <mxCell id="n36" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#1E88E5;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="_create_group | formwork_area | total_areas | total_reinforcement" syncAt="2026-11-18T18:56:14+00:00" syncComment="Правила агрегации данных в узлах дерева групп: расчет объема, площадей, расхода арматуры и площади опалубки. Отличается от режима АР включением части здания (L1)." syncKey="cs-stage1-group-aggregation" syncSource="ai-ifc-vor-generator / 10. Режим ЦС (CS) / 4. Этап 1 / 4.2. Группировка" value="Группировка и расчёт: объёмы, площади, расход арматуры" vertex="1">
+                    <mxGeometry height="100" width="160" x="1990" y="260" as="geometry"/>
+                </mxCell>
+                <mxCell id="n37" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF8E1;strokeColor=#F9A825;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="_resolve_part | classify_storey_type | get_building_part | Логика части здания | Определение части | Тип_этажа | Часть здания" syncAt="2026-11-18T18:56:14+00:00" syncComment="Правило определения части здания (надземная/подземная/цоколь) для ссылок на позиции ЦС. Приоритет: Расположение -&gt; Этаж -&gt; Тип этажа. Числовой индикатор этажа имеет приоритет над типом этажа." syncKey="cs-stage0-part-resolution" syncSource="§10 Режим ЦС / 3. Этап 0 / 3.5. position_links.py" value="Выбор строк и уточнение: часть здания, материал, высота" vertex="1">
+                    <mxGeometry height="100" width="160" x="2275" y="260" as="geometry"/>
+                </mxCell>
+                <mxCell id="n38" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF8E1;strokeColor=#F9A825;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="/api/session/&lt;id&gt;/select_rows | new_run" syncAt="2026-11-18T18:56:14+00:00" syncComment="Эндпоинты /api/session/&lt;id&gt;/select_rows и /new_run для выбора строк и запуска обработки. Ключевой этап генерации результата. На диаграмме — узел запуска вычислений." syncKey="ai-api-process" syncSource="ai-ifc-vor-generator / 8. API / Обработка и запуски" value="Запуск обработки выбранных элементов" vertex="1">
+                    <mxGeometry height="80" width="160" x="2465" y="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="n39" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#E3F2FD;strokeColor=#1565C0;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="position_links | position_links.json | ЦС" syncAt="2026-11-18T18:56:14+00:00" syncComment="Эндпоинт для получения ссылок на позиции цифрового сборника (position_links.json). Используется в режиме ЦС." syncKey="ai-api-digital-collection" syncSource="ai-ifc-vor-generator / 8. API / Цифровой сборник (ЦС)" value="Запрос групп в API Цифрового сборника" vertex="1">
+                    <mxGeometry height="110" width="160" x="2750" y="255" as="geometry"/>
+                </mxCell>
+                <mxCell id="n40" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#EF6C00;strokeWidth=1.5;shadow=1;fontStyle=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Найдены расценки?" vertex="1">
+                    <mxGeometry height="110" width="140" x="2950" y="255" as="geometry"/>
+                </mxCell>
+                <mxCell id="n41" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#1E88E5;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="WORKS_WORK_PROCESS_DETAIL_URL | fetch_work_details | Разбивка стоимости" syncAt="2026-11-18T18:56:14+00:00" syncComment="Запрос GET к WORKS_WORK_PROCESS_DETAIL_URL для получения полной разбивки стоимости (ЗП, ЭМ, МР) по ID выбранной работы. Выполняется после LLM-подбора работ модулем works_final_selector." syncKey="ai-works-detail-fetch" syncSource="§11 Режим ИИ / 5.4. Работы из цифрового сборника" value="Получение работ и стоимости" vertex="1">
+                    <mxGeometry height="70" width="160" x="3130" y="165" as="geometry"/>
+                </mxCell>
+                <mxCell id="n42" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#1E88E5;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Группа без расценок" vertex="1">
+                    <mxGeometry height="70" width="160" x="3130" y="385" as="geometry"/>
+                </mxCell>
+                <mxCell id="n43" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#1E88E5;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Пересчёт объёмов и поправочные нормы" vertex="1">
+                    <mxGeometry height="100" width="160" x="3320" y="260" as="geometry"/>
+                </mxCell>
+                <mxCell id="n44" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#1E88E5;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Финальный перечень работ по частям здания" vertex="1">
+                    <mxGeometry height="100" width="160" x="3510" y="260" as="geometry"/>
+                </mxCell>
+                <mxCell id="n45" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Смета ЛСР" vertex="1">
+                    <mxGeometry height="80" width="160" x="3700" y="270" as="geometry"/>
+                </mxCell>
+                <mxCell id="n46" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="final_result_ARCH.json | perechen_pipeline | works_final_selector | ЗП ЭМ МР | Итог ARCH | Итоговая таблица | ОБЩИЙ_Финальный_перечень_работ.xlsx | Стоимость | Таблица работ | Финальный перечень" syncAt="2026-11-18T18:56:14+00:00" syncComment="Итоговый артефакт запуска режима Архитектура: Финальный_перечень_работ.xlsx и final_result_ARCH.json, содержащие выбранные работы и сметные данные. На диаграмме — выходной узел процесса ARCH." syncKey="cs-stage1-final-works-xlsx" syncSource="§10 Режим ЦС / 4. Этап 1 / 4.5. Финальный перечень работ" value="Перечень работ" vertex="1">
+                    <mxGeometry height="80" width="160" x="3890" y="270" as="geometry"/>
+                </mxCell>
+                <mxCell id="e47" edge="1" parent="1" source="n22" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;entryX=0;entryY=0.5;" target="n29" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e48" edge="1" parent="1" source="n30" style="endArrow=none;dashed=1;html=1;strokeColor=#BDB76B;" target="n29">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e49" edge="1" parent="1" source="n29" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n31" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e50" edge="1" parent="1" source="n31" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;entryX=0;entryY=0.5;" target="n32" value="IFC">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e51" edge="1" parent="1" source="n31" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" target="n33" value="PDF">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e52" edge="1" parent="1" source="n32" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" target="n34" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e53" edge="1" parent="1" source="n33" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=1;" target="n34" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e54" edge="1" parent="1" source="n34" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n35" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e55" edge="1" parent="1" source="n35" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n36" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e56" edge="1" parent="1" source="n36" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n37" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e57" edge="1" parent="1" source="n37" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;entryX=0;entryY=0.5;" target="n38" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e58" edge="1" parent="1" source="n38" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" target="n39" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e59" edge="1" parent="1" source="n39" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n40" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e60" edge="1" parent="1" source="n40" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;entryX=0;entryY=0.5;" target="n41" value="Да">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e61" edge="1" parent="1" source="n40" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" target="n42" value="Нет">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e62" edge="1" parent="1" source="n41" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" target="n43" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e63" edge="1" parent="1" source="n42" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=1;" target="n43" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e64" edge="1" parent="1" source="n43" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n44" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e65" edge="1" parent="1" source="n44" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n45" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e66" edge="1" parent="1" source="n45" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n46" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="n67" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#8E24AA;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Обработка ИИ" vertex="1">
+                    <mxGeometry height="60" width="160" x="1040" y="970" as="geometry"/>
+                </mxCell>
+                <mxCell id="n68" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#8E24AA;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="works_final_selector | Группировка | Подбор работ | Этап 1 ARCH" syncAt="2026-11-18T18:56:14+00:00" syncComment="Этап 1 режима Архитектура: фильтрация элементов, группировка по МССК (group_excel), подбор таблиц работ (works_table_selector), выбор работ (works_fetcher) и финальный LLM-подбор (works_final_selector). На диаграмме — основной вычислительный блок ветки ARCH." syncKey="arch-stage1-group-select" syncSource="12. Режим Архитектура (ARCH) / 5.2. Этап 1" value="Разбор IFC / PDF: элементы, параметры, высота, группировка, объёмы" vertex="1">
+                    <mxGeometry height="100" width="160" x="1230" y="830" as="geometry"/>
+                </mxCell>
+                <mxCell id="n69" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#8E24AA;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Конструктив и архитектура: окна, двери, витражи, кровля, отделка, перила, мебель…" vertex="1">
+                    <mxGeometry height="100" width="160" x="1515" y="830" as="geometry"/>
+                </mxCell>
+                <mxCell id="n72" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#EDE7F6;strokeColor=#5E35B1;strokeWidth=2;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="doc_pdf_parser | pd_parser | Разбор ПОС ПЗ | Стадия documents" syncAt="2026-11-18T14:52:24+00:00" syncComment="Стадия documents: разбор загруженных ПОС/ПЗ/ВОР/ПД парсерами pd_parser и doc_pdf_parser. На диаграмме — первый узел обработки данных в ветке сравнения." syncKey="compare-documents-stage" syncSource="ai-ifc-vor-generator / 15. Сравнение ведомостей объёмов работ" value="Параллельный разбор документов" vertex="1">
+                    <mxGeometry height="80" width="160" x="1230" y="1180" as="geometry"/>
+                </mxCell>
+                <mxCell id="n73" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="ПОС и ПЗ: опалубка, высоты, сезон, бетонирование, кран, оборудование" vertex="1">
+                    <mxGeometry height="100" width="170" x="1510" y="1050" as="geometry"/>
+                </mxCell>
+                <mxCell id="n74" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="Арматура | Дополнение данных | Класс бетона | Сверка объемов" syncAt="2026-11-18T18:56:14+00:00" syncComment="Шаг использования данных из ВОР/ПД для дополнения модели: класс бетона, арматура, объемы работ, отсутствующие в модели, сверка объемов." syncKey="ai-doc-data-enrichment" syncSource="ai-ifc-vor-generator / 11. Режим ИИ (AI) / 4.1. Разбор ВОР и ПД" value="ВОР: объёмы, работы, арматура по классам и диаметрам" vertex="1">
+                    <mxGeometry height="90" width="170" x="1510" y="1175" as="geometry"/>
+                </mxCell>
+                <mxCell id="n75" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="DOC_FACTS | doc_facts | ВОР | ПД | Факты ВОР | Факты ПД | класс бетона | объемы работ" syncAt="2026-11-18T18:56:14+00:00" syncComment="Модуль `doc_facts.py`, встроенный в `perechen_pipeline` как блок `DOC_FACTS`. Читает результаты разбора ВОР и ПД, чтобы дополнить данные модели (класс бетона, арматуры, объёмы). На диаграмме — узел интеграции внешних документов." syncKey="ai-doc-facts" syncSource="§11 Режим ИИ / 5.8.1. Факты из ВОР и ПД" value="ПД: класс бетона, морозостойкость, водонепроницаемость" vertex="1">
+                    <mxGeometry height="90" width="170" x="1510" y="1295" as="geometry"/>
+                </mxCell>
+                <mxCell id="n76" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#8E24AA;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="UI константы | works_classification.json | Автоподстановка констант" syncAt="2026-11-18T18:56:14+00:00" syncComment="Блок веб-интерфейса «Параметры влияющие на расценки». Отображает глобальные константы из works_classification.json с автоподстановкой значений из IFC, ПОС, ПЗ. На диаграмме — узел пользовательского интерфейса для настройки параметров." syncKey="ai-module-rate-params" syncSource="ai-ifc-vor-generator / 11. Режим ИИ (AI) / 1. Входные данные / 1.3. Параметры запуска" value="Параметры для расценок" vertex="1">
+                    <mxGeometry height="70" width="160" x="2180" y="965" as="geometry"/>
+                </mxCell>
+                <mxCell id="n77" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF8E1;strokeColor=#F9A825;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Проверка и ручная корректировка" vertex="1">
+                    <mxGeometry height="80" width="160" x="2370" y="960" as="geometry"/>
+                </mxCell>
+                <mxCell id="n78" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF8E1;strokeColor=#F9A825;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="group_excel | run_&lt;NNN&gt; | select_rows | Дерево_проекта | Этап 1" syncAt="2026-11-18T18:56:14+00:00" syncComment="Фоновый этап запуска run_&lt;NNN&gt; после select_rows/new_run. Включает применение материалов, фильтрацию строк, группировку по МССК (group_excel.process_ifc_excel_mssk). Формирует Дерево_проекта_выбранные_элементы.xlsx. На диаграмме — основной этап формирования перечня работ." syncKey="cs-stage1-run-execution" syncSource="§10 Режим ЦС / 2. Общая схема пайплайна" value="Запуск выбранных элементов" vertex="1">
+                    <mxGeometry height="80" width="160" x="2560" y="960" as="geometry"/>
+                </mxCell>
+                <mxCell id="n79" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#8E24AA;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="Локальный алгоритм | Подбор таблиц работ" syncAt="2026-11-18T18:56:14+00:00" syncComment="Локальный детерминированный алгоритм подбора таблиц работ в режиме АР. Заменяет использование цифрового сборника на этапе 0. На диаграмме — узел процесса подбора работ в ветке АР." syncKey="ai-module-works-table-selector" syncSource="§11 Режим ИИ / 3. Этап 0 / 3.4. Справочники цифрового сборника" value="Алгоритм выбора сборников и таблиц нормативов" vertex="1">
+                    <mxGeometry height="100" width="160" x="2750" y="950" as="geometry"/>
+                </mxCell>
+                <mxCell id="n80" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#EDE7F6;strokeColor=#5E35B1;strokeWidth=2;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Выбор работы и расценки локальной моделью ИИ" vertex="1">
+                    <mxGeometry height="100" width="160" x="2940" y="950" as="geometry"/>
+                </mxCell>
+                <mxCell id="n81" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#EDE7F6;strokeColor=#5E35B1;strokeWidth=2;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="/tsn/docs | /tsn_mode | LLM | data/tsn | decide | tsn_coeffs | tsn_coeffs.py | ТСН | поправочные коэффициенты | сборники ТСН" syncAt="2026-11-18T18:56:14+00:00" syncComment="Модуль tsn_coeffs.py для применения поправочных коэффициентов из сборников ТСН. Использует LLM для принятия решений (да/нет/неясно) по применимости коэффициентов. На диаграмме — узел обработки/расчета коэффициентов." syncKey="ai-tsn-coeffs" syncSource="§11 Режим ИИ / 5.9. Поправочные коэффициенты сборников ТСН" value="Учёт ВОР и ПД: бетон, арматура, объёмы, коэффициенты ТСН" vertex="1">
+                    <mxGeometry height="100" width="160" x="3225" y="950" as="geometry"/>
+                </mxCell>
+                <mxCell id="n82" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#8E24AA;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="Excel отчеты | ДЛЯ_СМЕТЧИКА | Дерево_проекта | Финальный_перечень" syncAt="2026-11-18T18:56:14+00:00" syncComment="Финальные артефакты: ДЛЯ_СМЕТЧИКА, ОБЩИЙ_Финальный_перечень_работ.xlsx, Финальный_перечень_работ.xlsx, Дерево_проекта. Результат работы пайплайна." syncKey="common-excel-outputs" syncSource="ai-ifc-vor-generator / 3. Функциональность" value="Финальный перечень работ с объёмами" vertex="1">
+                    <mxGeometry height="100" width="160" x="3510" y="950" as="geometry"/>
+                </mxCell>
+                <mxCell id="n83" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Смета ЛСР" vertex="1">
+                    <mxGeometry height="80" width="160" x="3700" y="840" as="geometry"/>
+                </mxCell>
+                <mxCell id="n84" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="Итоговая таблица работ | ОБЩИЙ_Финальный_перечень_работ.xlsx | Финальный перечень ЦС" syncAt="2026-11-18T18:56:14+00:00" syncComment="Итоговая таблица работ xlsx с шифрами ТСН, объемами, стоимостью (ЗП/ЭМ/МР). Разбита на части здания. Единственный файл итоговой выдачи запуска режима ЦС." syncKey="cs-final-works-list" syncSource="§10 Режим ЦС / 7. Полный список создаваемых файлов (КР)" value="Перечень работ" vertex="1">
+                    <mxGeometry height="80" width="160" x="3890" y="840" as="geometry"/>
+                </mxCell>
+                <mxCell id="n85" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Аналитическая справка: учтено / взято из документов / требует проверки" vertex="1">
+                    <mxGeometry height="90" width="250" x="3750" y="1105" as="geometry"/>
+                </mxCell>
+                <mxCell id="n86" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF8E1;strokeColor=#F9A825;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Дополнительные операции&lt;br&gt;(по кнопкам)" vertex="1">
+                    <mxGeometry height="80" width="160" x="4080" y="960" as="geometry"/>
+                </mxCell>
+                <mxCell id="n87" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#8E24AA;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="Сверка ВОР | Сравнение с заказчиком | Сравнить с ВОР исполнителя" syncAt="2026-11-18T18:56:14+00:00" syncComment="Шаг сверки сформированного перечня работ с исходными строками ВОР заказчика. Результатом являются выводы и пояснения расхождений. На диаграмме — узел сравнения данных после формирования ВОР." syncKey="typical-vor-compare-executor" syncSource="ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма" value="Сравнение с ВОР заказчика" vertex="1">
+                    <mxGeometry height="60" width="160" x="4270" y="830" as="geometry"/>
+                </mxCell>
+                <mxCell id="n88" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#8E24AA;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="ВОР КР_ЖС | Типовой ВОР по КР.xlsx | Шаблон ВОР" syncAt="2026-11-18T18:56:14+00:00" syncComment="Файл Типовой ВОР по КР.xlsx является шаблоном иерархии ВОР. Используется для формирования структуры итогового документа. На диаграмме — эталонная структура результата." syncKey="ai-typical-vor" syncSource="ai-ifc-vor-generator / 7. Хранилища и справочники" value="Типовой ВОР по шаблону" vertex="1">
+                    <mxGeometry height="60" width="160" x="4270" y="920" as="geometry"/>
+                </mxCell>
+                <mxCell id="n89" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#8E24AA;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="builder | customer_vor | Сверка ВОР | Типовые ВОР" syncAt="2026-11-18T18:56:14+00:00" syncComment="Генерация типовых ведомостей (builder/customer_vor) и сверка с помощью comparison_typical. Специфичный процесс для режима типовых решений." syncKey="typical-vor-comparison" syncSource="ai-ifc-vor-generator / 3. Функциональность" value="Сверка двух ВОР" vertex="1">
+                    <mxGeometry height="60" width="160" x="4270" y="1010" as="geometry"/>
+                </mxCell>
+                <mxCell id="n90" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#8E24AA;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="estimate | estimate/compare | typical_vor | смета" syncAt="2026-11-18T18:56:14+00:00" syncComment="Эндпоинты для получения типовых ведомостей (typical_vor), сметной формы (estimate) и сравнения со сметой заказчика (estimate/compare)." syncKey="ai-api-typical-vor-estimate" syncSource="ai-ifc-vor-generator / 8. API / Типовые ВОР, сверка и смета" value="Сравнение со сметой заказчика" vertex="1">
+                    <mxGeometry height="60" width="160" x="4270" y="1100" as="geometry"/>
+                </mxCell>
+                <mxCell id="n91" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="Разложить в типовую ВОР | Сравнение типовых ведомостей | Формирование типовых ВОР" syncAt="2026-11-18T18:56:14+00:00" syncComment="Шаг формирования обеих типовых ведомостей по правилам и сравнения их готовых строк. Включает генерацию ВОР из IFC и документов и последующее сопоставление." syncKey="typical-vor-build-compare" syncSource="ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма" value="Файлы сравнений и типовой ВОР" vertex="1">
+                    <mxGeometry height="90" width="160" x="4460" y="955" as="geometry"/>
+                </mxCell>
+                <mxCell id="e92" edge="1" parent="1" source="n22" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" target="n67" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e93" edge="1" parent="1" source="n67" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;entryX=0;entryY=0.5;" target="n68" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e94" edge="1" parent="1" source="n67" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" target="n72" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e95" edge="1" parent="1" source="n68" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n69" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e98" edge="1" parent="1" source="n72" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n73" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e99" edge="1" parent="1" source="n73" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=1;" target="n76" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e100" edge="1" parent="1" source="n72" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n74" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e101" edge="1" parent="1" source="n74" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=1;" target="n76" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e102" edge="1" parent="1" source="n72" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n75" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e103" edge="1" parent="1" source="n75" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=1;" target="n76" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e104" edge="1" parent="1" source="n71" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" target="n76" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e105" edge="1" parent="1" source="n76" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n77" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e106" edge="1" parent="1" source="n77" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n78" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e107" edge="1" parent="1" source="n78" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n79" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e108" edge="1" parent="1" source="n79" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n80" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e109" edge="1" parent="1" source="n80" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n81" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e110" edge="1" parent="1" source="n81" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n82" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e111" edge="1" parent="1" source="n82" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;entryX=0;entryY=0.5;" target="n83" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e112" edge="1" parent="1" source="n83" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n84" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e113" edge="1" parent="1" source="n82" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" target="n85" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e114" edge="1" parent="1" source="n82" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n86" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e115" edge="1" parent="1" source="n86" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n87" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e116" edge="1" parent="1" source="n87" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n91" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e117" edge="1" parent="1" source="n86" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n88" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e118" edge="1" parent="1" source="n88" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n91" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e119" edge="1" parent="1" source="n86" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n89" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e120" edge="1" parent="1" source="n89" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n91" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e121" edge="1" parent="1" source="n86" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n90" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e122" edge="1" parent="1" source="n90" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n91" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="n123" parent="1" style="text;html=1;fontSize=14;fontStyle=1;fontColor=#263238;align=left;verticalAlign=middle;" value="Обозначения" vertex="1">
+                    <mxGeometry height="30" width="120" y="2585" as="geometry"/>
+                </mxCell>
+                <mxCell id="n124" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#1E88E5;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Процесс ЦС" vertex="1">
+                    <mxGeometry height="44" width="160" x="130" y="2580" as="geometry"/>
+                </mxCell>
+                <mxCell id="n125" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#8E24AA;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Процесс ИИ" vertex="1">
+                    <mxGeometry height="44" width="160" x="310" y="2580" as="geometry"/>
+                </mxCell>
+                <mxCell id="n126" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#EDE7F6;strokeColor=#5E35B1;strokeWidth=2;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Шаг с ИИ-моделью" vertex="1">
+                    <mxGeometry height="44" width="160" x="490" y="2580" as="geometry"/>
+                </mxCell>
+                <mxCell id="n127" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF8E1;strokeColor=#F9A825;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Действие пользователя" vertex="1">
+                    <mxGeometry height="44" width="160" x="670" y="2580" as="geometry"/>
+                </mxCell>
+                <mxCell id="n128" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#EF6C00;strokeWidth=1.5;shadow=1;fontStyle=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Решение" vertex="1">
+                    <mxGeometry height="44" width="160" x="850" y="2580" as="geometry"/>
+                </mxCell>
+                <mxCell id="n129" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#E3F2FD;strokeColor=#1565C0;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Справочник / API" vertex="1">
+                    <mxGeometry height="44" width="160" x="1030" y="2580" as="geometry"/>
+                </mxCell>
+                <mxCell id="n130" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Документ / результат" vertex="1">
+                    <mxGeometry height="44" width="160" x="1210" y="2580" as="geometry"/>
+                </mxCell>
+                <mxCell id="Lcx788-GmXI1QpceFY7X-1" edge="1" parent="1" source="n69" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;" target="n71" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1675" y="880" as="sourcePoint"/>
+                        <mxPoint x="1990" y="880" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="n71" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#8E24AA;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Превью элементов" vertex="1">
+                    <mxGeometry height="60" width="160" x="1870" y="850" as="geometry"/>
+                </mxCell>
+                <mxCell id="n131" parent="1" style="swimlane;horizontal=0;html=1;startSize=44;fillColor=#00838F;fontColor=#FFFFFF;fontStyle=1;fontSize=15;swimlaneFillColor=#F1FAFB;strokeColor=#00838F;rounded=1;arcSize=2;shadow=0;fontFamily=Helvetica;collapsible=0;" syncAliases="CHECK_MODEL | IFC проверка | IFC_исходные_параметры | LLM заполнение | LLM-сопоставление | check_model | parametrs_name.json | Проверка ЦИМ | Проверка_ЦИМ_модели.xlsx | ЦИМ модель" syncAt="2026-11-18T18:56:14+00:00" syncComment="Вспомогательный функционал: проверка IFC-модели на наличие требуемых параметров по data/parametrs_name.json с использованием LLM-сопоставления. Результат — файл Проверка_ЦИМ_модели.xlsx. На диаграмме — узел валидации входных данных." syncKey="check-cim-model" syncSource="ai-ifc-vor-generator | строка 20" value="Проверка ЦИМ модели" vertex="1">
+                    <mxGeometry height="240" width="4670" x="-1" y="1540" as="geometry"/>
+                </mxCell>
+                <mxCell id="n132" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#E3F2FD;strokeColor=#1565C0;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="POST /check_model | api/check-model | загрузка IFC" syncAt="2026-11-18T18:56:14+00:00" syncComment="Эндпоинт POST /ifc-vor/api/check_model для загрузки IFC-файла и старта проверки. На диаграмме — входной узел API." syncKey="check-model-api-start" syncSource="ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 3. API и интерфейс" value="POST /api/check_model&lt;br&gt;(только IFC)" vertex="1">
+                    <mxGeometry height="80" width="180" x="75" y="1600" as="geometry"/>
+                </mxCell>
+                <mxCell id="n133" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF8E1;strokeColor=#F9A825;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Загрузка IFC-модели" vertex="1">
+                    <mxGeometry height="80" width="170" x="290" y="1600" as="geometry"/>
+                </mxCell>
+                <mxCell id="n134" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="IFC_исходные_параметры.json | IFC_исходные_параметры.xlsx | Сырой дамп | Сырой дамп IFC | сырой дамп IFC" syncAt="2026-11-18T18:56:14+00:00" syncComment="Файлы IFC_исходные_параметры.xlsx и .json. Содержат таблицу всех свойств и JSON-копию записей с ключом GlobalId. Результат работы ifc_raw_dump.py. На диаграмме — артефакт промежуточного этапа." syncKey="cs-artifact-ifc-raw-params" syncSource="§10 Режим ЦС / 3.1. ifc_raw_dump.py" value="Сырой дамп:&lt;br&gt;IFC_исходные_параметры.json/.xlsx" vertex="1">
+                    <mxGeometry height="80" width="220" x="500" y="1600" as="geometry"/>
+                </mxCell>
+                <mxCell id="n135" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#E0F7FA;strokeColor=#006064;strokeWidth=2;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="LLM mapping | RUS_* | qwen3.8:27b | сопоставление" syncAt="2026-11-18T18:56:14+00:00" syncComment="Этап проверки ЦИМ: LLM (qwen3.8:27b) сопоставляет требуемые параметры (RUS_*) с колонками IFC-модели. На диаграмме — шаг обработки данных в ветке check-model." syncKey="check-model-llm-mapping" syncSource="ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 1. Назначение" value="Сопоставление параметров LLM&lt;br&gt;qwen3.8:27b" vertex="1">
+                    <mxGeometry height="80" width="220" x="990" y="1600" as="geometry"/>
+                </mxCell>
+                <mxCell id="n136" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="Отчёт ЦИМ | Проверка_ЦИМ_модели.json | Проверка_ЦИМ_модели.xlsx" syncAt="2026-11-18T18:56:14+00:00" syncComment="Файлы Проверка_ЦИМ_модели.xlsx и .json содержат элементы проверяемых IFC-классов и требуемые параметры RUS_*. На диаграмме — основной артефакт результата проверки." syncKey="check-cim-report" syncSource="ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 4. Артефакты сессии (outputs/ /)" value="Проверка_ЦИМ_модели.xlsx&lt;br&gt;+ отчёт по классам" vertex="1">
+                    <mxGeometry height="80" width="200" x="1245" y="1600" as="geometry"/>
+                </mxCell>
+                <mxCell id="n137" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#E3F2FD;strokeColor=#1565C0;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="MSSK | parametrs_name.json | requirements.py" syncAt="2026-11-18T18:56:14+00:00" syncComment="Модуль requirements.py: загрузка data/parametrs_name.json и выбор требований по IFC-классу. На диаграмме — компонент обработки справочников." syncKey="check-model-requirements" syncSource="ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 2. Модули" value="Требования:&lt;br&gt;data/parametrs_name.json" vertex="1">
+                    <mxGeometry height="70" width="220" x="500" y="1705" as="geometry"/>
+                </mxCell>
+                <mxCell id="n138" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="LLM mapping | Param mapping | Сопоставление_параметров.json" syncAt="2026-11-18T18:56:14+00:00" syncComment="Файл Сопоставление_параметров.json хранит карту соответствия требуемых параметров колонкам модели, использованную LLM. На диаграмме — данные для маппинга полей." syncKey="check-param-mapping" syncSource="ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 4. Артефакты сессии (outputs/ /)" value="Сопоставление_параметров.json&lt;br&gt;(использованная карта)" vertex="1">
+                    <mxGeometry height="70" width="220" x="990" y="1705" as="geometry"/>
+                </mxCell>
+                <mxCell id="n139" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#00838F;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="compute_dimensions | exclude_classes | opening_ends | Дамп IFC" syncAt="2026-11-18T18:56:14+00:00" syncComment="Правила формирования сырого дампа: exclude_classes=(), compute_dimensions=True, dimension_classes, opening_ends=True. На диаграмме — конфигурационный узел подготовки данных." syncKey="check-dump-config" syncSource="ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 4. Артефакты сессии (outputs/ /)" value="Дамп с торцами стен и щёками&lt;br&gt;проёмов (opening_ends)" vertex="1">
+                    <mxGeometry height="70" width="230" x="1245" y="1705" as="geometry"/>
+                </mxCell>
+                <mxCell id="n140" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#00838F;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="grouping.py | группировка | типовой ВОР" syncAt="2026-11-18T18:56:14+00:00" syncComment="Модуль grouping.py: группировка элементов по иерархии типового ВОР для веб-превью. На диаграмме — компонент агрегации результатов." syncKey="check-model-grouping" syncSource="ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 2. Модули" value="Превью по типовому ВОР" vertex="1">
+                    <mxGeometry height="70" width="190" x="1510" y="1705" as="geometry"/>
+                </mxCell>
+                <mxCell id="n141" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#E3F2FD;strokeColor=#1565C0;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="GET /groups | totalFormworkArea | превью" syncAt="2026-11-18T18:56:14+00:00" syncComment="Эндпоинт GET /ifc-vor/api/check_model/&lt;session_id&gt;/groups для получения сгруппированного превью. На диаграмме — узел вывода структурированных данных." syncKey="check-model-api-groups" syncSource="ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 3. API и интерфейс" value="GET /api/check_model/&amp;lt;id&amp;gt;/groups" vertex="1">
+                    <mxGeometry height="70" width="220" x="1735" y="1705" as="geometry"/>
+                </mxCell>
+                <mxCell id="n142" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#00838F;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="GET /check_model | sessionId | статус" syncAt="2026-11-18T18:56:14+00:00" syncComment="Эндпоинт GET /ifc-vor/api/check_model/&lt;session_id&gt; для получения статуса и результата. На диаграмме — узел получения результата." syncKey="check-model-api-status" syncSource="ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 3. API и интерфейс" value="Статус check_model_processing" vertex="1">
+                    <mxGeometry height="70" width="200" x="1990" y="1705" as="geometry"/>
+                </mxCell>
+                <mxCell id="n143" parent="1" style="swimlane;horizontal=0;html=1;startSize=44;fillColor=#00695C;fontColor=#FFFFFF;fontStyle=1;fontSize=15;swimlaneFillColor=#F1F8F6;strokeColor=#00695C;rounded=1;arcSize=2;shadow=0;fontFamily=Helvetica;collapsible=0;" syncAliases="ARCH | ELEMENT_TYPES_ARCH | architectural mode | src/services/architecture | Архитектура | Режим ARCH | Режим Архитектура" syncAt="2026-11-18T18:56:14+00:00" syncComment="Режим ARCH: обрабатывает только архитектурные элементы (без конструктива). Использует те же алгоритмы и LLM, что и режим ИИ, но с собственными копиями модулей в src/services/architecture/. На диаграмме — отдельная ветка для архитектурных работ." syncKey="arch-mode" syncSource="ai-ifc-vor-generator | строка 11" value="Архитектура (ARCH)" vertex="1">
+                    <mxGeometry height="460" width="4670" x="1" y="1810" as="geometry"/>
+                </mxCell>
+                <mxCell id="n144" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFF8E1;strokeColor=#F9A825;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="IFC/PDF | Upload | Загрузка файлов | Режим обработки" syncAt="2026-11-18T18:56:14+00:00" syncComment="Первый шаг процесса: загрузка исходных файлов (.ifc или .pdf) с выбором режима обработки (CS, AI, ARCH). На диаграмме — входной узел, определяющий ветку выполнения." syncKey="common-upload-ifc-pdf" syncSource="ai-ifc-vor-generator / 3. Функциональность" value="Загрузка IFC / PDF&lt;br&gt;+ документы" vertex="1">
+                    <mxGeometry height="90" width="180" x="75" y="1880" as="geometry"/>
+                </mxCell>
+                <mxCell id="n145" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#00695C;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="IFC_исходные_параметры | zero_step | zero_step.py | ДЛЯ_СМЕТЧИКА_исправленный.xlsx | Извлечение IFC ARCH | Этап 0 ARCH" syncAt="2026-11-18T18:56:14+00:00" syncComment="Этап 0 режима Архитектура: выгрузка сырого дампа IFC, вызов architecture.zero_step для извлечения ELEMENT_TYPES_ARCH и формирования ДЛЯ_СМЕТЧИКА_исправленный.xlsx. На диаграмме — первый узел ветки ARCH." syncKey="arch-stage0-extract" syncSource="12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`" value="Извлечение архитектурных&lt;br&gt;элементов (ELEMENT_TYPES_ARCH)" vertex="1">
+                    <mxGeometry height="90" width="250" x="1025" y="1880" as="geometry"/>
+                </mxCell>
+                <mxCell id="n146" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#00695C;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="ARCH | Архитектура | конструктивные элементы | фильтрация" syncAt="2026-11-18T18:56:14+00:00" syncComment="Правила фильтрации в режиме Архитектура: исключение конструктивных элементов (стены, колонны и др.) из выборки. На диаграмме — узел-ограничение или условие ветки ARCH." syncKey="arch-restrictions" syncSource="ai-ifc-vor-generator / 12. Режим Архитектура (ARCH) / 9. Ограничения" value="Без конструктива: стены, колонны,&lt;br&gt;перекрытия, балки, фундаменты,&lt;br&gt;сваи, лестницы" vertex="1">
+                    <mxGeometry height="90" width="270" x="1305" y="1880" as="geometry"/>
+                </mxCell>
+                <mxCell id="n147" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#00695C;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="group_excel.py | process_ifc_excel_ar | Группировка АР" syncAt="2026-11-18T18:56:14+00:00" syncComment="Модуль group_excel.py выполняет группировку элементов по правилам АР (process_ifc_excel_ar, group_elements_ar) для режима Архитектура." syncKey="arch-group-excel" syncSource="12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`" value="Группировка ARCH: часть здания →&lt;br&gt;МССК → материал → наименование" vertex="1">
+                    <mxGeometry height="90" width="300" x="2165" y="1880" as="geometry"/>
+                </mxCell>
+                <mxCell id="n148" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#00695C;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Превью и выбор строк" vertex="1">
+                    <mxGeometry height="90" width="200" x="2495" y="1880" as="geometry"/>
+                </mxCell>
+                <mxCell id="n149" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#00695C;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="works_table_selector.py | Детерминированный подбор | Подбор таблиц ARCH" syncAt="2026-11-18T18:56:14+00:00" syncComment="Модуль works_table_selector.py выполняет детерминированный подбор таблиц работ на основе алгоритма из data/algorithm.md." syncKey="arch-works-table-selector" syncSource="12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`" value="Подбор таблиц работ&lt;br&gt;(копия works_table_selector)" vertex="1">
+                    <mxGeometry height="90" width="250" x="2735" y="1880" as="geometry"/>
+                </mxCell>
+                <mxCell id="n150" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#00695C;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="larix fetcher | works_fetcher.py" syncAt="2026-11-18T18:56:14+00:00" syncComment="Модуль works_fetcher.py извлекает данные о работах из цифрового сборника (larix), формируя period.json и Подобранные_работы.json." syncKey="arch-works-fetcher" syncSource="12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`" value="Работы из цифрового&lt;br&gt;сборника (larix)" vertex="1">
+                    <mxGeometry height="90" width="220" x="3015" y="1880" as="geometry"/>
+                </mxCell>
+                <mxCell id="n151" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#E0F2F1;strokeColor=#004D40;strokeWidth=2;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="LLM подбор ARCH | works_final_selector.py | Финальный подбор ARCH" syncAt="2026-11-18T18:56:14+00:00" syncComment="Модуль works_final_selector.py выполняет финальный подбор работ с использованием LLM, рассчитывая объемы и стоимость для режима Архитектура." syncKey="arch-works-final-selector" syncSource="12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`" value="Финальный подбор работ LLM" vertex="1">
+                    <mxGeometry height="90" width="210" x="3265" y="1880" as="geometry"/>
+                </mxCell>
+                <mxCell id="n152" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Финальный_перечень_работ.xlsx" vertex="1">
+                    <mxGeometry height="90" width="210" x="3510" y="1880" as="geometry"/>
+                </mxCell>
+                <mxCell id="n153" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="ARBuilder | JSON ARCH | final_result_ARCH.json" syncAt="2026-11-18T18:56:14+00:00" syncComment="Итоговый файл final_result_ARCH.json, формируемый модулем ifc_json_builder.py (ARBuilder) с дисциплиной ARCH (АР)." syncKey="arch-final-json" syncSource="12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`" value="final_result_ARCH.json" vertex="1">
+                    <mxGeometry height="90" width="190" x="3760" y="1880" as="geometry"/>
+                </mxCell>
+                <mxCell id="n154" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#00695C;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="API comparisons | ComparisonManager | comparison_id | estimates.json | models.json | Режим сравнения | Сравнение ВОР | Сравнение ведомостей объёмов работ" syncAt="2026-11-18T18:56:14+00:00" syncComment="Отдельный режим сервиса для сравнения ведомостей объёмов работ, доступный только через API. Оркестратор ComparisonManager, состояние в sessions.json. На диаграмме — корневой узел ветки сравнения." syncKey="ai-vor-comparison-mode" syncSource="ai-ifc-vor-generator / 11. Режим ИИ (AI) / 8. Полный список создаваемых файлов (ИИ/АР) | строка 3116" value="Сравнение с ВОР&lt;br&gt;(общий режим)" vertex="1">
+                    <mxGeometry height="90" width="220" x="4065" y="1880" as="geometry"/>
+                </mxCell>
+                <mxCell id="n155" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#00695C;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Смета ЛСР" vertex="1">
+                    <mxGeometry height="90" width="140" x="4315" y="1880" as="geometry"/>
+                </mxCell>
+                <mxCell id="n156" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#00695C;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="PDF конвейер | ai-blueprint-to-ifc | Детекция стен" syncAt="2026-11-18T18:56:14+00:00" syncComment="Внешний конвейер ai-blueprint-to-ifc для обработки PDF (детекция стен, layout), результат которого передается в модули группировки и подбора как IFC. На диаграмме — входной узел альтернативного источника данных." syncKey="common-pdf-to-ifc-pipeline" syncSource="12. Режим Архитектура (ARCH) / 5.1. Этап 0" value="Разбор PDF-чертежа&lt;br&gt;(YOLO / DINO / VLM)" vertex="1">
+                    <mxGeometry height="80" width="250" x="290" y="2030" as="geometry"/>
+                </mxCell>
+                <mxCell id="n157" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="doc_facts | ВОР_ведомость_объемов | Документы ARCH | ПОС_глобальные_константы" syncAt="2026-11-18T18:56:14+00:00" syncComment="Опциональный этап обработки документов (ПОС, ПЗ, ВОР, ПД) в режиме ARCH, генерирующий соответствующие JSON/XLSX файлы и факты для сравнения. На диаграмме — ветка опциональной обработки документации." syncKey="arch-documents-pos-pz-vor" syncSource="12. Режим Архитектура (ARCH) / 5.3. Документы" value="Документы ПОС / ПЗ /&lt;br&gt;ВОР / ПД" vertex="1">
+                    <mxGeometry height="80" width="270" x="1305" y="2030" as="geometry"/>
+                </mxCell>
+                <mxCell id="n158" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#00695C;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Константы проекта&lt;br&gt;и факты ВОР / ПД" vertex="1">
+                    <mxGeometry height="80" width="250" x="2165" y="2030" as="geometry"/>
+                </mxCell>
+                <mxCell id="n159" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#00695C;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="Корректировка объемов | Нормы расхода" syncAt="2026-11-18T18:56:14+00:00" syncComment="Файл с нормами расхода для корректировки объемов. Используется только в режиме ЦС (КР), не применяется в режиме АР (ИИ)." syncKey="cs-koefs-correction" syncSource="§10 Режим ЦС / 8. Ключевые отличия от режима АР" value="Объёмы и стоимость&lt;br&gt;(koefs.xlsx, larix)" vertex="1">
+                    <mxGeometry height="80" width="210" x="3265" y="2030" as="geometry"/>
+                </mxCell>
+                <mxCell id="n160" parent="1" style="swimlane;horizontal=0;html=1;startSize=44;fillColor=#AD1457;fontColor=#FFFFFF;fontStyle=1;fontSize=15;swimlaneFillColor=#FDF1F5;strokeColor=#AD1457;rounded=1;arcSize=2;shadow=0;fontFamily=Helvetica;collapsible=0;" syncAliases="documents models estimates | Поток сравнения | Статусы сессии" syncAt="2026-11-18T18:56:14+00:00" syncComment="Последовательность стадий процесса сравнения: documents, models, estimates, comparison. На диаграмме — последовательные узлы этапов в ветке сравнения." syncKey="compare-stages-flow" syncSource="ai-ifc-vor-generator / 15. Сравнение ведомостей объёмов работ" value="Сравнение ведомостей ВОР" vertex="1">
+                    <mxGeometry height="270" width="4670" x="-1" y="2290" as="geometry"/>
+                </mxCell>
+                <mxCell id="n161" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#AD1457;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="doc_pdf_parser | pd_parser | Разбор ПОС ПЗ | Стадия documents" syncAt="2026-11-18T18:56:14+00:00" syncComment="Стадия documents: разбор загруженных ПОС/ПЗ/ВОР/ПД парсерами pd_parser и doc_pdf_parser. На диаграмме — первый узел обработки данных в ветке сравнения." syncKey="compare-documents-stage" syncSource="ai-ifc-vor-generator / 15. Сравнение ведомостей объёмов работ" value="1. Документы&lt;br&gt;(только ИИ): ПОС / ПЗ / ВОР / ПД" vertex="1">
+                    <mxGeometry height="90" width="250" x="75" y="2360" as="geometry"/>
+                </mxCell>
+                <mxCell id="n162" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#AD1457;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="models.json | process_ifc | select_rows" syncAt="2026-11-18T18:56:14+00:00" syncComment="Стадия models: создание сессий для каждой модели, запуск конвейера select_rows, формирование превью параметров. Результат models.json. На диаграмме — узел обработки IFC/PDF в ветке сравнения." syncKey="compare-models-stage" syncSource="ai-ifc-vor-generator / 15. Сравнение ведомостей объёмов работ" value="2. Модели: полный конвейер&lt;br&gt;ЦС / ИИ по каждой модели" vertex="1">
+                    <mxGeometry height="90" width="270" x="370" y="2360" as="geometry"/>
+                </mxCell>
+                <mxCell id="n163" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#AD1457;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="estimates.json | vor_parser | Внешний сервис разбора | Разбор смет" syncAt="2026-11-18T18:56:14+00:00" syncComment="Стадия estimates: разбор ВОР заказчика парсером vor_parser или внешним сервисом. Результат estimates.json. На диаграмме — узел парсинга входных смет в ветке сравнения." syncKey="compare-estimates-stage" syncSource="ai-ifc-vor-generator / 15. Сравнение ведомостей объёмов работ" value="3. Сметы заказчика:&lt;br&gt;разбор ВОР (vor_parser)" vertex="1">
+                    <mxGeometry height="90" width="250" x="685" y="2360" as="geometry"/>
+                </mxCell>
+                <mxCell id="n164" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FCE4EC;strokeColor=#880E4F;strokeWidth=2;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="result.xlsx | semantic_matching | work_group_validator | Сопоставление работ" syncAt="2026-11-18T18:56:14+00:00" syncComment="Стадия comparison: извлечение позиций, нормализация единиц, группировка и сопоставление (semantic_matching, LLM-валидация). Результат result.json и result.xlsx. На диаграмме — финальный узел анализа в ветке сравнения." syncKey="compare-comparison-stage" syncSource="ai-ifc-vor-generator / 15. Сравнение ведомостей объёмов работ" value="4. Сопоставление:&lt;br&gt;works_comparison + LLM" vertex="1">
+                    <mxGeometry height="90" width="250" x="980" y="2360" as="geometry"/>
+                </mxCell>
+                <mxCell id="n165" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="comparison_id | models.json | result.xlsx | Сравнение ВОР" syncAt="2026-11-18T18:56:14+00:00" syncComment="Каталог outputs/&lt;comparison_id&gt;/ содержит файлы сравнения ВОР: models.json, estimates.json, result.xlsx. Это артефакты этапа сравнения моделей. На диаграмме — выходной узел процесса сравнения." syncKey="ai-comparison-results" syncSource="ai-ifc-vor-generator / 7. Хранилища и справочники" value="result.json / result.xlsx" vertex="1">
+                    <mxGeometry height="90" width="190" x="1275" y="2360" as="geometry"/>
+                </mxCell>
+                <mxCell id="n166" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="models.json / estimates.json" vertex="1">
+                    <mxGeometry height="90" width="200" x="1505" y="2360" as="geometry"/>
+                </mxCell>
+                <mxCell id="n167" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#EF6C00;strokeWidth=1.5;shadow=1;fontStyle=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="Статус parameters_required&lt;br&gt;(только ИИ)" vertex="1">
+                    <mxGeometry height="80" width="250" x="370" y="2470" as="geometry"/>
+                </mxCell>
+                <mxCell id="n168" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#E3F2FD;strokeColor=#1565C0;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" syncAliases="comparisons | comparisons/estimates | comparisons/parameters | comparisons/retry" syncAt="2026-11-18T18:56:14+00:00" syncComment="Модуль сравнения ВОР: создание сравнений, загрузка ВОР заказчика, настройка параметров ИИ, повтор стадий и скачивание файлов сравнения." syncKey="ai-api-comparisons" syncSource="ai-ifc-vor-generator / 8. API / Сравнение ведомостей объёмов работ" value="POST /api/comparisons/&amp;lt;id&amp;gt;/parameters" vertex="1">
+                    <mxGeometry height="80" width="260" x="660" y="2470" as="geometry"/>
+                </mxCell>
+                <mxCell id="n169" parent="1" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;size=0.18;fillColor=#E8F5E9;strokeColor=#2E7D32;strokeWidth=1.5;shadow=1;fontFamily=Helvetica;fontSize=11;fontColor=#263238;" value="semantic_match_diagnostics.jsonl" vertex="1">
+                    <mxGeometry height="80" width="250" x="980" y="2470" as="geometry"/>
+                </mxCell>
+                <mxCell id="e131" edge="1" parent="1" source="n132" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n133" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e132" edge="1" parent="1" source="n133" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n134" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e133" edge="1" parent="1" source="n134" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n135" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e134" edge="1" parent="1" source="n137" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n135" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e135" edge="1" parent="1" source="n135" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n136" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e136" edge="1" parent="1" source="n135" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n138" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e137" edge="1" parent="1" source="n136" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n139" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e138" edge="1" parent="1" source="n139" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n140" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e139" edge="1" parent="1" source="n140" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n141" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e140" edge="1" parent="1" source="n141" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n142" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e141" edge="1" parent="1" source="n144" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n145" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e142" edge="1" parent="1" source="n144" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" target="n156" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e143" edge="1" parent="1" source="n145" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n146" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e144" edge="1" parent="1" source="n146" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n147" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e145" edge="1" parent="1" source="n156" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=1;" target="n145" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e146" edge="1" parent="1" source="n147" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n148" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e147" edge="1" parent="1" source="n148" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n149" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e148" edge="1" parent="1" source="n149" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n150" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e149" edge="1" parent="1" source="n150" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n151" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e150" edge="1" parent="1" source="n151" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n152" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e151" edge="1" parent="1" source="n152" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n153" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e152" edge="1" parent="1" source="n153" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n154" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e153" edge="1" parent="1" source="n154" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n155" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e154" edge="1" parent="1" source="n144" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n157" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e155" edge="1" parent="1" source="n157" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n158" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e156" edge="1" parent="1" source="n158" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" target="n149" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e157" edge="1" parent="1" source="n151" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n159" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e158" edge="1" parent="1" source="n159" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0.5;entryY=1;" target="n152" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e159" edge="1" parent="1" source="n161" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n162" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e160" edge="1" parent="1" source="n162" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n167" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e161" edge="1" parent="1" source="n167" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n168" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e162" edge="1" parent="1" source="n168" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" target="n164" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e164" edge="1" parent="1" source="n163" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n164" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e165" edge="1" parent="1" source="n164" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="n165" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e166" edge="1" parent="1" source="n162" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=0;entryX=0.5;entryY=0;" target="n166" value="">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="505" y="2340"/>
+                            <mxPoint x="1605" y="2340"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e167" edge="1" parent="1" source="n164" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#78909C;strokeWidth=1.6;endArrow=blockThin;endFill=1;endSize=7;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#37474F;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="n169" value="">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
