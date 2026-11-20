@@ -975,7 +975,8 @@ class SessionManager:
 
             self._update_progress(session_id, 20, "Извлечение элементов из чертежа...")
             result = self._process_pdf_with_progress(
-                session_id, pdf_path, session_dir, manual_legend=manual_legend
+                session_id, pdf_path, session_dir, manual_legend=manual_legend,
+                processing_type=processing_type
             )
             
             self._update_progress(session_id, 90, "Проверка результатов...")
@@ -1147,7 +1148,8 @@ class SessionManager:
             logger.debug(traceback.format_exc())
     
     def _process_pdf_with_progress(self, session_id: str, pdf_path: str,
-                                   session_dir: str, manual_legend: dict = None) -> Dict[str, str]:
+                                   session_dir: str, manual_legend: dict = None,
+                                   processing_type: str = "KR") -> Dict[str, str]:
         last_update_time = [0]
         min_interval = 2.0
         
@@ -1166,7 +1168,8 @@ class SessionManager:
             extra_kwargs["manual_legend"] = manual_legend
 
         result = process_pdf(pdf_path, output_folder=session_dir,
-                             progress_callback=progress_callback, **extra_kwargs)
+                             progress_callback=progress_callback,
+                             processing_type=processing_type, **extra_kwargs)
         self._update_progress(session_id, 90, "Проверка результатов...")
         return result
 

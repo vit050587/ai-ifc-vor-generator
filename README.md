@@ -110,7 +110,9 @@ BIM-моделей. Ключевые особенности:
   layout и легенд, анализ штриховок и расшифровка материалов (DINO + VLM), масштабы.
 - **Нормализация** характеристик: размеры, геометрия (в т. ч. расчёт количеств по bbox,
   когда в IFC нет QTO), материал, части здания, этажность.
-- **Группировка** элементов в иерархию для сметчика — правила зависят от режима.
+- **Группировка** элементов в иерархию для сметчика — единая для всех режимов
+  (`group_elements_mssk`: Часть здания → МССК → Материал → IFC-тип → Геометрия →
+  Материал/Бетон); различаются только имена файлов (`_AR`, `_mssk`).
 - **Подбор работ**: API ТСН (ЦС); детерминированный алгоритм + LLM (ИИ и Архитектура);
   альтернативно — по перечню сметчиков (`WORKS_SELECTOR=perechen`).
 - **Расчёт объёмов** (по группам/материалам), корректировка по нормам расхода
@@ -153,6 +155,7 @@ ai-ifc-vor-generator/
 │   │   ├── logger.py          # Настройка логирования
 │   │   ├── modes.py           # Коды режимов CS/AI/ARCH и их конвертация
 │   │   ├── prompt_manager.py  # Загрузка промптов из prompts/
+│   │   ├── cache_manager.py   # Обёртка дискового кеша (сравнение ВОР)
 │   │   └── keycloak.py        # Bearer-токен Keycloak (client_credentials)
 │   ├── services/              # Бизнес-логика и пайплайны
 │   │   ├── session_manager.py # Сессии, запуски, фоновые потоки, sessions.json
@@ -160,7 +163,7 @@ ai-ifc-vor-generator/
 │   │   ├── ifc_raw_dump.py    # «Сырой» дамп свойств/QTO/материалов + расчёт по bbox
 │   │   ├── ifc_reference_builder.py   # JSON-справочники цифрового сборника (ЦС)
 │   │   ├── position_links.py          # Ссылки на позиции цифрового сборника (ЦС)
-│   │   ├── group_excel.py             # Группировка элементов (ЦС и ИИ)
+│   │   ├── group_excel.py             # Группировка элементов (ЦС, ИИ, ARCH)
 │   │   ├── api_works_lookup.py        # ЦС: подбор работ через API ТСН
 │   │   ├── works_cost.py              # Стоимость/объёмы перечня (ЦС, ARCH)
 │   │   ├── selection_template_builder.py # Шаблон параметров подбора по элементам
@@ -180,8 +183,23 @@ ai-ifc-vor-generator/
 │   │   ├── materials_lookup.py / mssk_lookup.py   # МССК-справочники
 │   │   ├── pdf_processor.py           # Обёртка пайплайна обработки PDF
 │   │   ├── serializer.py              # Экспорт IFC → GLB
-│   │   ├── estimate_*.py              # Сметная форма по перечню (расчёт, экспорт)
-│   │   ├── comparison_*.py, vor_parser.py  # Сравнение ВОР (оркестратор и отчёт)
+│   │   ├── estimate_*.py              # Сметная форма по перечню: calculation,
+│   │   │                              #   consolidation, formulas, revisions,
+│   │   │                              #   parameter_comparison, comparison(+_report),
+│   │   │                              #   tasks_client, export
+│   │   ├── comparison_*.py            # Сравнение ВОР: manager, documents, layout,
+│   │   │                              #   reconciliation, similarity, typical,
+│   │   │                              #   report, exports, ai_reason, wording, vor
+│   │   ├── vor_parser.py              # Разбор ВОР заказчика (pdfplumber + эвристики)
+│   │   ├── quantity_*.py, *_formwork.py, ifc_*quantities.py
+│   │   │                              # Количества: меры, происхождение, правила,
+│   │   │                              #   опалубка стен/контактов/лестниц, QTO
+│   │   ├── model_inspector.py, model_documents.py, work_list_view.py,
+│   │   │   work_sections.py, cs_final_reader.py, cs_model_members.py
+│   │   │                              # Просмотр модели/документов/перечня, ЦС
+│   │   ├── construction_method.py, drawing_provenance.py, vor_verdicts.py
+│   │   ├── customer_documents/        # Разбор смет/ВОР заказчика (readers, schema,
+│   │   │                              #   validation, cache, ollama_client, service)
 │   │   ├── architecture/      # Режим ARCH: собственные копии модулей ИИ
 │   │   │                      #   zero_step, ifc_raw_dump, work_height, group_excel,
 │   │   │                      #   works_table_selector, works_fetcher,
@@ -189,13 +207,24 @@ ai-ifc-vor-generator/
 │   │   │                      #   ifc_reference_builder, ifc_json_builder,
 │   │   │                      #   ifc_features, selection_template_builder
 │   │   ├── vor_generation/    # Типовые ВОР: builder, customer_vor, session_typical,
-│   │   │                      #   template, documents, elements, reconcile, manager
+│   │   │                      #   template, typical_fill, saved_comparisons, documents,
+│   │   │                      #   elements, mapping, quantity/rates, reconcile, manager
 │   │   ├── check_model/       # Проверка ЦИМ: requirements, mapping, pipeline,
 │   │   │                      #   grouping, formwork, llm_client, geometry
 │   │   └── works_comparison/  # Сравнение позиций смет (LLM-валидация)
 │   │                          #   processor, positions_*, compare_positions_groups,
 │   │                          #   semantic_matching, construction_matching,
 │   │                          #   work_group_validator, ollama_service, units
+│   │
+│   │   # Не используются рабочим пайплайном (legacy, оставлены как история):
+│   │   # first_etap.py, second_etap.py, third_etap.py, fourth_etap.py,
+│   │   # base_knowledge.py, geometry_filter.py, validation_processor.py.
+│   │   # second_etap.py к тому же падает при импорте (нет Config.AR_DOCUMENTS_PATH).
+│   │
+│   ├── tools/
+│   │   └── tsn/               # Подготовка сборников ТСН (CLI): parse_coeffs,
+│   │                          #   parse_norms, tech_part, grid, refs, resolve,
+│   │                          #   assemble, build, validate, tsn_cfg
 │
 ├── ai-blueprint-to-ifc/       # Пайплайн машинного зрения для PDF-чертежей
 │   ├── config.py              # Настройки (модели, параметры, пороги)
@@ -217,9 +246,12 @@ ai-ifc-vor-generator/
 │
 ├── prompts/                   # Промпты LLM (validate_material.txt, validate_work.txt)
 ├── data/                      # Справочники (только чтение) — см. §7
+├── cache/                     # Дисковые кеши: check_model/mapping_cache.json,
+│                              #   customer_document_imports/, joblib/
 ├── uploads/                   # Загруженные файлы (по сессиям)
 ├── outputs/                   # Результаты обработки (sessions.json, <session_id>/)
-└── docs/                      # Манифест синхронизации диаграммы бизнес-процесса
+└── docs/                      # Манифест синхронизации диаграммы (diagram-sync*.json,
+                               #   readme-blocks*.json)
 ```
 
 ## 5. Технологический стек
@@ -245,7 +277,7 @@ ai-ifc-vor-generator/
 | `dino_hatching.pt` | DINO (TorchScript) | Анализ штриховок, сравнение символов легенды |
 | `hf.co/unsloth/Qwen3-VL-8B-Instruct-GGUF` (`OLLAMA_MODEL_NAME`) | Ollama / VLM | Обработка чертежей PDF: распознавание материалов и штриховок |
 | `yandex/YandexGPT-5-Lite-8B-instruct-GGUF` (`NORMS_LLM_MODEL`, `LLM_MODEL`, `KB_LLM_MODEL`) | Ollama | Режимы ИИ и Архитектура: разбор ПОС/ПЗ/ВОР/ПД, подбор работ, поправки ТСН |
-| `qwen3.8:27b` (`CHECK_MODEL_LLM_MODEL`) | Ollama | Проверка ЦИМ модели: сопоставление требуемых параметров с колонками модели |
+| `qwen3.8:27b` (`CHECK_MODEL_LLM_MODEL`, fallback `LLM_MODEL` → `NORMS_LLM_MODEL`) | Ollama | Проверка ЦИМ модели: сопоставление требуемых параметров с колонками модели |
 | `OLLAMA_MODEL` (`works_comparison`) | Ollama | Сравнение ВОР: семантическое сопоставление и LLM-валидация |
 | `GreenMap/qwen3-vl-4b-ru-blueprint-extractor` (`TG_MODEL_DIR`) | transformers (HF) | Извлечение данных с чертежа/легенды |
 | **ifcopenshell** | C++/Python | Парсинг и геометрия IFC, экспорт в GLB (не ML) |
@@ -270,12 +302,15 @@ ai-ifc-vor-generator/
 | `outputs/_doc_cache/` | Кеш разбора ПОС/ПЗ/ВОР/ПД по SHA-256 (служебный) |
 | `uploads/<session_id>/` | Загруженные пользователем файлы |
 | `cache/check_model/mapping_cache.json` | Кеш карты сопоставления параметров проверки ЦИМ |
+| `cache/customer_document_imports/` | Кеш импорта смет/ВОР заказчика (по SHA-256 файла) |
+| `cache/joblib/` | Дисковый кеш тяжёлых вычислений (joblib) |
 
 Справочники `data/` (только чтение):
 
 | Файл | Назначение |
 |------|-----------|
 | `perechen_kr.xlsx`, `perechen_kr_1.xlsx` | Перечни работ (ЦС; `perechen_kr` — база знаний подбора ИИ) |
+| `perechen_ar.xlsx` | Legacy-перечень прежнего 4-этапного пайплайна АР (не используется) |
 | `koefs.xlsx` | Нормы расхода/коэффициенты корректировки объёмов |
 | `price_cost.xlsx` | Стоимость расценок (ЦС — fallback; ИИ — локальный справочник) |
 | `algorithm.md` | Спецификация 8-шагового алгоритма подбора таблиц (ИИ/Архитектура) |
@@ -288,7 +323,8 @@ ai-ifc-vor-generator/
 | `parametrs_name.json` | Требования к параметрам ЦИМ по IFC-классам |
 | `Типовой ВОР по КР.xlsx` | Типовой шаблон ВОР (лист «ВОР КР_ЖС») |
 | `catalog_tsn.json`, `etalon.xlsx` | Каталог ТСН, эталон качества подбора |
-| `kb_cache.json`, `tsn_decisions_cache.json`, `pd_full_cache_v2.json`, `doc_facts_cache.json`, `local_*.json` | Кеши LLM-решений и локальных расценок |
+| `kb_cache.json`, `tsn_decisions_cache.json`, `pd_full_cache_v2.json`, `doc_facts_cache.json`, `rate_fix_cache.json`, `tsn_conflicts_cache.json`, `local_*.json` | Кеши LLM-решений, поправок ТСН и локальных расценок |
+| `ifc_models/*.ifc` | Тестовые IFC-модели пяти проектов для проверки ЦИМ (§13) |
 
 Внешние системы (по сети):
 
@@ -456,19 +492,36 @@ make clean     # остановить и удалить volumes (удаляет 
 
 ### Переменные окружения
 
-- `OLLAMA_BASE_URL` — адрес Ollama;
+- `OLLAMA_BASE_URL`, `LLM_BASE_URL` — адреса Ollama (в Docker `http://ollama:11434`,
+  в рабочей копии `http://localhost:11450`);
 - `OLLAMA_MODEL_NAME` — VLM для чертежей (Qwen3-VL-8B);
 - `NORMS_LLM_MODEL`, `LLM_MODEL`, `KB_LLM_MODEL` — LLM для разбора документов и подбора;
-- `WORKS_SELECTOR` — `perechen` (основной) или `llm` (прежний `works_final_selector`);
+- `LLM_TIMEOUT`, `LLM_TEMPERATURE`, `LLM_NUM_CTX`, `LLM_MAX_CONCURRENCY`, `LLM_PARALLEL`,
+  `LLM_API_KEY` — параметры обращений к LLM;
+- `KB_TIMEOUT`, `KB_WORKERS`, `KB_NUM_PREDICT`, `KB_THINK`, `KB_THINK_TIMEOUT`,
+  `KB_THINK_NUM_PREDICT`, `KB_CACHE_PATH` — параметры `perechen_kb`;
+- `CHECK_MODEL_LLM_MODEL` (fallback `LLM_MODEL` → `NORMS_LLM_MODEL`),
+  `CHECK_MODEL_LLM_TIMEOUT`, `CHECK_MODEL_LLM_NUM_CTX`, `CHECK_MODEL_USE_LLM`,
+  `CHECK_MODEL_CACHE_DIR` — проверка ЦИМ модели;
+- `WORKS_SELECTOR` — `perechen` (основной, задан в `.env`) или `llm` (прежний
+  `works_final_selector`); при отсутствии переменной код использует `llm`;
 - `WORKS_SOURCE` — `local` (локальный справочник) или `api` (larix);
-- `DOCUMENTS_PATH`, `KOEFS_PATH`, `PRICE_COST_PATH` — справочники;
-- `WORKS_API_URL`, `WORKS_API_TOKEN` — API справочника ТСН;
+- `DOCUMENTS_PATH`, `KOEFS_PATH`, `PRICE_COST_PATH`, `MSSK_EXCEL_PATH`,
+  `MSSK_NESTED_PATH`, `PERECHEN_KR_PATH`, `PERECHEN_XLSX`, `TREE_WORK_PATH`,
+  `PARAMS_REGISTRY_PATH`, `ETALON_PATH`, `TSN_DIR`, `LOCAL_WORKS_PATH`,
+  `LOCAL_RESOURCES_PATH`, `LOCAL_NORMS_PATH` — справочники `data/`;
+- `WORKS_API_URL`, `WORKS_API_TOKEN`, `WORKS_RESOURCES_API_URL`,
+  `WORKS_PERIOD_FILTER_URL`, `WORKS_WORK_PROCESS_URL`, `WORKS_WORK_PROCESS_DETAIL_URL` —
+  API цифрового справочника ТСН / larix;
 - `KEYCLOAK_TOKEN_URL`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET` — токен Keycloak;
-- `UPLOAD_FOLDER`, `OUTPUT_FOLDER`, `SESSIONS_FILE` — каталоги данных;
-- `DOC_CACHE_DIR`, `PD_FULL_CACHE_PATH`, `DOC_FACTS_CACHE_PATH` — кеши разбора документов;
-- `LLM_MAX_CONCURRENCY` — лимит одновременных обращений к Ollama;
+- `UPLOAD_FOLDER`, `OUTPUT_FOLDER`, `SESSIONS_FILE`, `CACHE_PATH` — каталоги данных;
+- `DOC_CACHE_DIR`, `PD_FULL_CACHE_PATH`, `DOC_FACTS_CACHE_PATH`, `KB_CACHE_PATH` —
+  кеши разбора документов;
 - `MAX_UPLOAD_MB` — лимит загрузки (по умолчанию 1024 МБ);
-- `SESSION_COOKIE_NAME`, `SECRET_KEY` — cookie и подпись сессии.
+- `SESSION_COOKIE_NAME`, `SECRET_KEY` — cookie и подпись сессии;
+- `VOR_LLM`, `ESTIMATE_TASKS_BASE_URL`, `CUSTOMER_DOCUMENT_MAX_CALLS`,
+  `RETRIEVAL_TOP_K`, `PERECHEN_LIMIT_GROUPS`, `TSN_N` — тонкая настройка подбора
+  работ, смет и разбора документов заказчика.
 
 ---
 
@@ -943,7 +996,8 @@ PDF-чертежа (`POST /api/upload_ifc`) можно отключить авт
 дисковый кеш группировки игнорируется
 (`_get_cached_or_compute(force_recompute=True)`).
 
-В отличие от АР, группировка **включает часть здания** (L1). Агрегация в каждом
+Группировка **включает часть здания** (L1); в режимах ИИ и Архитектура
+используется та же иерархия и та же функция. Агрегация в каждом
 узле (`_create_group`):
 
 - **объём группы** — coalesce: по каждой строке берётся первое ненулевое значение
@@ -1299,7 +1353,7 @@ API (`api_works_response.json`, сопоставление группы и ре�
 | Аспект | КР | АР |
 |---|---|---|
 | IFC-классы | Только конструктив (`ELEMENT_TYPES_KR`) | Конструктив + архитектура (`ELEMENT_TYPES_AR`) |
-| Группировка | **Часть здания → МССК → Материал → IFC-тип → Геометрия → Материал/Бетон** (`group_elements_mssk`) | МССК → Материал → Наименование, без части здания (`group_elements_ar`) |
+| Группировка | **Часть здания → МССК → Материал → IFC-тип → Геометрия → Материал/Бетон** (`group_elements_mssk`) | **Та же иерархия, что и в КР**: `process_ifc_excel_ar` вызывает `group_elements_mssk`; отличается только суффикс имён файлов (`_AR`) |
 | Группы итогового перечня | Перед запросом к API группы делятся по части здания (`split_leaf_groups_by_part`) и **по типу элемента** (`split_leaf_groups_by_name`) — заголовки и «Кол-во» как в АР | Группы дерева делятся по типу элемента в `perechen_pipeline` |
 | Подбор работ | **Внешний API ТСН** (`api_works_lookup`: `digital-collection/building-elements/positions` + стоимость `works/resources`) | Подбор таблиц — локальный детерминированный алгоритм (`works_table_selector`); работы — `works_fetcher` (larix); финальный выбор — LLM (`works_final_selector`) |
 | Константы проекта | Не требуются (только высота здания для фильтрации групп работ) | 10 констант из UI/ПОС/ПЗ/IFC |
@@ -1510,7 +1564,8 @@ select_rows / new_run ──► [Этап 1. Запуск run_<NNN>]  (фоно�
                 ├─ применение материалов          → materials.json
                 ├─ фильтрация строк               → filtered_elements.xlsx
                 ├─ group_excel.process_ifc_excel_ar
-                │      (Часть здания → МССК → Материал → Наименование)
+                │      (та же иерархия, что и в ЦС: Часть здания → МССК → Материал
+                │       → IFC-тип → Геометрия → Материал/Бетон)
                 │                                 → Дерево_проекта_выбранные_элементы.xlsx
                 │                                 → filtered_elements_grouped_AR.json
                 │                                 → Дерево_проекта.xlsx (всё здание)
@@ -2064,8 +2119,14 @@ LLM-разбора, модуль умеет читать **структуру** 
 
 #### 5.2. Группировка — `group_excel.py` (`process_ifc_excel_ar`)
 
-Обёртка с дисковым кешем вызывает `group_elements_ar`. Иерархия группировки АР
-(приведена к правилам КР — **часть здания добавлена уровнем L1**, FIX-45):
+Обёртка с дисковым кешем вызывает **`group_elements_mssk`** — ту же функцию и ту же
+иерархию, что и в режиме ЦС (§10, п. 4.2): дерево финального перечня АР должно совпадать
+с КР. Отличаются только имена файлов (суффикс `_AR`), контракт с
+`works_final_selector` не меняется. Функция `group_elements_ar` (упрощённая
+группировка «МССК → Материал → Наименование») в модуле сохранена, но обёрткой
+не используется.
+
+Иерархия:
 
 ```
 Часть здания (L1) — Подземная (до отм. 0,000) / Цоколь (от отм. 0,000) /
@@ -2077,7 +2138,11 @@ LLM-разбора, модуль умеет читать **структуру** 
                      >1 → «Многослойные», нет кода → «Прочее»; если источников
                      материала нет (нет IfcMaterialLayer/MGE-колонок) — уровень
                      пропускается
-      → Наименование элемента (L4) — по очищенному имени (без GUID/цифровых суффиксов)
+      → IFC-тип (L4, только если в группе несколько типов)
+        → Геометрия (L5) — по GEOMETRY_GROUP_RULES (толщина стен, площадь плит,
+                          периметр колонн, длина свай и т.д.)
+          → Материал (L6) — «Материал: …» (только при нескольких материалах)
+            → Бетон (L7) — «Бетон: В…, W…, F…»
 ```
 
 Параметр `material_code_overrides` функции `group_elements_mssk` — уточнение
@@ -2322,7 +2387,8 @@ fallback по колонке «Этаж» Excel полной модели; пр�
 для разбора ПОС — `pd_parser.LLMClient` / Ollama, `OLLAMA_BASE_URL` +
 `NORMS_LLM_MODEL`). Единица обработки — **листовая группа элементов** дерева
 группировки АР (`run_<NNN>/filtered_elements_grouped_AR.json`, §5.2: Часть
-здания → МССК → Материал → Наименование; листовые узлы содержат `indices` —
+здания → МССК → Материал → IFC-тип → Геометрия → Материал/Бетон; листовые
+узлы содержат `indices` —
 0-based индексы строк `filtered_elements.xlsx`, они же позиции записей
 `elements` в `Подобранные_таблицы_работ.json`). **Группировка и объёмы — по
 правилам КР** (`api_works_lookup` / `ifc_reference_builder`), чтобы финальный
@@ -3050,7 +3116,7 @@ discipline="AR", output_filename="final_result_AR.json")` — сопоставл
 | `params_registry.json` | `pd_parser` | Реестр параметров ПОС (тип `pos_global_constants`) — какие константы и по каким правилам извлекать из пояснительной записки LLM (включая группу грунтов и расстояние перемещения грунта — вне схемы `works_classification.json`) |
 | `selection_parameters.json` | `selection_template_builder.py` | Перечень параметров подбора работ из 3 главы `perechen_kr_1.xlsx` (геометрия, положение в здании, технология, оборудование) — «шаблон» для заполнения по каждому элементу |
 | `selection_parameters_mapping.json` | `selection_template_builder.py` | Расширяемая карта соответствия «параметр шаблона → ключи сырого дампа IFC (`raw_keys`), ключевые слова (`keywords`), вычисления (`computed`), константы (`constant_names`)»; дополняется вручную при появлении новых имён свойств в моделях. Единица параметра берётся из поля `unit` карты (у `depth` исправлена на «мм» — QTO Depth хранится в мм; при подаче в LLM нормализуется к метрам, §5.5) |
-| `elements_mssk_nested.json` | `mssk_lookup.build_mssk_lookup` | Иерархический справочник МССК-элементов; плоская карта «код → {имя, порядок}» для группировки L1 в `group_elements_ar` |
+| `elements_mssk_nested.json` | `mssk_lookup.build_mssk_lookup` | Иерархический справочник МССК-элементов; плоская карта «код → {имя, порядок}» для группировки L2 в `group_elements_mssk` |
 | `materials_mssk_nested.json` | `materials_lookup.build_materials_lookup` / `build_material_children_map` | Иерархический справочник МССК-материалов (`СТ …`); определяет группу материала L2 («Железобетон монолитный», «Многослойные», «Прочее»); дочерние коды (`material_code_options`) — варианты уточнения **неполного** кода (напр. «СТ 00 15» → сборный/монолитный) |
 | `koefs.xlsx`, `price_cost.xlsx` | `api_works_lookup` / `works_cost` (КР), `works_final_selector` (АР), `local_works`/`local_resources` (`WORKS_SELECTOR=perechen`) | Нормы расхода и стоимость расценок; `koefs.xlsx` — корректировка объёмов работ в финальном перечне АР (`works_cost._get_corrected_volume`, те же правила, что и в КР, §5.5 п. 3); `price_cost.xlsx` — КР (API ТСН/стоимость) и **локальный справочник расценок/ресурсов** подбора по перечню (§5.8: кеши `local_works.json`, `local_resources.json`, `local_norms.json`) |
 | `perechen_kr.xlsx` | `perechen_kb.load_perechen` | **Перечень сметчиков** — база знаний подбора работ подбором по перечню (§5.8) |
@@ -3124,7 +3190,7 @@ discipline="AR", output_filename="final_result_AR.json")` — сопоставл
 | Аспект | ЦС (КР) | ИИ (АР) |
 |---|---|---|
 | IFC-классы | Только конструктив (`ELEMENT_TYPES_KR`) | Конструктив + архитектура (`ELEMENT_TYPES_AR`) |
-| Группировка | Часть здания → МССК → Материал → IFC-тип → Геометрия (→ Материал/Бетон) | **Часть здания → МССК → Материал → Наименование** (без геометрических подгрупп) |
+| Группировка | Часть здания → МССК → Материал → IFC-тип → Геометрия (→ Материал/Бетон) | **Та же иерархия, что и в ЦС** (`process_ifc_excel_ar` вызывает `group_elements_mssk`) |
 | Подбор работ | Внешний API ТСН (`api_works_lookup`) | Подбор таблиц — локальный детерминированный алгоритм (`works_table_selector`, `data/algorithm.md`); финальный выбор работ по группам — по переключателю `WORKS_SELECTOR`: **`perechen`** (основной) — по перечню сметчиков `data/perechen_kr.xlsx` + локальный справочник расценок `data/price_cost.xlsx` (`perechen_kb`/`perechen_pipeline`, §5.8); **`llm`** — работы таблиц из цифрового сборника larix (`works_fetcher`, §5.4) + LLM-выбор (`works_final_selector`, §5.5) |
 | Документы и сборники | Не используются | ПОС/ПЗ: 10 глобальных констант (`pd_parser`, §4) и полный разбор ≈40 параметров (`pd_full`, §5.10, эндпоинт `/pd_full`); ВОР и ПД: класс бетона B/W/F по конструкциям, класс арматуры, объёмы работ «по проекту» и сверка объёмов (`doc_facts`, §5.8.1); сборники ТСН: поправочные коэффициенты и не учтённые материалы (`tsn_coeffs`, §5.9, эндпоинты `/tsn/docs`, `/tsn_mode`); признаки геометрии IFC (`ifc_features`, §5.11); аналитическая справка (`analytic.json`, эндпоинт `/analytic`, §5.12) |
 | Константы проекта | Не требуются | 10 констант (опалубка, высота здания, сезон ухода за бетоном, схема бетонирования, высота этажа, этажность здания, тип крана, грузоподъёмность крана, вместимость ковша, мощность оборудования) — из UI и/или ПОС/ПЗ/IFC; часть здания и `wall_location` (наружная/внутренняя) — параметры элемента IFC, не константы |
@@ -3265,7 +3331,7 @@ IFC-классов.
 | `zero_step.py` | Извлечение элементов IFC по `ELEMENT_TYPES_ARCH`, нормализация, Excel-таблицы, `IFC_глобальные_константы.json` |
 | `ifc_raw_dump.py` | «Сырой» дамп свойств/QTO/материалов + расчёт количеств по bbox |
 | `work_height.py` | Признаки высот/отметок элементов |
-| `group_excel.py` | Группировка по правилам АР (`process_ifc_excel_ar`, `group_elements_ar`) |
+| `group_excel.py` | Группировка по правилам КР/АР: `process_ifc_excel_ar` вызывает `group_elements_mssk` (иерархия как в ЦС, суффикс файлов `_AR`) |
 | `works_table_selector.py` | Детерминированный подбор таблиц работ (8 шагов `data/algorithm.md`) |
 | `works_fetcher.py` | Работы таблиц из цифрового сборника (larix): `period.json`, `Подобранные_работы.json`, детальные параметры позиций |
 | `works_final_selector.py` | Финальный подбор работ через LLM, расчёт объёмов и стоимости |
@@ -3310,7 +3376,8 @@ IFC-классов.
 1. Применяются материалы пользователя, выполняется фильтрация выбранных
    строк → `filtered_elements.xlsx`.
 2. Группировка `architecture.group_excel.process_ifc_excel_ar`
-   («Часть здания → МССК → Материал → Наименование») →
+   (та же иерархия, что и в ЦС/ИИ: Часть здания → МССК → Материал → IFC-тип →
+   Геометрия → Материал/Бетон) →
    `Дерево_проекта_выбранные_элементы.xlsx`,
    `filtered_elements_grouped_AR.json`, `ДЛЯ_СМЕТЧИКА_сгруппированный.xlsx`,
    `building_parts.json`.
@@ -3446,8 +3513,9 @@ IFC-классов.
 3. по IFC-классу элемента определяет требования из
    `data/parametrs_name.json` (наборы `RusSet_Common`, `RusSet_Quantities`,
    `RusSet_Location`, `RusSet_Label`, `RusSet_Construction`);
-4. с помощью LLM (`qwen3.8:27b`, переменные `CHECK_MODEL_LLM_MODEL` /
-   `LLM_MODEL`) сопоставляет требуемые параметры (`RUS_*`) с колонками модели;
+4. с помощью LLM (`CHECK_MODEL_LLM_MODEL` → `LLM_MODEL` → `NORMS_LLM_MODEL`;
+   в `.env` рабочей копии задано `qwen3.8:27b`) сопоставляет требуемые параметры
+   (`RUS_*`) с колонками модели;
 5. дополняет каждый элемент требуемыми параметрами и сохраняет результат.
 
 Функционал рассчитан на модели **разных проектировщиков**: имена свойств,
@@ -3466,7 +3534,7 @@ IFC-классов.
 | Модуль | Назначение |
 |---|---|
 | `requirements.py` | Загрузка `data/parametrs_name.json`, группировка по IFC-классам, выбор требований для элемента (код МССК `MGE_ElementCode`/`RUS_MSSK_Element_Code`, `PredefinedType`, наименование), разбор этажа на объект/подобъект/уровень (`storey_parts`) |
-| `llm_client.py` | Клиент Ollama `/api/chat` (JSON-ответы), модель по умолчанию `qwen3.8:27b`, контекст `CHECK_MODEL_LLM_NUM_CTX` (по умолчанию 16k — больший контекст заставляет Ollama перезагружать модель и резко замедляет запрос) |
+| `llm_client.py` | Клиент Ollama `/api/chat` (JSON-ответы), модель: `CHECK_MODEL_LLM_MODEL` → `LLM_MODEL` → `NORMS_LLM_MODEL` (в `.env` — `qwen3.8:27b`), контекст `CHECK_MODEL_LLM_NUM_CTX` (по умолчанию 16k — больший контекст заставляет Ollama перезагружать модель и резко замедляет запрос) |
 | `mapping.py` | Построение карты «требуемый параметр → колонка модели + преобразование»: LLM + детерминированный fallback, проверка ответа LLM (отклонение производных величин опалубки/проекций, кодов и типов вместо наименований), кэш `cache/check_model/mapping_cache.json` |
 | `geometry.py` | По-элементный добор геометрических параметров (`RUS_Length`, `RUS_Width`, `RUS_Height`, `RUS_Thickness`, `RUS_Perimeter`, `RUS_Area`, `RUS_NetFootprintArea`, `RUS_NetSideArea`, `RUS_NetSurfaceArea`, `RUS_Volume`, `RUS_GrossVolume`): альтернативные колонки QTO/`QTO_bbox::*` и расчёт по формулам класса IFC; отдельные правила для стен, плит, проёмов, колонн/свай и балок/связей (`IfcBeam`, `IfcMember` — размеры сечения из габаритов bbox) |
 | `grouping.py` | Группировка проверенных элементов для веб-превью по иерархии типового ВОР (часть здания → раздел → подраздел → наименование элемента): вид конструкции — по коду МССК из `data/elements_mssk_nested.json`, часть здания — по типу этажа/отметке, технология (сборные/монолитные) — по `ConstructionMethod`; кеш `Проверка_ЦИМ_модели_группы.json` |
@@ -3864,7 +3932,7 @@ IFC-классов.
 
 | Переменная | Назначение |
 |---|---|
-| `CHECK_MODEL_LLM_MODEL` | Модель Ollama для проверки (по умолчанию `LLM_MODEL`, в рабочей копии `qwen3.8:27b`) |
+| `CHECK_MODEL_LLM_MODEL` | Модель Ollama для проверки (fallback: `LLM_MODEL` → `NORMS_LLM_MODEL`; в рабочей копии `qwen3.8:27b`) |
 | `LLM_BASE_URL` / `OLLAMA_BASE_URL` | Адрес Ollama |
 | `CHECK_MODEL_LLM_TIMEOUT` | Таймаут запроса к LLM, сек (по умолчанию 900) |
 | `CHECK_MODEL_LLM_NUM_CTX` | Контекст LLM, токенов (по умолчанию 16384; большее значение заставляет Ollama перезагружать модель и замедляет сопоставление) |
