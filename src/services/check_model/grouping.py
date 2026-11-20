@@ -635,15 +635,15 @@ def _element_payload(row: Dict[str, Any], kind: Optional[str] = None) -> Dict[st
     неконструктивных элементов — ``None``), ``areaBasis`` — правило расчёта,
     ``elementArea`` — площадь самого элемента (``RUS_Area``) для справки.
     """
-    volume = _num(row.get("RUS_Volume"))
-    if volume is None:
-        volume = _num(row.get("Количество::Объём_м3"))
-    if volume is None:
-        volume = _num(row.get("RUS_GrossVolume"))
+    from ..ifc_quantities import resolve_volume
+    checked_volume = resolve_volume(row)
+    volume = checked_volume.value
     element_area = _num(row.get("RUS_Area"))
     formwork, basis = formwork_area(row, kind)
 
     return {
+        "volumeStatus": checked_volume.status,
+        "volumeBasis": checked_volume.source,
         "name": _text(row.get("Name")),
         "ifcClass": _text(row.get("IfcClass")),
         "storey": _text(row.get("RUS_Level")) or _text(row.get("Этаж")),

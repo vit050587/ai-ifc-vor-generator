@@ -564,7 +564,7 @@ _DEPTH_COLS = [
     'Длина_Depth_мм',
 ]
 # Колонки-источники площади плиты (м²) — для опалубки перекрытий
-# (боковые грани + нижняя поверхность).
+# (проекция без добавления торцов).
 _AREA_COLS = [
     'Площадь, м2',
     'Площадь_GrossArea_м2',
@@ -594,7 +594,7 @@ def _first_nonzero(row: Dict[str, Any], cols: List[str]) -> float:
 def _element_formwork_measure(row: Dict[str, Any], perim_cols: List[str],
                               depth_cols: List[str],
                               area_cols: List[str] | None = None) -> float:
-    """Опалубка: перекрытия — низ + боковые поверхности; лестницы — проекция.
+    """Опалубка: перекрытия и лестницы — горизонтальная проекция (ТСН п. 2.8).
 
     Фундаментные плиты используют торцы (периметр × толщина), балки и
     колонны — площадь контакта с опалубкой, стены — площадь стороны.
@@ -606,15 +606,18 @@ def _element_formwork_measure(row: Dict[str, Any], perim_cols: List[str],
                 return value, str(key)
         return 0.0, ''
 
+    row = dict(row)
+    row.setdefault('Имя', row.get('Name') or '')
+    row.setdefault('Тип элемента', row.get('IfcClass') or '')
     name_lower = str(row.get('Имя', '')).lower()
     from .construction_method import construction_method
     if construction_method(row) in ('precast', 'conflicting'):
         return 0.0, ''
-    if (str(row.get('Тип элемента') or '') in ('IfcWall', 'IfcWallStandardCase')
+    if (str(row.get('Тип элемента') or '').startswith('IfcWall')
             and not re.search(r'пилон|колонн', name_lower)):
-        return first(['QTO_Qto_WallBaseQuantities_Площадь_GrossSideArea_м2',
-                                   'Площадь_GrossSideArea_м2', 'QTO_Qto_WallBaseQuantities_Площадь_NetSideArea_м2',
-                                   'Площадь_NetSideArea_м2', 'Площадь, м2'])
+        from .wall_formwork import wall_projection
+        value, source = wall_projection(row)
+        return (value, source) if value is not None else (0.0, '')
     is_beam = str(row.get('Тип элемента') or '') == 'IfcBeam' or bool(re.search(r'балк|ригел', name_lower, re.I))
     if is_beam:
         from .ifc_quantities import number
@@ -632,41 +635,18 @@ def _element_formwork_measure(row: Dict[str, Any], perim_cols: List[str],
     stair_kind = _element_kind(str(row.get('Тип элемента') or ''), '',
                                name=stair_name)
     if stair_kind == 'stair':
-        from .stair_formwork import NORMAL_NET, NORMAL_GROSS
-        from .ifc_quantities import number
-        value = number(row.get(NORMAL_GROSS if component == 'landing' else NORMAL_NET))
-        return (value, NORMAL_GROSS if component == 'landing' else NORMAL_NET) if value is not None else (0.0, '')
+        from .stair_formwork import floor_projection, flight_projection
+        value, source = (floor_projection(row) if component == 'landing' else flight_projection(row))
+        return (value, source) if value is not None else (0.0, '')
     is_floor = (stair_kind == 'slab' or bool(re.search(r'перекрыт|покрыти', name_lower)))
     if is_floor:
-        geometric, source = first(['Геометрия_Площадь_опалубки_м2', 'QTO_geom::Площадь_опалубки_м2'])
-        if geometric > 0:
-            return geometric, source
-        bottom, bottom_source = first([
-            'Геометрия_Площадь_низа_м2', 'QTO_geom::Площадь_низа_м2',
-            'QTO_Qto_SlabBaseQuantities_Площадь_NetArea_м2', 'Площадь_NetArea_м2',
-            'Площадь_NET_м2', 'QTO::Qto_SlabBaseQuantities::NetArea',
-            'Площадь, м2', 'QTO_Qto_SlabBaseQuantities_Площадь_GrossArea_м2',
-            'Площадь_GrossArea_м2', 'Площадь_GROSS_м2',
-            'QTO::Qto_SlabBaseQuantities::GrossArea'])
-        edge_keys = ['Геометрия_Площадь_торцов_м2', 'QTO_geom::Площадь_торцов_м2']
-        edges, edge_source = first(edge_keys)
-        if not edge_source:
-            # A zero measured edge area is still a known quantity.
-            edge_source = next((key for key in edge_keys if row.get(key) == 0), '')
-        if not edge_source:
-            perimeter, perimeter_source = first(perim_cols)
-            depth, depth_source = first(depth_cols)
-            if not depth:
-                match = re.search(r'(\d+(?:[.,]\d+)?)\s*мм', str(row.get('Имя', '')))
-                if match:
-                    depth = float(match.group(1).replace(',', '.'))
-                    depth_source = 'Имя (толщина, мм)'
-            if perimeter and depth:
-                edges = perimeter * depth / 1e6
-                edge_source = f'{perimeter_source} × {depth_source} / 1000000 (мм² → м²)'
-        if bottom > 0 and edge_source:
-            return bottom + edges, f'{bottom_source} + {edge_source}'
-        return 0.0, ''
+        from .stair_formwork import floor_projection
+        value, source = floor_projection(row)
+        return (value, source) if value is not None else (0.0, '')
+    from .contact_formwork import contact_area
+    contact, source = contact_area(row)
+    if contact is not None:
+        return contact, source
     geometric, geometric_source = first(['Геометрия_Площадь_опалубки_м2'])
     if geometric > 0:
         return geometric, geometric_source
@@ -690,11 +670,11 @@ def _element_formwork_measure(row: Dict[str, Any], perim_cols: List[str],
             depth = float(m.group(1).replace(',', '.'))
             depth_source = 'Имя (толщина, мм)'
     side_area = perim * depth / 1e6
-    side_source = f'{perim_source} × {depth_source} / 1000000 (мм² → м²)' if perim and depth else ''
+    side_source = f'Оценка площади контакта: {perim_source} × {depth_source} / 1000000 (мм² → м²); примыкания требуют проекта' if perim and depth else ''
     if any(word in name_lower for word in ('перекрыт', 'покрыти', 'площадк', 'landing')) and 'фундамент' not in name_lower:
-        net_keys = ['QTO_Qto_SlabBaseQuantities_Площадь_NetArea_м2', 'Площадь_NetArea_м2', 'Площадь_NET_м2']
-        slab_area, slab_source = first(net_keys + (area_cols or _AREA_COLS))
-        return side_area + slab_area, ' + '.join(s for s in (side_source, slab_source) if s)
+        from .stair_formwork import floor_projection
+        value, source = floor_projection(row)
+        return (value, source) if value is not None else (0.0, '')
     return side_area, side_source
 
 
@@ -719,8 +699,8 @@ def _formwork_area_m2(group_df, perim_cols, depth_cols) -> float:
 
     По каждому элементу применяется `_element_formwork_area_m2`:
       * фундаментная плита — периметр × толщина (боковые грани);
-      * перекрытие — периметр × толщина + площадь плиты
-        (боковые граны + нижняя поверхность);
+      * перекрытие — горизонтальная проекция без отверстий
+        (проекция без добавления торцов);
       * прочие плиты — периметр × толщина.
     """
     area_cols = [c for c in _AREA_COLS if c in group_df.columns]
@@ -1243,8 +1223,8 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
 
         # Площадь опалубки плит группы (м², сумма по элементам):
         #   * фундаментные плиты — периметр × толщина (боковые грани);
-        #   * перекрытия — периметр × толщина + площадь плиты
-        #     (боковые грани + нижняя поверхность).
+        #   * перекрытия — горизонтальная проекция без отверстий
+        #     (проекция без добавления торцов).
         # Используется в финальном перечне работ для расценок монтажа/
         # демонтажа опалубки.
         perim_cols, depth_cols = _find_formwork_columns(headers)

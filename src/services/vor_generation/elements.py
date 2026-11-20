@@ -415,6 +415,27 @@ class ElementIndex:
                         quantity_sources[qname] = key
                         break
 
+            if kind in ('wall', 'parapet'):
+                from ..wall_formwork import wall_projection
+                projection, source = wall_projection(row)
+                if projection is not None:
+                    quantities['wall_projection_area'] = projection
+                    quantity_sources['wall_projection_area'] = source
+
+            if kind in ('column', 'beam', 'foundation_slab', 'crane_foundation'):
+                from ..contact_formwork import contact_area
+                contact, source = contact_area(row, kind=kind)
+                if contact is not None:
+                    quantities['contact_formwork_area'] = contact
+                    quantity_sources['contact_formwork_area'] = source
+
+            if kind in ('slab', 'stair'):
+                from ..stair_formwork import floor_projection, flight_projection
+                fallback, source = (flight_projection(row) if kind == 'stair' else floor_projection(row))
+                if fallback is not None:
+                    quantities['projection_fallback'] = fallback
+                    quantity_sources['projection_fallback'] = source
+
             geometry: Dict[str, float] = {}
             for gname, keys in _GEOMETRY_KEYS.items():
                 for key in keys:

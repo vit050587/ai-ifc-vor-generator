@@ -155,6 +155,13 @@ def _foundation_formwork_area(elements: List[Element]) -> Optional[float]:
     """
     values = []
     for el in elements:
+        if 'contact_formwork_area' in el.quantities:
+            values.append(_model_quantity(el, el.quantity('contact_formwork_area'), el.quantity_sources.get('contact_formwork_area')))
+            continue
+        if 'formwork_area' in el.quantities:
+            values.append(_model_quantity(el, el.quantity('formwork_area'),
+                          'Площадь контакта по IFC; примыкания требуют проверки по проекту'))
+            continue
         perimeter = el.quantity("perimeter")       # мм
         thickness = el.geometry.get("thickness")   # мм
         if perimeter > 0 and thickness and thickness > 0:
@@ -173,31 +180,42 @@ def _formwork_area(kind: Optional[str], agg: Dict[str, object],
         if kind == 'stair' or el.component in ('flight', 'landing') and kind == 'slab':
             # TSN 2001.3-6 §2.8 uses horizontal projection, not skin area.
             key = 'gross_projection_area' if el.component == 'landing' else 'projection_area'
-            return el.quantity(key) if key in el.quantities else None
+            if key in el.quantities:
+                return el.quantity(key)
+            if 'projection_fallback' in el.quantities:
+                return el.quantity('projection_fallback')
+            if 'area' in el.quantities:
+                el.quantity_sources['projection_fallback'] = 'Оценка горизонтальной проекции по площади элемента; контур требует проверки'
+                return el.quantity('area')
+            return None
+        if kind in ('wall', 'parapet'):
+            if 'wall_projection_area' in el.quantities:
+                return el.quantity('wall_projection_area')
+            from ..wall_formwork import wall_projection
+            proxy = {}
+            for source, target in (('side_area', 'RUS_NetSideArea'), ('volume', 'RUS_Volume'),
+                                   ('length', 'RUS_Length'), ('height', 'RUS_Height')):
+                if source in el.quantities:
+                    proxy[target] = el.quantity(source)
+            if el.geometry.get('thickness'):
+                proxy['RUS_Thickness'] = el.geometry['thickness']
+            value, source = wall_projection(proxy)
+            if source:
+                el.quantity_sources['wall_projection_area'] = source
+            return value
         if kind == 'slab':
-            if el.quantity('formwork_area') > 0:
-                return el.quantity('formwork_area')
-            bottom = (el.quantity('underside_area') or el.quantity('area')
-                      or el.quantity('gross_area'))
-            edges = el.quantity('edge_area') if 'edge_area' in el.quantities else None
-            if edges is None:
-                perimeter = el.quantity('perimeter')  # мм
-                thickness = el.geometry.get('thickness') or 0  # мм
-                if perimeter > 0 and thickness > 0:
-                    edges = perimeter * thickness / 1e6
-            return bottom + edges if bottom > 0 and edges is not None else None
+            for key in ('gross_projection_area', 'gross_area', 'projection_fallback'):
+                if key in el.quantities:
+                    return el.quantity(key)
+            if 'area' in el.quantities:
+                el.quantity_sources['projection_fallback'] = 'Оценка горизонтальной проекции по площади элемента; отверстия требуют проверки'
+                return el.quantity('area')
+            return None
+        if kind in ('column', 'beam') and 'contact_formwork_area' in el.quantities:
+            return el.quantity('contact_formwork_area')
         if 'formwork_area' in el.quantities and not (kind in ('wall', 'parapet') and el.quantity_sources.get('formwork_area') == 'QTO_geom::Площадь_опалубки_м2'):
             return el.quantity('formwork_area')
         side, area, surface = (el.quantity(key) for key in ('side_area', 'area', 'surface_area'))
-        if kind in ("wall", "parapet"):
-            if side or surface:
-                return side or surface
-            if "side_area" in el.quantities:
-                return side
-            depth = el.geometry.get("thickness") or 0
-            volume = el.quantity("volume")
-            # Same one-face area fallback as zero_step for a wall without area QTO.
-            return volume / (depth / 1000) if volume > 0 and depth > 0 else None
         if kind == "beam":
             return el.quantity('formwork_area') if 'formwork_area' in el.quantities else None
         if kind == "column":
@@ -207,7 +225,8 @@ def _formwork_area(kind: Optional[str], agg: Dict[str, object],
     known = [_model_quantity(el, value,
               (f'{value:g} (горизонтальная проекция, ТСН-2001.3-6 п. 2.8)'
                if el.component in ('flight', 'landing') and kind in ('stair', 'slab') else
-               f'{value:g} (нижняя поверхность + боковые поверхности перекрытия)' if kind == 'slab' else
+               f'{value:g} (одна вертикальная проекция без вычета проёмов; {el.quantity_sources.get("wall_projection_area", "")})' if kind in ('wall', 'parapet') else
+               f'{value:g} (горизонтальная проекция без вычета отверстий, ТСН-2001.3-6 п. 2.8)' if kind == 'slab' else
                f'{el.quantity("underside_area"):g} + {el.quantity("edge_area"):g}'
                if 'underside_area' in el.quantities and 'edge_area' in el.quantities else
                f'{value:g} ({", ".join(el.quantity_sources.values())})'))
@@ -315,19 +334,18 @@ def _fill_work(row: template.TemplateRow, elements: List[Element],
                 note = 'Показана известная часть площади.' if area is not None else 'Площадь не рассчитана.'
                 return (round(area, 2) if area is not None else None), f"{ctx.ref_ifc}. Неполные данные: нет площади у {missing} из {len(elements)} элементов. {note}"
             if area is not None and area >= 0:
-                estimated = sum('formwork_area' not in el.quantities and not (el.quantity("side_area") or el.quantity("surface_area")) for el in elements) if row.element_kind == "wall" else 0
-                wall_note = f". Для {estimated} элементов без площади QTO применено объём / толщина (одна сторона стены), как в расчёте по элементам." if estimated else ""
-                foundation_note = ''
+                wall_note = '. ТСН-2001.3-6, п. 2.8: вертикальная проекция одной стороны без вычета проёмов; торцы и откосы не добавляются.' if row.element_kind in ('wall', 'parapet') else ''
+                foundation_note = '. Оценка площади контакта: условия опирания и примыкания должны быть подтверждены проектом.'
                 if row.element_kind in ('foundation_slab', 'crane_foundation'):
                     if any(el.quantity_sources.get('perimeter', '').startswith('QTO_bbox') for el in elements):
-                        foundation_note = '. Периметр оценён по габаритам IFC (bbox); площадь опалубки является оценкой.'
+                        foundation_note += '. Периметр оценён по габаритам IFC (bbox); площадь опалубки является оценкой.'
                     elif any(el.quantity_sources.get('perimeter', '').startswith('QTO_geom') for el in elements):
-                        foundation_note = '. По внешнему контуру плит × толщина.'
+                        foundation_note += '. По внешнему контуру плит × толщина.'
                 geometry_note = ''
                 if row.element_kind not in ('wall', 'parapet') and any(el.quantity_sources.get('formwork_area') == 'QTO_geom::Площадь_опалубки_м2' for el in elements):
-                    geometry_note = '. По граням IFC: стороны, торцы, откосы и низ перемычек; основание исключено.' if row.element_kind in ('wall', 'parapet') else '. По вертикальным граням IFC.' if row.element_kind == 'column' else '. По геометрии IFC: нижняя поверхность и вертикальные торцы.'
+                    geometry_note = '. Оценка площади контакта по граням IFC: стороны, торцы, откосы и низ перемычек; основание исключено.' if row.element_kind in ('wall', 'parapet') else '. Оценка площади контакта по вертикальным граням IFC; примыкания требуют проекта.' if row.element_kind == 'column' else '. По геометрии IFC: нижняя поверхность и вертикальные торцы.'
                 if row.element_kind == 'slab':
-                    geometry_note = '. Нижняя поверхность и боковые поверхности перекрытия; при отсутствии площади граней — площадь низа + периметр × толщина.'
+                    geometry_note = '. ТСН-2001.3-6, п. 2.8: горизонтальная проекция перекрытий без вычета отверстий; боковые грани не добавляются.'
                 stair_note = ''
                 if row.element_kind == 'stair':
                     geometry_note = '. ТСН-2001.3-6, п. 2.8: горизонтальная проекция маршей; для площадок — проекция перекрытий без вычета отверстий. Вертикальные грани и наклонная площадь низа не прибавляются.'
@@ -335,6 +353,9 @@ def _fill_work(row: template.TemplateRow, elements: List[Element],
                 if row.element_kind == 'beam' and any(el.quantity_sources.get('formwork_area') == 'QTO_geom::Площадь_опалубки_м2' for el in elements):
                     beam_note = '. Оценка площади поверхностей балки: низ и все вертикальные грани, включая торцы. Примыкания к стенам, плитам и опорам не исключены; это не подтверждённая площадь контакта с опалубкой.'
                     geometry_note = ''
+                substitute_notes = '; '.join(dict.fromkeys(source for el in elements for key, source in el.quantity_sources.items() if key in ('projection_fallback', 'wall_projection_area', 'contact_formwork_area') and 'Оценка' in source))
+                if substitute_notes:
+                    geometry_note += '. ' + substitute_notes
                 result = (round(area, 2), ctx.ref_ifc + wall_note + foundation_note + geometry_note + stair_note + beam_note)
         elif qk == "concrete":
             volume = _concrete_volume(elements, None)
@@ -342,8 +363,10 @@ def _fill_work(row: template.TemplateRow, elements: List[Element],
             if missing:
                 note = 'Показана известная часть объёма.' if volume else 'Объём не рассчитан.'
                 return (round(volume, 2) if volume else None), f"{ctx.ref_ifc}. Неполные данные: нет объёма у {missing} из {len(elements)} элементов. {note}"
-            if volume:
-                result = (round(volume, 2), ctx.ref_ifc)
+            if volume is not None:
+                notes = '; '.join(dict.fromkeys(el.quantity_sources.get('volume', '') for el in elements
+                                               if el.quantity_sources.get('volume_status') == 'estimated'))
+                result = (round(volume, 2), ctx.ref_ifc + ('. Оценка: ' + notes if notes else ''))
         elif qk == "thermoliner":
             # Термовкладыши относятся к плитам перекрытий; для других
             # подразделов (парапеты и т. п.) данных модели недостаточно.
@@ -875,6 +898,8 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
     apply_mix_norms(output, rows)
     template.render_template(output, path=template_path, sheet_name=sheet_name,
                              output_path=output_path, stair_rows=stair_records(index))
+    from .rates import enrich
+    enrich(output_path)
 
     stats = {
         "shared_rebar_scopes": sorted({shared_heading(r) for r in pending_rebar}),

@@ -9,22 +9,17 @@
 
 Правила расчёта по видам конструкций типового ВОР:
 
-* **стена, парапет** — все четыре боковые поверхности: две лицевые грани
-  нетто (``2 × RUS_Volume / RUS_Thickness``, эквивалентно ``2 ×
-  RUS_NetSideArea``), два торца стены по толщине на всю высоту
-  (``2 × RUS_Thickness × RUS_Height``) и вертикальные щёки проёмов
-  (``QTO_geom::Площадь_торцов_проёмов_м2`` — сумма ``2 × глубина × высота``
-  по вырезам стены). Fallback лицевых — ``2 × RUS_NetSideArea``, затем
-  ``2 × RUS_Length × RUS_Height``;
+* **стена, парапет** — вертикальная проекция одной стороны без вычета
+  проёмов (ТСН-2001.3-6, п. 2.8), без добавления торцов и откосов;
 * **колонна, пилон** — площадь с четырёх сторон: периметр сечения × высота
   (``2 × (RUS_Width + RUS_Height) × RUS_Length``; fallback —
   ``RUS_NetSideArea``);
-* **фундамент, приямок** — только по внешнему периметру и толщине плиты:
-  ``RUS_Perimeter × RUS_Thickness`` (периметр — в метрах, толщина — в мм);
-* **перекрытие** — нижняя поверхность + боковые грани (периметр × толщина);
-* **лестничная площадка, пандус** — горизонтальная площадь с
-  одной стороны: ``RUS_Area`` (fallback — горизонтальная проекция меша
-  ``QTO_geom::Горизонтальная_проекция_м2``, затем ``RUS_Length × RUS_Width``);
+* **фундамент, приямок** — площадь контакта опалубки с бетоном; при
+  отсутствии явного значения — оценка по граням или периметру × толщине;
+* **перекрытие** — горизонтальная проекция без вычета отверстий;
+* **лестничная площадка, пандус** — проекция без вычета отверстий.
+  При нехватке данных сохраняются заменители по площади и размерам,
+  с пояснением об оценке;
 * **лестничный марш** — площадь проекции на пол (shapely-проекция меша
   ``QTO_geom::Горизонтальная_проекция_м2``; fallback — ``RUS_Length ×
   RUS_Width``);
@@ -54,8 +49,6 @@ from .geometry import to_number
 # Колонки сырого дампа, уточняющие расчёт (не являются требуемыми параметрами).
 _PROJECTION = "QTO_geom::Горизонтальная_проекция_м2"
 _BEAM_UNDERSIDE = "QTO_geom::Площадь_низа_м2"
-_WALL_OPENING_ENDS = "QTO_geom::Площадь_торцов_проёмов_м2"
-_WALL_ENDS = "QTO_geom::Площадь_торцов_стены_м2"
 
 # Виды конструкций, которым площадь опалубки не требуется.
 _NO_FORMWORK_KINDS = frozenset(
@@ -90,10 +83,10 @@ _MONOLITHIC_RE = re.compile(
 # Подписи правил — показываются в превью, чтобы было видно, как посчитана
 # площадь опалубки.
 BASIS = {
-    "wall": "4 боковые поверхности (2 лицевые нетто + 2 торца по толщине + щёки проёмов)",
+    "wall": "вертикальная проекция одной стороны без вычета проёмов",
     "column": "4 боковые поверхности (периметр сечения × высота)",
     "foundation": "внешний периметр × толщина плиты",
-    "slab": "нижняя поверхность + боковые поверхности",
+    "slab": "горизонтальная проекция без вычета отверстий",
     "landing": "горизонтальная площадь площадки с одной стороны",
     "flight": "проекция марша на пол",
     "beam": "низ + две длинные боковые грани",
@@ -141,54 +134,18 @@ def _positive(value: Any) -> Optional[float]:
     return number
 
 
-def _wall_ends_area(row: Dict[str, Any]) -> float:
-    """Торцы стены/парапета (м²).
-
-    Приоритет — расчётное значение из сырого дампа
-    (``QTO_geom::Площадь_торцов_стены_м2``): оно учитывает стены, собранные
-    из нескольких тел (у каждого тела свои два торца). Fallback — два торца
-    по толщине на всю высоту.
-    """
-    value = _positive(row.get(_WALL_ENDS))
-    if value is not None:
-        return value
-    thickness = _millimetres_to_metres(row.get("RUS_Thickness"))
-    height = _millimetres_to_metres(row.get("RUS_Height"))
-    if thickness and height:
-        return 2.0 * thickness * height
-    return 0.0
-
-
 def _wall_area(row: Dict[str, Any]) -> Optional[float]:
-    """Стена/парапет: опалубка по всем четырём боковым поверхностям.
-
-    Две лицевые грани — нетто, с учётом проёмов (``2 × объём / толщина``,
-    эквивалентно ``2 × RUS_NetSideArea``, но не зависит от того, выгружена ли
-    ``NetSideArea`` в QTO), два торца стены по толщине на всю высоту
-    (``QTO_geom::Площадь_торцов_стены_м2`` — с учётом числа тел стены) и
-    вертикальные щёки проёмов (``QTO_geom::Площадь_торцов_проёмов_м2`` —
-    сумма ``2 × глубина × высота`` по вырезам стены, см.
-    ``ifc_raw_dump.opening_ends_area_m2``).
-    """
-    ends = _wall_ends_area(row)
-    opening_ends = _positive(row.get(_WALL_OPENING_ENDS)) or 0.0
-    thickness = _millimetres_to_metres(row.get("RUS_Thickness"))
-    volume = _positive(row.get("RUS_Volume"))
-    if volume and thickness:
-        # Площадь одной лицевой грани = объём / толщина.
-        return 2.0 * volume / thickness + ends + opening_ends
-    side = _positive(row.get("RUS_NetSideArea"))
-    if side is not None:
-        return 2.0 * side + ends + opening_ends
-    length = _millimetres_to_metres(row.get("RUS_Length"))
-    height = _millimetres_to_metres(row.get("RUS_Height"))
-    if length and height:
-        return 2.0 * length * height + ends + opening_ends
-    return None
+    """Одна вертикальная проекция без вычета проёмов, ТСН-2001.3-6 п. 2.8."""
+    from ..wall_formwork import wall_projection
+    return wall_projection(row)[0]
 
 
 def _column_area(row: Dict[str, Any]) -> Optional[float]:
-    """Колонна/пилон: площадь опалубки с четырёх сторон."""
+    """Колонна/пилон: площадь контакта с бетоном, п. 2.8."""
+    from ..contact_formwork import contact_area
+    contact, _ = contact_area(row)
+    if contact is not None:
+        return contact
     width = _millimetres_to_metres(row.get("RUS_Width"))
     height = _millimetres_to_metres(row.get("RUS_Height"))
     length = _millimetres_to_metres(row.get("RUS_Length"))
@@ -199,7 +156,11 @@ def _column_area(row: Dict[str, Any]) -> Optional[float]:
 
 
 def _foundation_area(row: Dict[str, Any]) -> Optional[float]:
-    """Фундамент/приямок: опалубка по внешнему периметру и толщине плиты."""
+    """Фундамент/приямок: площадь контакта, п. 2.8; торцы как оценка."""
+    from ..contact_formwork import contact_area
+    contact, _ = contact_area(row)
+    if contact is not None:
+        return contact
     perimeter = _positive(row.get("RUS_Perimeter"))  # требуемый параметр — в метрах
     thickness = _millimetres_to_metres(row.get("RUS_Thickness"))
     if perimeter and thickness:
@@ -212,48 +173,28 @@ def _foundation_area(row: Dict[str, Any]) -> Optional[float]:
 
 
 def _horizontal_area(row: Dict[str, Any]) -> Optional[float]:
-    """Перекрытие/площадка: горизонтальная площадь с одной стороны."""
-    area = _positive(row.get("RUS_Area"))
-    if area is not None:
-        return area
-    projection = _positive(row.get(_PROJECTION))
-    if projection is not None:
-        return projection
-    length = _millimetres_to_metres(row.get("RUS_Length"))
-    width = _millimetres_to_metres(row.get("RUS_Width"))
-    if length and width:
-        return length * width
-    return None
+    """Площадка: проекция без отверстий, как перекрытие (пп. 1.2.5, 2.8)."""
+    from ..stair_formwork import floor_projection
+    return floor_projection(row)[0]
 
 
 def _slab_area(row: Dict[str, Any]) -> Optional[float]:
-    """Перекрытие: нижняя поверхность и боковые грани."""
-    measured = _positive(row.get("QTO_geom::Площадь_опалубки_м2"))
-    if measured is not None:
-        return measured
-    bottom = _positive(row.get(_BEAM_UNDERSIDE)) or _horizontal_area(row)
-    edges = to_number(row.get("QTO_geom::Площадь_торцов_м2"))
-    if edges is None or edges < 0:
-        edges = _foundation_area(row)
-    if bottom is not None and edges is not None:
-        return bottom + edges
-    return None
+    """Перекрытие: горизонтальная проекция без отверстий, п. 2.8."""
+    return _horizontal_area(row)
 
 
 def _flight_area(row: Dict[str, Any]) -> Optional[float]:
-    """Лестничный марш: площадь проекции на пол (shapely-проекция меша)."""
-    projection = _positive(row.get(_PROJECTION))
-    if projection is not None:
-        return projection
-    length = _millimetres_to_metres(row.get("RUS_Length"))
-    width = _millimetres_to_metres(row.get("RUS_Width"))
-    if length and width:
-        return length * width
-    return _positive(row.get("RUS_Area"))
+    """Марш: только измеренная горизонтальная проекция, п. 2.8."""
+    from ..stair_formwork import flight_projection
+    return flight_projection(row)[0]
 
 
 def _beam_area(row: Dict[str, Any]) -> Optional[float]:
     """Балка: низ и две длинные боковые грани, без верхней грани."""
+    from ..contact_formwork import contact_area
+    contact, _ = contact_area(row, kind='beam')
+    if contact is not None:
+        return contact
     length = _millimetres_to_metres(row.get("RUS_Length"))
     if not length:
         return None
@@ -337,4 +278,19 @@ def formwork_area(
     value = _RULES[rule](row)
     if value is None or value <= 0:
         return None, ""
-    return round(float(value), 4), BASIS[rule]
+    basis = BASIS[rule]
+    if rule in ('slab', 'landing', 'flight'):
+        from ..stair_formwork import floor_projection, flight_projection
+        _, source = flight_projection(row) if rule == 'flight' else floor_projection(row)
+        if source and 'Оценка' in source:
+            basis += '; ' + source
+    elif rule == 'wall':
+        from ..wall_formwork import wall_projection
+        _, source = wall_projection(row)
+        if source and 'Оценка' in source:
+            basis += '; ' + source
+    if rule in ('foundation', 'column', 'beam'):
+        from ..contact_formwork import contact_area
+        _, source = contact_area(row)
+        basis = source or 'Оценка площади контакта: ' + basis + '; примыкания требуют проекта'
+    return round(float(value), 4), basis

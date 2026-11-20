@@ -380,7 +380,8 @@ def _work_full_text(work: Dict[str, Any]) -> str:
 
 
 def _unit_text(work: Dict[str, Any]) -> str:
-    return str(work.get("unitOfMeasure") or work.get("unit_of_measure") or "").strip().lower()
+    from ..quantity_measure import work_unit
+    return work_unit(work).lower()
 
 
 def _is_joint_unit(unit: str) -> bool:
@@ -393,9 +394,8 @@ def _is_joint_work(work: Dict[str, Any]) -> bool:
 
 
 def _is_formwork_work(work: Dict[str, Any]) -> bool:
-    title = str(work.get("title") or work.get("name") or "").lower()
-    unit = _unit_text(work)
-    return "опалубк" in title and "м2" in unit
+    from ..quantity_measure import is_formwork
+    return is_formwork(work)
 
 
 _REBAR_INSTALL_PREFIXES = (
@@ -1183,110 +1183,9 @@ def _formwork_area_m2(
     params: Optional[Dict[str, Any]] = None,
     full: Optional[Dict[str, Any]] = None,
 ) -> Optional[float]:
-    el = element_payload.get("element", {}) or {}
-    family = _classify_family(element_payload)
-
-    if family == "foundation_slab":
-        perimeter = _foundation_slab_perimeter_m(el, params, full)
-
-        t: Optional[float] = None
-        if full:
-            depth_mm = _full_value(full, *_DEPTH_KEYS)
-            if depth_mm:
-                t = depth_mm / 1000.0
-        if not t:
-            depth_mm = _lookup(el, *_DEPTH_KEYS)
-            if depth_mm:
-                t = depth_mm / 1000.0
-        if not t and params:
-            t = _param_meters(params, "thickness") or _param_meters(params, "width")
-        if not t:
-            name_s = str(el.get("name") or "")
-            m = _MM_IN_NAME_RE.search(name_s)
-            if m:
-                try:
-                    t = int(m.group(1)) / 1000.0
-                except ValueError:
-                    pass
-
-        logger.info(
-            f"[formwork slab] gid={str(el.get('global_id') or '')[:8]} "
-            f"name={str(el.get('name') or '')[:50]!r} "
-            f"perimeter_m={perimeter} thickness_m={t} "
-            f"area={perimeter * t if perimeter and t else None}"
-        )
-
-        if perimeter and t:
-            return perimeter * t
-        return None
-
-    if params:
-        thickness = _param_meters(params, "thickness") \
-                    or _param_meters(params, "width")
-        if family in ("wall", "masonry"):
-            L = _param_meters(params, "length")
-            H = _param_meters(params, "height")
-            if L and H:
-                return 2.0 * L * H
-        if family in ("floor", "plate"):
-            L = _param_meters(params, "length")
-            W = _param_meters(params, "width")
-            if L and W and thickness:
-                return 2.0 * (L + W) * thickness
-        if family == "column":
-            L = _param_meters(params, "length")
-            W = _param_meters(params, "width")
-            H = _param_meters(params, "height")
-            if L and W and H:
-                return 2.0 * (L + W) * H
-        perimeter = _joint_length_m(params)
-        if perimeter and thickness:
-            return 2.0 * perimeter * thickness
-
-    if full:
-        L_mm = _full_value(full, *_LENGTH_KEYS)
-        W_mm = _full_value(full, *_WIDTH_KEYS)
-        H_mm = _full_value(full, *_HEIGHT_KEYS)
-        t_mm = _full_value(full, *_DEPTH_KEYS)
-        if family in ("floor", "plate") and L_mm and W_mm and t_mm:
-            return 2.0 * ((L_mm + W_mm) / 1000.0) * (t_mm / 1000.0)
-        if family in ("wall", "masonry") and L_mm and H_mm:
-            return 2.0 * (L_mm / 1000.0) * (H_mm / 1000.0)
-        if family == "column" and L_mm and W_mm and H_mm:
-            return 2.0 * ((L_mm + W_mm) / 1000.0) * (H_mm / 1000.0)
-
-    L_mm = _lookup(el, *_LENGTH_KEYS)
-    W_mm = _lookup(el, *_WIDTH_KEYS)
-    H_mm = _lookup(el, *_HEIGHT_KEYS)
-    t_mm = _lookup(el, *_DEPTH_KEYS) or _element_thickness_mm(element_payload)
-
-    if not L_mm:
-        return None
-    L = L_mm / 1000.0
-
-    if family in ("wall", "masonry"):
-        if H_mm:
-            return 2.0 * L * (H_mm / 1000.0)
-        if W_mm:
-            return 2.0 * L * (W_mm / 1000.0)
-
-    if family in ("floor", "plate"):
-        if W_mm and t_mm:
-            W = W_mm / 1000.0
-            t = t_mm / 1000.0
-            return 2.0 * (L + W) * t
-        return None
-
-    if family == "column":
-        if W_mm and H_mm:
-            return 2.0 * (L + W_mm / 1000.0) * (H_mm / 1000.0)
-        return None
-
-    if H_mm:
-        return 2.0 * L * (H_mm / 1000.0)
-    if W_mm and t_mm:
-        return 2.0 * (L + W_mm / 1000.0) * (t_mm / 1000.0)
-    return None
+    """Use the service-wide quantity rule; preserve this module API."""
+    from ..works_final_selector import _formwork_area_m2 as shared
+    return shared(element_payload, params, full)
 
 
 def _sum_formwork_area(
@@ -2148,37 +2047,13 @@ def _element_header(entry):
 # ======================================================================
 
 def _work_divisor(work: Dict[str, Any]) -> float:
-    unit = str(work.get("unit_of_measure") or work.get("unitOfMeasure") or "")
-    unit = unit.strip().lower().replace(" ", "")
-    unit = unit.replace("²", "2").replace("³", "3")
-    m = _UNIT_MULTIPLIER_RE.match(unit)
-    if not m:
-        return 1.0
-    try:
-        v = float(m.group(1).replace(",", "."))
-        return v if v > 0 else 1.0
-    except ValueError:
-        return 1.0
+    from ..quantity_measure import work_divisor
+    return work_divisor(work)
 
 
 def _resolve_unit_label(work: Dict[str, Any]) -> str:
-    unit = str(work.get("unit_of_measure", "")
-               or work.get("unitOfMeasure", "") or "")
-    unit_low = unit.lower().replace(" ", "")
-    divisor = _work_divisor(work)
-
-    if ("м3" in unit_low or "m3" in unit_low
-            or "м[3" in unit_low or "m[3" in unit_low):
-        base = "м³"
-    elif ("м2" in unit_low or "m2" in unit_low
-            or "м[2" in unit_low or "m[2" in unit_low):
-        base = "м²"
-    elif "шт" in unit_low:
-        base = "шт"
-    else:
-        return unit or ""
-
-    return f"{divisor} {base}" if divisor > 1 else base
+    from ..quantity_measure import work_unit_label
+    return work_unit_label(work)
 
 
 def _build_total_measure(quantity: Dict[str, Any]) -> Dict[str, Any]:
@@ -2228,85 +2103,9 @@ def _calculate_work_volume(
     formwork_area: float = 0.0,
     slab_group: bool = False,
 ) -> str:
-    """Рассчитывает объём работ для расценки (правила КР).
-
-    slab_group — группа является плитной (фундаментная плита /
-    перекрытие): опалубку таких групп считаем ТОЛЬКО по formwork_area,
-    fallback на площадь плиты из totalAreas запрещён (иначе объём
-    опалубки завышается в разы) — как в КР (_calculate_work_volume).
-    """
-    measure_type = (total_measure or {}).get("type", "")
-    measure_value = safe_float((total_measure or {}).get("value", 0))
-
-    if measure_value <= 0:
-        return ""
-
-    unit = str(work.get("unitOfMeasure", "")
-               or work.get("unit_of_measure", "") or "")
-    unit = unit.lower().replace(" ", "").replace("²", "2").replace("³", "3")
-
-    is_volume = ("м3" in unit or "m3" in unit
-                 or "м[3" in unit or "m[3" in unit)
-    is_area = ("м2" in unit or "m2" in unit
-               or "м[2" in unit or "m[2" in unit)
-    is_count = ("шт" in unit or any(
-        k in unit for k in
-        ("штук", "конструкц", "элемент", "сборн", "компл", "узл")
-    ))
-    is_length = "м" in unit and not is_area and not is_volume
-    is_ton = bool(_TON_UNIT_RE.search(unit))
-
-    divisor = _work_divisor(work)
-
-    if is_volume and measure_type == "volume":
-        vol = measure_value / divisor
-        decimals = 4 if divisor > 1 else 3
-        return f"{vol:.{decimals}f}"
-
-    if is_area and measure_type == "area":
-        vol = measure_value / divisor
-        decimals = 4 if divisor > 1 else 2
-        return f"{vol:.{decimals}f}"
-
-    if is_count and measure_type == "count":
-        vol = measure_value / divisor
-        decimals = 4 if divisor > 1 else 0
-        return f"{vol:.{decimals}f}"
-
-    if is_area and _is_formwork_work(work) and formwork_area > 0:
-        vol = formwork_area / divisor
-        decimals = 4 if divisor > 1 else 2
-        return f"{vol:.{decimals}f}"
-
-    # Опалубка плитных групп: если formwork_area не рассчитана — объём
-    # остаётся пустым (площадь плиты не является площадью опалубки).
-    if is_area and slab_group and _is_formwork_work(work):
-        return ""
-
-    if is_area and total_areas:
-        area_value = _pick_area_value(total_areas)
-        if area_value > 0:
-            vol = area_value / divisor
-            decimals = 4 if divisor > 1 else 2
-            return f"{vol:.{decimals}f}"
-
-    if is_length and measure_type == "joint":
-        vol = measure_value / divisor
-        decimals = 4 if divisor > 1 else 2
-        return f"{vol:.{decimals}f}"
-
-    if is_length and measure_type == "length":
-        vol = measure_value / divisor
-        decimals = 4 if divisor > 1 else 2
-        return f"{vol:.{decimals}f}"
-
-    if is_ton:
-        mass = safe_float((work.get("quantity") or {}).get("mass_t"),
-                           default=None)
-        if mass and mass > 0:
-            return f"{mass / divisor:.4f}"
-
-    return ""
+    """Use the service-wide quantity rule; preserve this module API."""
+    from ..works_final_selector import _calculate_work_volume as shared
+    return shared(work, total_measure, total_areas, formwork_area, slab_group)
 
 
 # ======================================================================
@@ -2408,6 +2207,14 @@ def build_final_works_xlsx(result_elements, xlsx_path):
             for col in ("ЗП", "ЭМ", "МР", "Стоимость")
         }
 
+    from pathlib import Path
+    from ..quantity_provenance import normalized_rows
+    from ..final_quantity_rules import refresh_concrete, refresh_formwork, summer_curing
+    source_rows = normalized_rows(Path(xlsx_path).parent)
+    refresh_concrete(result_elements, source_rows)
+    refresh_formwork(result_elements, source_rows)
+    summer_curing(result_elements)
+
     element_blocks = []
     for entry in result_elements:
         part = _resolve_building_part(entry)
@@ -2443,12 +2250,8 @@ def build_final_works_xlsx(result_elements, xlsx_path):
                 group_formwork_area
                 if _is_formwork_work(work) else 0.0
             )
-            vol_text = _calculate_work_volume(
-                work, total_measure,
-                total_areas=total_areas,
-                formwork_area=formwork_area,
-                slab_group=slab_group,
-            )
+            from ..works_final_selector import _entry_work_volume
+            vol_text, _ = _entry_work_volume(entry, work, entry.get('quantity_sources') or {})
 
             # Арматура — правила КР: расход арматуры группы подставляется
             # ТОЛЬКО в расценку «Установка отдельных стержней...» (т),

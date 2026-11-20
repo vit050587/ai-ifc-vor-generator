@@ -50,6 +50,8 @@ def _aggregate(rows, ours, theirs, kind, band=None):
     heading = theirs[0].get('elementGroup') or ours[0].get('elementGroup') or ''
     def total(source):
         value = dict(source[0],elementGroup=heading,quantity=sum(r['quantity'] for r in source))
+        from .rates import aggregate_references
+        value['rates'] = aggregate_references([r.get('rates') or {} for r in source])
         for field in ('reason','calculation','estimateParameterValues','estimateParameters'):
             value[field] = '; '.join(dict.fromkeys(r.get(field,'') for r in source if r.get(field)))
         value['calculation'] = ' + '.join(f"{r['quantity']:g} [строка {r['sourceRow']}]" for r in source)

@@ -223,7 +223,7 @@ def _process_pdf_unlocked(
 
         # Импортируем модули (кэшируются в sys.modules после первого импорта)
         from processor import Processor
-        from result_former import calculate_volumes, form_result_df
+        from result_former import calculate_volumes, form_result_df, DEFAULT_FLOOR_HEIGHT
         import pandas as pd
 
         logger.info(f"Запуск обработки PDF: {pdf_path_str}")
@@ -338,6 +338,8 @@ def _process_pdf_unlocked(
 
         # Формируем DataFrame в том же формате, что и zero_step
         calculated = calculate_volumes(result)
+        from src.services.drawing_provenance import save_context
+        save_context(output_folder_str, pdf_path_str, DEFAULT_FLOOR_HEIGHT)
         df_all = form_result_df(calculated)
 
         # Этап 3: Формирование результатов (быстрый этап - последние 5%)

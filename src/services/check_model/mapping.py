@@ -971,6 +971,10 @@ def apply_mapping(
             )
         if isinstance(value, str):
             value = value.strip()
+        if attribute.name == 'RUS_Volume':
+            # Gross volume, bbox and an LLM-selected column cannot override
+            # the shared net/project measure or a missing/conflicting status.
+            value = resolve_geometry(attribute, row, requirement.ifc_class)
         result[attribute.name] = value
     return result
 

@@ -1774,6 +1774,15 @@ class SessionManager:
                 shutil.copy2(os.path.join(search_dir, f), os.path.join(run_dir, f))
                 break
         
+        # Preserve the height actually used by the drawing calculator.
+        if s.get("source_type") == "pdf":
+            from .drawing_provenance import FILENAME as drawing_context_file
+            for directory in (search_dir, session_dir):
+                context_path = os.path.join(directory, drawing_context_file)
+                if os.path.isfile(context_path):
+                    shutil.copy2(context_path, os.path.join(run_dir, drawing_context_file))
+                    break
+
         run = {
             "run_id": run_id,
             "run_number": run_number,

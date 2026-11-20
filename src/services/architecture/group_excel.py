@@ -598,55 +598,9 @@ def _first_nonzero(row: Dict[str, Any], cols: List[str]) -> float:
 def _element_formwork_area_m2(row: Dict[str, Any], perim_cols: List[str],
                               depth_cols: List[str],
                               area_cols: List[str] | None = None) -> float:
-    """Площадь опалубки одного элемента-плиты (м²) по правилам КР:
-
-      * фундаментная плита («фундамент» в имени элемента) — опалубка
-        только боковых граней: периметр × толщина;
-      * перекрытие («перекрыт» в имени) — боковые грани + нижняя
-        поверхность: периметр × толщина + площадь плиты;
-      * прочие плиты (лестницы, приямки и т.п.) — боковые грани:
-        периметр × толщина.
-
-    Периметр и толщина в таблице — в миллиметрах, поэтому произведение
-    делится на 1e6 (мм² → м²). Если у плиты IfcSlab нет QTO-толщины,
-    толщина берётся из имени элемента («Перекрытие_200мм_…»).
-    У элементов без периметра/толщины (стены, балки и т.п.) вклад
-    равен нулю.
-    """
-    name_lower = str(row.get('Имя', '')).lower()
-    if 'сборн' in name_lower:
-        return 0.0
-    if str(row.get('Тип элемента') or '') in ('IfcWall', 'IfcWallStandardCase'):
-        return _first_nonzero(row, ['QTO_Qto_WallBaseQuantities_Площадь_GrossSideArea_м2',
-                                   'Площадь_GrossSideArea_м2', 'QTO_Qto_WallBaseQuantities_Площадь_NetSideArea_м2',
-                                   'Площадь_NetSideArea_м2', 'Площадь, м2'])
-    geometric = _first_nonzero(row, ['Геометрия_Площадь_опалубки_м2'])
-    if geometric > 0:
-        return geometric
-    if str(row.get('Тип элемента') or '') == 'IfcBeam' or re.search(r'балк|ригел', name_lower, re.I):
-        # Net/GrossSurfaceArea includes faces that do not contact formwork.
-        explicit = [key for key in row if re.search(r'опалуб|formwork', str(key), re.I)
-                    and re.search(r'площад|area', str(key), re.I)
-                    and not re.search(r'мм2|mm2', str(key), re.I)]
-        return _first_nonzero(row, explicit)
-    if not perim_cols or not depth_cols:
-        return 0.0
-    perim = _first_nonzero(row, perim_cols)
-    depth = _first_nonzero(row, depth_cols)
-    # Fallback толщины для плит IfcSlab без QTO-толщины: толщина часто
-    # закодирована в имени элемента («Перекрытие_200мм_ЖБ_B30_W6_F150»,
-    # «Фундаментная плита_800мм…»). Без неё боковые грани перекрытий
-    # не учитываются, и опалубка занижается.
-    if depth == 0 and str(row.get('Тип элемента', '')).strip() == 'IfcSlab':
-        m = re.search(r'(\d+(?:[.,]\d+)?)\s*мм', str(row.get('Имя', '')))
-        if m:
-            depth = float(m.group(1).replace(',', '.'))
-    side_area = perim * depth / 1e6
-    if any(word in name_lower for word in ('перекрыт', 'покрыти', 'площадк', 'landing')) and 'фундамент' not in name_lower:
-        net_keys = ['QTO_Qto_SlabBaseQuantities_Площадь_NetArea_м2', 'Площадь_NetArea_м2', 'Площадь_NET_м2']
-        slab_area = _first_nonzero(row, net_keys + (area_cols or _AREA_COLS))
-        return side_area + slab_area
-    return side_area
+    """Use the service-wide quantity rule; preserve this module API."""
+    from ..group_excel import _element_formwork_area_m2 as shared
+    return shared(row, perim_cols, depth_cols, area_cols)
 
 
 def _coalesce_series(group_df, cols):
@@ -662,79 +616,16 @@ def _coalesce_series(group_df, cols):
 
 
 def _formwork_area_m2(group_df, perim_cols, depth_cols) -> float:
-    """Площадь опалубки плит группы (м²), сумма по элементам.
-
-    По каждому элементу применяется `_element_formwork_area_m2`:
-      * фундаментная плита — периметр × толщина (боковые грани);
-      * перекрытие — периметр × толщина + площадь плиты
-        (боковые граны + нижняя поверхность);
-      * прочие плиты — периметр × толщина.
-    """
-    area_cols = [c for c in _AREA_COLS if c in group_df.columns]
-    total = 0.0
-    for _, row in group_df.iterrows():
-        total += _element_formwork_area_m2(row, perim_cols, depth_cols, area_cols)
-    return float(round(total, 2))
+    """Use the service-wide quantity rule; preserve this module API."""
+    from ..group_excel import _formwork_area_m2 as shared
+    return shared(group_df, perim_cols, depth_cols)
 
 
 def _create_group(name: str, level: int, group_df, rows: List[Dict[str, Any]],
                   volume_col, sum_columns: List[str], children=None) -> Dict[str, Any]:
-    """Создаёт узел дерева групп: агрегирует объём/площади по DataFrame строк.
-
-    Вынесен на уровень модуля, чтобы переиспользовать в разных вариантах
-    группировки (по разделам/подразделам и по кодам МССК).
-    """
-    indices = sorted(group_df.index.tolist())
-
-    # Объём группы: по каждой строке берём первое ненулевое значение среди
-    # ВСЕХ колонок-источников (coalesce). Колонки дублируют одно и то же
-    # значение в старом/новом формате имён, поэтому суммировать по колонкам
-    # нельзя — берётся первое ненулевое. Приоритет — volume_col, затем
-    # остальные колонки в порядке заголовков.
-    volume_cols = _prioritize_volume_col(
-        _find_volume_columns(group_df.columns), volume_col
-    )
-    vol_series = None
-    if volume_cols:
-        for col in volume_cols:
-            col_series = pd.to_numeric(group_df[col], errors='coerce').fillna(0)
-            if vol_series is None:
-                vol_series = col_series
-            else:
-                vol_series = vol_series.where(vol_series > 0, col_series)
-        volume = float(round(float(vol_series.sum()), 2))
-    else:
-        volume = 0.0
-
-    areas = {}
-    for col in sum_columns:
-        if 'площадь' in col.lower() and col in group_df.columns:
-            area_series = pd.to_numeric(group_df[col], errors='coerce').fillna(0)
-            total = area_series.sum()
-            if total > 0:
-                areas[col] = float(round(total, 2))
-
-    # Суммарный расход арматуры (кг) по всем элементам группы:
-    # ReinforcementVolumeRatio — плотность армирования (кг/м³), поэтому
-    # общий расход = Σ (кг/м³ × объём элемента, м³). Раньше суммировались
-    # сами плотности, что давало некорректные тонны арматуры.
-    reinforcement = 0.0
-    if 'ReinforcementVolumeRatio' in group_df.columns:
-        rein_series = pd.to_numeric(group_df['ReinforcementVolumeRatio'], errors='coerce').fillna(0)
-        if vol_series is not None:
-            reinforcement = float(round(float((rein_series * vol_series).sum()), 2))
-        else:
-            reinforcement = float(round(float(rein_series.sum()), 2))
-
-    first_elem = rows[indices[0]] if indices else {}
-
-    return {
-        'name': name, 'level': level, 'indices': indices,
-        'total_volume': volume, 'total_areas': areas,
-        'total_reinforcement': reinforcement,
-        'first_element': dict(first_elem), 'count': len(indices),
-        'children': children or []
-    }
+    """Use the service-wide quantity rule; preserve this module API."""
+    from ..group_excel import _create_group as shared
+    return shared(name, level, group_df, rows, volume_col, sum_columns, children)
 
 
 def group_elements(rows: List[Dict[str, Any]], headers: List[str], use_new_grouping: bool = False) -> List[Dict[str, Any]]:
@@ -1153,12 +1044,9 @@ def _add_geometry_groups(parent_group, elems, headers, volume_col, use_new_group
     )
 
     def get_volume(elem):
-        for col in volume_cols:
-            val = safe_parse_float(elem.row.get(col, 0))
-            if val > 0:
-                return val
-        return 0.0
-    
+        from ..ifc_quantities import resolve_volume
+        return resolve_volume(elem.row).value or 0.0
+
     def get_geometry_value(rule, elem):
         if not rule or not rule.get('field'):
             return get_volume(elem)

@@ -97,6 +97,8 @@ def _period(folder, metadata):
 
 
 def _rows(path, metadata):
+    from .drawing_provenance import load_context, quantity_source
+    drawing_context = load_context(Path(path).parent)
     book = load_workbook(path, read_only=True, data_only=True)
     try:
         sheet = book['Данные'] if 'Данные' in book.sheetnames else book.active
@@ -135,6 +137,11 @@ def _rows(path, metadata):
                 saved = number(d['Объём работ'])
                 if saved is not None and math.isclose(float(saved), work['_replayed_quantity'], abs_tol=1e-8, rel_tol=1e-9):
                     work['volume_source'] = work.get('_replayed_source')
+            if drawing_context:
+                value = number(d['Объём работ'])
+                work['volume_source'] = quantity_source(
+                    drawing_context, value, title, work.get('volume_source', ''),
+                    dict(facts, name=facts.get('name') or group), code)
             facts = dict(facts)
             if not facts.get('part'):
                 facts['part'] = part

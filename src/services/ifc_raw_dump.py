@@ -19,6 +19,7 @@
 import math
 from collections import deque
 import os
+import time
 import weakref
 
 import ifcopenshell
@@ -1236,6 +1237,10 @@ def _compute_formwork_bbox_quantities(element):
         dims = None
         if _geometry_is_simple(element):
             dims = _fast_bbox_mm(element)
+        if dims is None:
+            model = getattr(element, 'file', None)
+            surface_cache = _FORMWORK_SURFACE_CACHE.get(model, {}) if isinstance(model, ifcopenshell.file) else {}
+            dims = surface_cache.get(element.id(), {}).get('_bbox_native') if surface_cache else None
 
         if dims is None:
             settings = ifcopenshell.geom.settings()
@@ -1317,6 +1322,8 @@ def _surface_formwork_kind(ifc_class, name, object_type=''):
     text = f'{name or ""} {object_type or ""}'.lower()
     if 'сборн' in text:
         return None
+    if ifc_class == 'IfcFooting' or (ifc_class == 'IfcSlab' and _is_foundation_plate(name, object_type)):
+        return 'foundation'
     if ifc_class == 'IfcColumn' or (ifc_class in ('IfcWall', 'IfcWallStandardCase') and any(word in text for word in ('пилон', 'колонн'))):
         return 'column'
     if ifc_class == 'IfcBeam':
@@ -1324,7 +1331,9 @@ def _surface_formwork_kind(ifc_class, name, object_type=''):
     if ifc_class == 'IfcStairFlight':
         return 'flight'
     if ifc_class == 'IfcSlab' and not _is_foundation_plate(name, object_type):
-        if any(word in text for word in ('перекрыт', 'покрыти', 'площадк', 'landing')):
+        if any(word in text for word in ('площадк', 'landing')):
+            return 'landing'
+        if any(word in text for word in ('перекрыт', 'покрыти')):
             return 'slab'
     return None
 
@@ -1336,14 +1345,14 @@ def _surface_formwork_from_mesh(verts, faces, kind):
     lengths = np.linalg.norm(cross, axis=1)
     underside = float(lengths[cross[:, 2] < -lengths * 1e-6].sum() / 2)
     edges = float(lengths[np.abs(cross[:, 2]) <= lengths * 1e-6].sum() / 2)
-    if kind == 'column':
+    if kind in ('column', 'foundation'):
         underside = 0.0
     formwork = underside + edges
     if formwork <= 0:
         return {}
     result = {'underside_m2': underside,
               'edges_m2': edges, 'formwork_m2': formwork}
-    if kind in ('slab', 'flight'):
+    if kind in ('slab', 'landing', 'flight'):
         from .stair_formwork import horizontal_projection
         result.update(horizontal_projection(vertices, np.asarray(faces).reshape(-1, 3)))
     return result
@@ -1360,22 +1369,44 @@ def warm_formwork_surface_cache(model, elements=None):
         return
     kinds = {e.id(): _surface_formwork_kind(e.is_a(), e.Name, e.ObjectType) for e in selected}
     settings = ifcopenshell.geom.settings()
-    settings.set(settings.USE_WORLD_COORDS, True)
+    # One local SI mesh serves volume/dimensions and world-space formwork.
+    # Keeping the original local axes matters for rotated columns and beams.
+    settings.set(settings.USE_WORLD_COORDS, False)
+    settings.set(settings.CONVERT_BACK_UNITS, False)
+    from ifcopenshell.util.shape import get_shape_matrix
+    from ifcopenshell.util.unit import calculate_unit_scale
+    from .ifc_geometry_quantities import reuse_mesh
+    by_id = {element.id(): element for element in selected}
+    unit_scale = calculate_unit_scale(model)
+    workers = min(8, os.cpu_count() or 1)
+    started = time.perf_counter()
+    logger.info('Геометрия опалубки: %d элементов, потоков: %d', len(selected), workers)
     try:
-        iterator = ifcopenshell.geom.iterator(settings, model, min(4, os.cpu_count() or 1), include=selected)
+        iterator = ifcopenshell.geom.iterator(settings, model, workers, include=selected)
         if not iterator.initialize():
             return
         count = 0
+        last_progress = started
         while True:
             shape = iterator.get()
-            result = _surface_formwork_from_mesh(shape.geometry.verts, shape.geometry.faces, kinds[shape.id])
+            local_vertices = np.asarray(shape.geometry.verts).reshape(-1, 3)
+            matrix = get_shape_matrix(shape)
+            world_vertices = local_vertices @ matrix[:3, :3].T + matrix[:3, 3]
+            result = _surface_formwork_from_mesh(world_vertices, shape.geometry.faces, kinds[shape.id])
             if result:
+                # Same world bounds as CONVERT_BACK_UNITS=True, without a
+                # second engine call when the perimeter/depth QTO is absent.
+                result['_bbox_native'] = tuple(np.ptp(world_vertices, axis=0) / unit_scale)
                 cache[shape.id] = result
+            reuse_mesh(by_id[shape.id], local_vertices, shape.geometry.faces)
             count += 1
-            if count % 500 == 0:
-                logger.info('Геометрия опалубки: %d из %d элементов', count, len(selected))
+            now = time.perf_counter()
+            if count % 100 == 0 or now - last_progress >= 10:
+                logger.info('Геометрия опалубки: %d из %d элементов, %.1f с', count, len(selected), now - started)
+                last_progress = now
             if not iterator.next():
                 break
+        logger.info('Геометрия опалубки: готово %d элементов за %.1f с', count, time.perf_counter() - started)
     except Exception as exc:
         logger.debug('Пакетная геометрия опалубки: %s; оставшиеся элементы вычисляются отдельно', exc)
 
@@ -1386,7 +1417,7 @@ def _compute_surface_formwork_quantities(element):
     Columns use vertical faces. Floors, beams and flights also include
     underside faces. Precast elements and foundation slabs use other rules.
     """
-    kind = _surface_formwork_kind(element.is_a(), getattr(element, 'Name', ''), getattr(element, 'ObjectType', ''))
+    kind = _surface_formwork_kind(getattr(element, 'is_a', lambda: '')(), getattr(element, 'Name', ''), getattr(element, 'ObjectType', ''))
     if kind is None:
         return {}
     model = getattr(element, 'file', None)
@@ -1453,7 +1484,7 @@ def _compute_formwork_quantities(element):
 
 def enrich_formwork_quantities(row, element):
     """Use the same per-element perimeter/depth fallback as zero_step."""
-    if row.get("IfcClass") not in ("IfcSlab", "IfcStairFlight", "IfcWall", "IfcWallStandardCase", "IfcBeam", "IfcColumn"):
+    if row.get("IfcClass") not in ("IfcSlab", "IfcStairFlight", "IfcWall", "IfcWallStandardCase", "IfcBeam", "IfcColumn", "IfcFooting"):
         return row
     if (row.get('IfcClass') in ('IfcWall', 'IfcWallStandardCase')
             and _surface_formwork_kind(row.get('IfcClass'), row.get('Name'), row.get('ObjectType')) != 'column'):
@@ -1462,7 +1493,7 @@ def enrich_formwork_quantities(row, element):
         return row
     if (_surface_formwork_kind(row.get('IfcClass'), row.get('Name'), row.get('ObjectType'))
             and (not row.get('QTO_geom::Площадь_опалубки_м2')
-                 or (_surface_formwork_kind(row.get('IfcClass'), row.get('Name'), row.get('ObjectType')) in ('slab', 'flight')
+                 or (_surface_formwork_kind(row.get('IfcClass'), row.get('Name'), row.get('ObjectType')) in ('slab', 'landing', 'flight')
                      and 'QTO_geom::Горизонтальная_проекция_м2' not in row))):
         surface = _compute_surface_formwork_quantities(element)
         if surface:

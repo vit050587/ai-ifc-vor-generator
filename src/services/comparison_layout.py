@@ -211,7 +211,13 @@ def typical_views(typical):
         if has_quantity:
             populated.add(index)
             populated.update(record['ancestors'])
-        if has_quantity and row.get('isDifferent', row.get('status') != 'matched'):
+        # The first view shows observed deviations in paired positions only.
+        # Missing positions/data and equal quantities remain in the full view.
+        paired = row and bool(row.get('generatedWork') and row.get('customerWork'))
+        delta = row.get('difference') if row else None
+        deviation = (delta is not None and abs(delta) >= 1e-6) or (
+            row and (row.get('parameterComparison') or {}).get('status') == 'mismatch')
+        if paired and deviation:
             different.add(index)
             different.update(record['ancestors'])
     full = book.copy_worksheet(sheet)
@@ -318,6 +324,20 @@ def typical_views(typical):
                     cell.value = value(row) or None
                     cell.data_type = 's'
                     cell.alignment = copy(target.cell(number, 9).alignment)
+        from .vor_generation.rates import HEADERS as RATE_HEADERS
+        for column, field, title in zip(range(16, 21), ('code', 'title', 'unit', 'quantity', 'source'), RATE_HEADERS):
+            copy_cell_style(target.cell(2, 8), target.cell(2, column))
+            target.cell(2, column, title)
+            target.column_dimensions[get_column_letter(column)].width = 65 if field == 'title' else 28
+            for number, index in enumerate(indices, 1):
+                row = records[index]['comparison']
+                if row:
+                    cell = target.cell(number, column)
+                    copy_cell_style(target.cell(number, 8), cell)
+                    cell.value = (row.get('generatedRates') or {}).get(field)
+                    if isinstance(cell.value, str): cell.data_type = 's'
+                    cell.alignment = copy(target.cell(number, 9).alignment)
+                    if field == 'quantity': cell.number_format = '0.00000###'
         if include_ai:
             from .comparison_ai_reason import reason_text
             target.cell(2, 15).value = 'Обоснование ИИ'
@@ -350,7 +370,7 @@ def typical_views(typical):
         for column in ('D', 'E', 'F'):
             target.column_dimensions[column].width = 24
         if target.print_area:
-            target.print_area = f"A1:{'O' if include_ai else 'N'}{target.max_row}"
+            target.print_area = f'A1:T{target.max_row}'
     customer.close()
     book.active = 0
     return book

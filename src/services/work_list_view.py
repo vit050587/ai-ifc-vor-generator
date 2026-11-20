@@ -35,6 +35,10 @@ def ensure_current(path):
                     current = not any(re.search(r'\[(?:Высота от земли:|Этажи:)', str(row[1] or '')) or (row[0] and (str(row[4] or '').startswith('Расчётные данные:') or str(row[4]).lower() == 'nan')) for row in rows)
         finally:
             book.close()
+        from .drawing_provenance import load_context
+        if load_context(path.parent):
+            # Drawing sources also refresh historical public views.
+            current = False
         if not current:
             build(path)
 

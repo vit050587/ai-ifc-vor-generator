@@ -1291,172 +1291,45 @@ def _is_foundation_plate(name, object_type=''):
 
 
 def _surface_formwork_kind(ifc_class, name, object_type=''):
-    text = f'{name or ""} {object_type or ""}'.lower()
-    if 'сборн' in text:
-        return None
-    if ifc_class == 'IfcColumn':
-        return 'column'
-    if ifc_class == 'IfcBeam':
-        return 'beam'
-    if ifc_class == 'IfcStairFlight':
-        return 'flight'
-    if ifc_class == 'IfcSlab' and not _is_foundation_plate(name, object_type):
-        if any(word in text for word in ('перекрыт', 'покрыти', 'площадк', 'landing')):
-            return 'slab'
-    return None
+    """Use the service-wide quantity rule; preserve this module API."""
+    from ..ifc_raw_dump import _surface_formwork_kind as shared
+    return shared(ifc_class, name, object_type)
 
 
 def _surface_formwork_from_mesh(verts, faces, kind):
-    vertices = np.asarray(verts).reshape(-1, 3)
-    triangles = vertices[np.asarray(faces).reshape(-1, 3)]
-    cross = np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0])
-    lengths = np.linalg.norm(cross, axis=1)
-    underside = float(lengths[cross[:, 2] < -lengths * 1e-6].sum() / 2)
-    edges = float(lengths[np.abs(cross[:, 2]) <= lengths * 1e-6].sum() / 2)
-    if kind == 'column':
-        underside = 0.0
-    formwork = underside + edges
-    if formwork <= 0:
-        return {}
-    return {'underside_m2': underside,
-            'edges_m2': edges, 'formwork_m2': formwork}
+    """Use the service-wide quantity rule; preserve this module API."""
+    from ..ifc_raw_dump import _surface_formwork_from_mesh as shared
+    return shared(verts, faces, kind)
 
 
 def warm_formwork_surface_cache(model, elements=None):
-    """Batch IFC geometry on the engine's workers; reuse it in both exports."""
-    if not isinstance(model, ifcopenshell.file):
-        return
-    cache = _FORMWORK_SURFACE_CACHE.setdefault(model, {})
-    selected = [e for e in (elements if elements is not None else model.by_type('IfcElement'))
-                if e.id() not in cache and _surface_formwork_kind(e.is_a(), getattr(e, 'Name', ''), getattr(e, 'ObjectType', ''))]
-    if not selected:
-        return
-    kinds = {e.id(): _surface_formwork_kind(e.is_a(), e.Name, e.ObjectType) for e in selected}
-    settings = ifcopenshell.geom.settings()
-    settings.set(settings.USE_WORLD_COORDS, True)
-    try:
-        iterator = ifcopenshell.geom.iterator(settings, model, min(4, os.cpu_count() or 1), include=selected)
-        if not iterator.initialize():
-            return
-        count = 0
-        while True:
-            shape = iterator.get()
-            result = _surface_formwork_from_mesh(shape.geometry.verts, shape.geometry.faces, kinds[shape.id])
-            if result:
-                cache[shape.id] = result
-            count += 1
-            if count % 500 == 0:
-                logger.info('Геометрия опалубки: %d из %d элементов', count, len(selected))
-            if not iterator.next():
-                break
-    except Exception as exc:
-        logger.debug('Пакетная геометрия опалубки: %s; оставшиеся элементы вычисляются отдельно', exc)
+    """Use the service-wide quantity rule; preserve this module API."""
+    from ..ifc_raw_dump import warm_formwork_surface_cache as shared
+    return shared(model, elements)
 
 
 def _compute_surface_formwork_quantities(element):
-    """Mesh underside and vertical faces; walking/top faces are excluded.
-
-    Columns use vertical faces. Floors, beams and flights also include
-    underside faces. Precast elements and foundation slabs use other rules.
-    """
-    kind = _surface_formwork_kind(element.is_a(), getattr(element, 'Name', ''), getattr(element, 'ObjectType', ''))
-    if kind is None:
-        return {}
-    model = getattr(element, 'file', None)
-    cache = _FORMWORK_SURFACE_CACHE.setdefault(model, {}) if isinstance(model, ifcopenshell.file) else None
-    entity_id = element.id() if cache is not None else None
-    if cache is not None and entity_id in cache:
-        return dict(cache[entity_id])
-    try:
-        settings = ifcopenshell.geom.settings()
-        settings.set(settings.USE_WORLD_COORDS, True)
-        shape = ifcopenshell.geom.create_shape(settings, element)
-        result = _surface_formwork_from_mesh(shape.geometry.verts, shape.geometry.faces, kind)
-        if cache is not None:
-            cache[entity_id] = result
-        return dict(result)
-    except Exception as exc:
-        logger.debug('Не удалось получить грани опалубки %s: %s', getattr(element, 'GlobalId', '?'), exc)
-        return {}
+    """Use the service-wide quantity rule; preserve this module API."""
+    from ..ifc_raw_dump import _compute_surface_formwork_quantities as shared
+    return shared(element)
 
 
 def _compute_formwork_contour_quantities(element):
-    """Outer footprint perimeter of a foundation slab, excluding inner openings.
-
-    Project the actual IFC mesh onto XY and dissolve its triangles. Bounding
-    boxes change the outline of rotated and irregular plates; vertical faces
-    also include recesses and openings, so neither gives the outer perimeter.
-    Geometry engine coordinates are in metres, independently of IFC units.
-    """
-    from shapely.geometry import Polygon
-    from shapely.ops import unary_union
-
-    try:
-        settings = ifcopenshell.geom.settings()
-        settings.set(settings.USE_WORLD_COORDS, True)
-        shape = ifcopenshell.geom.create_shape(settings, element)
-        vertices = np.asarray(shape.geometry.verts).reshape(-1, 3)
-        faces = np.asarray(shape.geometry.faces).reshape(-1, 3)
-        triangles = vertices[faces]
-        cross = np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0])
-        projected = [Polygon(triangle[:, :2]) for triangle, normal in zip(triangles, cross)
-                     if abs(normal[2]) > 1e-10]
-        if not projected:
-            return {}
-        footprint = unary_union(projected)
-        polygons = [footprint] if footprint.geom_type == 'Polygon' else list(footprint.geoms)
-        perimeter = sum(p.exterior.length for p in polygons if p.geom_type == 'Polygon')
-        depth = float(np.ptp(vertices[:, 2]))
-        if perimeter <= 0 or depth <= 0:
-            return {}
-        return {'perimeter_mm': perimeter * 1000, 'depth_mm': depth * 1000, 'method': 'outer_contour'}
-    except Exception as exc:
-        logger.debug('Не удалось получить внешний контур плиты %s: %s', getattr(element, 'GlobalId', '?'), exc)
-        return {}
+    """Use the service-wide quantity rule; preserve this module API."""
+    from ..ifc_raw_dump import _compute_formwork_contour_quantities as shared
+    return shared(element)
 
 
 def _compute_formwork_quantities(element):
-    if (getattr(element, 'is_a', lambda: '')() == 'IfcSlab'
-            and _is_foundation_plate(getattr(element, 'Name', ''), getattr(element, 'ObjectType', ''))):
-        contour = _compute_formwork_contour_quantities(element)
-        if contour:
-            return contour
-    return _compute_formwork_bbox_quantities(element)
+    """Use the service-wide quantity rule; preserve this module API."""
+    from ..ifc_raw_dump import _compute_formwork_quantities as shared
+    return shared(element)
 
 
 def enrich_formwork_quantities(row, element):
-    """Use the same per-element perimeter/depth fallback as zero_step."""
-    if row.get("IfcClass") not in ("IfcSlab", "IfcStairFlight", "IfcWall", "IfcWallStandardCase", "IfcBeam", "IfcColumn"):
-        return row
-    if row.get('IfcClass') in ('IfcWall', 'IfcWallStandardCase'):
-        for key in ('QTO_geom::Площадь_опалубки_м2', 'QTO_geom::Площадь_низа_м2', 'QTO_geom::Площадь_торцов_м2'):
-            row.pop(key, None)
-        return row
-    if (_surface_formwork_kind(row.get('IfcClass'), row.get('Name'), row.get('ObjectType'))
-            and not row.get('QTO_geom::Площадь_опалубки_м2')):
-        surface = _compute_surface_formwork_quantities(element)
-        if surface:
-            row['QTO_geom::Площадь_опалубки_м2'] = surface['formwork_m2']
-            row['QTO_geom::Площадь_низа_м2'] = surface['underside_m2']
-            row['QTO_geom::Площадь_торцов_м2'] = surface['edges_m2']
-    if row.get('IfcClass') not in ('IfcSlab', 'IfcStairFlight'):
-        return row
-    def positive(key):
-        try:
-            return float(row.get(key) or 0) > 0
-        except (ValueError, TypeError):
-            return False
-    foundation = _is_foundation_plate(row.get('Name'), row.get('ObjectType'))
-    perimeter = positive("QTO::Qto_SlabBaseQuantities::Perimeter") or positive('QTO_geom::Внешний_периметр_мм') or (not foundation and positive("QTO_bbox::Периметр_мм"))
-    depth = positive("QTO::Qto_SlabBaseQuantities::Depth") or positive("QTO_bbox::Толщина_мм")
-    if not perimeter or not depth:
-        values = _compute_formwork_quantities(element)
-        if not perimeter and values.get("perimeter_mm"):
-            key = 'QTO_geom::Внешний_периметр_мм' if values.get('method') == 'outer_contour' else 'QTO_bbox::Периметр_мм'
-            row[key] = values["perimeter_mm"]
-        if not depth and values.get("depth_mm"):
-            row["QTO_bbox::Толщина_мм"] = values["depth_mm"]
-    return row
+    """Use the service-wide quantity rule; preserve this module API."""
+    from ..ifc_raw_dump import enrich_formwork_quantities as shared
+    return shared(row, element)
 
 
 def _height_geometry_complete(element):

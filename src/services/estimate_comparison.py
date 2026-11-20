@@ -10,9 +10,7 @@ from collections import Counter
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Alignment, Font
-from openpyxl.utils import get_column_letter
+from openpyxl import load_workbook
 
 from .works_comparison.units import unit_and_factor
 from .vor_generation import mapping
@@ -45,6 +43,16 @@ def norm(value):
 def known_sum(values):
     values = [number(value) for value in values]
     return sum(values, Decimal(0)) if values and all(value is not None for value in values) else None
+
+
+def cost_coverage(positions):
+    """Available amounts are a labelled partial sum, never a complete estimate."""
+    positions = list(positions)
+    amounts = [number(p.get('total')) for p in positions]
+    available = [value for value in amounts if value is not None]
+    return {'knownTotal': sum(available, Decimal(0)) if available or not positions else None,
+            'missing': sum(value is None for value in amounts),
+            'partial': sum(bool(p.get('incomplete')) for p in positions)}
 
 
 def package(record, children=()):
@@ -141,7 +149,24 @@ def read_xlsx(path):
                 line = ' '.join(str(value) for value in values if value is not None)
                 match = re.search(r'(?:текущий период тсн|период цен|период расчета)\s*:\s*(.+)', line, re.I)
                 if match: periods.add(match[1].strip())
-                candidate = _schema(values)
+                # Section titles may precede table headers or use dotted numbering.
+                # Inspect all text cells because a numbering column can come first.
+                has_rate = any(re.fullmatch(r'\d+\.\d+-\d+-\d+(?:[.,]\d+)?', str(v or '').strip()) for v in values)
+                heading = next((str(v).strip() for v in values if isinstance(v, str) and
+                                re.match(r'^(?:(?:под)?раздел[\s.:]|(?:подземная|надземная)\s+часть|автостоянка\s*$|часть здания:)', v.strip(), re.I)), None)
+                if heading and not has_rate:
+                    lower = norm(heading)
+                    if lower.startswith('подраздел'):
+                        hierarchy = [h for h in hierarchy if not norm(h).startswith('подраздел')] + [heading]
+                    elif lower.startswith('раздел'):
+                        hierarchy = [h for h in hierarchy if not norm(h).startswith(('раздел', 'подраздел'))] + [heading]
+                    else:
+                        hierarchy = [heading]
+                    group, active = '', None
+                    continue
+                from .estimate_revisions import schema as revision_schema
+                revision = revision_schema(values, rows[row_index]) if row_index < len(rows) else None
+                candidate = revision or _schema(values)
                 if candidate is None and row_index < len(rows) and any('наименован' in norm(v) for v in values):
                     candidate = _schema([' '.join(str(v or '') for v in pair) for pair in zip(values, rows[row_index])])
                 if candidate:
@@ -152,7 +177,12 @@ def read_xlsx(path):
                     continue
                 def cell(key):
                     index = schema.get(key)
-                    return values[index] if index is not None and index < len(values) else None
+                    value = values[index] if index is not None and index < len(values) else None
+                    if key in ('code', 'name') and (value is None or not str(value).strip()):
+                        previous = schema.get(key + '_before')
+                        if previous is not None and previous < len(values):
+                            return values[previous]
+                    return value
                 code, name = str(cell('code') or '').strip(), str(cell('name') or '').strip()
                 if code and not name and not cell('unit') and number(cell('quantity')) is None:
                     code = ''  # A full-width heading can occupy the code column.
@@ -181,14 +211,7 @@ def read_xlsx(path):
                             active = None
                             continue
                     first = next((str(v).strip() for v in values if isinstance(v, str) and v.strip()), '')
-                    if first.startswith(('Раздел ', 'Подраздел ')) or 'часть здания' in first.lower() or first.startswith('Раздел: '):
-                        if first.startswith('Раздел '): hierarchy = hierarchy[:1] + [first]
-                        elif first.startswith('Подраздел '): hierarchy = hierarchy[:2] + [first]
-                        elif 'часть здания' in first.lower(): hierarchy = [first]
-                        else: hierarchy, group = [], first[8:]
-                        if not first.startswith('Раздел: '): group = ''
-                        active = None
-                    elif first and (not name or all(value is None or str(value).strip() == name for value in values)) and not title.startswith(('итого', 'всего')):
+                    if first and (not name or all(value is None or str(value).strip() == name for value in values)) and not title.startswith(('итого', 'всего')):
                         group = first
                         active = None
                     continue
@@ -204,7 +227,8 @@ def read_xlsx(path):
                             'factors':({key:cell(key) for key in ('correction','index','winter_current','winter_base') if key in schema and cell(key) not in (None,'')} if not block_layout else {}),
                             'incomplete':False,
                             'scope':' > '.join([*hierarchy, *([group] if group else [])]), 'resources':[],
-                            'source':{'file':Path(path).name, 'sheet':sheet.title, 'row':row_index}}
+                            'source':{'file':Path(path).name, 'sheet':sheet.title, 'row':row_index,
+                                      'quantityColumn':schema['quantity'] + 1, 'costColumn':schema['total'] + 1}}
                 if block_layout and code.startswith('1.') and active is not None:
                     active['resources'].append(position)
                 else:
@@ -255,6 +279,9 @@ def _scope(position):
 
 def _compatible(a, b):
     from .construction_method import construction_method as detect
+    # An unassigned position cannot borrow a known building part from its peer.
+    if building_part(a) != building_part(b):
+        return False
     left_method = detect({'Name': a.get('scope', '') + ' ' + a['name']})
     right_method = detect({'Name': b.get('scope', '') + ' ' + b['name']})
     if left_method in ('monolithic', 'precast') and right_method in ('monolithic', 'precast') and left_method != right_method:
@@ -265,6 +292,17 @@ def _compatible(a, b):
         left, right = detector(a.get('scope', '') + ' ' + a['name']), detector(b.get('scope', '') + ' ' + b['name'])
         if left and right and left != right: return False
     return True
+
+
+def building_part(position):
+    text = str(position.get('scope') or '') + ' ' + str(position.get('name') or '')
+    part = mapping.detect_part(text)
+    if part is None:
+        match = re.search(r'\b(ниже|выше)\s+отм(?:етки)?\.?\s*[+−-]?0[.,]0+\b', text, re.I)
+        if match:
+            part = 'underground' if match[1].lower() == 'ниже' else 'above'
+    return {'underground': 'Подземная часть', 'above': 'Надземная часть',
+            'parking': 'Автостоянка'}.get(part, 'Часть здания не указана')
 
 
 def _aggregate(positions):
@@ -280,6 +318,7 @@ def _aggregate(positions):
         for field in ('total', 'quantity'): record[field] = known_sum(row[field] for row in members)
         record['incomplete'] = any(row.get('incomplete') for row in members)
         record['source'] = {'positions':[row['source'] for row in members]}
+        record['resources'] = [child for row in members for child in row.get('resources', [])]
         record['components'] = {key:known_sum(row['components'].get(key) for row in members)
                                 for key in set().union(*(row['components'] for row in members))}
         record['factors'] = {}
@@ -307,27 +346,33 @@ def compare_documents(generated, customer):
         elif not b: status = 'multiple_candidates' if ambiguous else 'only_generated'
         else:
             qg, qc, tg, tc = (number(v) for v in (a['quantity'], b['quantity'], a['total'], b['total']))
+            # Coefficients can be compared even when money or its price basis is missing.
+            for key in set(a['factors']) & set(b['factors']):
+                ag, bc = a['factors'][key], b['factors'][key]
+                if _canonical_factors(ag) != _canonical_factors(bc):
+                    result['factorDifferences'][key] = {'generated': ag, 'customer': bc}
             for field in ('components', 'factors'):
                 for key in set(a[field]) | set(b[field]):
                     for side, position in (('generated', a), ('customer', b)):
                         if position[field].get(key) is None:
                             result['missingDetails'].append({'side':side, 'field':field, 'key':key})
             result['quantityDifference'] = qc-qg if qc is not None and qg is not None else None
+            # Show the arithmetic difference of declared amounts even when their
+            # price periods are unknown/different or the amounts are incomplete.
+            # Status and coverage continue to expose those limitations separately.
+            result['costDifference'] = tc-tg if tg is not None and tc is not None else None
+            for key in set(a['components']) & set(b['components']):
+                ag, bc = number(a['components'][key]), number(b['components'][key])
+                if ag is not None and bc is not None:
+                    result['componentDifferences'][key] = bc-ag
             if tg is None or tc is None or a.get('incomplete') or b.get('incomplete'):
                 status = 'missing_cost'
             elif basis_different:
                 status = 'price_basis_difference'
             else:
-                result['costDifference'] = tc-tg if basis_known else None
                 if basis_known and qg not in (None, 0) and qc not in (None, 0):
                     result['quantityEffect'] = (qc-qg)*(tg/qg)
                     result['priceEffect'] = (tc-tg)-result['quantityEffect']
-                for key in set(a['components']) & set(b['components']):
-                    ag, bc = number(a['components'][key]), number(b['components'][key])
-                    if ag is not None and bc is not None: result['componentDifferences'][key] = bc-ag
-                for key in set(a['factors']) & set(b['factors']):
-                    ag, bc = a['factors'][key], b['factors'][key]
-                    if _canonical_factors(ag) != _canonical_factors(bc): result['factorDifferences'][key] = {'generated':ag,'customer':bc}
                 different = abs(tc-tg) > Decimal('.01') or (result['quantityDifference'] is not None and abs(result['quantityDifference']) > Decimal('.000001'))
                 different |= bool(result['factorDifferences']) or any(abs(v)>Decimal('.01') for v in result['componentDifferences'].values())
                 status = ('different' if different else 'missing_quantity' if qg is None or qc is None else 'matched') if basis_known else 'price_basis_unknown'
@@ -351,10 +396,14 @@ def compare_documents(generated, customer):
     for i,b in enumerate(theirs):
         if i not in used: append(None,b)
     total_g, total_c = known_sum(p['total'] for p in ours), known_sum(p['total'] for p in theirs)
-    return {'version':1, 'generatedFile':generated.get('file'), 'customerFile':customer.get('file'),
+    coverage_g, coverage_c = cost_coverage(ours), cost_coverage(theirs)
+    available_g, available_c = coverage_g['knownTotal'], coverage_c['knownTotal']
+    return {'version':3, 'generatedFile':generated.get('file'), 'customerFile':customer.get('file'),
             'generatedPeriod':generated.get('period'), 'customerPeriod':customer.get('period'),
             'priceBasisComparable':basis_known, 'rows':rows,
             'summary':{'byStatus':dict(Counter(r['status'] for r in rows)), 'generatedTotal':total_g, 'customerTotal':total_c,
+                       'generatedCostCoverage':coverage_g, 'customerCostCoverage':coverage_c,
+                       'knownDifference':available_c-available_g if available_g is not None and available_c is not None else None,
                        'difference':total_c-total_g if total_g is not None and total_c is not None and basis_known
                        and not any(p.get('incomplete') for p in [*ours,*theirs]) else None}}
 
@@ -367,46 +416,8 @@ def _canonical_factors(value):
 
 
 def write_report(result, path):
-    book = Workbook()
-    summary = book.active; summary.title = 'Итоги'
-    summary.append(['Показатель','Наша ЛСР','Смета заказчика'])
-    summary.append(['Файл',result['generatedFile'],result['customerFile']])
-    summary.append(['Период цен',result['generatedPeriod'],result['customerPeriod']])
-    summary.append(['Итого по позициям',result['summary']['generatedTotal'],result['summary']['customerTotal']])
-    summary.append(['Разница при сопоставимом периоде',result['summary']['difference']])
-    if not result['priceBasisComparable']:
-        summary.append(['Уровень или период цен различается либо не указан. Итоги показаны отдельно; общий вывод о равенстве стоимости не формируется.'])
-    sheet = book.create_sheet('Сравнение смет')
-    sheet.append(['Раздел / конструкция','Шифр нашей ЛСР','Шифр заказчика','Работа','Ед. без множителя','Количество нашей ЛСР',
-                  'Количество заказчика','Разница количества','Стоимость нашей ЛСР','Стоимость заказчика','Разница стоимости',
-                  'Влияние количества','Влияние стоимости единицы','Результат','Источник нашей ЛСР','Источник заказчика'])
-    detail = book.create_sheet('Начисления и коэффициенты')
-    detail.append(['Шифр','Работа','Разница ЗП','Разница ЭМ','Разница МР','Разница НР','Разница СП','Различия коэффициентов и индексов',
-                   'Недостающие сведения для подробного сравнения', 'Состав затрат нашей ЛСР', 'Состав затрат заказчика',
-                   'Коэффициенты нашей ЛСР', 'Коэффициенты заказчика', 'Ресурсы нашей ЛСР', 'Ресурсы заказчика'])
-    for row in result['rows']:
-        a,b = row['generated'] or {}, row['customer'] or {}
-        sheet.append([a.get('scope') or b.get('scope'),a.get('code'),b.get('code'),a.get('name') or b.get('name'),a.get('unit') or b.get('unit'),
-                      a.get('quantity'),b.get('quantity'),row['quantityDifference'],a.get('total'),b.get('total'),row['costDifference'],
-                      row['quantityEffect'],row['priceEffect'],LABELS[row['status']],json.dumps(a.get('source') or {},ensure_ascii=False),json.dumps(b.get('source') or {},ensure_ascii=False)])
-        detail.append([a.get('code') or b.get('code'),a.get('name') or b.get('name'),
-                       *[row['componentDifferences'].get(k) for k in ('labor','machines','materials','overhead','profit')],
-                       *[json.dumps(value,ensure_ascii=False,default=str) for value in (
-                           row['factorDifferences'],row['missingDetails'],a.get('components'),b.get('components'),
-                           a.get('factors'),b.get('factors'),a.get('resources'),b.get('resources'))]])
-    for current in book:
-        for cell in current[1]: cell.font = Font(bold=True)
-        for i in range(1,current.max_column+1): current.column_dimensions[get_column_letter(i)].width = 30
-        for cells in current:
-            for cell in cells:
-                if isinstance(cell.value,Decimal): cell.value=float(cell.value);cell.number_format='#,##0.00######'
-                if isinstance(cell.value,str): cell.data_type='s'
-                cell.alignment=Alignment(wrap_text=True,vertical='top')
-            current.row_dimensions[cells[0].row].height=65
-        current.auto_filter.ref=current.dimensions
-    sheet.column_dimensions['D'].width=65
-    detail.column_dimensions['H'].width=80
-    book.save(path);book.close()
+    from .estimate_comparison_report import write
+    write(result, path)
 
 
 def build(folder, customer_path, customer_name=None):

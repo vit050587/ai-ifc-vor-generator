@@ -908,6 +908,10 @@ def get_element_info(element, processing_type: str = "KR"):
             info['Геометрия_Площадь_опалубки_м2'] = surface['formwork_m2']
             info['Геометрия_Площадь_низа_м2'] = surface['underside_m2']
             info['Геометрия_Площадь_торцов_м2'] = surface['edges_m2']
+            if 'projection_m2' in surface:
+                from ..stair_formwork import NORMAL_NET, NORMAL_GROSS
+                info[NORMAL_NET] = surface['projection_m2']
+                info[NORMAL_GROSS] = surface['gross_projection_m2']
     if ifc_class in ('IfcSlab', 'IfcStairFlight'):
         perim_present = _has_positive_qto_value(
             info, ('Длина_Perimeter_мм',
@@ -1935,7 +1939,8 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
     df['Высота, мм'] = df.apply(lambda row: get_geometry_value(row, 'ВЫСОТА'), axis=1)
     df['Периметр, мм'] = df.apply(lambda row: get_geometry_value(row, 'ПЕРИМЕТР', convert_to_m=False), axis=1)
     df['Площадь, м2'] = df.apply(lambda row: get_geometry_value(row, 'ПЛОЩАДЬ'), axis=1)
-    df['Объём, м3'] = df.apply(lambda row: get_geometry_value(row, 'ОБЪЕМ', convert_to_m3=True), axis=1)
+    from ..ifc_quantities import resolve_volume
+    df['Объём, м3'] = df.apply(lambda row: resolve_volume(row).value, axis=1)
     df['ReinforcementVolumeRatio'] = df.apply(lambda row: get_geometry_value(row, 'ReinforcementVolumeRatio'), axis=1)
     
     # В pandas 3.0 столбцы из одних строк (например, '-' из get_geometry_value)
@@ -2122,6 +2127,7 @@ def zero_step(ifc_file, output_folder=None, write_full_data=True, processing_typ
 
     from .work_height import HEIGHT_FIELDS
     smetchik_cols.extend(col for col in HEIGHT_FIELDS if col in df.columns)
+    smetchik_cols.extend(col for col in df.columns if str(col).startswith(('Количество::', 'ТСН::', 'Свойство::ТСН::')))
 
     existing_cols = [col for col in smetchik_cols if col in df.columns]
 

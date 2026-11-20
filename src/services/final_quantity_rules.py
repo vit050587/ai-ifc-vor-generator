@@ -167,30 +167,78 @@ def apply_api_rebar(entries, run_dir, raw_rows=None):
 
 
 def summer_curing(entries):
-    """Replace winter rates before price enrichment; do not reuse winter prices."""
-    from .perechen_pipeline import _local_rate
-    local = _local_rate('3.6-98-1') or {}
+    """Compatibility entry point: preserve the project-selected curing norm."""
     for entry in entries:
-        works, seen = [], False
         for work in entry.get('selected_works') or []:
-            if str(work.get('pressmark') or '').startswith(('3.6-61-', '3.6-98-')):
-                if seen:
-                    continue
-                seen = True
-                if work.get('pressmark') != '3.6-98-1':
-                    quantity = dict(entry.get('group_quantity') or work.get('quantity') or {})
-                    work = {'pressmark': '3.6-98-1', 'title': local.get('title') or 'Уход за бетоном в летний период',
-                            'unit_of_measure': '1 м3', 'work_id': local.get('id'), 'quantity': quantity,
-                            **{dst: local.get(src) for src, dst in (('salary', 'salary'), ('curSalary', 'cur_salary'),
-                                ('operationOfMachines', 'operation_of_machines'), ('curOperationOfMachines', 'cur_operation_of_machines'),
-                                ('costOfMaterialResources', 'cost_of_material_resources'), ('curCostOfMaterialResources', 'cur_cost_of_material_resources'))},
-                            'reason': 'Уход за бетоном всегда в летний период (правило проекта)'}
-            works.append(work)
-        entry['selected_works'] = works
+            code = str(work.get('pressmark') or '')
+            if code not in ('3.6-61-1', '3.6-98-1'):
+                continue
+            quantity = dict(work.get('quantity') or {})
+            if code == '3.6-61-1':
+                # Covered surface is not concrete volume or formwork surface.
+                work.setdefault('unit_of_measure', '1 м2')
+                quantity.pop('volume_m3', None)
+                if 'covered_area_m2' in quantity:
+                    quantity['area_m2'] = quantity['covered_area_m2']
+            else:
+                work.setdefault('unit_of_measure', '1 м3')
+                quantity.pop('area_m2', None)
+                if 'volume_m3' not in quantity:
+                    source = entry.get('group_quantity') or {}
+                    if 'volume_m3' in source:
+                        quantity['volume_m3'] = source['volume_m3']
+            work['quantity'] = quantity
+            work['reason'] = (work.get('reason') or '') + '; ТСН п. 2.12: ' + (
+                'м² укрываемой поверхности' if code == '3.6-61-1' else 'м³ бетона по проекту; п. 1.2.9.2: температура от +5 °C')
+
+
+def refresh_concrete(entries, rows):
+    """Refresh concrete from the same project/net rule used by the VOR."""
+    from .ifc_quantities import resolve_volume
+    for entry in entries:
+        indices = entry.get('source_indices') or []
+        if not indices or any(i < 0 or i >= len(rows) for i in indices):
+            continue
+        if not all(rows[i].get('GlobalId') for i in indices):
+            continue
+        representative = str((entry.get('element') or {}).get('global_id') or '')
+        if representative and representative not in {str(rows[i].get('GlobalId')) for i in indices}:
+            continue
+        measures = [resolve_volume(rows[i]) for i in indices]
+        total = sum(m.value for m in measures if m.value is not None)
+        source = '; '.join(dict.fromkeys(m.source for m in measures if m.source))
+        missing = any(m.value is None for m in measures)
+        estimated = any(m.status == 'estimated' for m in measures)
+        entry.setdefault('group_quantity', {})['volume_m3'] = total
+        entry.setdefault('quantity_sources', {})['volume_m3'] = source
+        for work in entry.get('selected_works') or []:
+            unit = str(work.get('unit_of_measure') or work.get('unit') or '').replace('³', '3')
+            if 'м3' not in unit and 'm3' not in unit:
+                continue
+            if work.get('is_resource'):
+                continue
+            work.setdefault('quantity', {})['volume_m3'] = total
+            if missing:
+                work['quantityStatus'] = 'partial_data' if total else 'missing_data'
+                work['reason'] = 'Неполные данные: ' + source
+            elif estimated:
+                work['quantityStatus'] = 'estimated'
+                work['reason'] = 'Оценка: ' + source
+
+
+def _special_formwork(row, code):
+    from .contact_formwork import contact_area
+    from .stair_formwork import floor_projection
+    if code.startswith(('3.6-116-', '3.6-117-')) or code in (
+            '3.6-119-3', '3.6-119-4', '3.6-130-2', '3.6-130-3', '3.6-140-2', '3.6-140-3'):
+        return contact_area(row, without_openings=True)
+    if code.startswith('3.6-122-'):
+        return floor_projection(row)
+    return None
 
 
 def refresh_formwork(entries, rows):
-    """Recalculate saved group hints from current underside-and-sides/projection rules."""
+    """Recalculate saved group hints from TSN projection/contact rules."""
     from .group_excel import _element_formwork_measure
     for entry in entries:
         indices = entry.get('source_indices') or []
@@ -212,10 +260,30 @@ def refresh_formwork(entries, rows):
         entry.setdefault('quantity_sources', {})['formwork_area'] = '; '.join(dict.fromkeys(src for _, src in measures if src))
         for work in entry.get('selected_works') or []:
             if 'опалуб' in str(work.get('title') or '').lower():
-                work.setdefault('quantity', {})['area_m2'] = area
-                if any(not source for _, source in measures):
-                    work['quantityStatus'] = 'partial_data' if area else 'missing_data'
-                    work['reason'] = 'Недостаточно данных: для перекрытий нет площади низа и боковых поверхностей, для лестниц — проекции; общая площадь не подставляется'
+                code = str(work.get('pressmark') or '')
+                special = [_special_formwork(rows[i], code) for i in indices]
+                selected = special if special and special[0] is not None else measures
+                work_area = sum(value for value, _ in selected if value is not None)
+                work['normative_formwork_area_m2'] = work_area
+                work['normative_formwork_source'] = '; '.join(dict.fromkeys(source for _, source in selected if source))
+                work.setdefault('quantity', {})['area_m2'] = work_area
+                if any(not source for _, source in selected):
+                    work['quantityStatus'] = 'partial_data' if work_area else 'missing_data'
+                    work['reason'] = 'Недостаточно данных: для перекрытий нет горизонтальной проекции без отверстий, для лестниц — проекции; общая площадь не подставляется'
+                elif any('Оценка' in source for _, source in selected):
+                    work['quantityStatus'] = 'estimated'
+                    work['reason'] = '; '.join(source for _, source in selected)
+            if str(work.get('pressmark') or '') == '3.6-136-1':
+                from .ifc_quantities import number
+                # A project schedule is a group quantity, not one count per IFC wall.
+                shields = number(rows[indices[0]].get('ТСН::Щитов_на_этаже'))
+                floors = number(rows[indices[0]].get('ТСН::Этажей_с_ограждением'))
+                if shields is None or floors is None:
+                    work['quantity'] = {}
+                    work['quantityStatus'] = 'missing_data'
+                    work['reason'] = 'ТСН п. 2.17: нужны количество щитов на этаже и число этажей'
+                else:
+                    work['quantity'] = {'count': shields * floors}
 
 
 def slab_partitions(indices, rows):

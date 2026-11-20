@@ -12,8 +12,55 @@ NET = 'QTO_geom::Горизонтальная_проекция_м2'
 GROSS = 'QTO_geom::Горизонтальная_проекция_без_отверстий_м2'
 NORMAL_NET = 'Геометрия_Горизонтальная_проекция_м2'
 NORMAL_GROSS = 'Геометрия_Горизонтальная_проекция_без_отверстий_м2'
-VERSION = 1
+VERSION = 2
 logger = logging.getLogger(__name__)
+
+
+def floor_projection(row):
+    """Horizontal projection without service holes; never bottom + edges."""
+    from .ifc_quantities import number, resolve_volume
+    for key in (GROSS, NORMAL_GROSS, 'QTO::Qto_SlabBaseQuantities::GrossArea',
+                'QTO_Qto_SlabBaseQuantities_Площадь_GrossArea_м2',
+                'Площадь_GrossArea_м2', 'Площадь_GROSS_м2', 'RUS_GrossArea'):
+        value = number(row.get(key))
+        if value is not None:
+            return value, key
+    for key in (NET, NORMAL_NET, 'QTO::Qto_SlabBaseQuantities::NetArea',
+                'QTO_Qto_SlabBaseQuantities_Площадь_NetArea_м2',
+                'Площадь_NetArea_м2', 'Площадь_NET_м2', 'RUS_Area', 'Площадь, м2'):
+        value = number(row.get(key))
+        if value is not None:
+            holes = number(row.get('QTO_geom::Площадь_отверстий_перекрытия_м2'))
+            return value + (holes or 0), ('Оценка горизонтальной проекции: ' + key +
+                (' + площадь отверстий' if holes is not None else '; площадь отверстий неизвестна, требуется проверка'))
+    cls = str(row.get('IfcClass') or row.get('Тип элемента') or '')
+    if cls != 'IfcStairFlight':
+        depth = next((number(row.get(key)) for key in (
+            'QTO::Qto_SlabBaseQuantities::Depth', 'RUS_Thickness', 'Длина_Depth_мм',
+            'QTO_bbox::Толщина_мм') if number(row.get(key))), None)
+        if depth is None:
+            import re
+            match = re.search(r'(\d+(?:[.,]\d+)?)\s*мм', str(row.get('Name') or row.get('Имя') or ''), re.I)
+            depth = float(match.group(1).replace(',', '.')) if match else None
+        volume = resolve_volume(row)
+        if depth and volume.value is not None:
+            return volume.value / (depth / 1000), ('Оценка горизонтальной проекции: объём / толщина; '
+                + volume.source + '; отверстия и переменная толщина требуют проверки')
+    length = number(row.get('RUS_Length', row.get('QTO_bbox::Длина_мм')))
+    width = number(row.get('RUS_Width', row.get('QTO_bbox::Ширина_мм')))
+    if length is not None and width is not None:
+        return length * width / 1e6, 'Оценка горизонтальной проекции: длина × ширина; контур требует проверки'
+    return None, ''
+
+
+def flight_projection(row):
+    from .ifc_quantities import number
+    for key in (NET, NORMAL_NET, 'QTO::Qto_StairFlightBaseQuantities::NetFootprintArea',
+                'RUS_NetFootprintArea'):
+        value = number(row.get(key))
+        if value is not None:
+            return value, key
+    return floor_projection(row)
 
 
 def horizontal_projection(vertices, triangles):
@@ -55,8 +102,9 @@ def hydrate_index(index, raw_path, ifc_path=None):
     comparisons get the same geometry. A content-keyed private cache avoids
     retessellating unchanged originals on each request.
     """
-    members = [element for element in index.elements if element.kind == 'stair'
-               and 'projection_area' not in element.quantities and element.guid]
+    members = [element for element in index.elements if element.kind in ('stair', 'slab')
+               and 'projection_area' not in element.quantities and element.guid
+               and not (element.kind == 'slab' and 'gross_area' in element.quantities)]
     if not members:
         return
     source = find_ifc(raw_path, ifc_path)

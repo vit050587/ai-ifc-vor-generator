@@ -8,7 +8,7 @@ from openpyxl import load_workbook
 from .works_comparison.units import normalize_positions
 from .vor_generation.quantity import source_summary
 
-VERSION = 29
+VERSION = 30
 FILES = ('typical_generated.xlsx', 'typical_customer.xlsx')
 NATIVE_FILES = ('Сформированный_ВОР.xlsx', 'ВОР_заказчика.xlsx')
 
@@ -23,12 +23,12 @@ def read_typical_workbook(path):
         sheet = workbook['ВОР КР_ЖС']
         part = section = subsection = group = parent = parking = component = ''
         result = []
-        for index, values in enumerate(sheet.iter_rows(min_row=4, max_col=8, values_only=True), 4):
+        for index, values in enumerate(sheet.iter_rows(min_row=4, max_col=13, values_only=True), 4):
             # Preserved source-audit rows are not additional construction
             # groups. They must not make an otherwise unique match ambiguous.
             if sheet.row_dimensions[index].hidden:
                 continue
-            number, name, unit, quantity, calculation, reason, parameters, parameter_values = values
+            number, name, unit, quantity, calculation, reason, parameters, parameter_values = values[:8]
             number = str(number).strip() if number is not None else ''
             name = str(name).strip() if name is not None else ''
             if number and not name:
@@ -89,9 +89,10 @@ def read_typical_workbook(path):
                            'unit': normalized_unit, 'quantity': value, 'reason': str(reason or ''),
                            'estimateParameters': str(parameters or ''),
                            'estimateParameterValues': str(parameter_values or ''),
-                           'quantityStatus': 'partial_data' if 'Неполные данные:' in str(reason or '') else 'estimated' if 'Оценка площади поверхностей' in str(reason or '') else 'calculated' if value is not None else 'missing_data',
+                           'quantityStatus': 'partial_data' if 'Неполные данные:' in str(reason or '') else 'estimated' if any(marker in str(reason or '') for marker in ('Оценка', 'не подтверждены проектными данными')) else 'calculated' if value is not None else 'missing_data',
                            'sourceFile': Path(path).name})
             result[-1]['calculation'] = str(calculation or '')
+            result[-1]['rates'] = dict(zip(('code', 'title', 'unit', 'quantity', 'source'), values[8:13]))
         return result
     finally:
         workbook.close()
@@ -292,6 +293,7 @@ def compare_rows(generated, customer):
                            'generatedEstimateParameters': (g or {}).get('estimateParameters', ''),
                            'customerEstimateParameters': (c or {}).get('estimateParameters', ''),
                            'generatedEstimateParameterValues': (g or {}).get('estimateParameterValues', ''),
+                           'generatedRates': (g or {}).get('rates') or {},
                            'customerEstimateParameterValues': (c or {}).get('estimateParameterValues', ''),
                            'generatedElementGroup': (g or {}).get('elementGroup'),
                            'customerElementGroup': (c or {}).get('elementGroup'),
@@ -374,7 +376,7 @@ def build_typical_comparison(folder, models=None, projects=None, raw_paths=(), d
                 return False
             from .ifc_raw_dump import _is_foundation_plate, _surface_formwork_kind
             if (row.get('IfcClass') in ('IfcSlab', 'IfcStairFlight')
-                    and _surface_formwork_kind(row.get('IfcClass'), row.get('Name'), row.get('ObjectType'))
+                    and _surface_formwork_kind(row.get('IfcClass'), row.get('Name'), row.get('ObjectType')) in ('slab', 'landing', 'flight')
                     and 'QTO_geom::Горизонтальная_проекция_м2' not in row):
                 return True
             if (_surface_formwork_kind(row.get('IfcClass'), row.get('Name'), row.get('ObjectType'))
@@ -393,14 +395,18 @@ def build_typical_comparison(folder, models=None, projects=None, raw_paths=(), d
             import ifcopenshell
             from .ifc_raw_dump import enrich_formwork_quantities, warm_formwork_surface_cache
             model = ifcopenshell.open(str(source))
-            warm_formwork_surface_cache(model)
+            selected = []
             for row in missing:
                 try:
                     element = model.by_guid(row['GlobalId'])
                 except RuntimeError:
                     continue
                 if element is not None:
-                    enrich_formwork_quantities(row, element)
+                    selected.append((row, element))
+            # A legacy row must not trigger rebuilding the entire model.
+            warm_formwork_surface_cache(model, [element for _, element in selected])
+            for row, element in selected:
+                enrich_formwork_quantities(row, element)
             del model
         records.extend(rows)
     raw = folder / 'typical_ifc_elements.json'

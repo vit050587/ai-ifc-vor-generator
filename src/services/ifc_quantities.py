@@ -36,6 +36,8 @@ def volume_rank(key):
     name = re.sub(r'[\s_-]', '', key.rsplit('::', 1)[-1])
     if name in ('netvolume', 'чистыйобъем', 'объемнетто'):
         return 0
+    if name == 'rusvolume':
+        return 1
     if name in ('volume', 'объем'):
         return 1 if key.startswith('qto::') else 2
     if key.startswith(('qto_bbox::', 'qto_geom::')) and 'объем' in key:
@@ -57,6 +59,54 @@ def unit_factor(unit):
 
 
 def resolve_volume(row, units=None):
+    from .tsn_quantity_rules import concrete_volume
+    result = _resolve_physical_volume(row, units)
+    if result.value is None and result.status == 'missing_data':
+        result = _substitute_volume(row)
+    return concrete_volume(row, result)
+
+
+def _substitute_volume(row):
+    """Keep legacy substitutes as estimates, separate from measured net volume."""
+    def first(keys):
+        for key in keys:
+            value = number(row.get(key))
+            if value is not None:
+                return value, key
+        return None, ''
+    cls = str(row.get('IfcClass') or row.get('Тип элемента') or '')
+    area, source = first(('QTO::Qto_SlabBaseQuantities::NetArea',
+                          'QTO::Qto_WallBaseQuantities::NetSideArea',
+                          'QTO_Qto_SlabBaseQuantities_Площадь_NetArea_м2',
+                          'QTO_Qto_WallBaseQuantities_Площадь_NetSideArea_м2',
+                          'Площадь_NetArea_м2', 'Площадь_NetSideArea_м2',
+                          'RUS_Area', 'RUS_NetSideArea', 'Площадь, м2'))
+    depth, ds = first(('QTO::Qto_SlabBaseQuantities::Depth',
+                       'QTO::Qto_WallBaseQuantities::Width', 'RUS_Thickness',
+                       'Длина_Depth_мм', 'QTO_bbox::Толщина_мм'))
+    if depth is None and cls in ('IfcWall', 'IfcWallStandardCase'):
+        depth, ds = first(('QTO_bbox::Ширина_мм',))
+    if area is not None and depth and cls in ('IfcSlab', 'IfcWall', 'IfcWallStandardCase', 'IfcFooting'):
+        return Volume(area * depth / 1000, f'Оценка объёма: {source} × {ds} / 1000; '
+                      'вырезы, вуты и опорные части требуют проверки', 'estimated')
+    dimensions = []
+    for names in (('RUS_Length', 'QTO_bbox::Длина_мм'),
+                  ('RUS_Width', 'QTO_bbox::Ширина_мм'),
+                  ('RUS_Height', 'QTO_bbox::Высота_мм')):
+        dimensions.append(first(names))
+    if all(value is not None for value, _ in dimensions):
+        volume = math.prod(value for value, _ in dimensions) / 1e9
+        return Volume(volume, 'Оценка объёма по габаритам: ' + ' × '.join(key for _, key in dimensions)
+                      + ' / 1000000000; вырезы и сложная форма не подтверждены', 'estimated')
+    box, source = first(('QTO_bbox::Габаритный_объём_м3', 'RUS_GrossVolume',
+                         'QTO_Qto_SlabBaseQuantities_Объём_GrossVolume_м3',
+                         'QTO_Qto_WallBaseQuantities_Объём_GrossVolume_м3'))
+    if box is not None:
+        return Volume(box, f'Оценка объёма по заменителю {source}; вычеты требуют проверки', 'estimated')
+    return Volume(None)
+
+
+def _resolve_physical_volume(row, units=None):
     """Choose once per element; preserve zero, reject contradictory peer fields.
 
     Legacy raw dumps assume m3 when no unit metadata exists. Newly extracted IFC
@@ -95,6 +145,8 @@ def resolve_volume(row, units=None):
 
 
 def stamp_volume(row, volume):
+    # Canonical storage holds the source physical measure. Project deductions
+    # are resolved at read time so steel can never be deducted twice.
     row.update({VALUE: volume.value if volume.value is not None else '',
                 SOURCE: volume.source, STATUS: volume.status})
     return row
@@ -125,6 +177,12 @@ def stamp_ifc_volume(row, element):
     from .ifc_raw_dump import _iter_type_propsets
     values = {}
     unknown_units = set()
+    openings = getattr(element, 'HasOpenings', ()) or ()
+    if openings:
+        row['Количество::Есть_проёмы'] = True
+        row['Количество::Есть_анкерные_полости'] = any(
+            re.search(r'анкер|anchor', str(getattr(getattr(rel, 'RelatedOpeningElement', None), 'Name', '')), re.I)
+            for rel in openings)
     try:
         model = element.file
         definitions = [rel.RelatingPropertyDefinition for rel in getattr(element, 'IsDefinedBy', ())
@@ -155,7 +213,7 @@ def stamp_ifc_volume(row, element):
         primary_unknown = sorted(key for key in unknown_units if volume_rank(key) == primary_rank)
         if primary_unknown:
             return stamp_volume(row, Volume(None, '; '.join(primary_unknown), 'missing_units'))
-        return stamp_volume(row, resolve_volume(values))
+        return stamp_volume(row, _resolve_physical_volume(values))
     # Only explicitly labelled model geometry is eligible as a fallback.
     geometry = {key: value for key, value in row.items() if str(key).startswith(('QTO_bbox::', 'QTO_geom::'))}
-    return stamp_volume(row, resolve_volume(geometry))
+    return stamp_volume(row, _resolve_physical_volume(geometry))

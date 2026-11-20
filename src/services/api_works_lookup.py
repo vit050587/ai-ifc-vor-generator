@@ -648,29 +648,9 @@ def _divisor(okei_value) -> int:
     return okei if okei and okei > 1 else 1
 
 
-def _work_divisor(work: Dict[str, Any]) -> int:
-    """Делитель объёма работы (100 для «100 м²», 1 для «м²»/«т»/«шт»).
-
-    Приоритет — okeiValue из ответа API. У части работ okeiValue
-    отсутствует (None), а кратность задана только в самой единице
-    измерения («100 м2», «1 т», «100 м3») — в этом случае числовой
-    префикс разбирается из unitOfMeasure. Без этого объём работ
-    в «100 м²» не делился на 100, а стоимость завышалась в 100 раз.
-    """
-    divisor = _divisor(work.get("okeiValue"))
-    if divisor > 1:
-        return divisor
-
-    unit = str(work.get("unitOfMeasure", "") or "").strip()
-    match = re.match(r"^(\d+)\s", unit)
-    if match:
-        try:
-            prefix = int(match.group(1))
-            if prefix > 1:
-                return prefix
-        except ValueError:
-            pass
-    return 1
+def _work_divisor(work: Dict[str, Any]) -> float:
+    from .quantity_measure import work_divisor
+    return work_divisor(work)
 
 
 # Приоритет ключей при выборе «рабочей» площади группы из totalAreas.
@@ -712,15 +692,8 @@ def _pick_area_value(total_areas: Dict[str, Any]) -> float:
 
 
 def _is_formwork_work(work: Dict[str, Any]) -> bool:
-    """Расценка монтажа/демонтажа опалубки с единицей измерения «м2».
-
-    Прочие работы с «опалубкой» в наименовании (например, установка
-    арматуры «в опалубку», ед. изм. «1 т») не подпадают — несовпадение
-    единицы измерения.
-    """
-    name = str(work.get("name", "")).lower()
-    unit = str(work.get("unitOfMeasure", "") or "").lower().replace(" ", "").replace("²", "2")
-    return "опалубк" in name and "м2" in unit
+    from .quantity_measure import is_formwork
+    return is_formwork(work)
 
 
 def _calculate_work_volume(
@@ -757,7 +730,8 @@ def _calculate_work_volume(
     measure_type = (total_measure or {}).get("type", "")
     measure_value = safe_float((total_measure or {}).get("value", 0))
 
-    unit = str(work.get("unitOfMeasure", "") or "").lower().replace(" ", "")
+    from .quantity_measure import work_unit
+    unit = work_unit(work).lower().replace(" ", "").replace("²", "2").replace("³", "3")
 
     is_volume = ("м3" in unit or "m3" in unit or "м[3" in unit or "m[3" in unit)
     is_area = ("м2" in unit or "m2" in unit or "м[2" in unit or "m[2" in unit)
@@ -765,7 +739,7 @@ def _calculate_work_volume(
 
     divisor = _work_divisor(work)
 
-    if is_area and (beam_group or slab_group) and _is_formwork_work(work):
+    if is_area and _is_formwork_work(work):
         if formwork_area <= 0:
             return ""
         vol = formwork_area / divisor
@@ -821,32 +795,8 @@ def _calculate_work_volume(
 
 
 def _resolve_unit_label(work: Dict[str, Any]) -> str:
-    """Определяет единицу измерения для колонки «Ед. изм.» финального перечня.
-
-    Обозначение единицы должно соответствовать делителю объёма:
-      * без делителя — базовая единица: «м³», «м²», «шт»;
-      * с делителем (например, 100) — «100 м³», «100 м²», «100 шт»,
-        т.е. объём в перечне выражен в сотнях соответствующих единиц.
-
-    Делитель определяется по okeiValue, а при его отсутствии — по числовому
-    префиксу единицы из API («100 м2» → 100, см. _work_divisor).
-
-    Для прочих измерителей (т, кг, м и т.п.) возвращается исходное
-    обозначение из API.
-    """
-    unit = str(work.get("unitOfMeasure", "") or "").lower().replace(" ", "")
-    divisor = _work_divisor(work)
-
-    if "м3" in unit or "m3" in unit or "м[3" in unit or "m[3" in unit:
-        base = "м³"
-    elif "м2" in unit or "m2" in unit or "м[2" in unit or "m[2" in unit:
-        base = "м²"
-    elif "шт" in unit:
-        base = "шт"
-    else:
-        return work.get("unitOfMeasure", "") or ""
-
-    return f"{divisor} {base}" if divisor > 1 else base
+    from .quantity_measure import work_unit_label
+    return work_unit_label(work)
 
 
 # =====================================================================

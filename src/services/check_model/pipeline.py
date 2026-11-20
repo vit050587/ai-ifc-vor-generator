@@ -354,6 +354,10 @@ def run_check_model(
             for name in required_names:
                 result_row.setdefault(name, "")
             result_row.update(values)
+            from ..ifc_quantities import resolve_volume
+            checked_volume = resolve_volume(row)
+            result_row['ТСН::Статус_объёма'] = checked_volume.status
+            result_row['ТСН::Обоснование_объёма'] = checked_volume.source
             result_rows.append(result_row)
 
     # Всего элементов каждого IFC-класса в файле: точное значение из открытой

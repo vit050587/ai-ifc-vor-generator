@@ -16,6 +16,15 @@ HEADERS={'code':'Шифр','name':'Наименование','unit':'Ед. из�
 
 def _schema(table):
     from ..estimate_comparison import _schema as recognize
+    from ..estimate_revisions import schema as revision_schema
+    # Search explicit revision groups before a broad multi-line header match
+    # can mistake the preamble + first header row for a complete plain table.
+    for ri in range(min(50,len(table.rows))):
+        if ri + 1 < len(table.rows):
+            revised = revision_schema(table.rows[ri], table.rows[ri + 1])
+            if revised:
+                return {'start':ri + 2,'fields':{k:v for k,v in revised.items() if k!='priceLevel'},
+                        'priceLevel':revised['priceLevel'],'revision':True}
     for ri in range(min(50,len(table.rows))):
         for depth in (1,2,3,4):
             if ri+depth>len(table.rows): continue
@@ -51,11 +60,12 @@ def read(path, *, llm=None, allow_llm=True):
         contexts.append(table.context)
         width=len(table.rows[0]);labels=['']*width
         for key,col in fields.items():
-            if col is not None: labels[col]=HEADERS[key]
+            if col is not None and key in HEADERS: labels[col]=HEADERS[key]
         if schema.get('priceLevel')=='current': labels[fields['total']]='Стоимость в текущих ценах'
         for preamble in table.rows[:schema['start']]:
             sheet.append(preamble)
-        sheet.append(labels)
+        if not schema.get('revision'):
+            sheet.append(labels)
         mapping=locations.setdefault(sheet.title,{})
         for ri,row in enumerate(table.rows[schema['start']:],schema['start']):
             sheet.append(row)

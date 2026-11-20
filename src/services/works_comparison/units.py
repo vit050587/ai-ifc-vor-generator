@@ -17,8 +17,10 @@ def unit_and_factor(value):
         return text, None
     number, thousand, unit = match.groups()
     unit = unit.strip()
-    if re.fullmatch(r'м[23] (?:деталей|оклеиваемой поверхности|покрытия|поверхности)', unit):
+    if re.fullmatch(r'м[23] (?:деталей|оклеиваемой поверхности|изолируемой поверхности|покрытия|поверхности|в деле|стяжки|изоляции|грунта|основания)', unit):
         unit = unit[:2]
+    elif re.fullmatch(r'м (?:шва|швов|плинтусов)', unit):
+        unit = 'м'
     if unit not in ALIASES:
         return text, None
     factor = Decimal(number.replace(',', '.')) if number else Decimal(1)

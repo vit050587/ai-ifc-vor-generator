@@ -765,6 +765,7 @@ def extract_elements_from_ifc(ifc_path: str, output_folder: str, processing_type
 
     from .work_height import HEIGHT_FIELDS
     smetchik_cols.extend(col for col in HEIGHT_FIELDS if col in df.columns)
+    smetchik_cols.extend(col for col in df.columns if str(col).startswith(('Количество::', 'ТСН::', 'Свойство::ТСН::', 'QTO_geom::', 'Геометрия_')))
 
     # Оставляем только существующие колонки, убираем дубликаты
     existing_cols = []
@@ -810,27 +811,8 @@ def extract_elements_from_ifc(ifc_path: str, output_folder: str, processing_type
         else:
             df_smetchik['Площадь, м2'] = 0
 
-    # Объём, м3
-    if 'Объём, м3' not in df_smetchik.columns:
-        vol_col = None
-        for candidate in ['Объём_NetVolume_м3', 'Объём_GrossVolume_м3']:
-            if candidate in df_smetchik.columns:
-                vol_col = candidate
-                break
-        if vol_col:
-            df_smetchik['Объём, м3'] = df_smetchik[vol_col].apply(
-                lambda v: safe_parse_float(v) if v != '-' else 0
-            )
-        else:
-            # Пробуем из литров
-            for candidate in ['Объём_GrossVolume_литры', 'Объём_NetVolume_литры']:
-                if candidate in df_smetchik.columns:
-                    df_smetchik['Объём, м3'] = df_smetchik[candidate].apply(
-                        lambda v: safe_parse_float(v) / 1000 if v != '-' else 0
-                    )
-                    break
-            else:
-                df_smetchik['Объём, м3'] = 0
+    from ..ifc_quantities import resolve_volume
+    df_smetchik['Объём, м3'] = df.apply(lambda row: resolve_volume(row).value, axis=1)
 
     # Длина, мм — для свай, балок
     if 'Длина, мм' not in df_smetchik.columns:
@@ -1186,50 +1168,9 @@ def _recompute_group_aggregates(
     volume_cols: List[str],
     precision: int = 2,
 ) -> Dict[str, Any]:
-    """Агрегаты подгруппы листовой группы: объём, площади, арматура, опалубка.
-
-    Суммы по элементам подгруппы. Используется при разделении листовых групп
-    (по частям здания — ``split_leaf_groups_by_part``, по типу элемента —
-    ``split_leaf_groups_by_name``): сумма показателей подгрупп равна
-    показателям исходной группы.
-    """
-
-    def _row_volume(row: Dict[str, Any]) -> float:
-        # Первое ненулевое значение среди колонок-источников объёма
-        # (coalesce — та же логика, что в _create_group/group_elements)
-        for col in volume_cols:
-            val = safe_parse_float(row.get(col, 0))
-            if val > 0:
-                return val
-        return 0.0
-
-    volume = float(round(sum(_row_volume(r) for r in sub_rows), precision))
-    areas: Dict[str, float] = {}
-    for col in headers:
-        if 'площадь' not in str(col).lower():
-            continue
-        total = sum(safe_parse_float(r.get(col, 0)) for r in sub_rows)
-        if total > 0:
-            areas[col] = float(round(total, precision))
-    reinforcement = float(round(sum(
-        safe_parse_float(r.get('ReinforcementVolumeRatio', 0)) * _row_volume(r)
-        for r in sub_rows
-    ), precision))
-    # Площадь опалубки плит подгруппы (фундаментные плиты — периметр ×
-    # толщина; перекрытия — периметр × толщина + площадь плиты) —
-    # пересчитывается по элементам подгруппы, чтобы сумма площадей
-    # опалубки подгрупп равнялась площади исходной группы.
-    perim_cols, depth_cols = _find_formwork_columns(headers)
-    formwork_area = float(round(sum(
-        _element_formwork_area_m2(r, perim_cols, depth_cols)
-        for r in sub_rows
-    ), precision))
-    return {
-        'total_volume': volume,
-        'total_areas': areas,
-        'total_reinforcement': reinforcement,
-        'formwork_area': formwork_area,
-    }
+    """Use the service-wide quantity rule; preserve this module API."""
+    from ..ifc_reference_builder import _recompute_group_aggregates as shared
+    return shared(sub_rows, headers, volume_cols, precision)
 
 
 def split_leaf_groups_by_name(

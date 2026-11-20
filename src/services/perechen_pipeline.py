@@ -151,10 +151,11 @@ def _element_quantities(run_dir: str, filename: str = "filtered_elements.xlsx", 
                    'fw_hint': fw_source,
                    'rebar_kg': f'{rebar_col} (кг/м³) × {resolved_volume.source}' if rebar_col and vol else ''}
         name = str(r.get("Имя") or "").lower()
-        formwork_known = fw > 0 or (str(r.get("Тип элемента") or "") != "IfcBeam" and not re.search(r"балк|ригел|плит|перекрыт", name) and area > 0)
+        formwork_known = bool(fw_source)
         out.append({"_sources": sources, "volume": vol, "area": area, "fw_hint": fw,
                     "volume_source": resolved_volume.source, "volume_status": resolved_volume.status,
                     "volume_missing": int(resolved_volume.value is None),
+                    "volume_estimated": int(resolved_volume.status == 'estimated'),
                     "area_missing": int(area <= 0), "formwork_missing": int(not formwork_known),
                     "rebar_kg": rebar_ratio(r, rebar_col) * vol if rebar_col else 0.0})
     return out
@@ -183,30 +184,12 @@ def _element_kind(el: Dict[str, Any]) -> str:
 
 
 def _formwork_area(el: Dict[str, Any], q: Dict[str, float]) -> float:
-    """Площадь опалубки группы — по правилам ЦС (КР).
+    """Общая мера опалубки: сумма по элементам из group_excel.
 
-    Раньше площадь считалась «на глаз» по геометрии (для стен — 2 × объём /
-    толщина, для плит — объём / толщина), из-за чего объёмы опалубки в ИИ
-    расходились с ЦС: у стен ровно в 2 раза, у плит — на десятки процентов.
-    Теперь правила те же, что в КР (`api_works_lookup._calculate_work_volume`):
-
-      * плиты с данными периметра/толщины (фундаментные плиты, перекрытия,
-        приямки, лестничные площадки) — периметр × толщина, для перекрытий
-        дополнительно площадь плиты (`q["fw_hint"]`, сумма по элементам);
-      * стены и прочие элементы (периметра/толщины нет) —
-        «Площадь, м2» группы (`q["area"]`);
-      * балки — только явно заданная площадь контакта с опалубкой;
-        полная поверхность балки не используется;
-      * плитные группы (плита/перекрытие) без рассчитанной площади опалубки —
-        объём не считается: площадь плиты не является площадью опалубки.
+    Проекции стен/перекрытий и площадь контакта не подменяются общей
+    площадью группы. Заменители выбираются в общей функции измерения.
     """
-    fw = float(q.get("fw_hint") or 0.0)
-    if fw > 0:
-        return fw
-    name = str(el.get("name") or "").lower()
-    if re.search(r"плит|перекрыт|балк|ригел|лестн|марш|площадк", name) or el.get("ifc_class") in ("IfcBeam", "IfcSlab", "IfcStair", "IfcStairFlight", "IfcFooting"):
-        return 0.0
-    return float(q.get("area") or 0.0)
+    return float(q.get('fw_hint') or 0.0)
 
 
 def _curing_rate(el: Dict[str, Any], existing) -> Optional[Dict[str, Any]]:
@@ -241,10 +224,6 @@ def _volume(rate: Dict[str, Any], el: Dict[str, Any], q: Dict[str, float], trace
     if "м3" in unit:
         base = q["volume"]
         source = origins.get('volume') or 'quantity.volume (м³)'
-        if not base and q["area"]:
-            t = (kb.element_thickness(el) or 0) / 1000
-            base = q["area"] * t if t else 0.0
-            source = f"{origins.get('area') or 'quantity.area'} × толщина из характеристик элемента ({t:g} м)"
     elif "м2" in unit:
         base = _formwork_area(el, q) if "опалуб" in title else q["area"] * _layers(el)
         source = (origins.get('fw_hint') if q.get('fw_hint') else origins.get('area')) if 'опалуб' in title else (
@@ -360,6 +339,10 @@ def _row(rate: Dict[str, Any], el: Dict[str, Any], q: Dict[str, float], work: st
     return {"pressmark": rate["pressmark"], "title": kb._full_title(rate), "unit": rate["unit"],
             "volume": vol, "volume_source": trace.get("source", ""), "zp": zp, "em": em, "mr": mr, "total": total,
             "is_resource": rate["is_resource"], "work": work,
+            **({'reason': 'Неполные данные: часть объёмов бетона отсутствует.', 'quantityStatus': 'partial_data'}
+               if 'м3' in str(rate.get('unit', '')).replace('³', '3') and q.get('volume_missing', 0) else
+               {'reason': 'Оценка: нормативные границы объёмов требуют проектных данных.', 'quantityStatus': 'estimated'}
+               if 'м3' in str(rate.get('unit', '')).replace('³', '3') and q.get('volume_estimated', 0) else {}),
             **({"reason": "Неполные данные: показана известная часть площади опалубки.", "quantityStatus": "partial_data"}
                if "опалуб" in kb._full_title(rate).lower() and q.get("formwork_missing", 0) > 0 else {})}
 
@@ -466,17 +449,17 @@ def build_final_from_perechen(tables_json_path: str, run_dir: str, progress=None
 
         for (tkey, material), ids in buckets.items():
             el = elements[ids[0]].get("element", {})
-            q = {"volume": 0.0, "area": 0.0, "rebar_kg": 0.0, "fw_hint": 0.0, "area_missing": 0, "formwork_missing": 0, "count": len(ids)}
+            q = {"volume": 0.0, "area": 0.0, "rebar_kg": 0.0, "fw_hint": 0.0, "area_missing": 0, "formwork_missing": 0, "volume_missing": 0, "volume_estimated": 0, "count": len(ids)}
             if per_el:
                 for i in ids:
                     if i < len(per_el):
-                        for k in ("volume", "area", "rebar_kg", "fw_hint", "area_missing", "formwork_missing"):
+                        for k in ("volume", "area", "rebar_kg", "fw_hint", "area_missing", "formwork_missing", "volume_missing", "volume_estimated"):
                             q[k] += per_el[i].get(k, 0.0)
             if single:  # итоги группировки надёжнее, если группа однородна
                 leaf = {"volume": float(node.get("total_volume") or 0), "area": _leaf_area(node),
                         "rebar_kg": float(node.get("total_reinforcement") or 0)}
                 for k, v in leaf.items():
-                    if v > 0:
+                    if v > 0 and (k != 'volume' or not per_el):
                         q[k] = v
             q = {k: round(v, 4) if isinstance(v, float) else v for k, v in q.items()}
             tasks.append((part, tkey, material, ids, el, q, path))
@@ -856,28 +839,20 @@ PROJECT_CONSTANTS = {}
 
 
 def _cold_season():
-    # Meeting rule: concrete curing is always priced for summer.
-    return False
+    temperature = PROJECT_CONSTANTS.get('average_daily_temperature_c')
+    try:
+        return float(temperature) < 5 if temperature is not None else False
+    except (TypeError, ValueError):
+        return False
 
 
 _finalize_rows_v2 = finalize_rows
 
 
 def finalize_rows(el, q, works, subs):
-    rows = _finalize_rows_v2(el, q, works, subs)
-    result, seen = [], False
-    for row in rows:
-        if str(row['pressmark']).startswith(('3.6-98-', '3.6-61-')):
-            if seen:
-                continue
-            seen = True
-            local = _local_rate('3.6-98-1') or {}
-            rate = {'pressmark': '3.6-98-1', 'unit': local.get('unitOfMeasure') or '1 м3',
-                    'title': local.get('title') or 'Уход за бетоном в летний период',
-                    'is_resource': False, 'formula': ''}
-            row = _row(rate, el, q, 'Уход за бетоном в летний период (правило проекта)')
-        result.append(row)
-    return result
+    # Keep the selected norm: §2.12 uses m² for 3.6-61-1 and m³ for 3.6-98-1.
+    # No unconditional seasonal substitution or cross-unit deduplication.
+    return _finalize_rows_v2(el, q, works, subs)
 
 
 _build_base = build_final_from_perechen

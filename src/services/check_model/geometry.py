@@ -568,41 +568,9 @@ def _perimeter_mm(row: Dict[str, Any], group: str) -> Optional[float]:
 
 
 def _volume_m3(row: Dict[str, Any], group: str) -> Optional[float]:
-    """Объём нетто: объём меша, затем расчёт по габаритам, затем bbox-объём.
-
-    Габаритный объём bbox (``QTO_bbox::Габаритный_объём_м3``) — произведение
-    габаритов, поэтому для некруглых элементов он завышен и используется
-    только как последний вариант.
-    """
-    value = _value(row, _MESH_VOLUME, _MESH_VOLUME_ALIAS)
-    if value is not None:
-        return value
-    if group == "wall":
-        length = _raw_length_mm(row, group)
-        thickness = _thickness_mm(row, group)
-        height = _raw_height_mm(row, group)
-        if length and thickness and height:
-            return length * thickness * height / 1_000_000_000.0
-    if group == "slab":
-        area = _raw_area_m2(row, group)
-        thickness = _thickness_mm(row, group)
-        if area and thickness:
-            return area * thickness / 1000.0
-        length = _raw_length_mm(row, group)
-        width = _raw_width_mm(row, group)
-        if length and width and thickness:
-            return length * width * thickness / 1_000_000_000.0
-    if group == "opening":
-        box = _opening_box(row)
-        if box:
-            return box[0] * box[1] * box[2] / 1_000_000_000.0
-    if group == "stair":
-        length = _raw_length_mm(row, group)
-        width = _raw_width_mm(row, group)
-        height = _raw_height_mm(row, group)
-        if length and width and height:
-            return length * width * height / 1_000_000_000.0
-    return _value(row, _BBOX_VOLUME)
+    """Объём из IFC/замкнутой геометрии; габариты не заменяют объём бетона."""
+    from ..ifc_quantities import resolve_volume
+    return resolve_volume(row).value
 
 
 def _gross_volume_m3(row: Dict[str, Any], group: str) -> Optional[float]:

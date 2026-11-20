@@ -2551,6 +2551,22 @@ function addLegendItem() {
         <input type="text" class="legend-label" placeholder="Подпись (например, «Железобетон монолитный»)">
         <button type="button" class="btn btn-sm btn-danger" title="Удалить">✕</button>
     `;
+    const labelInput = div.querySelector('.legend-label');
+    const fileInput = div.querySelector('.legend-file');
+
+    labelInput.addEventListener('paste', (event) => {
+        const items = Array.from(event.clipboardData?.items ?? []);
+        const imageItem = items.find(item => item.type.startsWith('image/'));
+        const file = imageItem?.getAsFile();
+
+        if (!file) return; // Обычный текст вставляется как раньше
+        event.preventDefault();
+
+        const transfer = new DataTransfer();
+        transfer.items.add(file);
+        fileInput.files = transfer.files;
+    });
+
     div.querySelector('button').onclick = () => div.remove();
     container.appendChild(div);
 }
@@ -6685,7 +6701,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const label=document.createElement('span');label.textContent='Сравнение нашей ЛСР и сметы заказчика';
       const link=document.createElement('a');link.className='btn btn-sm btn-primary';link.textContent='Скачать сравнение';link.href=d.download_url;link.setAttribute('download','');
       card.append(label,link);$('vorCmpBtnBox').after(card);
-      msg.textContent=`Сопоставление завершено: ${d.positions} строк.`+(d.priceBasisComparable?'':' Периоды или уровни цен различаются либо не указаны; итоги показаны отдельно.');
+      msg.textContent=`Сопоставление завершено: ${d.positions} строк.`+(d.priceBasisComparable?'':' Разница рассчитана по указанным суммам; сопоставимость периодов и уровней цен не подтверждена.');
     }catch(error){if(viewIsCurrent(sid,run,generation))msg.textContent=error.message;}
     finally{btn.disabled=false;input.value='';}
   }

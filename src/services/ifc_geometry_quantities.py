@@ -56,13 +56,37 @@ def mesh_quantities(vertices, faces, ifc_class):
     return result
 
 
+def _cache_key(element):
+    return (element.id(), element.Representation.id(),
+            tuple(rel.id() for rel in getattr(element, 'HasOpenings', ())))
+
+
+def reuse_mesh(element, vertices, faces):
+    """Reuse local SI geometry already built for formwork instead of tessellating again.
+
+    Complete slab QTO needs no extra geometry measures. Other elements can also
+    need section dimensions during model checking. Keep the same cache keys and
+    calculations as compute(), including openings and local axis dimensions.
+    """
+    model = getattr(element, 'file', None)
+    if not isinstance(model, ifcopenshell.file) or not getattr(element, 'Representation', None):
+        return
+    cache = _CACHE.setdefault(model, {})
+    key = _cache_key(element)
+    if key in cache:
+        return
+    required = ('volume', 'area') if _is_slab(element) else ('volume', 'area', 'length', 'width', 'height')
+    if all(_available({}, element, metric) for metric in required):
+        return
+    cache[key] = mesh_quantities(vertices, faces, element.is_a())
+
+
 def compute(element):
     if not getattr(element, 'Representation', None):
         return {}
     model = getattr(element, 'file', None)
     cache = _CACHE.setdefault(model, {}) if isinstance(model, ifcopenshell.file) else None
-    key = (element.id(), element.Representation.id(),
-           tuple(rel.id() for rel in getattr(element, 'HasOpenings', ()))) if cache is not None else None
+    key = _cache_key(element) if cache is not None else None
     if cache is not None and key in cache:
         return dict(cache[key])
     try:
