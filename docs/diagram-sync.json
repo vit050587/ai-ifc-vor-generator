@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-11-18T19:03:16+00:00",
+  "updatedAt": "2026-11-20T10:49:14+00:00",
   "diagram": {
     "path": "Блок_схема_ВОР_и_IFC_—_бизнес_процесс_2.drawio",
-    "sha256": "1ba46350b306f3daa3a33249e7fea8ecc29debead703882d30d6b7cec117e096"
+    "sha256": "4b714b12ded63488d4f445158c6d83979e93a0ee33e2c091d45348bc2362ed0b"
   },
   "entities": {
     "ai-vor-generator-core": {
@@ -27,8 +27,8 @@
       "title": "Режим ИИ (AI)",
       "kind": "mode",
       "evidence": "ai-ifc-vor-generator | строка 11",
-      "commentHash": "9e7c7ff1c3575a22",
-      "comment": "Режим AI (легаси AR): обрабатывает конструктив и архитектуру. Подбор работ использует детерминированный алгоритм works_table_selector и LLM (works_final_selector / perechen_pipeline). На диаграмме — ветка смешанной обработки с ИИ."
+      "commentHash": "017ed88e25559cf1",
+      "comment": "Режим ИИ (АР) отличается от ЦС включением архитектурных элементов и использованием LLM для финального подбора работ. Использует локальный детерминированный алгоритм или LLM-переключатель WORKS_SELECTOR. На диаграмме — корневой узел ветки ИИ."
     },
     "arch-mode": {
       "cellId": "n143",
@@ -63,7 +63,7 @@
       "title": "Проверка ЦИМ модели",
       "kind": "step",
       "evidence": "ai-ifc-vor-generator | строка 20",
-      "commentHash": "7977fb804c356894",
+      "commentHash": "0b33c6eff8d8408e",
       "comment": "Вспомогательный функционал: проверка IFC-модели на наличие требуемых параметров по data/parametrs_name.json с использованием LLM-сопоставления. Результат — файл Проверка_ЦИМ_модели.xlsx. На диаграмме — узел валидации входных данных."
     },
     "compare-vor-api": {
@@ -162,29 +162,41 @@
       "commentHash": "ce6a198e7bb5e2e0",
       "comment": "Модуль src/core/modes.py: нормализация входных кодов (CS/AI/ARCH, легаси KR/AR) в публичные и внутренние коды пайплайна. Обеспечивает обратную совместимость и корректную маршрутизацию. На диаграмме — узел преобразования параметров режима."
     },
+    "ai-docs-parsing-pos-pz": {
+      "cellId": null,
+      "page": null,
+      "nodeLabel": null,
+      "score": 0.0,
+      "method": "unmatched",
+      "title": "Разбор документов ПОС/ПЗ",
+      "kind": "step",
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104",
+      "commentHash": "328f081fa4f818ae",
+      "comment": "Обработка документов ПОС, ПЗ, ВОР и ПД с помощью парсеров (pd_parser, doc_pdf_parser). Применяется в режимах ИИ и Архитектура. На диаграмме — ветка анализа проектной документации."
+    },
     "ai-pdf-extraction-vision": {
       "cellId": "n33",
       "page": "Бизнес-процесс (горизонтально)",
       "nodeLabel": "Распознавание чертежа: стены, легенда, штриховки, материалы, масштаб",
       "score": 1.0,
       "method": "syncKey",
-      "title": "Извлечение данных из PDF",
+      "title": "Извлечение данных PDF",
       "kind": "step",
-      "evidence": "ai-ifc-vor-generator / 3. Функциональность",
-      "commentHash": "20301f3e65196a73",
-      "comment": "Машинное зрение для PDF-чертежей: детекция стен (YOLO OBB), layout, легенд, анализ штриховок и расшифровка материалов (DINO + VLM). Используется в режимах AI и ARCH."
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104",
+      "commentHash": "b266d468ca877659",
+      "comment": "Обработка PDF-чертежей с помощью машинного зрения: детекция стен (YOLO), анализ штриховок и материалов (DINO, VLM). На диаграмме — ветка обработки чертежей для режимов AI/ARCH."
     },
     "common-cost-calculation": {
-      "cellId": null,
-      "page": null,
-      "nodeLabel": null,
-      "score": 0.0,
-      "method": "unmatched",
-      "title": "Расчет стоимости",
+      "cellId": "n43",
+      "page": "Бизнес-процесс (горизонтально)",
+      "nodeLabel": "Пересчёт объёмов и поправочные нормы",
+      "score": 1.0,
+      "method": "syncKey",
+      "title": "Расчет объемов и стоимости",
       "kind": "step",
-      "evidence": "ai-ifc-vor-generator / 3. Функциональность",
-      "commentHash": "877bfeb770cdeebf",
-      "comment": "Расчет объемов и стоимости с корректировкой по нормам расхода (koefs.xlsx) и ценам (price_cost.xlsx, larix, API ТСН). Финальный расчетный этап."
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104",
+      "commentHash": "a64408235c4d0e25",
+      "comment": "Вычисление объемов по группам, корректировка по нормам расхода (koefs.xlsx) и расчет стоимости (price_cost.xlsx, larix). На диаграмме — финальный расчетный этап перед формированием документов."
     },
     "common-excel-outputs": {
       "cellId": "n82",
@@ -194,11 +206,11 @@
       "method": "syncKey",
       "title": "Excel-перечни работ",
       "kind": "artifact",
-      "evidence": "ai-ifc-vor-generator / 3. Функциональность",
-      "commentHash": "274c0e94d674bcdb",
-      "comment": "Финальные артефакты: ДЛЯ_СМЕТЧИКА, ОБЩИЙ_Финальный_перечень_работ.xlsx, Финальный_перечень_работ.xlsx, Дерево_проекта. Результат работы пайплайна."
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104",
+      "commentHash": "3b6ad2e6f19df5e7",
+      "comment": "Формирование итоговых Excel-файлов: ДЛЯ_СМЕТЧИКА, ОБЩИЙ_Финальный_перечень_работ, Дерево_проекта. На диаграмме — узел вывода результатов в формате таблиц."
     },
-    "common-grouping-hierarchy": {
+    "common-group-elements-mssk": {
       "cellId": null,
       "page": null,
       "nodeLabel": null,
@@ -206,8 +218,8 @@
       "method": "unmatched",
       "title": "Группировка элементов",
       "kind": "step",
-      "evidence": "ai-ifc-vor-generator / 3. Функциональность",
-      "commentHash": "93b779cb48794175",
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104",
+      "commentHash": "ec44ed2b6d421a7e",
       "comment": "Модуль grouping.py: правила отнесения элементов к частям здания, видам конструкций и технологиям. Определяет структуру дерева в превью. На диаграмме — логический блок обработки данных перед выводом."
     },
     "common-normalization-geometry": {
@@ -218,8 +230,8 @@
       "method": "unmatched",
       "title": "Нормализация характеристик",
       "kind": "step",
-      "evidence": "ai-ifc-vor-generator / 3. Функциональность",
-      "commentHash": "92fc999426157346",
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104",
+      "commentHash": "200634254f155b09",
       "comment": "Подэтап извлечения: чтение свойств с экземпляра и типа элемента (IsTypedBy), классификация этажей (classify_storey_type), расчет высоты здания и bbox-фолбэк для плит. Обеспечивает заполнение кодов МССК и материалов в ДЛЯ_СМЕТЧИКА_исправленный.xlsx."
     },
     "common-upload-ifc-pdf": {
@@ -228,11 +240,11 @@
       "nodeLabel": "Загрузка IFC / PDF + документы",
       "score": 1.0,
       "method": "pinned",
-      "title": "Загрузка IFC или PDF",
+      "title": "Загрузка IFC и PDF",
       "kind": "step",
-      "evidence": "ai-ifc-vor-generator / 3. Функциональность",
-      "commentHash": "92fb84549fbb3615",
-      "comment": "Первый шаг процесса: загрузка исходных файлов (.ifc или .pdf) с выбором режима обработки (CS, AI, ARCH). На диаграмме — входной узел, определяющий ветку выполнения."
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104",
+      "commentHash": "317ae3bd27fd60a9",
+      "comment": "Первый шаг процесса: пользователь загружает файлы IFC или PDF-чертежи, указывая режим обработки (CS, AI, ARCH). На диаграмме — входной узел с выбором режима и приложением документов."
     },
     "common-works-selection": {
       "cellId": "n11",
@@ -242,9 +254,21 @@
       "method": "syncKey",
       "title": "Подбор работ",
       "kind": "step",
-      "evidence": "ai-ifc-vor-generator / 3. Функциональность",
-      "commentHash": "413c57c2c483adf5",
-      "comment": "Автоматический подбор работ: через API ТСН для режима CS, детерминированный алгоритм + LLM для AI/ARCH, или по перечню сметчиков. Ключевой этап формирования сметы."
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104",
+      "commentHash": "d0bde78b791f8a0b",
+      "comment": "Определение работ по API ТСН (режим CS) или детерминированному алгоритму с LLM (режимы AI/ARCH). Альтернатива — подбор по перечню сметчиков. На диаграмме — ключевой узел формирования перечня работ."
+    },
+    "cs-smeta-form-tsn": {
+      "cellId": null,
+      "page": null,
+      "nodeLabel": null,
+      "score": 0.0,
+      "method": "unmatched",
+      "title": "Сметная форма ТСН",
+      "kind": "step",
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104",
+      "commentHash": "ad747dde43d5b8db",
+      "comment": "Формирование сметной формы по стандарту ТСН-2001.12 с дополнением 83 на основе сформированного перечня. На диаграмме — финальный выход для режима ЦС."
     },
     "cs-stage0-extract-ifc": {
       "cellId": "n7",
@@ -254,7 +278,7 @@
       "method": "syncKey",
       "title": "Извлечение элементов IFC",
       "kind": "stage",
-      "evidence": "ai-ifc-vor-generator / 3. Функциональность",
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104",
       "commentHash": "48de9114d5b5ede3",
       "comment": "Этап 0 режима ИИ: zero_step.py извлекает элементы по спискам ELEMENT_TYPES_AR и ELEMENT_TYPES_KR, нормализует характеристики и QTO. Формирует файл ДЛЯ_СМЕТЧИКА_исправленный.xlsx. На диаграмме — узел «Извлечение элементов» ветки ИИ."
     },
@@ -266,9 +290,9 @@
       "method": "syncKey",
       "title": "Типовые ВОР и сверка",
       "kind": "step",
-      "evidence": "ai-ifc-vor-generator / 3. Функциональность",
-      "commentHash": "623be8fbf5898699",
-      "comment": "Генерация типовых ведомостей (builder/customer_vor) и сверка с помощью comparison_typical. Специфичный процесс для режима типовых решений."
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104",
+      "commentHash": "ca228612eb22da14",
+      "comment": "Генерация типовых ведомостей (builder/customer_vor) и выполнение сверки (comparison_typical). На диаграмме — отдельный процесс сравнения с типовыми решениями."
     },
     "ai-model-dino-hatching": {
       "cellId": null,
@@ -278,23 +302,11 @@
       "method": "unmatched",
       "title": "DINO анализ штриховок",
       "kind": "model",
-      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ",
-      "commentHash": "bc6ca0b492593e8e",
-      "comment": "Модель dino_hatching.pt (DINO TorchScript) для анализа штриховок и сравнения символов легенды. Часть конвейера обработки PDF."
+      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272",
+      "commentHash": "a1538d13fa13ea3e",
+      "comment": "Модель dino_hatching.pt (DINO TorchScript) для анализа штриховок и сравнения символов легенды. На диаграмме — узел распознавания материалов на чертежах."
     },
-    "ai-model-llm-works": {
-      "cellId": null,
-      "page": null,
-      "nodeLabel": null,
-      "score": 0.0,
-      "method": "unmatched",
-      "title": "LLM подбор работ",
-      "kind": "model",
-      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ",
-      "commentHash": "d79a15c354917f9b",
-      "comment": "LLM-модель (YandexGPT-5-Lite) для режимов ИИ и Архитектура: разбор документов, подбор работ, поправки ТСН. Ключевой интеллектуальный компонент."
-    },
-    "ai-model-vlm-blueprint": {
+    "ai-model-qwen-vl-blueprint": {
       "cellId": null,
       "page": null,
       "nodeLabel": null,
@@ -302,11 +314,23 @@
       "method": "unmatched",
       "title": "VLM распознавание чертежей",
       "kind": "model",
-      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ",
-      "commentHash": "d080a2a7cb247567",
-      "comment": "VLM-модель (Qwen3-VL-8B) для обработки чертежей PDF: распознавание материалов и штриховок. Используется в режиме AI/ARCH."
+      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272",
+      "commentHash": "add1e4046af85c13",
+      "comment": "Модель Qwen3-VL-8B (Ollama) для обработки чертежей PDF: распознавание материалов и штриховок. На диаграмме — LLM-компонент визуального анализа."
     },
-    "ai-model-yolo-walls": {
+    "ai-model-yandexgpt-works": {
+      "cellId": null,
+      "page": null,
+      "nodeLabel": null,
+      "score": 0.0,
+      "method": "unmatched",
+      "title": "LLM подбор работ",
+      "kind": "model",
+      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272",
+      "commentHash": "2700a273c9de3d5a",
+      "comment": "Модель YandexGPT-5-Lite (Ollama) для режимов ИИ и Архитектура: разбор документов, подбор работ, поправки ТСН. На диаграмме — интеллектуальный агент бизнес-логики."
+    },
+    "ai-model-yolo-walls-obb": {
       "cellId": null,
       "page": null,
       "nodeLabel": null,
@@ -314,11 +338,11 @@
       "method": "unmatched",
       "title": "YOLO детекция стен",
       "kind": "model",
-      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ",
-      "commentHash": "4248898ea19ba462",
-      "comment": "Модель yolo_walls_obb.pt (Ultralytics YOLO OBB) для детекции стен на PDF-чертежах. Используется в конвейере ai-blueprint-to-ifc."
+      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272",
+      "commentHash": "88da3f752f7f78e3",
+      "comment": "Модель yolo_walls_obb.pt (Ultralytics YOLO) для детекции стен на PDF-чертежах. На диаграмме — компонент машинного зрения в ветке обработки PDF."
     },
-    "check-model-cim-llm": {
+    "check-model-qwen-cim": {
       "cellId": null,
       "page": null,
       "nodeLabel": null,
@@ -326,11 +350,11 @@
       "method": "unmatched",
       "title": "LLM проверка ЦИМ",
       "kind": "model",
-      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ",
-      "commentHash": "77ee9e2e2aba2619",
-      "comment": "Модель qwen3.8:27b для проверки ЦИМ модели: сопоставление требуемых параметров с колонками модели. Используется в режиме проверки."
+      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272",
+      "commentHash": "f1cc24873b2b0bdb",
+      "comment": "Модель qwen3.8:27b (Ollama) для проверки ЦИМ модели: сопоставление параметров с колонками модели. На диаграмме — узел валидации в ветке проверки ЦИМ."
     },
-    "compare-model-vor-llm": {
+    "compare-model-works-vor": {
       "cellId": null,
       "page": null,
       "nodeLabel": null,
@@ -338,23 +362,23 @@
       "method": "unmatched",
       "title": "LLM сравнение ВОР",
       "kind": "model",
-      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ",
-      "commentHash": "d132698f87ce2da3",
-      "comment": "LLM-модель для сравнения ВОР: семантическое сопоставление и LLM-валидация. Используется в процессе сверки типовых ведомостей."
+      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272",
+      "commentHash": "c1451a96471950bf",
+      "comment": "Модель Ollama (works_comparison) для семантического сопоставления и LLM-валидации при сравнении ВОР. На диаграмме — компонент процесса сверки ведомостей."
     },
-    "ai-comparison-results": {
-      "cellId": "n165",
-      "page": "Бизнес-процесс (горизонтально)",
-      "nodeLabel": "result.json / result.xlsx",
-      "score": 1.0,
-      "method": "pinned",
-      "title": "Результаты сравнения ВОР",
-      "kind": "artifact",
-      "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники",
-      "commentHash": "1f52feca723f44a6",
-      "comment": "Каталог outputs/<comparison_id>/ содержит файлы сравнения ВОР: models.json, estimates.json, result.xlsx. Это артефакты этапа сравнения моделей. На диаграмме — выходной узел процесса сравнения."
+    "common-cache-doc-parsing": {
+      "cellId": null,
+      "page": null,
+      "nodeLabel": null,
+      "score": 0.0,
+      "method": "unmatched",
+      "title": "Кеш разбора документов",
+      "kind": "data",
+      "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники / строка 296",
+      "commentHash": "b36e2601c1f6afae",
+      "comment": "Каталог кэша результатов разбора ПОС/ПЗ/ВОР/ПД по SHA-256 (DOC_CACHE_DIR, по умолчанию outputs/_doc_cache). На диаграмме — узел данных (кеш), связанный с этапами разбора документов."
     },
-    "ai-sessions-storage": {
+    "common-storage-sessions-json": {
       "cellId": null,
       "page": null,
       "nodeLabel": null,
@@ -362,81 +386,57 @@
       "method": "unmatched",
       "title": "Хранилище сессий",
       "kind": "data",
-      "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники",
-      "commentHash": "f37e2cbfe57031f0",
-      "comment": "Файл outputs/sessions.json хранит метаданные сессий, запусков и прогресса. Используется для трекинга состояния процессов ЦС, ИИ и Архитектуры. На диаграмме — узел хранения данных сессий."
+      "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники / строка 296",
+      "commentHash": "88a27553f719c07d",
+      "comment": "Файл outputs/sessions.json хранит метаданные сессий, запусков и прогресса. Потокобезопасная запись и резервное копирование. На диаграмме — узел управления состоянием процесса."
     },
-    "ai-vor-generation-output": {
+    "ai-llm-decisions-cache": {
       "cellId": null,
       "page": null,
       "nodeLabel": null,
       "score": 0.0,
       "method": "unmatched",
-      "title": "Сформированный ВОР",
-      "kind": "artifact",
+      "title": "Кеши LLM-решений",
+      "kind": "data",
       "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники",
-      "commentHash": "7ddf8f90fc596201",
-      "comment": "Каталог outputs/<job_id>/ хранит результат формирования ВОР: Сформированный_ВОР.xlsx и vor_generation.json. Это основной артефакт режима ИИ/Архитектуры. На диаграмме — выходной узел генерации ВОР."
+      "commentHash": "17a70e2b13fe5d26",
+      "comment": "Набор файлов кэшей (kb_cache.json, tsn_decisions_cache.json и др.) для хранения результатов работы LLM и поправок ТСН. Позволяет ускорить повторные запуски."
     },
-    "ai-mssk-data": {
+    "ai-mssk-elements-dictionary": {
       "cellId": null,
       "page": null,
       "nodeLabel": null,
       "score": 0.0,
       "method": "unmatched",
-      "title": "Справочник МССК",
+      "title": "Справочник МССК элементов",
       "kind": "data",
       "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники",
-      "commentHash": "538d94c1cefbd4d6",
-      "comment": "Файлы elements_mssk.xlsx и materials_mssk.xlsx содержат справочники элементов и материалов МССК. Используются для классификации и подбора. На диаграмме — справочник классификатора."
+      "commentHash": "e9f6f91de2b315b7",
+      "comment": "Справочник elements_mssk_nested.json. Иерархический справочник элементов МССК, используемый в mssk_lookup.build_mssk_lookup для определения названий групп L2 при группировке."
     },
-    "ai-perechen-kr": {
+    "ai-mssk-materials-dictionary": {
       "cellId": null,
       "page": null,
       "nodeLabel": null,
       "score": 0.0,
       "method": "unmatched",
-      "title": "Справочник перечня работ",
+      "title": "Справочник МССК материалов",
       "kind": "data",
       "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники",
-      "commentHash": "3412257a002fca1b",
-      "comment": "Файлы perechen_kr.xlsx и perechen_kr_1.xlsx содержат перечни работ для режима ЦС и базу знаний для ИИ. Используются для подбора работ. На диаграмме — входной справочник данных."
+      "commentHash": "6c6dd2148385b9b5",
+      "comment": "Справочник materials_mssk_nested.json. Иерархический справочник материалов МССК, используемый в materials_lookup для построения карты дочерних кодов и уточнения неполных кодов материалов."
     },
-    "ai-price-cost": {
+    "ai-works-selection-dictionaries": {
       "cellId": null,
       "page": null,
       "nodeLabel": null,
       "score": 0.0,
       "method": "unmatched",
-      "title": "Справочник расценок",
+      "title": "Справочники подбора работ",
       "kind": "data",
       "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники",
-      "commentHash": "b79b8b13da52afab",
-      "comment": "Локальный источник данных для подбора работ: файл data/price_cost.xlsx. Используется при значении переменной WORKS_SOURCE=local. На диаграмме — узел данных, питающий модуль подбора работ."
-    },
-    "ai-tsn-data": {
-      "cellId": null,
-      "page": null,
-      "nodeLabel": null,
-      "score": 0.0,
-      "method": "unmatched",
-      "title": "Справочник ТСН",
-      "kind": "data",
-      "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники",
-      "commentHash": "ff723d8b6580979d",
-      "comment": "Файлы tsn/*.json содержат разобранные сборники ТСН с поправочными коэффициентами. Используются для детального подбора норм. На диаграмме — справочник нормативов."
-    },
-    "ai-typical-vor": {
-      "cellId": "n88",
-      "page": "Бизнес-процесс (горизонтально)",
-      "nodeLabel": "Типовой ВОР по шаблону",
-      "score": 1.0,
-      "method": "syncKey",
-      "title": "Типовой ВОР",
-      "kind": "data",
-      "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники",
-      "commentHash": "e5140723f29af1f3",
-      "comment": "Файл Типовой ВОР по КР.xlsx является шаблоном иерархии ВОР. Используется для формирования структуры итогового документа. На диаграмме — эталонная структура результата."
+      "commentHash": "6ba12a5a939204f5",
+      "comment": "Набор JSON-справочников для детерминированного подбора работ в режимах ИИ и Архитектура: ifc_to_collections.json, msck_elements_compact.json, tree_work_compact.json, works_classification.json, params_registry.json. На диаграмме — узел данных, питающий алгоритм подбора."
     },
     "ai-keycloak-auth": {
       "cellId": null,
@@ -447,7 +447,7 @@
       "title": "Keycloak Auth",
       "kind": "external",
       "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники",
-      "commentHash": "86fd9390e8685537",
+      "commentHash": "8c5abdfa5730ba5d",
       "comment": "Система Keycloak для выдачи и обновления Bearer-токенов. Обеспечивает аутентификацию доступа к API. На диаграмме — узел аутентификации."
     },
     "ai-ollama-llm": {
@@ -653,6 +653,18 @@
       "evidence": "ai-ifc-vor-generator / 8. API / Формирование ВОР по типовому шаблону",
       "commentHash": "ec9f2cd5ee8f8c43",
       "comment": "Эндпоинты для формирования ВОР по типовому шаблону: создание задачи (multipart с IFC), отслеживание статуса и скачивание/предпросмотр файлов результата."
+    },
+    "external-larix-tsn-api": {
+      "cellId": null,
+      "page": null,
+      "nodeLabel": null,
+      "score": 0.0,
+      "method": "unmatched",
+      "title": "API цифрового справочника ТСН",
+      "kind": "external",
+      "evidence": "ai-ifc-vor-generator / 9. Запуск и развертывание / Переменные окружения",
+      "commentHash": "58c533237a13d666",
+      "comment": "Внешние эндпоинты larix (WORKS_API_URL, WORKS_RESOURCES_API_URL и др.) для получения работ, ресурсов и периодов. Используется в режиме ЦС для подбора работ и получения стоимости."
     },
     "cs-mode-normalization": {
       "cellId": null,
@@ -1111,11 +1123,11 @@
       "comment": "Формируется файл filtered_elements.xlsx на основе выбранных строк и материалов. Включает подмешивание свойств IFC и уточнение МССК-кодов материалов."
     },
     "cs-stage1-grouping-mssk": {
-      "cellId": null,
-      "page": null,
-      "nodeLabel": null,
-      "score": 0.0,
-      "method": "unmatched",
+      "cellId": "n36",
+      "page": "Бизнес-процесс (горизонтально)",
+      "nodeLabel": "Группировка и расчёт: объёмы, площади, расход арматуры",
+      "score": 1.0,
+      "method": "pinned",
       "title": "Группировка по МССК",
       "kind": "module",
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 4. Этап 1 / 4.2. Группировка",
@@ -1145,18 +1157,6 @@
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 4. Этап 1 / 4.2. Группировка",
       "commentHash": "d9a52fff4068c6ec",
       "comment": "Правило обработки неполных МССК-кодов через material_code_overrides. Позволяет разделять группы материалов (например, сборный/монолитный железобетон) и игнорировать кеш при наличии уточнений."
-    },
-    "cs-stage1-group-aggregation": {
-      "cellId": "n36",
-      "page": "Бизнес-процесс (горизонтально)",
-      "nodeLabel": "Группировка и расчёт: объёмы, площади, расход арматуры",
-      "score": 1.0,
-      "method": "syncKey",
-      "title": "Агрегация узлов групп",
-      "kind": "rule",
-      "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 4. Этап 1 / 4.2. Группировка",
-      "commentHash": "920e49e6403d2118",
-      "comment": "Правила агрегации данных в узлах дерева групп: расчет объема, площадей, расхода арматуры и площади опалубки. Отличается от режима АР включением части здания (L1)."
     },
     "cs-stage1-formwork-calc": {
       "cellId": null,
@@ -1263,7 +1263,7 @@
       "title": "Финальный перечень работ",
       "kind": "artifact",
       "evidence": "§10 Режим ЦС / 4. Этап 1 / 4.5. Финальный перечень работ",
-      "commentHash": "6279b8c1ff001d97",
+      "commentHash": "08c4c9fb60f97015",
       "comment": "Итоговый артефакт запуска режима Архитектура: Финальный_перечень_работ.xlsx и final_result_ARCH.json, содержащие выбранные работы и сметные данные. На диаграмме — выходной узел процесса ARCH."
     },
     "cs-stage1-calc-work-volume": {
@@ -1422,41 +1422,17 @@
       "commentHash": "db4afb4bdb9bb1d4",
       "comment": "Шаблон comparison_vor_template.xlsx. Определяет стандартную иерархию ВОР (часть здания → раздел → подраздел → работа → шифр) для отчета сравнения в модуле comparison_vor.prepare_report."
     },
-    "cs-data-elements-mssk": {
-      "cellId": null,
-      "page": null,
-      "nodeLabel": null,
-      "score": 0.0,
-      "method": "unmatched",
-      "title": "Справочник МССК-элементов",
-      "kind": "data",
-      "evidence": "§10 Режим ЦС / 6. Справочники data/",
-      "commentHash": "7ca51fe485ccbb76",
-      "comment": "Справочник elements_mssk_nested.json. Иерархический справочник элементов МССК, используемый в mssk_lookup.build_mssk_lookup для определения названий групп L2 при группировке."
-    },
     "cs-data-koefs": {
-      "cellId": null,
-      "page": null,
-      "nodeLabel": null,
-      "score": 0.0,
-      "method": "unmatched",
+      "cellId": "n159",
+      "page": "Бизнес-процесс (горизонтально)",
+      "nodeLabel": "Объёмы и стоимость (koefs.xlsx, larix)",
+      "score": 1.0,
+      "method": "pinned",
       "title": "Нормы расхода",
       "kind": "data",
       "evidence": "§10 Режим ЦС / 6. Справочники data/",
       "commentHash": "4baad96672f73036",
       "comment": "Справочник koefs.xlsx. Используется модулем works_cost._get_corrected_volume для корректировки объема работ расценок на основе пар «Шифр ТСН + ресурс»."
-    },
-    "cs-data-materials-mssk": {
-      "cellId": null,
-      "page": null,
-      "nodeLabel": null,
-      "score": 0.0,
-      "method": "unmatched",
-      "title": "Справочник МССК-материалов",
-      "kind": "data",
-      "evidence": "§10 Режим ЦС / 6. Справочники data/",
-      "commentHash": "0c8797c778d3913b",
-      "comment": "Справочник materials_mssk_nested.json. Иерархический справочник материалов МССК, используемый в materials_lookup для построения карты дочерних кодов и уточнения неполных кодов материалов."
     },
     "cs-data-price-cost": {
       "cellId": null,
@@ -1554,18 +1530,6 @@
       "commentHash": "e61228774c075c9a",
       "comment": "Финальный выходной JSON запуска режима ЦС (КР). Содержит структурированные результаты обработки."
     },
-    "cs-final-works-list": {
-      "cellId": "n84",
-      "page": "Бизнес-процесс (горизонтально)",
-      "nodeLabel": "Перечень работ",
-      "score": 1.0,
-      "method": "syncKey",
-      "title": "ОБЩИЙ_Финальный_перечень_работ",
-      "kind": "artifact",
-      "evidence": "§10 Режим ЦС / 7. Полный список создаваемых файлов (КР)",
-      "commentHash": "0616bcd282a15c11",
-      "comment": "Итоговая таблица работ xlsx с шифрами ТСН, объемами, стоимостью (ЗП/ЭМ/МР). Разбита на части здания. Единственный файл итоговой выдачи запуска режима ЦС."
-    },
     "cs-selected-elements-grouped": {
       "cellId": null,
       "page": null,
@@ -1578,41 +1542,17 @@
       "commentHash": "4cb106930b7093d6",
       "comment": "JSON-файл с группами выбранных элементов в формате запроса API ТСН. Рабочий артефакт этапа 1, остается в run_<NNN>/, не входит в итоговую выдачу."
     },
-    "cs-api-works-lookup": {
+    "cs-works-api-lookup": {
       "cellId": null,
       "page": null,
       "nodeLabel": null,
       "score": 0.0,
       "method": "unmatched",
-      "title": "api_works_lookup",
-      "kind": "module",
-      "evidence": "§10 Режим ЦС / 8. Ключевые отличия от режима АР",
-      "commentHash": "9fd29d05d3ace4c9",
-      "comment": "Модуль подбора работ через внешний API ТСН (digital-collection/building-elements/positions). Используется в режиме ЦС вместо локального алгоритма."
-    },
-    "cs-group-elements-mssk": {
-      "cellId": null,
-      "page": null,
-      "nodeLabel": null,
-      "score": 0.0,
-      "method": "unmatched",
-      "title": "group_elements_mssk",
-      "kind": "module",
-      "evidence": "§10 Режим ЦС / 8. Ключевые отличия от режима АР",
-      "commentHash": "e04e61ee929326d1",
-      "comment": "Модуль группировки элементов по иерархии: Часть здания → МССК → Материал → IFC-тип → Геометрия. Используется в режиме ЦС (КР)."
-    },
-    "cs-koefs-correction": {
-      "cellId": "n159",
-      "page": "Бизнес-процесс (горизонтально)",
-      "nodeLabel": "Объёмы и стоимость (koefs.xlsx, larix)",
-      "score": 1.0,
-      "method": "pinned",
-      "title": "koefs.xlsx",
-      "kind": "artifact",
-      "evidence": "§10 Режим ЦС / 8. Ключевые отличия от режима АР",
-      "commentHash": "7dc030ba6ce6ce03",
-      "comment": "Файл с нормами расхода для корректировки объемов. Используется только в режиме ЦС (КР), не применяется в режиме АР (ИИ)."
+      "title": "Подбор работ через API",
+      "kind": "step",
+      "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 8. Ключевые отличия от режима АР",
+      "commentHash": "1da700599817f4d9",
+      "comment": "В режиме ЦС подбор работ выполняется через внешний API ТСН (api_works_lookup), в отличие от локального алгоритма в режиме АР. Результат — список позиций с стоимостью."
     },
     "ai-works-selector-llm": {
       "cellId": null,
@@ -2150,21 +2090,9 @@
       "method": "unmatched",
       "title": "Группировка элементов АР",
       "kind": "module",
-      "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (run_) / 5.2. Группировка — group_excel.py (process_ifc_excel_ar)",
-      "commentHash": "0897079dd2852091",
-      "comment": "Модуль group_excel.py (функция process_ifc_excel_ar) выполняет группировку элементов по иерархии: Часть здания (L1), Код МССК (L2), Материал (L3), Наименование (L4). Использует дисковый кеш."
-    },
-    "ai-group-hierarchy-ar": {
-      "cellId": null,
-      "page": null,
-      "nodeLabel": null,
-      "score": 0.0,
-      "method": "unmatched",
-      "title": "Иерархия группировки АР",
-      "kind": "data",
-      "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (run_) / 5.2. Группировка — group_excel.py (process_ifc_excel_ar)",
-      "commentHash": "59bc55406e32a239",
-      "comment": "Структура уровней группировки: L1 Часть здания (Подземная/Цоколь/Надземная), L2 Код МССК, L3 Материал, L4 Наименование элемента. Определяет логику формирования дерева работ."
+      "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.2. Группировка — `group_excel.py` (`process_ifc_excel_ar`)",
+      "commentHash": "91f2f2ef37ed6181",
+      "comment": "Модуль group_excel.py в режиме ИИ вызывает group_elements_mssk для формирования дерева АР. Иерархия совпадает с режимом ЦС, но файлы имеют суффикс _AR. На диаграмме — узел группировки в ветке ИИ."
     },
     "ai-material-code-override-rule": {
       "cellId": null,
@@ -2322,6 +2250,18 @@
       "commentHash": "78666da16daed54d",
       "comment": "Правило переключения технологии: приоритет у явного материала элемента (сталь, дерево, кирпич) над ConstructionMethod. Определяет выбор сборника (Сб. 9, 10, 8)."
     },
+    "ai-msck-elements-map": {
+      "cellId": null,
+      "page": null,
+      "nodeLabel": null,
+      "score": 0.0,
+      "method": "unmatched",
+      "title": "Справочник МССК",
+      "kind": "data",
+      "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.3. Подбор таблиц работ — `works_table_selector.py` | строка 2149",
+      "commentHash": "90b1fa7b5d178fa0",
+      "comment": "Справочник data/msck_elements_compact.json для уточнения по коду МССК. Поиск по точному совпадению или префиксу."
+    },
     "ai-tree-work-compact": {
       "cellId": null,
       "page": null,
@@ -2472,11 +2412,11 @@
       "nodeLabel": null,
       "score": 0.0,
       "method": "unmatched",
-      "title": "Финальный подбор работ через LLM",
+      "title": "Финальный подбор работ LLM",
       "kind": "module",
-      "evidence": "§11 Режим ИИ / 5.5. Финальный подбор работ через LLM",
-      "commentHash": "72d392692dfb8ba3",
-      "comment": "Модуль works_final_selector.py (версия 13.2) отбирает подходящие работы с помощью LLM (Ollama). Единица обработки — листовая группа элементов дерева АР. Использует правила КР для согласования объёмов."
+      "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.5. Финальный подбор работ через LLM — `works_final_selector.py`",
+      "commentHash": "3c74e6b36acf7e77",
+      "comment": "Модуль works_final_selector.py (v13.2) использует LLM (Ollama) для отбора работ из цифрового сборника. Единица обработки — листовая группа элементов из filtered_elements_grouped_AR.json. На диаграмме — узел финального выбора в ветке ИИ."
     },
     "ai-split-leaf-groups-by-part": {
       "cellId": null,
@@ -2571,7 +2511,7 @@
       "title": "Подбор работ по перечню",
       "kind": "module",
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8. Подбор по перечню сметчиков — `perechen_pipeline.py` + `perechen_kb.py`",
-      "commentHash": "e208b00bac06cd85",
+      "commentHash": "3d565d8c46c1177a",
       "comment": "Центральный модуль этапа 1 режима ИИ, реализованный в `perechen_pipeline.py` и `perechen_kb.py`. Выполняет последовательную обработку строк сметы через блоки 0-13 (база, доработки, константы, ПОС, ТСН, арматура и др.). На диаграмме — основной узел обработки перечня."
     },
     "ai-kb-cache": {
@@ -2631,7 +2571,7 @@
       "title": "Факты из ВОР и ПД",
       "kind": "module",
       "evidence": "§11 Режим ИИ / 5.8.1. Факты из ВОР и ПД",
-      "commentHash": "a9c695e54e88b6dc",
+      "commentHash": "febfb46b5391a4da",
       "comment": "Модуль `doc_facts.py`, встроенный в `perechen_pipeline` как блок `DOC_FACTS`. Читает результаты разбора ВОР и ПД, чтобы дополнить данные модели (класс бетона, арматуры, объёмы). На диаграмме — узел интеграции внешних документов."
     },
     "ai-doc-facts-extract": {
@@ -2832,10 +2772,10 @@
       "nodeLabel": "Учёт ВОР и ПД: бетон, арматура, объёмы, коэффициенты ТСН",
       "score": 1.0,
       "method": "syncKey",
-      "title": "Коэффициенты ТСН",
+      "title": "Поправочные коэффициенты ТСН",
       "kind": "module",
       "evidence": "§11 Режим ИИ / 5.9. Поправочные коэффициенты сборников ТСН",
-      "commentHash": "982e540b0eeeae37",
+      "commentHash": "24159b58a437f417",
       "comment": "Модуль tsn_coeffs.py для применения поправочных коэффициентов из сборников ТСН. Использует LLM для принятия решений (да/нет/неясно) по применимости коэффициентов. На диаграмме — узел обработки/расчета коэффициентов."
     },
     "ai-pd-full-extract": {
@@ -2847,8 +2787,8 @@
       "title": "Разбор ПОС и ПЗ",
       "kind": "module",
       "evidence": "§11 Режим ИИ / 5.10. Полный разбор ПОС/ПЗ",
-      "commentHash": "aa7a72c514dd95a7",
-      "comment": "Модули pd_parser и pd_full извлекают 10 глобальных констант и ~40 параметров из документов ПОС/ПЗ. Результат доступен через эндпоинт /pd_full. На диаграмме — этап извлечения контекста из проектной документации."
+      "commentHash": "425f682881202b88",
+      "comment": "Опциональный шаг: pd_parser.py разбирает PDF ПОС и ПЗ через LLM, извлекая глобальные константы в ПОС_глобальные_константы.json. Использует кэш и семафоры для управления нагрузкой на Ollama."
     },
     "ai-ifc-features": {
       "cellId": null,
@@ -3042,6 +2982,18 @@
       "commentHash": "2563327907769158",
       "comment": "Актуальный период ТСН из цифрового сборника. Создается на этапе 1 модулем works_fetcher. Общий для всех запусков сессии."
     },
+    "ai-artifact-final-works-xlsx": {
+      "cellId": "n84",
+      "page": "Бизнес-процесс (горизонтально)",
+      "nodeLabel": "Перечень работ",
+      "score": 1.0,
+      "method": "pinned",
+      "title": "Финальный_перечень_работ.xlsx",
+      "kind": "artifact",
+      "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 8. Полный список создаваемых файлов (ИИ/АР)",
+      "commentHash": "cbe032134f90097f",
+      "comment": "Единственный файл итоговой выдачи запуска режима ИИ: перечень работ с объёмами; на диске рядом остаются final_result_AR.json и справочные JSON."
+    },
     "ai-final-result-ar": {
       "cellId": null,
       "page": null,
@@ -3089,30 +3041,6 @@
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 8. Полный список создаваемых файлов (ИИ/АР) | строка 3116",
       "commentHash": "55cf7fb52048ec4d",
       "comment": "Отдельный режим сервиса для сравнения ведомостей объёмов работ, доступный только через API. Оркестратор ComparisonManager, состояние в sessions.json. На диаграмме — корневой узел ветки сравнения."
-    },
-    "ai-works-llm-selector": {
-      "cellId": null,
-      "page": null,
-      "nodeLabel": null,
-      "score": 0.0,
-      "method": "unmatched",
-      "title": "LLM-выбор работ",
-      "kind": "module",
-      "evidence": "§11 Режим ИИ / 9. Ключевые отличия от режима КР",
-      "commentHash": "365f77d918fa01e8",
-      "comment": "Альтернативный режим подбора работ (WORKS_SELECTOR=llm). Загружает работы из цифрового сборника larix (works_fetcher) и выполняет финальный выбор через LLM (works_final_selector). На диаграмме — ветка интеллектуального подбора работ."
-    },
-    "ai-data-doc-cache": {
-      "cellId": null,
-      "page": null,
-      "nodeLabel": null,
-      "score": 0.0,
-      "method": "unmatched",
-      "title": "Кеш разбора документов",
-      "kind": "data",
-      "evidence": "§11 Режим ИИ / 10. Конфигурация / строка 3140",
-      "commentHash": "8b292bbf45735bbc",
-      "comment": "Каталог кэша результатов разбора ПОС/ПЗ/ВОР/ПД по SHA-256 (DOC_CACHE_DIR, по умолчанию outputs/_doc_cache). На диаграмме — узел данных (кеш), связанный с этапами разбора документов."
     },
     "ai-data-doc-facts-cache": {
       "cellId": null,
@@ -3210,6 +3138,18 @@
       "commentHash": "c091cd028e879f11",
       "comment": "Внешняя система для получения расценок при значении WORKS_SOURCE=api. Альтернатива локальному справочнику. На диаграмме — внешний узел, взаимодействующий с модулем подбора."
     },
+    "ai-works-source-local": {
+      "cellId": null,
+      "page": null,
+      "nodeLabel": null,
+      "score": 0.0,
+      "method": "unmatched",
+      "title": "Справочник расценок",
+      "kind": "data",
+      "evidence": "§11 Режим ИИ / 10. Конфигурация / строка 3140",
+      "commentHash": "3930a08e940a5ae6",
+      "comment": "Локальный источник данных для подбора работ: файл data/price_cost.xlsx. Используется при значении переменной WORKS_SOURCE=local. На диаграмме — узел данных, питающий модуль подбора работ."
+    },
     "ai-api-tsn-docs": {
       "cellId": null,
       "page": null,
@@ -3270,41 +3210,77 @@
       "commentHash": "aefcf18b5f9ca1bc",
       "comment": "Список допустимых IFC-классов для режима ARCH (окна, двери, кровля, перила и др.), определенный в zero_step.py. Используется для фильтрации элементов при извлечении."
     },
-    "arch-final-json": {
-      "cellId": "n153",
-      "page": "Бизнес-процесс (горизонтально)",
-      "nodeLabel": "final_result_ARCH.json",
-      "score": 1.0,
-      "method": "pinned",
-      "title": "Финальный JSON ARCH",
-      "kind": "artifact",
-      "evidence": "12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`",
-      "commentHash": "376a0d9403932c7d",
-      "comment": "Итоговый файл final_result_ARCH.json, формируемый модулем ifc_json_builder.py (ARBuilder) с дисциплиной ARCH (АР)."
-    },
-    "arch-group-excel": {
-      "cellId": "n147",
-      "page": "Бизнес-процесс (горизонтально)",
-      "nodeLabel": "Группировка ARCH: часть здания → МССК → материал → наименование",
-      "score": 1.0,
-      "method": "pinned",
-      "title": "Группировка элементов ARCH",
-      "kind": "step",
-      "evidence": "12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`",
-      "commentHash": "a203dfe9e296e31e",
-      "comment": "Модуль group_excel.py выполняет группировку элементов по правилам АР (process_ifc_excel_ar, group_elements_ar) для режима Архитектура."
-    },
     "arch-services-package": {
       "cellId": null,
       "page": null,
       "nodeLabel": null,
       "score": 0.0,
       "method": "unmatched",
-      "title": "Пакет src/services/architecture",
+      "title": "Пакет архитектуры",
       "kind": "module",
-      "evidence": "12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`",
-      "commentHash": "5e24ee7f4f4a6237",
-      "comment": "Набор модулей для обработки режима ARCH, являющийся копией общих сервисов с измененными импортами и логикой под архитектурные классы. Включает zero_step, group_excel, works_final_selector и другие."
+      "evidence": "ai-ifc-vor-generator / 12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`",
+      "commentHash": "3d7a9d00c12a854d",
+      "comment": "Пакет src/services/architecture/ содержит модули пайплайна режима Архитектура (ARCH). Включает zero_step, group_excel, works_final_selector и другие. На диаграмме — контейнер или узел модулей ветки ARCH."
+    },
+    "arch-module-group-excel": {
+      "cellId": "n147",
+      "page": "Бизнес-процесс (горизонтально)",
+      "nodeLabel": "Группировка ARCH: часть здания → МССК → материал → наименование",
+      "score": 1.0,
+      "method": "pinned",
+      "title": "Группировка ARCH (group_excel)",
+      "kind": "module",
+      "evidence": "ai-ifc-vor-generator / 12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`",
+      "commentHash": "b86a8840d46c9373",
+      "comment": "Модуль group_excel.py пакета архитектуры: process_ifc_excel_ar вызывает общую group_elements_mssk, иерархия та же, что в ЦС (часть здания → МССК → материал → IFC-тип → геометрия → материал/бетон), отличается только суффикс файлов _AR."
+    },
+    "arch-module-works-table-selector": {
+      "cellId": "n149",
+      "page": "Бизнес-процесс (горизонтально)",
+      "nodeLabel": "Подбор таблиц работ (копия works_table_selector)",
+      "score": 1.0,
+      "method": "pinned",
+      "title": "Подбор таблиц работ ARCH (works_table_selector)",
+      "kind": "module",
+      "evidence": "ai-ifc-vor-generator / 12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`",
+      "commentHash": "cfcad15e0146eb8d",
+      "comment": "Модуль works_table_selector.py пакета архитектуры: детерминированный подбор таблиц работ по 8 шагам алгоритма data/algorithm.md."
+    },
+    "arch-module-works-fetcher": {
+      "cellId": "n150",
+      "page": "Бизнес-процесс (горизонтально)",
+      "nodeLabel": "Работы из цифрового сборника (larix)",
+      "score": 1.0,
+      "method": "pinned",
+      "title": "Работы из цифрового сборника (larix)",
+      "kind": "module",
+      "evidence": "ai-ifc-vor-generator / 12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`",
+      "commentHash": "7278872ef157dc9d",
+      "comment": "Модуль works_fetcher.py пакета архитектуры: работы таблиц из цифрового сборника larix — period.json, Подобранные_работы.json и детальные параметры позиций."
+    },
+    "arch-module-works-final-selector": {
+      "cellId": "n151",
+      "page": "Бизнес-процесс (горизонтально)",
+      "nodeLabel": "Финальный подбор работ LLM",
+      "score": 1.0,
+      "method": "pinned",
+      "title": "Финальный подбор работ LLM (ARCH)",
+      "kind": "module",
+      "evidence": "ai-ifc-vor-generator / 12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`",
+      "commentHash": "12dfd92bfbf0a975",
+      "comment": "Модуль works_final_selector.py пакета архитектуры: финальный подбор работ через LLM с расчётом объёмов и стоимости для режима Архитектура."
+    },
+    "arch-artifact-final-result": {
+      "cellId": "n153",
+      "page": "Бизнес-процесс (горизонтально)",
+      "nodeLabel": "final_result_ARCH.json",
+      "score": 1.0,
+      "method": "pinned",
+      "title": "final_result_ARCH.json",
+      "kind": "artifact",
+      "evidence": "ai-ifc-vor-generator / 12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`",
+      "commentHash": "6fffced8594a9f93",
+      "comment": "Финальный JSON запуска режима Архитектура: собирается ifc_json_builder.py (ARBuilder, дисциплина ARCH → АР)."
     },
     "arch-stage0-extract": {
       "cellId": "n145",
@@ -3314,45 +3290,9 @@
       "method": "pinned",
       "title": "Извлечение элементов ARCH",
       "kind": "stage",
-      "evidence": "12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`",
-      "commentHash": "6de1b1201359d8d6",
+      "evidence": "12. Режим Архитектура (ARCH) / 5.1. Этап 0",
+      "commentHash": "6db63abfe7ef7ca0",
       "comment": "Этап 0 режима Архитектура: выгрузка сырого дампа IFC, вызов architecture.zero_step для извлечения ELEMENT_TYPES_ARCH и формирования ДЛЯ_СМЕТЧИКА_исправленный.xlsx. На диаграмме — первый узел ветки ARCH."
-    },
-    "arch-works-fetcher": {
-      "cellId": "n150",
-      "page": "Бизнес-процесс (горизонтально)",
-      "nodeLabel": "Работы из цифрового сборника (larix)",
-      "score": 1.0,
-      "method": "pinned",
-      "title": "Получение работ ARCH",
-      "kind": "step",
-      "evidence": "12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`",
-      "commentHash": "60cfdd2c36ac8f8a",
-      "comment": "Модуль works_fetcher.py извлекает данные о работах из цифрового сборника (larix), формируя period.json и Подобранные_работы.json."
-    },
-    "arch-works-final-selector": {
-      "cellId": "n151",
-      "page": "Бизнес-процесс (горизонтально)",
-      "nodeLabel": "Финальный подбор работ LLM",
-      "score": 1.0,
-      "method": "pinned",
-      "title": "Финальный подбор работ ARCH",
-      "kind": "step",
-      "evidence": "12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`",
-      "commentHash": "8d7606bcd81c7116",
-      "comment": "Модуль works_final_selector.py выполняет финальный подбор работ с использованием LLM, рассчитывая объемы и стоимость для режима Архитектура."
-    },
-    "arch-works-table-selector": {
-      "cellId": "n149",
-      "page": "Бизнес-процесс (горизонтально)",
-      "nodeLabel": "Подбор таблиц работ (копия works_table_selector)",
-      "score": 1.0,
-      "method": "pinned",
-      "title": "Подбор таблиц работ ARCH",
-      "kind": "step",
-      "evidence": "12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`",
-      "commentHash": "1fad3e2e0b6cf5bb",
-      "comment": "Модуль works_table_selector.py выполняет детерминированный подбор таблиц работ на основе алгоритма из data/algorithm.md."
     },
     "common-pdf-to-ifc-pipeline": {
       "cellId": "n156",
@@ -3366,17 +3306,17 @@
       "commentHash": "e669c2fcad49b412",
       "comment": "Внешний конвейер ai-blueprint-to-ifc для обработки PDF (детекция стен, layout), результат которого передается в модули группировки и подбора как IFC. На диаграмме — входной узел альтернативного источника данных."
     },
-    "arch-stage1-group-select": {
+    "arch-stage1-grouping-selection": {
       "cellId": "n68",
       "page": "Бизнес-процесс (горизонтально)",
       "nodeLabel": "Разбор IFC / PDF: элементы, параметры, высота, группировка, объёмы",
       "score": 1.0,
-      "method": "syncKey",
+      "method": "pinned",
       "title": "Группировка и подбор работ",
       "kind": "stage",
-      "evidence": "12. Режим Архитектура (ARCH) / 5.2. Этап 1",
-      "commentHash": "6663cfa3f96694c4",
-      "comment": "Этап 1 режима Архитектура: фильтрация элементов, группировка по МССК (group_excel), подбор таблиц работ (works_table_selector), выбор работ (works_fetcher) и финальный LLM-подбор (works_final_selector). На диаграмме — основной вычислительный блок ветки ARCH."
+      "evidence": "ai-ifc-vor-generator / 12. Режим Архитектура (ARCH) / 5. Порядок обработки / 5.2. Этап 1 — группировка и подбор работ",
+      "commentHash": "cc5dcf697c3a4924",
+      "comment": "Этап 1 режима Архитектура: фильтрация элементов, группировка по иерархии (Часть здания → МССК), подбор таблиц работ и финальный выбор через LLM. Формирует Финальный_перечень_работ.json."
     },
     "arch-documents-pos-pz-vor": {
       "cellId": "n157",
@@ -3426,18 +3366,6 @@
       "commentHash": "58f3c47c7fbdf413",
       "comment": "Правила фильтрации в режиме Архитектура: исключение конструктивных элементов (стены, колонны и др.) из выборки. На диаграмме — узел-ограничение или условие ветки ARCH."
     },
-    "check-model-llm-mapping": {
-      "cellId": "n135",
-      "page": "Бизнес-процесс (горизонтально)",
-      "nodeLabel": "Сопоставление параметров LLM qwen3.8:27b",
-      "score": 1.0,
-      "method": "pinned",
-      "title": "Сопоставление параметров LLM",
-      "kind": "stage",
-      "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 1. Назначение",
-      "commentHash": "847fc415d1df75b1",
-      "comment": "Этап проверки ЦИМ: LLM (qwen3.8:27b) сопоставляет требуемые параметры (RUS_*) с колонками IFC-модели. На диаграмме — шаг обработки данных в ветке check-model."
-    },
     "check-model-modules": {
       "cellId": null,
       "page": null,
@@ -3450,41 +3378,41 @@
       "commentHash": "622b777d2c105a4c",
       "comment": "Набор модулей в src/services/check_model/ для реализации функционала проверки. На диаграмме — узел-модуль или контейнер компонентов."
     },
-    "check-model-geometry": {
+    "check-model-geometry-module": {
       "cellId": null,
       "page": null,
       "nodeLabel": null,
       "score": 0.0,
       "method": "unmatched",
-      "title": "Модуль геометрии",
+      "title": "Расчет геометрических параметров",
       "kind": "module",
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 2. Модули",
-      "commentHash": "dc080049bb8a4fc6",
-      "comment": "Модуль geometry.py: расчет геометрических параметров (RUS_Length, RUS_Area и др.) по формулам IFC. На диаграмме — компонент вычислений."
+      "commentHash": "8ca47ed0a2f659f4",
+      "comment": "Модуль geometry.py: добор геометрических параметров (длина, ширина, объем, площадь) по формулам IFC или из QTO. Отдельные правила для стен, плит, колонн и балок."
     },
-    "check-model-grouping": {
+    "check-model-grouping-module": {
       "cellId": "n140",
       "page": "Бизнес-процесс (горизонтально)",
       "nodeLabel": "Превью по типовому ВОР",
       "score": 1.0,
       "method": "pinned",
-      "title": "Модуль группировки",
+      "title": "Группировка для веб-превью",
       "kind": "module",
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 2. Модули",
-      "commentHash": "f84059ab33d1e8c1",
-      "comment": "Модуль grouping.py: группировка элементов по иерархии типового ВОР для веб-превью. На диаграмме — компонент агрегации результатов."
+      "commentHash": "72931711aa726215",
+      "comment": "Модуль grouping.py: группировка проверенных элементов по иерархии типового ВОР (часть здания, раздел, технология) для отображения в веб-интерфейсе. Использует elements_mssk_nested.json."
     },
-    "check-model-requirements": {
-      "cellId": "n137",
+    "check-model-mapping-module": {
+      "cellId": "n135",
       "page": "Бизнес-процесс (горизонтально)",
-      "nodeLabel": "Требования: data/parametrs_name.json",
+      "nodeLabel": "Сопоставление параметров LLM qwen3.8:27b",
       "score": 1.0,
       "method": "pinned",
-      "title": "Модуль требований",
+      "title": "Сопоставление параметров LLM",
       "kind": "module",
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 2. Модули",
-      "commentHash": "8345d5156b44ad1a",
-      "comment": "Модуль requirements.py: загрузка data/parametrs_name.json и выбор требований по IFC-классу. На диаграмме — компонент обработки справочников."
+      "commentHash": "1ad24c3ef71bf78e",
+      "comment": "Модуль mapping.py: построение карты соответствия требуемых параметров IFC и колонок модели с использованием LLM и детерминированных правил. Использует кэш mapping_cache.json."
     },
     "check-model-session-manager": {
       "cellId": null,
@@ -3727,11 +3655,11 @@
       "comment": "Логика определения RUS_Level для IfcOpeningElement через связь IfcRelVoidsElement и find_storey, так как у проёмов нет ContainedInStructure. Узел обработки иерархии модели."
     },
     "ai-ifc-vor-req-mapping": {
-      "cellId": null,
-      "page": null,
-      "nodeLabel": null,
-      "score": 0.0,
-      "method": "unmatched",
+      "cellId": "n137",
+      "page": "Бизнес-процесс (горизонтально)",
+      "nodeLabel": "Требования: data/parametrs_name.json",
+      "score": 1.0,
+      "method": "pinned",
       "title": "Сопоставление требований к классам",
       "kind": "rule",
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 5. Правила заполнения",
@@ -3828,11 +3756,11 @@
       "nodeLabel": null,
       "score": 0.0,
       "method": "unmatched",
-      "title": "LLM для проверки модели",
-      "kind": "model",
+      "title": "Настройки LLM для проверки",
+      "kind": "rule",
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 6. Настройки",
-      "commentHash": "cf022601f9d76914",
-      "comment": "Настройка LLM (Ollama) для этапа проверки ЦИМ: переменные CHECK_MODEL_LLM_MODEL, CHECK_MODEL_USE_LLM и параметры контекста. Определяет, используется ли ИИ для сопоставления свойств или только детерминированные правила."
+      "commentHash": "7fc76b6c3649e599",
+      "comment": "Правила конфигурации LLM для режима проверки: выбор модели (CHECK_MODEL_LLM_MODEL), таймаут, размер контекста и возможность отключения LLM в пользу детерминированных правил."
     },
     "check-model-deterministic-logic": {
       "cellId": null,
@@ -3883,11 +3811,11 @@
       "comment": "Входные данные для формирования типовых ведомостей: IFC_исходные_параметры.json, загруженный ВОР заказчика, документы ПОС/ПЗ/ПД и шаблон data/Типовой ВОР по КР.xlsx. Эти файлы являются входом для модуля builder.build_vor."
     },
     "typical-vor-builder-module": {
-      "cellId": null,
-      "page": null,
-      "nodeLabel": null,
-      "score": 0.0,
-      "method": "unmatched",
+      "cellId": "n88",
+      "page": "Бизнес-процесс (горизонтально)",
+      "nodeLabel": "Типовой ВОР по шаблону",
+      "score": 1.0,
+      "method": "pinned",
       "title": "Модуль формирования ВОР",
       "kind": "module",
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Формирование типовых ведомостей",
@@ -4135,11 +4063,11 @@
       "comment": "Стадия models: создание сессий для каждой модели, запуск конвейера select_rows, формирование превью параметров. Результат models.json. На диаграмме — узел обработки IFC/PDF в ветке сравнения."
     },
     "compare-output-artifacts": {
-      "cellId": null,
-      "page": null,
-      "nodeLabel": null,
-      "score": 0.0,
-      "method": "unmatched",
+      "cellId": "n165",
+      "page": "Бизнес-процесс (горизонтально)",
+      "nodeLabel": "result.json / result.xlsx",
+      "score": 1.0,
+      "method": "pinned",
       "title": "Артефакты сравнения",
       "kind": "artifact",
       "evidence": "ai-ifc-vor-generator / 15. Сравнение ведомостей объёмов работ",
@@ -4236,1935 +4164,1886 @@
       "evidence": "ai-ifc-vor-generator / 2. Режимы обработки | строка 79"
     },
     {
-      "syncKey": "common-cost-calculation",
-      "title": "Расчет стоимости",
+      "syncKey": "ai-docs-parsing-pos-pz",
+      "title": "Разбор документов ПОС/ПЗ",
       "kind": "step",
       "line": 104,
-      "evidence": "ai-ifc-vor-generator / 3. Функциональность"
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
     },
     {
-      "syncKey": "common-grouping-hierarchy",
+      "syncKey": "common-group-elements-mssk",
       "title": "Группировка элементов",
       "kind": "step",
       "line": 104,
-      "evidence": "ai-ifc-vor-generator / 3. Функциональность"
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
     },
     {
       "syncKey": "common-normalization-geometry",
       "title": "Нормализация характеристик",
       "kind": "step",
       "line": 104,
-      "evidence": "ai-ifc-vor-generator / 3. Функциональность"
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
+    },
+    {
+      "syncKey": "cs-smeta-form-tsn",
+      "title": "Сметная форма ТСН",
+      "kind": "step",
+      "line": 104,
+      "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
     },
     {
       "syncKey": "ai-model-dino-hatching",
       "title": "DINO анализ штриховок",
       "kind": "model",
-      "line": 240,
-      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ"
+      "line": 272,
+      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272"
     },
     {
-      "syncKey": "ai-model-llm-works",
-      "title": "LLM подбор работ",
-      "kind": "model",
-      "line": 240,
-      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ"
-    },
-    {
-      "syncKey": "ai-model-vlm-blueprint",
+      "syncKey": "ai-model-qwen-vl-blueprint",
       "title": "VLM распознавание чертежей",
       "kind": "model",
-      "line": 240,
-      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ"
+      "line": 272,
+      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272"
     },
     {
-      "syncKey": "ai-model-yolo-walls",
+      "syncKey": "ai-model-yandexgpt-works",
+      "title": "LLM подбор работ",
+      "kind": "model",
+      "line": 272,
+      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272"
+    },
+    {
+      "syncKey": "ai-model-yolo-walls-obb",
       "title": "YOLO детекция стен",
       "kind": "model",
-      "line": 240,
-      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ"
+      "line": 272,
+      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272"
     },
     {
-      "syncKey": "check-model-cim-llm",
+      "syncKey": "check-model-qwen-cim",
       "title": "LLM проверка ЦИМ",
       "kind": "model",
-      "line": 240,
-      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ"
+      "line": 272,
+      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272"
     },
     {
-      "syncKey": "compare-model-vor-llm",
+      "syncKey": "compare-model-works-vor",
       "title": "LLM сравнение ВОР",
       "kind": "model",
-      "line": 240,
-      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ"
+      "line": 272,
+      "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272"
     },
     {
-      "syncKey": "ai-sessions-storage",
+      "syncKey": "common-cache-doc-parsing",
+      "title": "Кеш разбора документов",
+      "kind": "data",
+      "line": 296,
+      "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники / строка 296"
+    },
+    {
+      "syncKey": "common-storage-sessions-json",
       "title": "Хранилище сессий",
       "kind": "data",
-      "line": 264,
-      "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники"
+      "line": 296,
+      "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники / строка 296"
     },
     {
-      "syncKey": "ai-vor-generation-output",
-      "title": "Сформированный ВОР",
-      "kind": "artifact",
-      "line": 264,
-      "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники"
-    },
-    {
-      "syncKey": "ai-mssk-data",
-      "title": "Справочник МССК",
+      "syncKey": "ai-llm-decisions-cache",
+      "title": "Кеши LLM-решений",
       "kind": "data",
-      "line": 276,
+      "line": 310,
       "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники"
     },
     {
-      "syncKey": "ai-perechen-kr",
-      "title": "Справочник перечня работ",
+      "syncKey": "ai-mssk-elements-dictionary",
+      "title": "Справочник МССК элементов",
       "kind": "data",
-      "line": 276,
+      "line": 310,
       "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники"
     },
     {
-      "syncKey": "ai-price-cost",
-      "title": "Справочник расценок",
+      "syncKey": "ai-mssk-materials-dictionary",
+      "title": "Справочник МССК материалов",
       "kind": "data",
-      "line": 276,
+      "line": 310,
       "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники"
     },
     {
-      "syncKey": "ai-tsn-data",
-      "title": "Справочник ТСН",
+      "syncKey": "ai-works-selection-dictionaries",
+      "title": "Справочники подбора работ",
       "kind": "data",
-      "line": 276,
+      "line": 310,
       "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники"
     },
     {
       "syncKey": "ai-keycloak-auth",
       "title": "Keycloak Auth",
       "kind": "external",
-      "line": 295,
+      "line": 331,
       "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники"
     },
     {
       "syncKey": "ai-ollama-llm",
       "title": "LLM Ollama",
       "kind": "external",
-      "line": 295,
+      "line": 331,
       "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники"
     },
     {
       "syncKey": "ai-tsn-api",
       "title": "Цифровой справочник ТСН",
       "kind": "external",
-      "line": 295,
+      "line": 331,
       "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники"
     },
     {
       "syncKey": "ai-api-rules",
       "title": "Правила API",
       "kind": "rule",
-      "line": 302,
+      "line": 338,
       "evidence": "ai-ifc-vor-generator / 8. API"
     },
     {
       "syncKey": "ai-api-auth",
       "title": "Авторизация API",
       "kind": "api",
-      "line": 310,
+      "line": 346,
       "evidence": "ai-ifc-vor-generator / 8. API / Авторизация и служебное"
     },
     {
       "syncKey": "ai-api-check-model",
       "title": "Проверка ЦИМ",
       "kind": "api",
-      "line": 319,
+      "line": 355,
       "evidence": "ai-ifc-vor-generator / 8. API / Загрузка и проверка ЦИМ"
     },
     {
       "syncKey": "ai-api-upload-ifc",
       "title": "Загрузка IFC",
       "kind": "api",
-      "line": 319,
+      "line": 355,
       "evidence": "ai-ifc-vor-generator / 8. API / Загрузка и проверка ЦИМ"
     },
     {
       "syncKey": "ai-api-sessions",
       "title": "Управление сессиями",
       "kind": "api",
-      "line": 328,
+      "line": 364,
       "evidence": "ai-ifc-vor-generator / 8. API / Сессии и файлы"
     },
     {
       "syncKey": "ai-session-statuses",
       "title": "Статусы обработки сессии",
       "kind": "data",
-      "line": 352,
+      "line": 388,
       "evidence": "ai-ifc-vor-generator / 8. API / Обработка и запуски"
     },
     {
       "syncKey": "ai-api-analytics-compare",
       "title": "API аналитики и сравнения",
       "kind": "api",
-      "line": 358,
+      "line": 394,
       "evidence": "ai-ifc-vor-generator / 8. API / Документы и константы (ИИ и Архитектура)"
     },
     {
       "syncKey": "ai-api-documents-upload",
       "title": "API загрузки документов",
       "kind": "api",
-      "line": 358,
+      "line": 394,
       "evidence": "ai-ifc-vor-generator / 8. API / Документы и константы (ИИ и Архитектура)"
     },
     {
       "syncKey": "ai-api-final-json",
       "title": "API финального JSON",
       "kind": "api",
-      "line": 382,
+      "line": 418,
       "evidence": "ai-ifc-vor-generator / 8. API / Финальный JSON запуска"
     },
     {
       "syncKey": "ai-api-3d-model",
       "title": "API 3D-модели",
       "kind": "api",
-      "line": 390,
+      "line": 426,
       "evidence": "ai-ifc-vor-generator / 8. API / 3D-модель (только IFC)"
     },
     {
       "syncKey": "ai-api-vor-generation",
       "title": "API генерации ВОР",
       "kind": "api",
-      "line": 421,
+      "line": 457,
       "evidence": "ai-ifc-vor-generator / 8. API / Формирование ВОР по типовому шаблону"
+    },
+    {
+      "syncKey": "external-larix-tsn-api",
+      "title": "API цифрового справочника ТСН",
+      "kind": "external",
+      "line": 495,
+      "evidence": "ai-ifc-vor-generator / 9. Запуск и развертывание / Переменные окружения"
     },
     {
       "syncKey": "cs-mode-normalization",
       "title": "Нормализация кода режима",
       "kind": "rule",
-      "line": 482,
+      "line": 535,
       "evidence": "§10 Режим ЦС (CS) / Переименование режимов"
     },
     {
       "syncKey": "cs-external-tsn-api",
       "title": "API справочника ТСН",
       "kind": "external",
-      "line": 494,
+      "line": 547,
       "evidence": "§10 Режим ЦС (CS)"
     },
     {
       "syncKey": "cs-module-blueprint-to-ifc",
       "title": "Пайплайн ai-blueprint-to-ifc",
       "kind": "module",
-      "line": 508,
+      "line": 561,
       "evidence": "§10 Режим ЦС (CS) / 1. Входные данные / 1.1. Основной файл модели"
     },
     {
       "syncKey": "cs-api-select-rows",
       "title": "Запуск подбора строк",
       "kind": "api",
-      "line": 539,
+      "line": 592,
       "evidence": "§10 Режим ЦС / 1.2. Параметры запуска"
     },
     {
       "syncKey": "cs-api-filter-height",
       "title": "Фильтрация по высоте",
       "kind": "api",
-      "line": 548,
+      "line": 601,
       "evidence": "§10 Режим ЦС / 1.2. Параметры запуска"
     },
     {
       "syncKey": "cs-module-session-manager",
       "title": "Менеджер сессий",
       "kind": "module",
-      "line": 605,
+      "line": 658,
       "evidence": "§10 Режим ЦС / 3. Этап 0 — загрузка файла и извлечение элементов"
     },
     {
       "syncKey": "cs-module-ifc-raw-dump",
       "title": "Сырой дамп IFC",
       "kind": "module",
-      "line": 621,
+      "line": 674,
       "evidence": "§10 Режим ЦС / 3.1. ifc_raw_dump.py"
     },
     {
       "syncKey": "cs-module-zero-step",
       "title": "Извлечение элементов",
       "kind": "module",
-      "line": 632,
+      "line": 685,
       "evidence": "§10 Режим ЦС / 3.2. zero_step.py"
     },
     {
       "syncKey": "cs-stage0-extract-kr",
       "title": "Извлечение элементов КР",
       "kind": "step",
-      "line": 637,
+      "line": 690,
       "evidence": "§10 Режим ЦС / 3. Этап 0 / 3.2. zero_step.py"
     },
     {
       "syncKey": "cs-stage0-classify-storey-kr",
       "title": "Классификация этажей КР",
       "kind": "step",
-      "line": 664,
+      "line": 717,
       "evidence": "§10 Режим ЦС / 3. Этап 0 / 3.2. zero_step.py"
     },
     {
       "syncKey": "cs-stage0-selection-template",
       "title": "Шаблон параметров подбора",
       "kind": "step",
-      "line": 674,
+      "line": 727,
       "evidence": "§10 Режим ЦС / 3. Этап 0 / 3.3. selection_template_builder.py"
     },
     {
       "syncKey": "cs-stage0-artifact-all-data",
       "title": "IFC_ВСЕ_ДАННЫЕ*.xlsx",
       "kind": "artifact",
-      "line": 676,
+      "line": 729,
       "evidence": "§10 Режим ЦС / 3. Этап 0 / 3.2. zero_step.py"
     },
     {
       "syncKey": "cs-stage0-artifact-smetchik",
       "title": "ДЛЯ_СМЕТЧИКА_исправленный.xlsx",
       "kind": "artifact",
-      "line": 676,
+      "line": 729,
       "evidence": "§10 Режим ЦС / 3. Этап 0 / 3.2. zero_step.py"
     },
     {
       "syncKey": "cs-stage0-reference-builder",
       "title": "Построение JSON-справочников",
       "kind": "step",
-      "line": 696,
+      "line": 749,
       "evidence": "§10 Режим ЦС / 3. Этап 0 / 3.4. ifc_reference_builder.py"
     },
     {
       "syncKey": "cs-stage0-artifact-grouped-json",
       "title": "ifc_raw_elements_grouped.json",
       "kind": "artifact",
-      "line": 705,
+      "line": 758,
       "evidence": "§10 Режим ЦС / 3. Этап 0 / 3.4. ifc_reference_builder.py"
     },
     {
       "syncKey": "cs-stage0-ifc-reference-builder",
       "title": "ifc_reference_builder",
       "kind": "module",
-      "line": 718,
+      "line": 771,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 3. Этап 0 — загрузка файла и извлечение элементов / 3.4. `ifc_reference_builder.py` — JSON-справочники цифрового сборника (только КР)"
     },
     {
       "syncKey": "cs-stage0-geometry-extraction-order",
       "title": "Порядок извлечения геометрии",
       "kind": "rule",
-      "line": 721,
+      "line": 774,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 3. Этап 0 — загрузка файла и извлечение элементов / 3.4. `ifc_reference_builder.py` — JSON-справочники цифрового сборника (только КР)"
     },
     {
       "syncKey": "cs-stage0-pdf-reference-build",
       "title": "Построение справочника из PDF",
       "kind": "step",
-      "line": 732,
+      "line": 785,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 3. Этап 0 — загрузка файла и извлечение элементов / 3.4. `ifc_reference_builder.py` — JSON-справочники цифрового сборника (только КР)"
     },
     {
       "syncKey": "cs-stage0-json-references-artifact",
       "title": "JSON-справочники сессии",
       "kind": "artifact",
-      "line": 734,
+      "line": 787,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 3. Этап 0 — загрузка файла и извлечение элементов / 3.4. `ifc_reference_builder.py` — JSON-справочники цифрового сборника (только КР)"
     },
     {
       "syncKey": "cs-stage0-position-links-module",
       "title": "position_links",
       "kind": "module",
-      "line": 739,
+      "line": 792,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 3. Этап 0 — загрузка файла и извлечение элементов / 3.5. `position_links.py` — ссылки на позиции цифрового сборника (только КР)"
     },
     {
       "syncKey": "cs-stage0-position-links-artifact",
       "title": "position_links.json",
       "kind": "artifact",
-      "line": 751,
+      "line": 804,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 3. Этап 0 — загрузка файла и извлечение элементов / 3.5. `position_links.py` — ссылки на позиции цифрового сборника (только КР)"
     },
     {
       "syncKey": "cs-api-get-position-links",
       "title": "GET position_links",
       "kind": "api",
-      "line": 768,
+      "line": 821,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 3. Этап 0 — загрузка файла и извлечение элементов / 3.5. `position_links.py` — ссылки на позиции цифрового сборника (только КР)"
     },
     {
       "syncKey": "cs-stage0-pydantic-schemas-rule",
       "title": "Схемы Pydantic position_links",
       "kind": "rule",
-      "line": 793,
+      "line": 846,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 3. Этап 0 — загрузка файла и извлечение элементов / 3.5. `position_links.py` — ссылки на позиции цифрового сборника (только КР)"
     },
     {
       "syncKey": "cs-stage0-missing-groups",
       "title": "Отсутствующие в ЦС группы",
       "kind": "artifact",
-      "line": 805,
+      "line": 858,
       "evidence": "§10 Режим ЦС / 3. Этап 0 / 3.5. position_links.py"
     },
     {
       "syncKey": "cs-api-update-height",
       "title": "Обновление высоты здания",
       "kind": "api",
-      "line": 837,
+      "line": 890,
       "evidence": "§10 Режим ЦС / 3. Этап 0 / 3.5. position_links.py"
     },
     {
       "syncKey": "cs-stage0-preview-editing",
       "title": "Редактирование превью КР",
       "kind": "rule",
-      "line": 847,
+      "line": 900,
       "evidence": "§10 Режим ЦС / 3. Этап 0 / 3.5. position_links.py"
     },
     {
       "syncKey": "cs-stage0-material-refinement",
       "title": "Уточнение материала МССК",
       "kind": "rule",
-      "line": 854,
+      "line": 907,
       "evidence": "§10 Режим ЦС / 3. Этап 0 / 3.5. position_links.py"
     },
     {
       "syncKey": "cs-stage0-cascade-highlight",
       "title": "Каскадная подсветка",
       "kind": "rule",
-      "line": 865,
+      "line": 918,
       "evidence": "§10 Режим ЦС / 3. Этап 0 / 3.5. position_links.py"
     },
     {
       "syncKey": "cs-api-upload-pdf-legend",
       "title": "Загрузка PDF с легендой",
       "kind": "api",
-      "line": 876,
+      "line": 929,
       "evidence": "§10 Режим ЦС / 3. Этап 0 / 3.6. Ручная легенда чертежа"
     },
     {
       "syncKey": "cs-stage0-legend-validation",
       "title": "Валидация ручной легенды",
       "kind": "rule",
-      "line": 880,
+      "line": 933,
       "evidence": "§10 Режим ЦС / 3. Этап 0 / 3.6. Ручная легенда чертежа"
     },
     {
       "syncKey": "cs-stage0-pdf-legend",
       "title": "Обработка PDF легенды",
       "kind": "module",
-      "line": 886,
+      "line": 939,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 3. Этап 0 / 3.6. Ручная легенда чертежа"
     },
     {
       "syncKey": "cs-stage1-run-api",
       "title": "Запуск обработки сессии",
       "kind": "api",
-      "line": 898,
+      "line": 951,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 4. Этап 1 — запуск обработки"
     },
     {
       "syncKey": "cs-stage1-filtered-elements",
       "title": "Фильтрация элементов",
       "kind": "artifact",
-      "line": 904,
+      "line": 957,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 4. Этап 1 / 4.1. Применение материалов и фильтрация строк"
-    },
-    {
-      "syncKey": "cs-stage1-grouping-mssk",
-      "title": "Группировка по МССК",
-      "kind": "module",
-      "line": 920,
-      "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 4. Этап 1 / 4.2. Группировка"
     },
     {
       "syncKey": "cs-stage1-grouping-hierarchy",
       "title": "Иерархия группировки КР",
       "kind": "data",
-      "line": 922,
+      "line": 975,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 4. Этап 1 / 4.2. Группировка"
     },
     {
       "syncKey": "cs-stage1-material-code-override",
       "title": "Уточнение МССК материалов",
       "kind": "rule",
-      "line": 938,
+      "line": 991,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 4. Этап 1 / 4.2. Группировка"
     },
     {
       "syncKey": "cs-stage1-formwork-calc",
       "title": "Расчет площади опалубки",
       "kind": "rule",
-      "line": 949,
+      "line": 1003,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 4. Этап 1 / 4.2. Группировка"
     },
     {
       "syncKey": "cs-stage1-grouping-outputs",
       "title": "Артефакты группировки",
       "kind": "artifact",
-      "line": 973,
+      "line": 1027,
       "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 4. Этап 1 / 4.2. Группировка"
     },
     {
       "syncKey": "cs-stage1-selected-elements-grouped",
       "title": "selected_elements_grouped.json",
       "kind": "artifact",
-      "line": 982,
+      "line": 1036,
       "evidence": "§10 Режим ЦС / 4. Этап 1 / 4.3. Группы для API"
     },
     {
       "syncKey": "cs-stage1-is-precast-rule",
       "title": "Признак сборного ЖБ",
       "kind": "rule",
-      "line": 994,
+      "line": 1048,
       "evidence": "§10 Режим ЦС / 4. Этап 1 / 4.3. Группы для API"
     },
     {
       "syncKey": "cs-stage1-split-by-part",
       "title": "Разделение по частям здания",
       "kind": "step",
-      "line": 1006,
+      "line": 1060,
       "evidence": "§10 Режим ЦС / 4. Этап 1 / 4.3. Группы для API"
     },
     {
       "syncKey": "cs-stage1-split-by-name",
       "title": "Разделение по типу элемента",
       "kind": "step",
-      "line": 1031,
+      "line": 1085,
       "evidence": "§10 Режим ЦС / 4. Этап 1 / 4.3. Группы для API"
     },
     {
       "syncKey": "cs-stage1-api-works-lookup",
       "title": "API ТСН подбор работ",
       "kind": "api",
-      "line": 1052,
+      "line": 1106,
       "evidence": "§10 Режим ЦС / 4. Этап 1 / 4.4. Подбор работ через API ТСН"
     },
     {
       "syncKey": "cs-stage1-api-works-response",
       "title": "Ответ API ТСН",
       "kind": "artifact",
-      "line": 1073,
+      "line": 1127,
       "evidence": "§10 Режим ЦС / 4. Этап 1 / 4.4. Подбор работ через API ТСН"
     },
     {
       "syncKey": "cs-stage1-calc-work-volume",
       "title": "Расчёт объёмов работ",
       "kind": "step",
-      "line": 1083,
+      "line": 1137,
       "evidence": "§10 Режим ЦС / 4. Этап 1 / 4.5. Финальный перечень работ"
     },
     {
       "syncKey": "cs-stage1-calc-work-cost",
       "title": "Расчёт стоимости работ",
       "kind": "step",
-      "line": 1109,
+      "line": 1163,
       "evidence": "§10 Режим ЦС / 4. Этап 1 / 4.5. Финальный перечень работ"
     },
     {
       "syncKey": "cs-stage1-final-result-json",
       "title": "Финальный JSON результата",
       "kind": "artifact",
-      "line": 1149,
+      "line": 1203,
       "evidence": "§10 Режим ЦС / 4. Этап 1 / 4.6. Сборка финального JSON"
     },
     {
       "syncKey": "cs-stage1-build-positions",
       "title": "Формирование позиций работ",
       "kind": "step",
-      "line": 1154,
+      "line": 1208,
       "evidence": "§10 Режим ЦС / 4. Этап 1 / 4.6. Сборка финального JSON"
     },
     {
       "syncKey": "cs-stage1-final-output-rule",
       "title": "Состав итоговой выдачи",
       "kind": "rule",
-      "line": 1174,
+      "line": 1228,
       "evidence": "§10 Режим ЦС / 4. Этап 1 / 4.7. Финализация"
     },
     {
       "syncKey": "cs-finalization-artifact-filter",
       "title": "Исключение артефактов из выдачи",
       "kind": "rule",
-      "line": 1180,
+      "line": 1234,
       "evidence": "§10 Режим ЦС / 4.7. Финализация"
     },
     {
       "syncKey": "cs-api-build-final-json",
       "title": "Пересборка финального JSON",
       "kind": "api",
-      "line": 1191,
+      "line": 1245,
       "evidence": "§10 Режим ЦС / 4.7. Финализация"
     },
     {
       "syncKey": "cs-api-restore-session",
       "title": "Восстановление сессии",
       "kind": "api",
-      "line": 1199,
+      "line": 1253,
       "evidence": "§10 Режим ЦС / 4.7. Финализация"
     },
     {
       "syncKey": "cs-module-group-excel",
       "title": "Группировка Excel",
       "kind": "module",
-      "line": 1211,
+      "line": 1265,
       "evidence": "§10 Режим ЦС / 5. Сводка по модулям"
     },
     {
       "syncKey": "cs-module-ifc-reference-builder",
       "title": "Построитель справочников",
       "kind": "module",
-      "line": 1211,
+      "line": 1265,
       "evidence": "§10 Режим ЦС / 5. Сводка по модулям"
     },
     {
       "syncKey": "cs-module-pdf-processor",
       "title": "Обработка PDF",
       "kind": "module",
-      "line": 1211,
+      "line": 1265,
       "evidence": "§10 Режим ЦС / 5. Сводка по модулям"
     },
     {
       "syncKey": "cs-module-position-links",
       "title": "Ссылки на позиции",
       "kind": "module",
-      "line": 1211,
+      "line": 1265,
       "evidence": "§10 Режим ЦС / 5. Сводка по модулям"
     },
     {
       "syncKey": "cs-data-comparison-vor",
       "title": "Шаблон сравнения ВОР",
       "kind": "data",
-      "line": 1237,
-      "evidence": "§10 Режим ЦС / 6. Справочники data/"
-    },
-    {
-      "syncKey": "cs-data-elements-mssk",
-      "title": "Справочник МССК-элементов",
-      "kind": "data",
-      "line": 1237,
-      "evidence": "§10 Режим ЦС / 6. Справочники data/"
-    },
-    {
-      "syncKey": "cs-data-koefs",
-      "title": "Нормы расхода",
-      "kind": "data",
-      "line": 1237,
-      "evidence": "§10 Режим ЦС / 6. Справочники data/"
-    },
-    {
-      "syncKey": "cs-data-materials-mssk",
-      "title": "Справочник МССК-материалов",
-      "kind": "data",
-      "line": 1237,
+      "line": 1291,
       "evidence": "§10 Режим ЦС / 6. Справочники data/"
     },
     {
       "syncKey": "cs-data-price-cost",
       "title": "Стоимость расценок",
       "kind": "data",
-      "line": 1237,
+      "line": 1291,
       "evidence": "§10 Режим ЦС / 6. Справочники data/"
     },
     {
       "syncKey": "cs-rule-data-read-only",
       "title": "Режим чтения справочников",
       "kind": "rule",
-      "line": 1247,
+      "line": 1301,
       "evidence": "§10 Режим ЦС / 6. Справочники data/"
     },
     {
       "syncKey": "cs-element-selection-params",
       "title": "Параметры_подбора_элементов",
       "kind": "artifact",
-      "line": 1255,
+      "line": 1309,
       "evidence": "§10 Режим ЦС / 7. Полный список создаваемых файлов (КР)"
     },
     {
       "syncKey": "cs-for-estimator-corrected",
       "title": "ДЛЯ_СМЕТЧИКА_исправленный",
       "kind": "artifact",
-      "line": 1255,
+      "line": 1309,
       "evidence": "§10 Режим ЦС / 7. Полный список создаваемых файлов (КР)"
     },
     {
       "syncKey": "cs-ifc-elements-output",
       "title": "ifc_elements_output",
       "kind": "artifact",
-      "line": 1255,
+      "line": 1309,
       "evidence": "§10 Режим ЦС / 7. Полный список создаваемых файлов (КР)"
     },
     {
       "syncKey": "cs-ifc-global-constants",
       "title": "IFC_глобальные_константы",
       "kind": "artifact",
-      "line": 1255,
+      "line": 1309,
       "evidence": "§10 Режим ЦС / 7. Полный список создаваемых файлов (КР)"
     },
     {
       "syncKey": "cs-ifc-raw-elements-grouped",
       "title": "ifc_raw_elements_grouped",
       "kind": "artifact",
-      "line": 1255,
+      "line": 1309,
       "evidence": "§10 Режим ЦС / 7. Полный список создаваемых файлов (КР)"
     },
     {
       "syncKey": "cs-final-result-kr",
       "title": "final_result_KR",
       "kind": "artifact",
-      "line": 1275,
+      "line": 1329,
       "evidence": "§10 Режим ЦС / 7. Полный список создаваемых файлов (КР)"
     },
     {
       "syncKey": "cs-selected-elements-grouped",
       "title": "selected_elements_grouped",
       "kind": "artifact",
-      "line": 1275,
+      "line": 1329,
       "evidence": "§10 Режим ЦС / 7. Полный список создаваемых файлов (КР)"
     },
     {
-      "syncKey": "cs-api-works-lookup",
-      "title": "api_works_lookup",
-      "kind": "module",
-      "line": 1299,
-      "evidence": "§10 Режим ЦС / 8. Ключевые отличия от режима АР"
-    },
-    {
-      "syncKey": "cs-group-elements-mssk",
-      "title": "group_elements_mssk",
-      "kind": "module",
-      "line": 1299,
-      "evidence": "§10 Режим ЦС / 8. Ключевые отличия от режима АР"
+      "syncKey": "cs-works-api-lookup",
+      "title": "Подбор работ через API",
+      "kind": "step",
+      "line": 1353,
+      "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 8. Ключевые отличия от режима АР"
     },
     {
       "syncKey": "ai-works-selector-llm",
       "title": "Подбор через LLM (larix)",
       "kind": "module",
-      "line": 1337,
+      "line": 1391,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / строка 1337"
     },
     {
       "syncKey": "ai-works-selector-perechen",
       "title": "Подбор по перечню сметчиков",
       "kind": "module",
-      "line": 1337,
+      "line": 1391,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / строка 1337"
     },
     {
       "syncKey": "ai-works-selector-switch",
       "title": "Переключатель WORKS_SELECTOR",
       "kind": "rule",
-      "line": 1337,
+      "line": 1391,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / строка 1337"
     },
     {
       "syncKey": "ai-api-upload-pdf",
       "title": "Загрузка PDF-чертежа",
       "kind": "api",
-      "line": 1362,
+      "line": 1416,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 1. Входные данные / 1.1. Основной файл модели / строка 1362"
     },
     {
       "syncKey": "ai-api-upload-pd",
       "title": "Загрузка ПД",
       "kind": "api",
-      "line": 1388,
+      "line": 1442,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 1. Входные данные / 1.2. Опциональные файлы ПОС и пояснительной записки (ПЗ) / строка 1388"
     },
     {
       "syncKey": "ai-api-upload-pos",
       "title": "Загрузка ПОС",
       "kind": "api",
-      "line": 1388,
+      "line": 1442,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 1. Входные данные / 1.2. Опциональные файлы ПОС и пояснительной записки (ПЗ) / строка 1388"
     },
     {
       "syncKey": "ai-api-upload-pz",
       "title": "Загрузка ПЗ",
       "kind": "api",
-      "line": 1388,
+      "line": 1442,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 1. Входные данные / 1.2. Опциональные файлы ПОС и пояснительной записки (ПЗ) / строка 1388"
     },
     {
       "syncKey": "ai-api-upload-vor",
       "title": "Загрузка ВОР",
       "kind": "api",
-      "line": 1388,
+      "line": 1442,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 1. Входные данные / 1.2. Опциональные файлы ПОС и пояснительной записки (ПЗ) / строка 1388"
     },
     {
       "syncKey": "ai-api-pd-full",
       "title": "Полный разбор ПД",
       "kind": "api",
-      "line": 1395,
+      "line": 1449,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 1. Входные данные / 1.2. Опциональные файлы ПОС и пояснительной записки (ПЗ) / строка 1395"
     },
     {
       "syncKey": "ai-rule-constants-priority",
       "title": "Приоритет констант подбора",
       "kind": "rule",
-      "line": 1401,
+      "line": 1455,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 1. Входные данные / 1.2. Опциональные файлы ПОС и пояснительной записки (ПЗ) / строка 1401"
     },
     {
       "syncKey": "ai-api-select-rows",
       "title": "Запуск ИИ-подбора работ",
       "kind": "api",
-      "line": 1410,
+      "line": 1464,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 1. Входные данные / 1.3. Параметры запуска"
     },
     {
       "syncKey": "ai-api-works-constants",
       "title": "Получение констант работ",
       "kind": "api",
-      "line": 1421,
+      "line": 1475,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 1. Входные данные / 1.3. Параметры запуска"
     },
     {
       "syncKey": "ai-stage0-extract",
       "title": "Этап 0: Загрузка и извлечение",
       "kind": "stage",
-      "line": 1484,
+      "line": 1538,
       "evidence": "11. Режим ИИ (AI) / 2. Общая схема пайплайна"
     },
     {
       "syncKey": "ai-zero-step",
       "title": "Извлечение и нормализация",
       "kind": "module",
-      "line": 1595,
+      "line": 1650,
       "evidence": "11. Режим ИИ (AI) / 3. Этап 0 — загрузка файла и извлечение элементов / 3.2. zero_step.py — извлечение и нормализация элементов"
     },
     {
       "syncKey": "ai-stage0-quantities-parse",
       "title": "Распознавание количеств",
       "kind": "step",
-      "line": 1676,
+      "line": 1731,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 3. Этап 0 — загрузка файла и извлечение элементов / 3.2. `zero_step.py` — извлечение и нормализация элементов"
     },
     {
       "syncKey": "ai-stage0-ifc-global-constants",
       "title": "IFC_глобальные_константы.json",
       "kind": "data",
-      "line": 1696,
+      "line": 1751,
       "evidence": "§11 Режим ИИ / 3. Этап 0 / 3.2. zero_step.py"
     },
     {
       "syncKey": "ai-stage0-selection-template-builder",
       "title": "selection_template_builder.py",
       "kind": "module",
-      "line": 1705,
+      "line": 1760,
       "evidence": "§11 Режим ИИ / 3. Этап 0 / 3.3. selection_template_builder.py"
     },
     {
       "syncKey": "ai-data-selection-parameters",
       "title": "selection_parameters.json",
       "kind": "data",
-      "line": 1708,
+      "line": 1763,
       "evidence": "§11 Режим ИИ / 3. Этап 0 / 3.3. selection_template_builder.py"
     },
     {
       "syncKey": "ai-data-selection-params-mapping",
       "title": "selection_parameters_mapping.json",
       "kind": "data",
-      "line": 1708,
+      "line": 1763,
       "evidence": "§11 Режим ИИ / 3. Этап 0 / 3.3. selection_template_builder.py"
     },
     {
       "syncKey": "ai-stage0-selection-params-json",
       "title": "Параметры_подбора_элементов.json",
       "kind": "artifact",
-      "line": 1726,
+      "line": 1781,
       "evidence": "§11 Режим ИИ / 3. Этап 0 / 3.3. selection_template_builder.py"
     },
     {
       "syncKey": "ai-module-ifc-reference-builder",
       "title": "ifc_reference_builder.py",
       "kind": "module",
-      "line": 1757,
+      "line": 1812,
       "evidence": "§11 Режим ИИ / 3. Этап 0 / 3.4. Справочники цифрового сборника"
     },
     {
       "syncKey": "ai-stage0-ar-reference-restriction",
       "title": "Ограничение справочников в АР",
       "kind": "rule",
-      "line": 1768,
+      "line": 1823,
       "evidence": "§11 Режим ИИ / 3. Этап 0 / 3.4. Справочники цифрового сборника — в АР не строятся"
     },
     {
       "syncKey": "ai-stage0-ar-columns-readonly",
       "title": "Неизменяемость колонок АР",
       "kind": "rule",
-      "line": 1785,
+      "line": 1840,
       "evidence": "§11 Режим ИИ / 3. Этап 0 / 3.4. Справочники цифрового сборника — в АР не строятся"
     },
     {
       "syncKey": "ai-stage0-auto-part-material",
       "title": "Автоопределение части и материала",
       "kind": "step",
-      "line": 1788,
+      "line": 1843,
       "evidence": "§11 Режим ИИ / 3. Этап 0 / 3.4. Справочники цифрового сборника — в АР не строятся"
     },
     {
       "syncKey": "ai-stage0-incomplete-mssk-resolution",
       "title": "Уточнение неполного МССК",
       "kind": "step",
-      "line": 1794,
+      "line": 1849,
       "evidence": "§11 Режим ИИ / 3. Этап 0 / 3.4. Справочники цифрового сборника — в АР не строятся"
     },
     {
       "syncKey": "ai-stage0-cascade-highlight",
       "title": "Каскадная подсветка групп",
       "kind": "step",
-      "line": 1805,
+      "line": 1860,
       "evidence": "§11 Режим ИИ / 3. Этап 0 / 3.4. Справочники цифрового сборника — в АР не строятся"
     },
     {
       "syncKey": "ai-stage0-kr-manual-material",
       "title": "Ручное переопределение в КР",
       "kind": "rule",
-      "line": 1814,
+      "line": 1869,
       "evidence": "§11 Режим ИИ / 3. Этап 0 / 3.4. Справочники цифрового сборника — в АР не строятся"
     },
     {
       "syncKey": "ai-stage0-manual-legend-format",
       "title": "Структура ручной легенды",
       "kind": "data",
-      "line": 1822,
+      "line": 1877,
       "evidence": "§11 Режим ИИ / 3. Этап 0 / 3.5. Ручная легенда чертежа (PDF)"
     },
     {
       "syncKey": "ai-stage0-legend-pipeline",
       "title": "Конвейер ручной легенды",
       "kind": "module",
-      "line": 1832,
+      "line": 1887,
       "evidence": "§11 Режим ИИ / 3. Этап 0 / 3.5. Ручная легенда чертежа (PDF)"
     },
     {
       "syncKey": "ai-pos-constants-json",
       "title": "Константы ПОС",
       "kind": "artifact",
-      "line": 1864,
+      "line": 1919,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 4. Опционально — разбор ПОС и пояснительной записки ПЗ (pd_parser.py) | строка 1864"
     },
     {
       "syncKey": "ai-pz-constants-json",
       "title": "Константы ПЗ",
       "kind": "artifact",
-      "line": 1864,
+      "line": 1919,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 4. Опционально — разбор ПОС и пояснительной записки ПЗ (pd_parser.py) | строка 1864"
     },
     {
       "syncKey": "ai-works-classification-json",
       "title": "Схема констант",
       "kind": "data",
-      "line": 1875,
+      "line": 1930,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 4. Опционально — разбор ПОС и пояснительной записки ПЗ (pd_parser.py) | строка 1875"
     },
     {
       "syncKey": "ai-selection-params-json",
       "title": "Параметры подбора",
       "kind": "artifact",
-      "line": 1894,
+      "line": 1949,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 4. Опционально — разбор ПОС и пояснительной записки ПЗ (pd_parser.py) | строка 1894"
     },
     {
       "syncKey": "ai-doc-pdf-parser",
       "title": "Разбор ВОР и ПД",
       "kind": "module",
-      "line": 1920,
+      "line": 1975,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 4. Опционально — разбор ПОС и пояснительной записки ПЗ (pd_parser.py) / 4.1. Разбор ВОР и ПД (doc_pdf_parser.py) | строка 1920"
     },
     {
       "syncKey": "ai-vor-llm-parse",
       "title": "Разбор ВОР через LLM",
       "kind": "stage",
-      "line": 1934,
+      "line": 1989,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 4.1. Разбор ВОР и ПД"
     },
     {
       "syncKey": "ai-vor-deterministic-extract",
       "title": "Детерминированный разбор ВОР",
       "kind": "module",
-      "line": 1945,
+      "line": 2000,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 4.1. Разбор ВОР и ПД"
     },
     {
       "syncKey": "ai-pd-llm-parse",
       "title": "Разбор ПД через LLM",
       "kind": "stage",
-      "line": 1957,
+      "line": 2012,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 4.1. Разбор ВОР и ПД"
     },
     {
       "syncKey": "ai-doc-parse-optimization",
       "title": "Оптимизация разбора документов",
       "kind": "rule",
-      "line": 1973,
+      "line": 2028,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 4.1. Разбор ВОР и ПД"
     },
     {
       "syncKey": "ai-doc-facts-matching",
       "title": "Семантическое сопоставление ВОР",
       "kind": "module",
-      "line": 1987,
+      "line": 2042,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 4.1. Разбор ВОР и ПД"
     },
     {
       "syncKey": "ai-material-filtering",
       "title": "Применение материалов и фильтрация",
       "kind": "step",
-      "line": 2035,
+      "line": 2090,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (run_) / 5.1. Применение материалов и фильтрация строк"
     },
     {
       "syncKey": "ai-group-excel-ar",
       "title": "Группировка элементов АР",
       "kind": "module",
-      "line": 2067,
-      "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (run_) / 5.2. Группировка — group_excel.py (process_ifc_excel_ar)"
-    },
-    {
-      "syncKey": "ai-group-hierarchy-ar",
-      "title": "Иерархия группировки АР",
-      "kind": "data",
-      "line": 2070,
-      "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (run_) / 5.2. Группировка — group_excel.py (process_ifc_excel_ar)"
+      "line": 2122,
+      "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.2. Группировка — `group_excel.py` (`process_ifc_excel_ar`)"
     },
     {
       "syncKey": "ai-material-code-override-rule",
       "title": "Уточнение МССК-кодов материала",
       "kind": "rule",
-      "line": 2083,
+      "line": 2148,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (run_) / 5.2. Группировка — group_excel.py (process_ifc_excel_ar)"
     },
     {
       "syncKey": "ai-frontend-preview-grouping",
       "title": "Фронтенд группировки превью",
       "kind": "module",
-      "line": 2101,
+      "line": 2166,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (run_) / 5.2. Группировка — group_excel.py (process_ifc_excel_ar)"
     },
     {
       "syncKey": "ai-split-leaf-groups",
       "title": "Разбивка листовых групп",
       "kind": "step",
-      "line": 2109,
+      "line": 2174,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.2. Группировка — `group_excel.py` (`process_ifc_excel_ar`) | строка 2109"
     },
     {
       "syncKey": "ai-reinforcement-calc-rule",
       "title": "Расчет расхода арматуры",
       "kind": "rule",
-      "line": 2118,
+      "line": 2183,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.2. Группировка — `group_excel.py` (`process_ifc_excel_ar`) | строка 2118"
     },
     {
       "syncKey": "ai-building-parts-json",
       "title": "Части здания",
       "kind": "artifact",
-      "line": 2129,
+      "line": 2194,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.2. Группировка — `group_excel.py` (`process_ifc_excel_ar`) | строка 2129"
     },
     {
       "syncKey": "ai-building-tree-full",
       "title": "Дерево всего здания",
       "kind": "artifact",
-      "line": 2129,
+      "line": 2194,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.2. Группировка — `group_excel.py` (`process_ifc_excel_ar`) | строка 2129"
     },
     {
       "syncKey": "ai-grouped-elements-json",
       "title": "JSON дерево групп",
       "kind": "artifact",
-      "line": 2129,
+      "line": 2194,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.2. Группировка — `group_excel.py` (`process_ifc_excel_ar`) | строка 2129"
     },
     {
       "syncKey": "ai-grouped-for-estimator",
       "title": "Сгруппированный файл сметчика",
       "kind": "artifact",
-      "line": 2129,
+      "line": 2194,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.2. Группировка — `group_excel.py` (`process_ifc_excel_ar`) | строка 2129"
     },
     {
       "syncKey": "ai-selected-elements-tree",
       "title": "Дерево выбранных элементов",
       "kind": "artifact",
-      "line": 2129,
+      "line": 2194,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.2. Группировка — `group_excel.py` (`process_ifc_excel_ar`) | строка 2129"
     },
     {
       "syncKey": "ai-works-table-selector",
       "title": "Селектор работ АР",
       "kind": "module",
-      "line": 2139,
+      "line": 2204,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.3. Подбор таблиц работ — `works_table_selector.py` | строка 2139"
     },
     {
       "syncKey": "ai-element-normalization",
       "title": "Нормализация элемента",
       "kind": "step",
-      "line": 2149,
+      "line": 2214,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.3. Подбор таблиц работ — `works_table_selector.py` | строка 2149"
     },
     {
       "syncKey": "ai-ifc-collections-map",
       "title": "Справочник коллекций",
       "kind": "data",
-      "line": 2149,
+      "line": 2214,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.3. Подбор таблиц работ — `works_table_selector.py` | строка 2149"
     },
     {
       "syncKey": "ai-material-priority-rule",
       "title": "Приоритет материала",
       "kind": "rule",
-      "line": 2149,
+      "line": 2214,
+      "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.3. Подбор таблиц работ — `works_table_selector.py` | строка 2149"
+    },
+    {
+      "syncKey": "ai-msck-elements-map",
+      "title": "Справочник МССК",
+      "kind": "data",
+      "line": 2214,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.3. Подбор таблиц работ — `works_table_selector.py` | строка 2149"
     },
     {
       "syncKey": "ai-tree-work-compact",
       "title": "Дерево работ",
       "kind": "data",
-      "line": 2149,
+      "line": 2214,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.3. Подбор таблиц работ — `works_table_selector.py` | строка 2149"
     },
     {
       "syncKey": "ai-works-selector-sb6-rules",
       "title": "Правила подбора таблиц Сб. 6",
       "kind": "rule",
-      "line": 2177,
+      "line": 2242,
       "evidence": "§11 Режим ИИ / 5.3. Подбор таблиц работ / строка 2177"
     },
     {
       "syncKey": "ai-works-selector-global-constants",
       "title": "Константы проекта",
       "kind": "data",
-      "line": 2209,
+      "line": 2274,
       "evidence": "§11 Режим ИИ / 5.3. Подбор таблиц работ / строка 2209"
     },
     {
       "syncKey": "ai-works-selector-sb7-11-rules",
       "title": "Правила подбора таблиц Сб. 7-11",
       "kind": "rule",
-      "line": 2209,
+      "line": 2274,
       "evidence": "§11 Режим ИИ / 5.3. Подбор таблиц работ / строка 2209"
     },
     {
       "syncKey": "ai-works-selector-fallback-search",
       "title": "Глобальный поиск по ключевым словам",
       "kind": "step",
-      "line": 2232,
+      "line": 2297,
       "evidence": "§11 Режим ИИ / 5.3. Подбор таблиц работ / строка 2232"
     },
     {
       "syncKey": "ai-works-selector-output-json",
       "title": "Подобранные_таблицы_работ.json",
       "kind": "artifact",
-      "line": 2235,
+      "line": 2300,
       "evidence": "§11 Режим ИИ / 5.3. Подбор таблиц работ / строка 2235"
     },
     {
       "syncKey": "ai-works-fetcher-module",
       "title": "Модуль загрузки работ",
       "kind": "module",
-      "line": 2261,
+      "line": 2326,
       "evidence": "§11 Режим ИИ / 5.4. Работы из цифрового сборника / строка 2261"
     },
     {
       "syncKey": "ai-works-fetcher-output-json",
       "title": "Подобранные_работы.json",
       "kind": "artifact",
-      "line": 2265,
+      "line": 2330,
       "evidence": "§11 Режим ИИ / 5.4. Работы из цифрового сборника / строка 2265"
     },
     {
       "syncKey": "ai-works-fetcher-period-filter",
       "title": "Определение актуального периода ТСН",
       "kind": "step",
-      "line": 2265,
+      "line": 2330,
       "evidence": "§11 Режим ИИ / 5.4. Работы из цифрового сборника / строка 2265"
     },
     {
       "syncKey": "ai-works-fetcher-work-process",
       "title": "Загрузка работ по таблицам",
       "kind": "step",
-      "line": 2265,
+      "line": 2330,
       "evidence": "§11 Режим ИИ / 5.4. Работы из цифрового сборника / строка 2265"
     },
     {
       "syncKey": "ai-works-fetcher-api",
       "title": "API цифрового сборника работ",
       "kind": "external",
-      "line": 2298,
+      "line": 2363,
       "evidence": "§11 Режим ИИ / 5.4. Работы из цифрового сборника"
     },
     {
       "syncKey": "ai-works-final-selector",
-      "title": "Финальный подбор работ через LLM",
+      "title": "Финальный подбор работ LLM",
       "kind": "module",
-      "line": 2320,
-      "evidence": "§11 Режим ИИ / 5.5. Финальный подбор работ через LLM"
+      "line": 2385,
+      "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.5. Финальный подбор работ через LLM — `works_final_selector.py`"
     },
     {
       "syncKey": "ai-split-leaf-groups-by-part",
       "title": "Разделение групп по частям здания",
       "kind": "step",
-      "line": 2331,
+      "line": 2397,
       "evidence": "§11 Режим ИИ / 5.5. Финальный подбор работ через LLM"
     },
     {
       "syncKey": "ai-works-filter-rank",
       "title": "Фильтрация и ранжирование работ",
       "kind": "step",
-      "line": 2359,
+      "line": 2425,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.5. Финальный подбор работ через LLM — `works_final_selector.py` | строка 2359"
     },
     {
       "syncKey": "ai-api-work-detail",
       "title": "Детали позиции работы",
       "kind": "api",
-      "line": 2397,
+      "line": 2463,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.5. Финальный подбор работ через LLM — `works_final_selector.py` | строка 2397"
     },
     {
       "syncKey": "ai-llm-work-selection",
       "title": "LLM-выбор работы",
       "kind": "step",
-      "line": 2397,
+      "line": 2463,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.5. Финальный подбор работ через LLM — `works_final_selector.py` | строка 2397"
     },
     {
       "syncKey": "ai-artifact-final-works-json",
       "title": "Финальный перечень работ JSON",
       "kind": "artifact",
-      "line": 2432,
+      "line": 2498,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.5. Финальный подбор работ через LLM — `works_final_selector.py` | строка 2432"
     },
     {
       "syncKey": "ai-stage1-build-final-json",
       "title": "Сборка финального JSON",
       "kind": "step",
-      "line": 2497,
+      "line": 2563,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.6. Сборка финального JSON — `ifc_json_builder.py`"
     },
     {
       "syncKey": "ai-data-perechen-kb",
       "title": "База знаний perechen_kb",
       "kind": "data",
-      "line": 2567,
+      "line": 2633,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8. Подбор по перечню сметчиков — `perechen_pipeline.py` + `perechen_kb.py`"
     },
     {
       "syncKey": "ai-perechen-pipeline",
       "title": "Подбор работ по перечню",
       "kind": "module",
-      "line": 2569,
+      "line": 2635,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8. Подбор по перечню сметчиков — `perechen_pipeline.py` + `perechen_kb.py`"
     },
     {
       "syncKey": "ai-kb-cache",
       "title": "Кеш решений подбора",
       "kind": "data",
-      "line": 2603,
+      "line": 2669,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8. Подбор по перечню сметчиков — `perechen_pipeline.py` + `perechen_kb.py`"
     },
     {
       "syncKey": "ai-finalize-rows",
       "title": "Расчёт объёмов и арматуры",
       "kind": "step",
-      "line": 2608,
+      "line": 2674,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8. Подбор по перечню сметчиков — `perechen_pipeline.py` + `perechen_kb.py`"
     },
     {
       "syncKey": "ai-cost-calculation",
       "title": "Расчёт стоимости ресурсов",
       "kind": "step",
-      "line": 2638,
+      "line": 2704,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8. Подбор по перечню сметчиков — `perechen_pipeline.py` + `perechen_kb.py`"
     },
     {
       "syncKey": "ai-mix-norms-finalize",
       "title": "Корректировка норм MIX_NORMS",
       "kind": "step",
-      "line": 2669,
+      "line": 2735,
       "evidence": "§11 Режим ИИ / 5.8. Подбор по перечню сметчиков"
     },
     {
       "syncKey": "ai-doc-facts-extract",
       "title": "Извлечение фактов из документов",
       "kind": "step",
-      "line": 2700,
+      "line": 2766,
       "evidence": "§11 Режим ИИ / 5.8.1. Факты из ВОР и ПД"
     },
     {
       "syncKey": "ai-doc-facts-matching-rules",
       "title": "Правила мягкого сопоставления",
       "kind": "rule",
-      "line": 2722,
+      "line": 2788,
       "evidence": "§11 Режим ИИ / 5.8.1. Факты из ВОР и ПД"
     },
     {
       "syncKey": "ai-doc-volume-distribution",
       "title": "Раскладка объёма ВОР по группам",
       "kind": "rule",
-      "line": 2732,
+      "line": 2798,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8.1. Факты из ВОР и ПД — `doc_facts.py`"
     },
     {
       "syncKey": "ai-doc-rebar-extraction",
       "title": "Извлечение массы арматуры из ВОР",
       "kind": "step",
-      "line": 2737,
+      "line": 2803,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8.1. Факты из ВОР и ПД — `doc_facts.py`"
     },
     {
       "syncKey": "ai-rebar-works-mapping",
       "title": "Сопоставление арматуры с работами",
       "kind": "step",
-      "line": 2749,
+      "line": 2815,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8.1. Факты из ВОР и ПД — `doc_facts.py`"
     },
     {
       "syncKey": "ai-rebar-fallback-rule",
       "title": "Фолбэк для арматуры без ВОР",
       "kind": "rule",
-      "line": 2763,
+      "line": 2829,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8.1. Факты из ВОР и ПД — `doc_facts.py`"
     },
     {
       "syncKey": "ai-volume-verification",
       "title": "Сверка объёмов модель и ВОР",
       "kind": "step",
-      "line": 2769,
+      "line": 2835,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8.1. Факты из ВОР и ПД — `doc_facts.py`"
     },
     {
       "syncKey": "ai-analytic-doc-summary",
       "title": "Тезисы из ВОР и ПД",
       "kind": "artifact",
-      "line": 2775,
+      "line": 2841,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8.1. Факты из ВОР и ПД — `doc_facts.py`"
     },
     {
       "syncKey": "ai-api-doc-facts",
       "title": "Эндпоинт фактов документов",
       "kind": "api",
-      "line": 2784,
+      "line": 2850,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8.1. Факты из ВОР и ПД — `doc_facts.py`"
     },
     {
       "syncKey": "ai-conditional-works-rule",
       "title": "Условные работы не моделируется",
       "kind": "rule",
-      "line": 2796,
+      "line": 2862,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8.2. Условные работы «не моделируется» — блок `CONDITIONAL_WORKS`"
     },
     {
       "syncKey": "ai-works-confirmation-logic",
       "title": "Логика подтверждения работ",
       "kind": "step",
-      "line": 2803,
+      "line": 2869,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.8.2. Условные работы «не моделируется» — блок `CONDITIONAL_WORKS`"
     },
     {
       "syncKey": "ai-conditional-works-filter",
       "title": "Фильтрация условных работ",
       "kind": "rule",
-      "line": 2812,
+      "line": 2878,
       "evidence": "§11 Режим ИИ / 5.8.2. Условные работы «не моделируется»"
     },
     {
       "syncKey": "ai-doc-facts-corpus",
       "title": "Корпус документов для поиска",
       "kind": "data",
-      "line": 2818,
+      "line": 2884,
       "evidence": "§11 Режим ИИ / 5.8.2. Условные работы «не моделируется»"
     },
     {
       "syncKey": "ai-analytic-json",
       "title": "Аналитический отчет",
       "kind": "artifact",
-      "line": 2823,
+      "line": 2889,
       "evidence": "§11 Режим ИИ / 5.8.2. Условные работы «не моделируется»"
     },
     {
       "syncKey": "ai-works-classification",
       "title": "Классификация работ",
       "kind": "data",
-      "line": 2824,
+      "line": 2890,
       "evidence": "§11 Режим ИИ / 5.8.2. Условные работы «не моделируется»"
     },
     {
       "syncKey": "ai-vor-verification",
       "title": "Проверка соответствия ВОР",
       "kind": "step",
-      "line": 2829,
+      "line": 2895,
       "evidence": "§11 Режим ИИ / 5.8.2. Условные работы «не моделируется»"
     },
     {
       "syncKey": "ai-pd-full-extract",
       "title": "Разбор ПОС и ПЗ",
       "kind": "module",
-      "line": 2851,
+      "line": 2917,
       "evidence": "§11 Режим ИИ / 5.10. Полный разбор ПОС/ПЗ"
     },
     {
       "syncKey": "ai-ifc-features",
       "title": "ifc_features.json",
       "kind": "module",
-      "line": 2863,
+      "line": 2929,
       "evidence": "§11 Режим ИИ / 5.11. Признаки геометрии модели"
     },
     {
       "syncKey": "ai-api-analytic",
       "title": "Эндпоинт аналитической справки",
       "kind": "api",
-      "line": 2872,
+      "line": 2938,
       "evidence": "§11 Режим ИИ / 5.12. Аналитическая справка и переключатели UI"
     },
     {
       "syncKey": "ai-vor-source-data",
       "title": "Источник данных ВОР",
       "kind": "data",
-      "line": 2909,
+      "line": 2975,
       "evidence": "§11 Режим ИИ / 5.13. Сравнение работ и объёмов ВОР заказчика и сформированного перечня"
     },
     {
       "syncKey": "ai-vor-element-grouping",
       "title": "Группировка по виду конструкции",
       "kind": "rule",
-      "line": 2918,
+      "line": 2984,
       "evidence": "§11 Режим ИИ / 5.13. Сравнение работ и объёмов ВОР заказчика и сформированного перечня"
     },
     {
       "syncKey": "ai-vor-part-comparison",
       "title": "Сравнение по частям здания",
       "kind": "step",
-      "line": 2932,
+      "line": 2998,
       "evidence": "§11 Режим ИИ / 5.13. Сравнение работ и объёмов ВОР заказчика и сформированного перечня"
     },
     {
       "syncKey": "ai-vor-unit-normalization",
       "title": "Нормализация единиц и агрегация",
       "kind": "step",
-      "line": 2941,
+      "line": 3007,
       "evidence": "§11 Режим ИИ / 5.13. Сравнение работ и объёмов ВОР заказчика и сформированного перечня"
     },
     {
       "syncKey": "ai-vor-comparison-report",
       "title": "Отчёт сравнения ВОР",
       "kind": "artifact",
-      "line": 2967,
+      "line": 3033,
       "evidence": "§11 Режим ИИ / 5.13. Сравнение работ и объёмов ВОР заказчика и сформированного перечня"
     },
     {
       "syncKey": "ai-vor-compare-api",
       "title": "API сравнения ВОР",
       "kind": "api",
-      "line": 2980,
+      "line": 3046,
       "evidence": "§11 Режим ИИ / 5.13. Сравнение работ и объёмов ВОР заказчика и сформированного перечня"
     },
     {
       "syncKey": "ai-pdf-processor",
       "title": "Обработка PDF чертежей",
       "kind": "module",
-      "line": 2996,
+      "line": 3062,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 6. Сводка по модулям (порядок работы) | строка 2996"
     },
     {
       "syncKey": "ai-comparison-manager",
       "title": "Сравнение ведомостей",
       "kind": "mode",
-      "line": 3033,
+      "line": 3099,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 6. Сводка по модулям (порядок работы) | строка 3033"
     },
     {
       "syncKey": "ai-ifc-to-collections",
       "title": "Карта IFC на сборники",
       "kind": "data",
-      "line": 3043,
+      "line": 3109,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 7. Справочники data/ и их роль в режиме ИИ (АР) | строка 3043"
     },
     {
       "syncKey": "ai-msck-elements",
       "title": "Дерево МССК элементов",
       "kind": "data",
-      "line": 3043,
+      "line": 3109,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 7. Справочники data/ и их роль в режиме ИИ (АР) | строка 3043"
     },
     {
       "syncKey": "ai-params-registry",
       "title": "Реестр параметров ПОС",
       "kind": "data",
-      "line": 3043,
+      "line": 3109,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 7. Справочники data/ и их роль в режиме ИИ (АР) | строка 3043"
     },
     {
       "syncKey": "ai-doc-cache",
       "title": "Кэш разбора документов",
       "kind": "data",
-      "line": 3066,
+      "line": 3132,
       "evidence": "§11 Режим ИИ / 7. Справочники data/ и их роль в режиме ИИ (АР)"
     },
     {
       "syncKey": "ai-pd-full-analysis",
       "title": "pd_full.json",
       "kind": "artifact",
-      "line": 3077,
+      "line": 3143,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 8. Полный список создаваемых файлов (ИИ/АР) | строка 3077"
     },
     {
       "syncKey": "ai-period-tsn",
       "title": "period.json",
       "kind": "artifact",
-      "line": 3077,
+      "line": 3143,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 8. Полный список создаваемых файлов (ИИ/АР) | строка 3077"
     },
     {
       "syncKey": "ai-final-result-ar",
       "title": "final_result_AR.json",
       "kind": "artifact",
-      "line": 3096,
+      "line": 3162,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 8. Полный список создаваемых файлов (ИИ/АР) | строка 3096"
     },
     {
       "syncKey": "ai-selected-works-larix",
       "title": "Подобранные_работы",
       "kind": "artifact",
-      "line": 3096,
+      "line": 3162,
       "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 8. Полный список создаваемых файлов (ИИ/АР) | строка 3096"
-    },
-    {
-      "syncKey": "ai-works-llm-selector",
-      "title": "LLM-выбор работ",
-      "kind": "module",
-      "line": 3124,
-      "evidence": "§11 Режим ИИ / 9. Ключевые отличия от режима КР"
-    },
-    {
-      "syncKey": "ai-data-doc-cache",
-      "title": "Кеш разбора документов",
-      "kind": "data",
-      "line": 3140,
-      "evidence": "§11 Режим ИИ / 10. Конфигурация / строка 3140"
     },
     {
       "syncKey": "ai-data-doc-facts-cache",
       "title": "Кеш фактов документов",
       "kind": "data",
-      "line": 3140,
+      "line": 3206,
       "evidence": "§11 Режим ИИ / 10. Конфигурация / строка 3140"
     },
     {
       "syncKey": "ai-data-kb-cache",
       "title": "Кеш базы знаний",
       "kind": "data",
-      "line": 3140,
+      "line": 3206,
       "evidence": "§11 Режим ИИ / 10. Конфигурация / строка 3140"
     },
     {
       "syncKey": "ai-external-ollama",
       "title": "Сервер Ollama",
       "kind": "external",
-      "line": 3140,
+      "line": 3206,
       "evidence": "§11 Режим ИИ / 10. Конфигурация / строка 3140"
     },
     {
       "syncKey": "ai-llm-model-kb",
       "title": "LLM для базы знаний",
       "kind": "model",
-      "line": 3140,
+      "line": 3206,
       "evidence": "§11 Режим ИИ / 10. Конфигурация / строка 3140"
     },
     {
       "syncKey": "ai-llm-model-norms",
       "title": "LLM для норм",
       "kind": "model",
-      "line": 3140,
+      "line": 3206,
       "evidence": "§11 Режим ИИ / 10. Конфигурация / строка 3140"
     },
     {
       "syncKey": "ai-llm-model-perechen",
       "title": "LLM для перечня",
       "kind": "model",
-      "line": 3140,
+      "line": 3206,
       "evidence": "§11 Режим ИИ / 10. Конфигурация / строка 3140"
     },
     {
       "syncKey": "ai-rule-llm-concurrency",
       "title": "Лимит параллельности LLM",
       "kind": "rule",
-      "line": 3140,
+      "line": 3206,
       "evidence": "§11 Режим ИИ / 10. Конфигурация / строка 3140"
     },
     {
       "syncKey": "ai-works-source-api",
       "title": "Внешний API Larix",
       "kind": "external",
-      "line": 3140,
+      "line": 3206,
+      "evidence": "§11 Режим ИИ / 10. Конфигурация / строка 3140"
+    },
+    {
+      "syncKey": "ai-works-source-local",
+      "title": "Справочник расценок",
+      "kind": "data",
+      "line": 3206,
       "evidence": "§11 Режим ИИ / 10. Конфигурация / строка 3140"
     },
     {
       "syncKey": "ai-api-tsn-docs",
       "title": "API списка ТСН",
       "kind": "api",
-      "line": 3165,
+      "line": 3231,
       "evidence": "§11 Режим ИИ / 10. Конфигурация / строка 3165"
     },
     {
       "syncKey": "ai-step-add-tsn",
       "title": "Добавление сборника ТСН",
       "kind": "step",
-      "line": 3165,
+      "line": 3231,
       "evidence": "§11 Режим ИИ / 10. Конфигурация / строка 3165"
     },
     {
       "syncKey": "arch-mode-code",
       "title": "Код режима ARCH",
       "kind": "rule",
-      "line": 3187,
+      "line": 3253,
       "evidence": "ai-ifc-vor-generator / 12. Режим Архитектура (ARCH) / 1. Назначение и код режима"
     },
     {
       "syncKey": "arch-mode-aliases",
       "title": "Варианты кода ARCH",
       "kind": "rule",
-      "line": 3196,
+      "line": 3262,
       "evidence": "ai-ifc-vor-generator / 12. Режим Архитектура (ARCH) / 1. Назначение и код режима"
     },
     {
       "syncKey": "arch-ifc-classes",
       "title": "Архитектурный набор IFC-классов",
       "kind": "data",
-      "line": 3230,
+      "line": 3296,
       "evidence": "12. Режим Архитектура (ARCH) / 3. Архитектурный набор IFC-классов"
     },
     {
       "syncKey": "arch-services-package",
-      "title": "Пакет src/services/architecture",
+      "title": "Пакет архитектуры",
       "kind": "module",
-      "line": 3262,
-      "evidence": "12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`"
+      "line": 3328,
+      "evidence": "ai-ifc-vor-generator / 12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`"
     },
     {
       "syncKey": "arch-data-algorithm-refs",
       "title": "Справочники алгоритма подбора",
       "kind": "data",
-      "line": 3369,
+      "line": 3436,
       "evidence": "12. Режим Архитектура (ARCH) / 7. Используемые справочники"
     },
     {
       "syncKey": "arch-api-processing-endpoints",
       "title": "API обработка ARCH",
       "kind": "api",
-      "line": 3388,
+      "line": 3455,
       "evidence": "12. Режим Архитектура (ARCH) / 8. API и веб-интерфейс"
     },
     {
       "syncKey": "check-model-modules",
       "title": "Модули проверки ЦИМ",
       "kind": "module",
-      "line": 3464,
+      "line": 3532,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 2. Модули"
     },
     {
-      "syncKey": "check-model-geometry",
-      "title": "Модуль геометрии",
+      "syncKey": "check-model-geometry-module",
+      "title": "Расчет геометрических параметров",
       "kind": "module",
-      "line": 3466,
+      "line": 3534,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 2. Модули"
     },
     {
       "syncKey": "check-model-session-manager",
       "title": "Оркестрация сессий",
       "kind": "module",
-      "line": 3477,
+      "line": 3545,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 2. Модули"
     },
     {
       "syncKey": "ai-ifc-check-summary",
       "title": "Сводка проверки ЦИМ",
       "kind": "data",
-      "line": 3504,
+      "line": 3572,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 3. API и интерфейс"
     },
     {
       "syncKey": "ai-ifc-preview-typical-vor",
       "title": "Превью по типовому ВОР",
       "kind": "module",
-      "line": 3523,
+      "line": 3591,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 3. API и интерфейс"
     },
     {
       "syncKey": "ai-ifc-classification-rules",
       "title": "Правила классификации ВОР",
       "kind": "rule",
-      "line": 3549,
+      "line": 3617,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 3. API и интерфейс"
     },
     {
       "syncKey": "ai-ifc-formwork-data-sources",
       "title": "Источники данных опалубки",
       "kind": "data",
-      "line": 3584,
+      "line": 3652,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 3. API и интерфейс / Площадь опалубки в превью (formwork.py)"
     },
     {
       "syncKey": "check-cim-groups-cache",
       "title": "Кеш группировки ЦИМ",
       "kind": "artifact",
-      "line": 3604,
+      "line": 3672,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 3. API и интерфейс / Площадь опалубки в превью (formwork.py)"
     },
     {
       "syncKey": "check-model-session",
       "title": "Сессия проверки модели",
       "kind": "data",
-      "line": 3610,
+      "line": 3678,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 3. API и интерфейс / Площадь опалубки в превью (formwork.py)"
     },
     {
       "syncKey": "check-cim-summary-json",
       "title": "Сводный отчёт JSON",
       "kind": "artifact",
-      "line": 3615,
+      "line": 3683,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 4. Артефакты сессии (outputs/ /)"
     },
     {
       "syncKey": "check-element-stats",
       "title": "Статистика элементов",
       "kind": "data",
-      "line": 3627,
+      "line": 3695,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 4. Артефакты сессии (outputs/ /)"
     },
     {
       "syncKey": "ai-ifc-vor-qto-geom-tors",
       "title": "Расчёт площади торцов",
       "kind": "data",
-      "line": 3658,
+      "line": 3726,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 4. Артефакты сессии"
     },
     {
       "syncKey": "ai-ifc-vor-dump-raw-rules",
       "title": "Правила dump_ifc_elements_raw",
       "kind": "rule",
-      "line": 3668,
+      "line": 3736,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 4. Артефакты сессии"
     },
     {
       "syncKey": "ai-ifc-vor-slab-geo-opt",
       "title": "Оптимизация геометрии плит",
       "kind": "rule",
-      "line": 3672,
+      "line": 3740,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 4. Артефакты сессии"
     },
     {
       "syncKey": "ai-ifc-vor-opening-level",
       "title": "Определение этажа проёма",
       "kind": "step",
-      "line": 3688,
+      "line": 3756,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 4. Артефакты сессии"
-    },
-    {
-      "syncKey": "ai-ifc-vor-req-mapping",
-      "title": "Сопоставление требований к классам",
-      "kind": "rule",
-      "line": 3695,
-      "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 5. Правила заполнения"
     },
     {
       "syncKey": "ai-ifc-vor-llm-mapping",
       "title": "LLM сопоставление параметров",
       "kind": "model",
-      "line": 3723,
+      "line": 3791,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 5. Правила заполнения"
     },
     {
       "syncKey": "ai-deterministic-fallback",
       "title": "Фолбэк на детерминированную карту",
       "kind": "rule",
-      "line": 3758,
+      "line": 3826,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 5. Правила заполнения"
     },
     {
       "syncKey": "ai-llm-response-validation",
       "title": "Валидация ответа LLM",
       "kind": "rule",
-      "line": 3758,
+      "line": 3826,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 5. Правила заполнения"
     },
     {
       "syncKey": "ai-mapping-cache",
       "title": "Кэш карты сопоставления",
       "kind": "data",
-      "line": 3758,
+      "line": 3826,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 5. Правила заполнения"
     },
     {
       "syncKey": "ai-geometry-fallback",
       "title": "Добор геометрических параметров",
       "kind": "module",
-      "line": 3783,
+      "line": 3851,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 5. Правила заполнения"
     },
     {
       "syncKey": "ai-volume-calculation",
       "title": "Расчёт объёма нетто/брутто",
       "kind": "rule",
-      "line": 3812,
+      "line": 3880,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 5. Правила заполнения"
     },
     {
       "syncKey": "check-model-fill-rules",
       "title": "Правила заполнения параметров",
       "kind": "rule",
-      "line": 3840,
+      "line": 3908,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 5. Правила заполнения"
     },
     {
       "syncKey": "check-model-llm-config",
-      "title": "LLM для проверки модели",
-      "kind": "model",
-      "line": 3865,
+      "title": "Настройки LLM для проверки",
+      "kind": "rule",
+      "line": 3933,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 6. Настройки"
     },
     {
       "syncKey": "check-model-deterministic-logic",
       "title": "Логика детерминированной проверки",
       "kind": "rule",
-      "line": 3888,
+      "line": 3956,
       "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 7. Проверка на моделях разных проектировщиков"
-    },
-    {
-      "syncKey": "typical-vor-builder-module",
-      "title": "Модуль формирования ВОР",
-      "kind": "module",
-      "line": 3916,
-      "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Формирование типовых ведомостей"
     },
     {
       "syncKey": "typical-vor-pylon-wall-rule",
       "title": "Правило обработки стен-пилонов",
       "kind": "rule",
-      "line": 3926,
+      "line": 3994,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Формирование типовых ведомостей"
     },
     {
       "syncKey": "ai-typical-vor-files",
       "title": "Файлы типовых ВОР",
       "kind": "artifact",
-      "line": 3936,
+      "line": 4004,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Результаты"
     },
     {
       "syncKey": "ai-typical-vor-reconcile-file",
       "title": "Сводка сверки ВОР",
       "kind": "artifact",
-      "line": 3939,
+      "line": 4007,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Результаты"
     },
     {
       "syncKey": "ai-typical-vor-reconcile-rules",
       "title": "Правила сверки ВОР",
       "kind": "rule",
-      "line": 3948,
+      "line": 4016,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Результаты"
     },
     {
       "syncKey": "ai-typical-vor-session-mgmt",
       "title": "Управление сессиями ВОР",
       "kind": "module",
-      "line": 3957,
+      "line": 4025,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Сессии и скорость"
     },
     {
       "syncKey": "ai-typical-vor-caching-rules",
       "title": "Кэширование и переиспользование",
       "kind": "rule",
-      "line": 3962,
+      "line": 4030,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Сессии и скорость"
     },
     {
       "syncKey": "ai-typical-vor-core-modules",
       "title": "Модули генерации ВОР",
       "kind": "module",
-      "line": 3967,
+      "line": 4035,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Сессии и скорость"
     },
     {
       "syncKey": "ai-typical-vor-smeta-step",
       "title": "Смета по перечню",
       "kind": "step",
-      "line": 3974,
+      "line": 4042,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Отдельная сметная форма по перечню"
     },
     {
       "syncKey": "ai-typical-vor-smeta-file",
       "title": "Файл сметы по перечню",
       "kind": "artifact",
-      "line": 3978,
+      "line": 4046,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Отдельная сметная форма по перечню"
     },
     {
       "syncKey": "ai-typical-vor-smeta-formulas",
       "title": "Формулы сметного расчета",
       "kind": "rule",
-      "line": 3991,
+      "line": 4059,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Отдельная сметная форма по перечню"
     },
     {
       "syncKey": "typical-cost-rounding-rules",
       "title": "Правила округления и точности",
       "kind": "rule",
-      "line": 4001,
+      "line": 4069,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Отдельная сметная форма по перечню"
     },
     {
       "syncKey": "typical-incomplete-data-handling",
       "title": "Обработка неполных данных",
       "kind": "rule",
-      "line": 4009,
+      "line": 4077,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Отдельная сметная форма по перечню"
     },
     {
       "syncKey": "typical-construction-grouping",
       "title": "Группировка конструкций",
       "kind": "step",
-      "line": 4019,
+      "line": 4087,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Отдельная сметная форма по перечню"
     },
     {
       "syncKey": "typical-height-correction-calc",
       "title": "Расчёт высотных поправок",
       "kind": "step",
-      "line": 4026,
+      "line": 4094,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Отдельная сметная форма по перечню"
     },
     {
       "syncKey": "typical-correction-conditions",
       "title": "Условия применения поправок",
       "kind": "rule",
-      "line": 4035,
+      "line": 4103,
       "evidence": "ai-ifc-vor-generator / 14. Типовые ВОР, сверка и сметная форма / Отдельная сметная форма по перечню"
-    },
-    {
-      "syncKey": "compare-output-artifacts",
-      "title": "Артефакты сравнения",
-      "kind": "artifact",
-      "line": 4084,
-      "evidence": "ai-ifc-vor-generator / 15. Сравнение ведомостей объёмов работ"
     },
     {
       "syncKey": "common-outputs-write-rule",
       "title": "Правило записи в outputs",
       "kind": "rule",
-      "line": 4093,
+      "line": 4161,
       "evidence": "ai-ifc-vor-generator / 16. Сопровождение документации"
     },
     {
       "syncKey": "common-readme-sync-rule",
       "title": "Правило актуальности README",
       "kind": "rule",
-      "line": 4093,
+      "line": 4161,
       "evidence": "ai-ifc-vor-generator / 16. Сопровождение документации"
     }
   ],
@@ -6228,11 +6107,6 @@
       "id": "n42",
       "page": "Бизнес-процесс (горизонтально)",
       "label": "Группа без расценок"
-    },
-    {
-      "id": "n43",
-      "page": "Бизнес-процесс (горизонтально)",
-      "label": "Пересчёт объёмов и поправочные нормы"
     },
     {
       "id": "n67",
@@ -6344,13 +6218,13 @@
   ],
   "blocks": {
     "path": "docs/readme-blocks.json",
-    "sha256": "db36395f037ceafda30af939fdb32c5a02da17848a812de8c51355e2328423ca",
+    "sha256": "caf4c4978e00484e2404d896efd55da03237140c607d9c02620bb57a9fc69ab9",
     "model": "qwen3.8:27b",
     "promptVersion": "v1",
-    "generatedAt": "2026-11-18T14:33:33+00:00"
+    "generatedAt": "2026-11-20T10:29:01+00:00"
   },
   "readme": {
     "path": "README.md",
-    "sha256": "ad8f8da29be0c545188aa3a881adb2e70eece2d73f65af8bdf3fffc844afb9b1"
+    "sha256": "72584fc89f17d40c04a0b8aff089b26f77020a1b8c23622b1fd09cd4f1eb49fd"
   }
 }

@@ -6252,6 +6252,583 @@
         ],
         "evidence": "ai-ifc-vor-generator / 12. Режим Архитектура (ARCH) / 1. Назначение и код режима"
       }
+    ],
+    "1597d08970a3ab58": [
+      {
+        "blockId": "b1597d089",
+        "kind": "step",
+        "title": "Загрузка IFC и PDF",
+        "syncKey": "common-upload-ifc-pdf",
+        "comment": "Первый шаг процесса: пользователь загружает файлы IFC или PDF-чертежи, указывая режим обработки (CS, AI, ARCH). На диаграмме — входной узел с выбором режима и приложением документов.",
+        "aliases": [
+          "IFC PDF",
+          "Upload",
+          "Загрузка файлов",
+          "Режим обработки"
+        ],
+        "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
+      },
+      {
+        "blockId": "b1597d089",
+        "kind": "step",
+        "title": "Извлечение элементов IFC",
+        "syncKey": "cs-stage0-extract-ifc",
+        "comment": "Этап извлечения данных из IFC-модели с использованием ifcopenshell. Классы элементов определяются выбранным режимом (KR, AR, ARCH). На диаграмме — блок обработки геометрии и характеристик.",
+        "aliases": [
+          "ELEMENT_TYPES",
+          "ifcopenshell",
+          "Извлечение IFC",
+          "Парсинг IFC"
+        ],
+        "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
+      },
+      {
+        "blockId": "b1597d089",
+        "kind": "step",
+        "title": "Извлечение данных PDF",
+        "syncKey": "ai-pdf-extraction-vision",
+        "comment": "Обработка PDF-чертежей с помощью машинного зрения: детекция стен (YOLO), анализ штриховок и материалов (DINO, VLM). На диаграмме — ветка обработки чертежей для режимов AI/ARCH.",
+        "aliases": [
+          "DINO VLM",
+          "PDF Vision",
+          "YOLO OBB",
+          "Распознавание чертежей"
+        ],
+        "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
+      },
+      {
+        "blockId": "b1597d089",
+        "kind": "step",
+        "title": "Нормализация характеристик",
+        "syncKey": "common-normalization-geometry",
+        "comment": "Обработка размеров, геометрии, материалов и этажности. Включает расчет количеств по bbox при отсутствии QTO в IFC. На диаграмме — этап подготовки данных перед группировкой.",
+        "aliases": [
+          "QTO",
+          "Геометрия",
+          "Материалы",
+          "Нормализация"
+        ],
+        "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
+      },
+      {
+        "blockId": "b1597d089",
+        "kind": "step",
+        "title": "Группировка элементов",
+        "syncKey": "common-group-elements-mssk",
+        "comment": "Формирование иерархии элементов для сметчика (Часть здания → МССК → Материал). Единый алгоритм group_elements_mssk для всех режимов. На диаграмме — блок структурирования данных.",
+        "aliases": [
+          "group_elements_mssk",
+          "Группировка",
+          "Иерархия",
+          "МССК"
+        ],
+        "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
+      },
+      {
+        "blockId": "b1597d089",
+        "kind": "step",
+        "title": "Подбор работ",
+        "syncKey": "common-works-selection",
+        "comment": "Определение работ по API ТСН (режим CS) или детерминированному алгоритму с LLM (режимы AI/ARCH). Альтернатива — подбор по перечню сметчиков. На диаграмме — ключевой узел формирования перечня работ.",
+        "aliases": [
+          "API ТСН",
+          "LLM Selection",
+          "WORKS_SELECTOR"
+        ],
+        "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
+      },
+      {
+        "blockId": "b1597d089",
+        "kind": "step",
+        "title": "Расчет объемов и стоимости",
+        "syncKey": "common-cost-calculation",
+        "comment": "Вычисление объемов по группам, корректировка по нормам расхода (koefs.xlsx) и расчет стоимости (price_cost.xlsx, larix). На диаграмме — финальный расчетный этап перед формированием документов.",
+        "aliases": [
+          "larix",
+          "Нормы расхода",
+          "Объемы",
+          "Расчет стоимости"
+        ],
+        "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
+      },
+      {
+        "blockId": "b1597d089",
+        "kind": "step",
+        "title": "Разбор документов ПОС/ПЗ",
+        "syncKey": "ai-docs-parsing-pos-pz",
+        "comment": "Обработка документов ПОС, ПЗ, ВОР и ПД с помощью парсеров (pd_parser, doc_pdf_parser). Применяется в режимах ИИ и Архитектура. На диаграмме — ветка анализа проектной документации.",
+        "aliases": [
+          "doc_pdf_parser",
+          "pd_parser",
+          "Парсинг ПЗ",
+          "Разбор ПОС"
+        ],
+        "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
+      },
+      {
+        "blockId": "b1597d089",
+        "kind": "artifact",
+        "title": "Excel-перечни работ",
+        "syncKey": "common-excel-outputs",
+        "comment": "Формирование итоговых Excel-файлов: ДЛЯ_СМЕТЧИКА, ОБЩИЙ_Финальный_перечень_работ, Дерево_проекта. На диаграмме — узел вывода результатов в формате таблиц.",
+        "aliases": [
+          "Excel отчеты",
+          "ДЛЯ_СМЕТЧИКА",
+          "Дерево_проекта",
+          "Финальный_перечень"
+        ],
+        "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
+      },
+      {
+        "blockId": "b1597d089",
+        "kind": "step",
+        "title": "Типовые ВОР и сверка",
+        "syncKey": "typical-vor-comparison",
+        "comment": "Генерация типовых ведомостей (builder/customer_vor) и выполнение сверки (comparison_typical). На диаграмме — отдельный процесс сравнения с типовыми решениями.",
+        "aliases": [
+          "builder",
+          "comparison_typical",
+          "Сверка",
+          "Типовые ВОР"
+        ],
+        "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
+      },
+      {
+        "blockId": "b1597d089",
+        "kind": "step",
+        "title": "Сметная форма ТСН",
+        "syncKey": "cs-smeta-form-tsn",
+        "comment": "Формирование сметной формы по стандарту ТСН-2001.12 с дополнением 83 на основе сформированного перечня. На диаграмме — финальный выход для режима ЦС.",
+        "aliases": [
+          "Дополнение 83",
+          "Смета ТСН",
+          "Сметная форма",
+          "ТСН-2001.12"
+        ],
+        "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
+      },
+      {
+        "blockId": "b1597d089",
+        "kind": "step",
+        "title": "Проверка ЦИМ модели",
+        "syncKey": "check-cim-model-validation",
+        "comment": "Отдельный процесс проверки модели ЦИМ, где подбор работ не выполняется. На диаграмме — изолированная ветка валидации параметров модели.",
+        "aliases": [
+          "Без подбора работ",
+          "Валидация модели",
+          "Проверка ЦИМ",
+          "ЦИМ check"
+        ],
+        "evidence": "ai-ifc-vor-generator / 3. Функциональность / строка 104"
+      }
+    ],
+    "3597dcec7c7cbd8d": [],
+    "12d4a6fe1ab199f3": [],
+    "2b70c9f14407d4c3": [
+      {
+        "blockId": "b2b70c9f1",
+        "kind": "model",
+        "title": "YOLO детекция стен",
+        "syncKey": "ai-model-yolo-walls-obb",
+        "comment": "Модель yolo_walls_obb.pt (Ultralytics YOLO) для детекции стен на PDF-чертежах. На диаграмме — компонент машинного зрения в ветке обработки PDF.",
+        "aliases": [
+          "Ultralytics",
+          "YOLO OBB",
+          "yolo_walls_obb",
+          "Детекция стен"
+        ],
+        "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272"
+      },
+      {
+        "blockId": "b2b70c9f1",
+        "kind": "model",
+        "title": "DINO анализ штриховок",
+        "syncKey": "ai-model-dino-hatching",
+        "comment": "Модель dino_hatching.pt (DINO TorchScript) для анализа штриховок и сравнения символов легенды. На диаграмме — узел распознавания материалов на чертежах.",
+        "aliases": [
+          "DINO",
+          "TorchScript",
+          "dino_hatching",
+          "Штриховки"
+        ],
+        "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272"
+      },
+      {
+        "blockId": "b2b70c9f1",
+        "kind": "model",
+        "title": "VLM распознавание чертежей",
+        "syncKey": "ai-model-qwen-vl-blueprint",
+        "comment": "Модель Qwen3-VL-8B (Ollama) для обработки чертежей PDF: распознавание материалов и штриховок. На диаграмме — LLM-компонент визуального анализа.",
+        "aliases": [
+          "Ollama",
+          "Qwen3-VL",
+          "VLM",
+          "Распознавание материалов"
+        ],
+        "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272"
+      },
+      {
+        "blockId": "b2b70c9f1",
+        "kind": "model",
+        "title": "LLM подбор работ",
+        "syncKey": "ai-model-yandexgpt-works",
+        "comment": "Модель YandexGPT-5-Lite (Ollama) для режимов ИИ и Архитектура: разбор документов, подбор работ, поправки ТСН. На диаграмме — интеллектуальный агент бизнес-логики.",
+        "aliases": [
+          "LLM Selection",
+          "NORMS_LLM",
+          "YandexGPT",
+          "Подбор работ AI"
+        ],
+        "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272"
+      },
+      {
+        "blockId": "b2b70c9f1",
+        "kind": "model",
+        "title": "LLM проверка ЦИМ",
+        "syncKey": "check-model-qwen-cim",
+        "comment": "Модель qwen3.8:27b (Ollama) для проверки ЦИМ модели: сопоставление параметров с колонками модели. На диаграмме — узел валидации в ветке проверки ЦИМ.",
+        "aliases": [
+          "CHECK_MODEL",
+          "qwen3.8",
+          "Проверка ЦИМ LLM",
+          "Сопоставление параметров"
+        ],
+        "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272"
+      },
+      {
+        "blockId": "b2b70c9f1",
+        "kind": "model",
+        "title": "LLM сравнение ВОР",
+        "syncKey": "compare-model-works-vor",
+        "comment": "Модель Ollama (works_comparison) для семантического сопоставления и LLM-валидации при сравнении ВОР. На диаграмме — компонент процесса сверки ведомостей.",
+        "aliases": [
+          "LLM Validation",
+          "Semantic Match",
+          "works_comparison",
+          "Сравнение ВОР"
+        ],
+        "evidence": "ai-ifc-vor-generator / 6. Модели ИИ / строка 272"
+      }
+    ],
+    "454a01b5f32727a5": [
+      {
+        "blockId": "b454a01b5",
+        "kind": "data",
+        "title": "Хранилище сессий",
+        "syncKey": "common-storage-sessions-json",
+        "comment": "Файл outputs/sessions.json хранит метаданные сессий, запусков и прогресса. Потокобезопасная запись и резервное копирование. На диаграмме — узел управления состоянием процесса.",
+        "aliases": [
+          "RLock",
+          "sessions.json",
+          "Атомарная запись",
+          "Метаданные сессий"
+        ],
+        "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники / строка 296"
+      },
+      {
+        "blockId": "b454a01b5",
+        "kind": "data",
+        "title": "Кеш разбора документов",
+        "syncKey": "common-cache-doc-parsing",
+        "comment": "Каталог outputs/_doc_cache/ хранит кеш разбора ПОС/ПЗ/ВОР/ПД по SHA-256. Служебное хранилище для ускорения повторных запросов. На диаграмме — вспомогательный узел кэширования.",
+        "aliases": [
+          "SHA-256",
+          "_doc_cache",
+          "pd_cache",
+          "Кеш документов"
+        ],
+        "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники / строка 296"
+      }
+    ],
+    "7965c9b701668621": [
+      {
+        "blockId": "b7965c9b7",
+        "kind": "data",
+        "title": "Справочники подбора работ",
+        "syncKey": "ai-works-selection-dictionaries",
+        "comment": "Набор JSON-справочников для детерминированного подбора работ в режимах ИИ и Архитектура: ifc_to_collections.json, msck_elements_compact.json, tree_work_compact.json, works_classification.json, params_registry.json. На диаграмме — узел данных, питающий алгоритм подбора.",
+        "aliases": [
+          "ifc_to_collections.json",
+          "msck_elements_compact.json",
+          "params_registry.json",
+          "tree_work_compact.json",
+          "works_classification.json"
+        ],
+        "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники"
+      },
+      {
+        "blockId": "b7965c9b7",
+        "kind": "data",
+        "title": "Справочник МССК элементов",
+        "syncKey": "ai-mssk-elements-dictionary",
+        "comment": "Файлы elements_mssk.xlsx и elements_mssk_nested.json содержат справочник элементов МССК. Используется в процессе группировки и подбора работ.",
+        "aliases": [
+          "elements_mssk.xlsx",
+          "elements_mssk_nested.json",
+          "МССК элементы"
+        ],
+        "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники"
+      },
+      {
+        "blockId": "b7965c9b7",
+        "kind": "data",
+        "title": "Справочник МССК материалов",
+        "syncKey": "ai-mssk-materials-dictionary",
+        "comment": "Файлы materials_mssk.xlsx и materials_mssk_nested.json содержат справочник материалов МССК. Используется для определения материальных ресурсов.",
+        "aliases": [
+          "materials_mssk.xlsx",
+          "materials_mssk_nested.json",
+          "МССК материалы"
+        ],
+        "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники"
+      },
+      {
+        "blockId": "b7965c9b7",
+        "kind": "data",
+        "title": "Кеши LLM-решений",
+        "syncKey": "ai-llm-decisions-cache",
+        "comment": "Набор файлов кэшей (kb_cache.json, tsn_decisions_cache.json и др.) для хранения результатов работы LLM и поправок ТСН. Позволяет ускорить повторные запуски.",
+        "aliases": [
+          "LLM cache",
+          "kb_cache.json",
+          "pd_full_cache_v2.json",
+          "tsn_decisions_cache.json"
+        ],
+        "evidence": "ai-ifc-vor-generator / 7. Хранилища и справочники"
+      }
+    ],
+    "70632892acd98e4e": [
+      {
+        "blockId": "b70632892",
+        "kind": "external",
+        "title": "API цифрового справочника ТСН",
+        "syncKey": "external-larix-tsn-api",
+        "comment": "Внешние эндпоинты larix (WORKS_API_URL, WORKS_RESOURCES_API_URL и др.) для получения работ, ресурсов и периодов. Используется в режиме ЦС для подбора работ и получения стоимости.",
+        "aliases": [
+          "API ТСН",
+          "WORKS_API_URL",
+          "digital-collection",
+          "larix"
+        ],
+        "evidence": "ai-ifc-vor-generator / 9. Запуск и развертывание / Переменные окружения"
+      },
+      {
+        "blockId": "b70632892",
+        "kind": "external",
+        "title": "Keycloak Auth",
+        "syncKey": "external-keycloak-auth",
+        "comment": "Система аутентификации Keycloak (KEYCLOAK_TOKEN_URL, KEYCLOAK_CLIENT_ID) для получения токенов доступа к внешним API.",
+        "aliases": [
+          "Auth",
+          "KEYCLOAK_TOKEN_URL",
+          "Keycloak"
+        ],
+        "evidence": "ai-ifc-vor-generator / 9. Запуск и развертывание / Переменные окружения"
+      }
+    ],
+    "e9233da52fb92a9e": [],
+    "3270ac74dcaf89d7": [
+      {
+        "blockId": "b3270ac74",
+        "kind": "step",
+        "title": "Группировка элементов",
+        "syncKey": "cs-stage1-grouping",
+        "comment": "Этап 1 режима ЦС: функция group_excel.py (process_ifc_excel_mssk) группирует элементы по иерархии «Часть здания → МССК → Материал → IFC-тип». Используется также в режимах ИИ и Архитектура.",
+        "aliases": [
+          "L1",
+          "group_excel.py",
+          "process_ifc_excel_mssk",
+          "Группировка"
+        ],
+        "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 4. Этап 1 — запуск обработки / 4.2. Группировка"
+      }
+    ],
+    "c1d8a02760c0304d": [
+      {
+        "blockId": "bc1d8a027",
+        "kind": "step",
+        "title": "Подбор работ через API",
+        "syncKey": "cs-works-api-lookup",
+        "comment": "В режиме ЦС подбор работ выполняется через внешний API ТСН (api_works_lookup), в отличие от локального алгоритма в режиме АР. Результат — список позиций с стоимостью.",
+        "aliases": [
+          "API ТСН",
+          "api_works_lookup",
+          "Подбор работ"
+        ],
+        "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 8. Ключевые отличия от режима АР"
+      },
+      {
+        "blockId": "bc1d8a027",
+        "kind": "artifact",
+        "title": "Финальный перечень работ",
+        "syncKey": "cs-final-works-list",
+        "comment": "Итоговый артефакт режима ЦС: файл ОБЩИЙ_Финальный_перечень_работ.xlsx. Содержит итоговый список работ с количеством и стоимостью.",
+        "aliases": [
+          "Итог ЦС",
+          "ОБЩИЙ_Финальный_перечень_работ.xlsx",
+          "Финальный перечень"
+        ],
+        "evidence": "ai-ifc-vor-generator / 10. Режим ЦС (CS) / 8. Ключевые отличия от режима АР"
+      }
+    ],
+    "526bb73e59312199": [
+      {
+        "blockId": "b526bb73e",
+        "kind": "module",
+        "title": "Группировка элементов АР",
+        "syncKey": "ai-group-excel-ar",
+        "comment": "Модуль group_excel.py в режиме ИИ вызывает group_elements_mssk для формирования дерева АР. Иерархия совпадает с режимом ЦС, но файлы имеют суффикс _AR. На диаграмме — узел группировки в ветке ИИ.",
+        "aliases": [
+          "group_elements_mssk",
+          "group_excel.py",
+          "process_ifc_excel_ar",
+          "Группировка АР"
+        ],
+        "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.2. Группировка — `group_excel.py` (`process_ifc_excel_ar`)"
+      }
+    ],
+    "14d035da170003c2": [],
+    "c164da4c9ab3561e": [
+      {
+        "blockId": "bc164da4c",
+        "kind": "module",
+        "title": "Финальный подбор работ LLM",
+        "syncKey": "ai-works-final-selector",
+        "comment": "Модуль works_final_selector.py (v13.2) использует LLM (Ollama) для отбора работ из цифрового сборника. Единица обработки — листовая группа элементов из filtered_elements_grouped_AR.json. На диаграмме — узел финального выбора в ветке ИИ.",
+        "aliases": [
+          "LLM-выбор",
+          "Ollama",
+          "works_final_selector.py",
+          "Финальный подбор"
+        ],
+        "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 5. Этап 1 — запуск обработки (`run_ `) / 5.5. Финальный подбор работ через LLM — `works_final_selector.py`"
+      }
+    ],
+    "d805f3dee9b55336": [
+      {
+        "blockId": "bd805f3de",
+        "kind": "mode",
+        "title": "Режим ИИ (АР)",
+        "syncKey": "ai-mode",
+        "comment": "Режим ИИ (АР) отличается от ЦС включением архитектурных элементов и использованием LLM для финального подбора работ. Использует локальный детерминированный алгоритм или LLM-переключатель WORKS_SELECTOR. На диаграмме — корневой узел ветки ИИ.",
+        "aliases": [
+          "AI Mode",
+          "WORKS_SELECTOR",
+          "АР",
+          "Режим ИИ"
+        ],
+        "evidence": "ai-ifc-vor-generator / 11. Режим ИИ (AI) / 9. Ключевые отличия от режима КР"
+      }
+    ],
+    "d0198ed7015def41": [
+      {
+        "blockId": "bd0198ed7",
+        "kind": "module",
+        "title": "Пакет архитектуры",
+        "syncKey": "arch-services-package",
+        "comment": "Пакет src/services/architecture/ содержит модули пайплайна режима Архитектура (ARCH). Включает zero_step, group_excel, works_final_selector и другие. На диаграмме — контейнер или узел модулей ветки ARCH.",
+        "aliases": [
+          "ARCH package",
+          "src/services/architecture",
+          "Пакет ARCH"
+        ],
+        "evidence": "ai-ifc-vor-generator / 12. Режим Архитектура (ARCH) / 4. Состав пакета `src/services/architecture/`"
+      }
+    ],
+    "438afe0c1f699229": [
+      {
+        "blockId": "b438afe0c",
+        "kind": "stage",
+        "title": "Группировка и подбор работ",
+        "syncKey": "arch-stage1-grouping-selection",
+        "comment": "Этап 1 режима Архитектура: фильтрация элементов, группировка по иерархии (Часть здания → МССК), подбор таблиц работ и финальный выбор через LLM. Формирует Финальный_перечень_работ.json.",
+        "aliases": [
+          "works_final_selector",
+          "Группировка",
+          "Подбор работ",
+          "Финальный_перечень_работ.json",
+          "Этап 1"
+        ],
+        "evidence": "ai-ifc-vor-generator / 12. Режим Архитектура (ARCH) / 5. Порядок обработки / 5.2. Этап 1 — группировка и подбор работ"
+      }
+    ],
+    "dad7611e92bdf502": [
+      {
+        "blockId": "bdad7611e",
+        "kind": "mode",
+        "title": "Проверка ЦИМ модели",
+        "syncKey": "check-model-mode",
+        "comment": "Режим проверки IFC-модели: выгрузка сырых параметров, определение требований по IFC-классу, сопоставление с колонками модели через LLM и дополнение элементов параметрами.",
+        "aliases": [
+          "Check Model",
+          "IFC check",
+          "LLM mapping",
+          "parametrs_name.json",
+          "Проверка ЦИМ"
+        ],
+        "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 1. Назначение"
+      }
+    ],
+    "efa086c2df1dd10c": [
+      {
+        "blockId": "befa086c2",
+        "kind": "module",
+        "title": "Сопоставление параметров LLM",
+        "syncKey": "check-model-mapping-module",
+        "comment": "Модуль mapping.py: построение карты соответствия требуемых параметров IFC и колонок модели с использованием LLM и детерминированных правил. Использует кэш mapping_cache.json.",
+        "aliases": [
+          "LLM mapping",
+          "mapping.py",
+          "mapping_cache.json",
+          "Карта параметров"
+        ],
+        "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 2. Модули"
+      },
+      {
+        "blockId": "befa086c2",
+        "kind": "module",
+        "title": "Расчет геометрических параметров",
+        "syncKey": "check-model-geometry-module",
+        "comment": "Модуль geometry.py: добор геометрических параметров (длина, ширина, объем, площадь) по формулам IFC или из QTO. Отдельные правила для стен, плит, колонн и балок.",
+        "aliases": [
+          "QTO bbox",
+          "RUS_Area",
+          "RUS_Volume",
+          "geometry.py",
+          "Геометрия"
+        ],
+        "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 2. Модули"
+      },
+      {
+        "blockId": "befa086c2",
+        "kind": "module",
+        "title": "Группировка для веб-превью",
+        "syncKey": "check-model-grouping-module",
+        "comment": "Модуль grouping.py: группировка проверенных элементов по иерархии типового ВОР (часть здания, раздел, технология) для отображения в веб-интерфейсе. Использует elements_mssk_nested.json.",
+        "aliases": [
+          "Web preview",
+          "elements_mssk_nested.json",
+          "grouping.py",
+          "Группировка"
+        ],
+        "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 2. Модули"
+      }
+    ],
+    "32d785e00f4b93e5": [
+      {
+        "blockId": "b32d785e0",
+        "kind": "rule",
+        "title": "Настройки LLM для проверки",
+        "syncKey": "check-model-llm-config",
+        "comment": "Правила конфигурации LLM для режима проверки: выбор модели (CHECK_MODEL_LLM_MODEL), таймаут, размер контекста и возможность отключения LLM в пользу детерминированных правил.",
+        "aliases": [
+          "CHECK_MODEL_LLM_MODEL",
+          "CHECK_MODEL_USE_LLM",
+          "LLM config",
+          "Ollama settings"
+        ],
+        "evidence": "ai-ifc-vor-generator / 13. Проверка ЦИМ модели / 6. Настройки"
+      }
     ]
   }
 }
