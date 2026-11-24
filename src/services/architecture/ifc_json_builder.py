@@ -1363,6 +1363,14 @@ def build_final_json(
     """
     # Нормализуем дисциплину
     discipline_upper = discipline.upper()
+    if discipline_upper == 'ARCH':
+        selected_path = Path(input_folder) / 'Финальный_перечень_работ.json'
+        if selected_path.is_file():
+            selected = load_json_file(selected_path) or {}
+            if selected.get('selection_method') == 'architecture-ai-v1':
+                from .ai_selection import build_model_result
+                return build_model_result(input_folder, source_file, selected,
+                                          output_filename or 'final_result_ARCH.json')
     
     # Маппинг латинских обозначений на русские.
     # ARCH — режим «Архитектура»: структура JSON та же, что у АР

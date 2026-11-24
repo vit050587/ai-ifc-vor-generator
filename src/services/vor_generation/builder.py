@@ -122,8 +122,15 @@ def _group_header(elements: List[Element], param: Optional[str], label: Optional
     текст шаблона с фактическим значением геометрии.
     """
     if param == 'area':
+        from .elements import foundation_pit
+        if elements and all(foundation_pit(el) for el in elements):
+            return 'Приямки'
         return _format_header(fallback_text, param, label)
     name = _dominant_group_name(elements)
+    from .elements import foundation_pit
+    if elements and all(foundation_pit(el) for el in elements):
+        if 'приям' not in name.lower():
+            name = 'Приямки' + (': ' + name if name else '')
     if name:
         if param == "thickness" and label:
             from .thickness import parse
@@ -736,21 +743,22 @@ def _fill_rows(rows: List[template.TemplateRow], elements: List[Element],
 def _geometry_groups(elements: List[Element], param: str,
                      index: ElementIndex) -> List[Tuple[str, List[Element]]]:
     """Группирует элементы по геометрическому параметру (толщина/сечение/площадь)."""
-    groups: Dict[str, List[Element]] = {}
+    from .elements import foundation_pit
+    groups: Dict[tuple, List[Element]] = {}
     for el in elements:
         label = index.geometry_label(el, param) or ""
-        groups.setdefault(label, []).append(el)
+        groups.setdefault((foundation_pit(el), label), []).append(el)
 
     def sort_key(item):
-        label = item[0]
+        pit, label = item[0]
         if not label:
-            return (1, 0.0, "")
+            return (pit, 1, 0.0, "")
         m = re.match(r"\d+(?:[.,]\d+)?", label)
         if m:
-            return (0, float(m.group(0).replace(",", ".")), label)
-        return (0, 0.0, label)
+            return (pit, 0, float(m.group(0).replace(",", ".")), label)
+        return (pit, 0, 0.0, label)
 
-    return sorted(groups.items(), key=sort_key)
+    return [(key[1], members) for key, members in sorted(groups.items(), key=sort_key)]
 
 
 # =====================================================================
@@ -819,7 +827,7 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
             elements = index.select(row.element_kind, part)
             children = block_rows.get(row.index, [])
             # Slab area bands are intentionally combined in one labelled block.
-            if row.geometry in ("thickness", "section") and elements:
+            if elements and (row.geometry in ("thickness", "section") or row.element_kind == 'foundation_slab'):
                 groups = _geometry_groups(elements, row.geometry, index)
                 total_volume = sum(el.quantity("volume") for el in elements)
                 for label, group_elements in groups:
@@ -878,6 +886,14 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
                         name_override='', extra={c:None for c in range(3,9)}))
                     output.extend(_fill_rows(group,members,ctx,'beam',part))
                 continue
+            from .elements import foundation_pit
+            if group[0].element_kind == 'foundation_slab' and any(foundation_pit(el) for el in elements):
+                for label, members in _geometry_groups(elements, None, index):
+                    output.append(template.OutputRow(group[0].index,
+                        label=_group_header(members, None, label, 'Фундаментная плита'),
+                        name_override='', extra={c:None for c in range(3,9)}))
+                    output.extend(_fill_rows(group, members, ctx, 'foundation_slab', part))
+                continue
             for out_row in _fill_rows(group, elements, ctx, group[0].element_kind, part):
                 if out_row.volume is not None:
                     filled += 1
@@ -894,14 +910,18 @@ def build_vor(elements_json_path: str, docs: Documents, output_path: str,
     copy_auxiliary(output, source_rows, rows, ctx.ref_vor)
     filled = sum(item.volume is not None for item in output)
     _say(progress, "Запись заполненного ВОР")
-    from .stair_report import records as stair_records
+    from .stair_report import records as stair_records, completeness
+    stair_rows = stair_records(index)
+    stair_control = completeness(stair_rows, docs.rebar)
     apply_mix_norms(output, rows)
     template.render_template(output, path=template_path, sheet_name=sheet_name,
-                             output_path=output_path, stair_rows=stair_records(index))
+                             output_path=output_path, stair_rows=stair_rows,
+                             stair_control=stair_control)
     from .rates import enrich
     enrich(output_path)
 
     stats = {
+        "stair_completeness": stair_control,
         "shared_rebar_scopes": sorted({shared_heading(r) for r in pending_rebar}),
         "rows": len(output),
         "filled": filled,

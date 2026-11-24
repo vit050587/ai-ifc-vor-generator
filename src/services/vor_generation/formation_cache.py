@@ -44,7 +44,7 @@ def fingerprint(folder, template_path, session):
         'doc_pdf_parser.py','vor_parser.py','vor_comparison.py','pd_parser.py','ifc_quantities.py','construction_method.py',
         'estimate_parameter_comparison.py','stair_formwork.py','wall_formwork.py','tsn_quantity_rules.py',
         'ifc_raw_dump.py','ifc_geometry_quantities.py','group_excel.py','contact_formwork.py',
-        'final_quantity_rules.py','quantity_measure.py','ifc_reference_builder.py','works_final_selector.py','perechen_kb.py'))
+        'structural_classification.py','final_quantity_rules.py','quantity_measure.py','ifc_reference_builder.py','works_final_selector.py','perechen_kb.py'))
     from ..stair_formwork import find_ifc
     raw = vc._find_session_dir(str(folder), 'IFC_исходные_параметры.json')
     if raw:

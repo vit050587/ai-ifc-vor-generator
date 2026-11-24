@@ -323,6 +323,14 @@ def fetch_and_save_works(
     with open(tables_json_path, "r", encoding="utf-8") as fh:
         tables_payload = json.load(fh)
 
+    tables = _collect_table_codes(tables_payload)
+    if not tables and tables_payload.get('processing_type') == 'ARCH':
+        path = os.path.join(works_output_dir or session_dir, WORKS_JSON_FILENAME)
+        with open(path, 'w', encoding='utf-8') as fh:
+            json.dump({'processing_type': 'ARCH', 'tables': [], 'total_tables': 0,
+                       'total_works': 0, 'period': None, 'period_id': None}, fh)
+        return path
+
     # Шаг 1: актуальный период ТСН
     period = fetch_actual_period()
     period_title = str(period.get("title") or "")
@@ -356,7 +364,7 @@ def fetch_and_save_works(
 
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "processing_type": "AR",
+        "processing_type": "ARCH",
         "period": period_title,
         "period_id": period.get("id"),
         "source": os.path.basename(tables_json_path),

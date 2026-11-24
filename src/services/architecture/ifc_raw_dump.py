@@ -1400,8 +1400,23 @@ def _collect_element_data(element, compute_bbox_qto=True):
             continue
         row[attr_name] = _truncate(_serialize_raw(attr_value))
 
+    if row["IfcClass"] in ('IfcDoor', 'IfcWindow'):
+        try:
+            from ifcopenshell.util.unit import calculate_unit_scale
+            scale = float(calculate_unit_scale(element.file))
+            row['АР_Масштаб_длины_IFC_в_метры'] = scale
+            for attr, key in [('OverallWidth', 'АР_Габаритная_ширина_мм'),
+                              ('OverallHeight', 'АР_Габаритная_высота_мм')]:
+                value = getattr(element, attr, None)
+                if value is not None and float(value) > 0:
+                    row[key] = float(value) * scale * 1000
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            pass
+
     # Материал (из IfcRelAssociatesMaterial).
     row["Материал"] = _get_material(element)
+    from ..ifc_material_layers import layer_properties
+    row.update(layer_properties(element))
 
     # Этаж и отметка этажа (из IfcRelContainedInSpatialStructure).
     storey_name, storey_elev = _get_storey(element)

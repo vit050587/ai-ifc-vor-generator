@@ -67,7 +67,7 @@ GROUPS_JSON = "Проверка_ЦИМ_модели_группы.json"
 
 # Версия структуры кеша превью: при изменении правил группировки/расчёта
 # площадей кеш пересчитывается, даже если исходный JSON не менялся.
-GROUPS_VERSION = 4
+GROUPS_VERSION = 5
 
 # Справочник МССК-элементов: соответствие кода МССК виду конструкции.
 MSSK_ELEMENTS_JSON = Path(__file__).resolve().parents[3] / "data" / "elements_mssk_nested.json"
@@ -378,6 +378,12 @@ def _element_kind(row: Dict[str, Any]) -> Optional[str]:
     # правила он попадал в подраздел плит перекрытия).
     if "приям" in text:
         return "foundation_slab"
+
+    from ..structural_classification import assess
+    classification = assess(row)
+    if classification and (classification['basis'] == 'geometry' or
+                           classification['basis'] == 'mssk' and classification['effective_kind'] in ('wall', 'column')):
+        return classification['effective_kind']
 
     # Приоритет — справочник МССК: код элемента точнее текстовых эвристик
     # (например, «Лестничная площадка» приходит как IfcSlab/«Перекрытие»).

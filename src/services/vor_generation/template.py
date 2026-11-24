@@ -280,7 +280,8 @@ def with_kind(rows, kind):
 
 
 def render_template(output_rows: List[OutputRow], path: str = None,
-                    sheet_name: str = DEFAULT_SHEET, output_path: str = None, stair_rows=None) -> str:
+                    sheet_name: str = DEFAULT_SHEET, output_path: str = None, stair_rows=None,
+                    stair_control=None) -> str:
     """Записывает заполненный ВОР в копию шаблона.
 
     Структура листа (заголовки, порядок разделов, форматирование) сохраняется:
@@ -391,6 +392,9 @@ def render_template(output_rows: List[OutputRow], path: str = None,
     if stair_rows is not None:
         from .stair_report import write as write_stairs
         write_stairs(out, stair_rows)
+    if stair_control is not None:
+        from .stair_report import write_control
+        write_control(out, stair_control)
     out.save(output_path)
     out.close()
     from .model_links import save as save_model_links

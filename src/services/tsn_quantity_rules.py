@@ -39,6 +39,10 @@ def concrete_volume(row, physical):
     text = ' '.join(str(row.get(k) or '') for k in ('Name', 'Имя', 'ObjectType'))
     column = cls == 'IfcColumn' or (cls in ('IfcWall', 'IfcWallStandardCase') and
                                    re.search(r'пилон|колонн', text, re.I))
+    from .structural_classification import assess
+    classification = assess(row)
+    if classification and classification['basis'] in ('geometry', 'mssk'):
+        column = classification['effective_kind'] == 'column'
     section = value('Площадь_сечения_м2')
     height = value('Высота_колонны_по_проекту_м')
     span = value('Длина_балки_по_проекту_м')

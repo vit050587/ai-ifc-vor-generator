@@ -30,6 +30,8 @@
 """
 
 import json
+from collections import OrderedDict
+from threading import RLock
 import os
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -237,8 +239,9 @@ def el_text(el: Any) -> str:
 #  Загрузка и кеш
 # =====================================================================
 
-_cache: Optional["Facts"] = None
-_cache_dir: Optional[str] = None
+_cache_by_dir = OrderedDict()
+_cache_lock = RLock()
+_CACHE_SESSIONS = 16
 
 
 def _find(session_dir: str, filename: str) -> Optional[str]:
@@ -814,27 +817,38 @@ def load(session_dir: str) -> Optional["Facts"]:
 
     Возвращает ``None``, если ни одного документа в сессии нет.
     """
-    global _cache, _cache_dir
     key_dir = os.path.abspath(session_dir)
     vor_path = _find(key_dir, VOR_JSON)
     pd_path = _find(key_dir, PD_JSON)
-    stamp = (key_dir, _mt(vor_path), _mt(pd_path))
-    if _cache is not None and _cache_dir == stamp:
-        return _cache
-    if not vor_path and not pd_path:
-        _cache, _cache_dir = None, stamp
-        return None
-    vor_items = (_load_json(vor_path).get("items") or []) if vor_path else []
-    pd_items = (_load_json(pd_path).get("items") or []) if pd_path else []
-    _cache = Facts(vor_items, pd_items, session_dir=key_dir)
-    _cache_dir = stamp
-    return _cache
+    def signature(path):
+        try:
+            stat = os.stat(path)
+            return path, stat.st_mtime_ns, stat.st_size
+        except (OSError, TypeError):
+            return path, None, None
+    stamp = (signature(vor_path), signature(pd_path))
+    with _cache_lock:
+        cached = _cache_by_dir.get(key_dir)
+        if cached is not None and cached[0] == stamp:
+            _cache_by_dir.move_to_end(key_dir)
+            return cached[1]
+        if not vor_path and not pd_path:
+            facts = None
+        else:
+            vor_items = (_load_json(vor_path).get("items") or []) if vor_path else []
+            pd_items = (_load_json(pd_path).get("items") or []) if pd_path else []
+            facts = Facts(vor_items, pd_items, session_dir=key_dir)
+        _cache_by_dir[key_dir] = (stamp, facts)
+        _cache_by_dir.move_to_end(key_dir)
+        while len(_cache_by_dir) > _CACHE_SESSIONS:
+            _cache_by_dir.popitem(last=False)
+        return facts
 
 
 def reset() -> None:
     """Сбрасывает кеш (для тестов и повторных запусков)."""
-    global _cache, _cache_dir
-    _cache, _cache_dir = None, None
+    with _cache_lock:
+        _cache_by_dir.clear()
 
 
 def facts_items(session_dir: str) -> Dict[str, Any]:

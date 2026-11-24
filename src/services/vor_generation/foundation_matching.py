@@ -25,7 +25,7 @@ def operation_links(generated, customer):
             if row.get('isSeparator') or row.get('quantity') is None: continue
             if is_shared_group(row.get('elementGroup')): continue
             family = _family(row)
-            if family not in ('foundation_slab','crane_foundation'): continue
+            if family not in ('foundation_slab','crane_foundation','pit'): continue
             key = scope(row)[:3]+(family,operation_identity(row))
             candidates[side][key].append(row)
     links = {}

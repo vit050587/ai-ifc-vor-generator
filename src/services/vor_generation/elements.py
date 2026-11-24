@@ -180,9 +180,16 @@ class Element:
     construction_method: str = 'unknown'
     landing_role: str = 'unknown'
     model_section: str = ''
+    classification_check: dict = field(default_factory=dict)
 
     def quantity(self, name: str) -> float:
         return float(self.quantities.get(name) or 0.0)
+
+
+def foundation_pit(element):
+    """A pit remains a separate construction even with the same slab thickness."""
+    return element.kind == 'foundation_slab' and bool(re.search(
+        'приям', ' '.join((element.name, element.group_name, element.mge_name)), re.I))
 
 
 def _concrete_spec(grade: str, water: str, freeze: str) -> str:
@@ -224,6 +231,8 @@ def _element_kind(ifc_class: str, mge_name: str, name: str = "",
     n = (mge_name or "").lower()
     name_low = f"{(name or '').lower()} {(group_name or '').lower()}"
     text = f"{n} {name_low}"
+    if ifc_class in ('IfcSlab', 'IfcFooting', 'IfcWall', 'IfcWallStandardCase') and 'приям' in text:
+        return 'foundation_slab'
     if mapping.detect_kind(text) == "crane_foundation":
         return "crane_foundation"
     if ifc_class in ("IfcWall", "IfcWallStandardCase"):
@@ -349,6 +358,7 @@ class ElementIndex:
 
         elements: List[Element] = []
         from .stair_grouping import landing_role
+        from ..structural_classification import assess as assess_classification
         levels_by_building = {}
         for raw_row in raw:
             elevation = raw_row.get('Отметка_этажа_м')
@@ -389,6 +399,11 @@ class ElementIndex:
             )
             if kind is None:
                 continue
+            classification_check = assess_classification(row, kind)
+            if classification_check and classification_check['basis'] in ('geometry', 'mssk'):
+                kind = classification_check['effective_kind']
+            from ..structural_classification import quantity_row
+            measured_row = quantity_row(row, classification_check)
             method = construction_method(row)
             if method == 'precast' and not kind.startswith('precast'):
                 kind = {'stair': 'precast', 'wall': 'precast_panel',
@@ -417,14 +432,14 @@ class ElementIndex:
 
             if kind in ('wall', 'parapet'):
                 from ..wall_formwork import wall_projection
-                projection, source = wall_projection(row)
+                projection, source = wall_projection(measured_row)
                 if projection is not None:
                     quantities['wall_projection_area'] = projection
                     quantity_sources['wall_projection_area'] = source
 
             if kind in ('column', 'beam', 'foundation_slab', 'crane_foundation'):
                 from ..contact_formwork import contact_area
-                contact, source = contact_area(row, kind=kind)
+                contact, source = contact_area(measured_row, kind=kind)
                 if contact is not None:
                     quantities['contact_formwork_area'] = contact
                     quantity_sources['contact_formwork_area'] = source
@@ -443,6 +458,12 @@ class ElementIndex:
                     if value is not None and value > 0:
                         geometry[gname] = value
                         break
+            if classification_check and classification_check.get('a_mm') and classification_check.get('b_mm'):
+                if kind == 'column':
+                    geometry['section_w'] = classification_check['a_mm']
+                    geometry['section_h'] = classification_check['b_mm']
+                elif kind == 'wall':
+                    geometry['thickness'] = classification_check['a_mm']
             if kind == "column" or kind == "beam":
                 section = _first_key(row, "MGE_Section")
                 area = _num(row.get("QTO::Qto_BeamBaseQuantities::CrossSectionArea"))
@@ -452,8 +473,8 @@ class ElementIndex:
                     geometry["section_area"] = area
                 m = _SECTION_NAME_RE.search(_text(row.get("Name")))
                 if m:
-                    geometry["section_w"] = float(m.group(1))
-                    geometry["section_h"] = float(m.group(2))
+                    geometry.setdefault("section_w", float(m.group(1)))
+                    geometry.setdefault("section_h", float(m.group(2)))
             if kind == "slab" or kind == "foundation_slab":
                 area = _num(row.get("QTO::Qto_SlabBaseQuantities::NetArea"))
                 if area:
@@ -486,6 +507,7 @@ class ElementIndex:
                 landing_role=landing_role(row, levels_by_building.get(row.get('Здание_IFC_ID', ''), set()))
                 if kind in ('stair', 'precast') else 'unknown',
                 model_section=_first_key(row, 'MGE_Section'),
+                classification_check=classification_check or {},
                 geometry=geometry,
                 name=name,
                 group_name=group_name,
@@ -538,7 +560,8 @@ class ElementIndex:
             for param in ("thickness", "section"):
                 label = self.geometry_label(element, param)
                 if label:
-                    key = (element.kind or "", "" if ignore_part else element.part, label)
+                    kind = 'pit' if foundation_pit(element) else element.kind or ''
+                    key = (kind, "" if ignore_part else element.part, label)
                     result.setdefault(key, name)
         self._names_cache[ignore_part] = result
         return result
@@ -587,7 +610,7 @@ class ElementIndex:
 
         kept = []
         for element in self.elements:
-            if element.kind in ('foundation_slab', 'crane_foundation'):
+            if element.kind in ('foundation_slab', 'crane_foundation') and not foundation_pit(element):
                 if matches(element, active):
                     element.kind = 'crane_foundation'
                 elif matches(element, removed):

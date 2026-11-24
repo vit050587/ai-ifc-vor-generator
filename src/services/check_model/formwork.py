@@ -270,6 +270,9 @@ def formwork_area(
         ``(площадь_м², правило)``. Для сборного ж/б и элементов, которым
         опалубка не требуется, — ``(None, "")``.
     """
+    if kind in ('wall', 'column'):
+        from ..structural_classification import assess, quantity_row
+        row = quantity_row(row, assess(row))
     rule = _rule(row, kind)
     if rule is None:
         return None, ""

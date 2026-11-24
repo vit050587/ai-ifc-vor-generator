@@ -1357,7 +1357,8 @@ def _enrich_quantity(q, element):
 
     if not result.get("count"):
         result["count"] = 1
-    return result
+    from .quantity_fields import opening_area
+    return opening_area(element.get('row') or {}, element.get('ifc_class'), result)
 
 
 def _element_quantity_for_table(element_payload, table_code):
@@ -1374,6 +1375,7 @@ def _element_quantity_for_table(element_payload, table_code):
 def _sum_group_quantities(payloads):
     total = {"volume_m3": 0.0, "area_m2": 0.0, "length_m": 0.0,
              "joint_length_m": 0.0, "count": 0}
+    sources = {}
     for payload in payloads:
         q = {}
         for work in payload.get("works", []) or []:
@@ -1382,12 +1384,17 @@ def _sum_group_quantities(payloads):
                 q = dict(wq)
                 break
         q = _enrich_quantity(q, payload.get("element") or {})
+        for key, source in (q.get('_sources') or {}).items():
+            if source:
+                sources.setdefault(key, set()).add(str(source))
         for key in ("volume_m3", "area_m2", "length_m", "joint_length_m"):
             v = _pick_quantity(q, key)
             if v:
                 total[key] += v
         cnt = _pick_quantity(q, "count")
         total["count"] += int(cnt) if cnt else 1
+    if sources:
+        total['_sources'] = {key: '; '.join(sorted(values)) for key, values in sources.items()}
     return total
 
 
@@ -1538,6 +1545,11 @@ def _select_works_for_element(
     building_height, llm_client, group_count,
     group_quantity, group_formwork_area, group_joint_length_m,
 ):
+    if element_payload.get('selection_method') == 'architecture-ai-v1':
+        from .ai_selection import select_positions
+        return select_positions(element_payload, works_by_table, llm_client,
+                                _build_work_row, quantity=group_quantity,
+                                group_count=group_count)
     tables_with_works = []
     for tbl_meta in element_payload.get("works", []) or []:
         code = str(tbl_meta.get("code") or "").strip()
@@ -1666,6 +1678,8 @@ def _split_final_entries_by_height(entries, rows, payloads, params_by_id):
                 group = _recompute_group_aggregates(raw, headers, volumes, precision=8)
                 group['count'] = len(indices)
                 quantity = _group_quantity_from_aggregates(group, _sum_group_quantities([payloads[i] for i in indices]))
+                if any(w.get('architecture_operation') for w in sub.get('selected_works') or []):
+                    quantity = _sum_group_quantities([payloads[i] for i in indices])
                 formwork = group['formwork_area']
                 joint = _sum_joint_length([payloads[i] for i in indices], params_by_id)
                 sub.update(group_quantity=quantity, group_formwork_area_m2=formwork,
@@ -1675,6 +1689,10 @@ def _split_final_entries_by_height(entries, rows, payloads, params_by_id):
                 header = re.sub(r'Кол-во:\s*\d+', f'Кол-во: {len(indices)}',
                                 entry.get('group_header') or _element_header(sub))
                 for work in sub.get('selected_works') or []:
+                    if work.get('architecture_operation'):
+                        from .ai_selection import apply_quantity
+                        apply_quantity(work, payloads[indices[0]], quantity, len(indices))
+                        continue
                     q = _enrich_quantity(dict(quantity), sub['element'])
                     if _is_formwork_work(work):
                         q['area_m2'] = formwork
@@ -1743,6 +1761,10 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
         logger.info(f"Листовых групп после разделения по частям здания: "
                     f"{len(leaf_groups)}")
 
+    if tables_payload.get('processing_type') == 'ARCH':
+        from .ai_selection import partition_groups
+        leaf_groups = partition_groups(leaf_groups, elements_payload)
+
     processing_units = []
     if leaf_groups:
         covered = set()
@@ -1779,6 +1801,8 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
             group_quantity = _group_quantity_from_aggregates(
                 group, group_quantity_fallback
             )
+            if element_payload.get('selection_method') == 'architecture-ai-v1':
+                group_quantity = dict(group_quantity_fallback or {})
             group_formwork_area = safe_float(group.get("formwork_area"), default=0.0)
             # Расход арматуры группы — только из агрегата дерева
             # группировки (total_reinforcement), как в КР.
@@ -1793,7 +1817,11 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
                                                  rebar_mass_by_gid)
         group_joint_m = _sum_joint_length(unit["payloads"], params_by_id)
 
-        family = _classify_family(element_payload)
+        if element_payload.get('selection_method') == 'architecture-ai-v1':
+            from .table_matching import location
+            family = element_payload.get('family') or location(element)
+        else:
+            family = _classify_family(element_payload)
         applied = element_payload.get("applied_constants", {}) or {}
 
         # Часть здания группы — по правилам КР: path[0] листовой группы
@@ -1821,25 +1849,37 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
                 group_count,
             )
 
-        logger.info(f"«{element.get('name')}»: family={family}, "
-                    f"part={part_key}, "
-                    f"tables={len(element_payload.get('works', []) or [])}, "
-                    f"formwork_m2={group_formwork_area}, "
-                    f"rebar_kg={group_rebar_kg}, "
-                    f"joint_m={group_joint_m}")
+        if element_payload.get('selection_method') == 'architecture-ai-v1':
+            logger.info('«%s»: family=%s, part=%s, components=%s, tables=%s',
+                        element.get('name'), family, part_key,
+                        len(element_payload.get('architecture_components') or []),
+                        len(element_payload.get('works') or []))
+        else:
+            logger.info(f"«{element.get('name')}»: family={family}, part={part_key}, "
+                        f"tables={len(element_payload.get('works', []) or [])}, "
+                        f"formwork_m2={group_formwork_area}, rebar_kg={group_rebar_kg}, joint_m={group_joint_m}")
 
         # Сборный железобетон подбирается на общих основаниях: попытка
         # подбора делается для всех групп элементов (FIX-47). Если
         # кандидатов нет, _select_works_for_element вернёт пустой список
         # с note — группа выведется без строк работ.
-        selected_works, note = _select_works_for_element(
-            element_payload, works_by_table, family, element_part,
-            building_height, llm,
-            group_count=group_count,
-            group_quantity=group_quantity,
-            group_formwork_area=group_formwork_area,
-            group_joint_length_m=group_joint_m,
-        )
+        try:
+            selected_works, note = _select_works_for_element(
+                element_payload, works_by_table, family, element_part,
+                building_height, llm,
+                group_count=group_count,
+                group_quantity=group_quantity,
+                group_formwork_area=group_formwork_area,
+                group_joint_length_m=group_joint_m,
+            )
+        except Exception as exc:
+            if element_payload.get('selection_method') != 'architecture-ai-v1':
+                raise
+            logger.exception('Ошибка подбора АР для «%s»; обработка продолжается', element.get('name'))
+            from .component_selection import unresolved_rows
+            selected_works, note = unresolved_rows(
+                element_payload, _build_work_row, f'Расценка не подобрана: {exc}',
+                quantity=group_quantity, group_count=group_count)
 
         total_selected += len(selected_works)
         entry = {
@@ -1851,6 +1891,8 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
             "family": family,
             "part": part_key,
             "work_type": element_payload.get("work_type", ""),
+            "component_decisions": element_payload.get('component_decisions') or [],
+            "excluded_components": element_payload.get('excluded_components') or [],
         }
         if group:
             entry["group"] = {"name": group.get("name", ""),
@@ -1868,12 +1910,16 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
 
     result_elements = _split_final_entries_by_height(
         result_elements, elements_rows, elements_payload, params_by_id)
+    if tables_payload.get('processing_type') == 'ARCH':
+        from .coefficient_selection import enrich
+        enrich(result_elements, llm)
     total_selected = sum(len(entry.get('selected_works') or []) for entry in result_elements)
     _enrich_selected_works_with_costs(result_elements, works_payload.get("period_id"))
 
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "processing_type": "AR",
+        "processing_type": "ARCH",
+        "selection_method": tables_payload.get('algorithm'),
         "period": works_payload.get("period"),
         "period_id": works_payload.get("period_id"),
         "source": os.path.basename(works_json_path),
@@ -1883,11 +1929,10 @@ def select_final_works(tables_json_path, works_json_path, run_dir,
     }
 
     json_path = os.path.join(run_dir, FINAL_WORKS_JSON_FILENAME)
-    with open(json_path, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, ensure_ascii=False, indent=2)
-
     xlsx_path = os.path.join(run_dir, FINAL_WORKS_XLSX_FILENAME)
     build_final_works_xlsx(result_elements, xlsx_path)
+    with open(json_path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
     return json_path
 
 
@@ -2182,6 +2227,7 @@ def build_final_works_xlsx(result_elements, xlsx_path):
     columns = [
         "Шифр ТСН", "Наименование расценки/ресурса", "Ед. изм.",
         "Объём работ", "ЗП", "ЭМ", "МР", "Стоимость",
+        "Обоснование подбора", "Допущения", "Источник объёма", "Проверка коэффициентов",
         "_is_part_header", "_is_element_header", "_is_part_total",
         "_is_grand_total",
     ]
@@ -2211,9 +2257,12 @@ def build_final_works_xlsx(result_elements, xlsx_path):
     from ..quantity_provenance import normalized_rows
     from ..final_quantity_rules import refresh_concrete, refresh_formwork, summer_curing
     source_rows = normalized_rows(Path(xlsx_path).parent)
-    refresh_concrete(result_elements, source_rows)
-    refresh_formwork(result_elements, source_rows)
-    summer_curing(result_elements)
+    structural_entries = [entry for entry in result_elements
+                          if not any(w.get('architecture_operation')
+                                     for w in entry.get('selected_works') or [])]
+    refresh_concrete(structural_entries, source_rows)
+    refresh_formwork(structural_entries, source_rows)
+    summer_curing(structural_entries)
 
     element_blocks = []
     for entry in result_elements:
@@ -2251,13 +2300,13 @@ def build_final_works_xlsx(result_elements, xlsx_path):
                 if _is_formwork_work(work) else 0.0
             )
             from ..works_final_selector import _entry_work_volume
-            vol_text, _ = _entry_work_volume(entry, work, entry.get('quantity_sources') or {})
+            vol_text, volume_source = _entry_work_volume(entry, work, entry.get('quantity_sources') or {})
 
             # Арматура — правила КР: расход арматуры группы подставляется
             # ТОЛЬКО в расценку «Установка отдельных стержней...» (т),
             # прочие арматурные расценки остаются без объёма.
             work_title_low = str(work.get("title") or "").lower()
-            if group_rebar_kg > 0 and _is_rebar_work_title(work_title_low):
+            if not work.get('architecture_operation') and group_rebar_kg > 0 and _is_rebar_work_title(work_title_low):
                 if "отдельн" in work_title_low and "стержн" in work_title_low:
                     vol_text = f"{group_rebar_kg / 1000.0:.4f}"
                 else:
@@ -2268,6 +2317,11 @@ def build_final_works_xlsx(result_elements, xlsx_path):
             row["Наименование расценки/ресурса"] = work.get("title") or ""
             row["Ед. изм."] = _resolve_unit_label(work)
             row["Объём работ"] = vol_text
+            row["Обоснование подбора"] = work.get('reason') or ''
+            from .coefficient_selection import display
+            row["Проверка коэффициентов"] = display(work)
+            row["Допущения"] = '; '.join(work.get('assumptions') or [])
+            row["Источник объёма"] = volume_source or work.get('quantity_note') or ''
             row["_work"] = work  # для расчёта стоимости после корректировки
             work_rows.append(row)
 
@@ -2318,6 +2372,9 @@ def build_final_works_xlsx(result_elements, xlsx_path):
             mr = _cost(work, "cur_cost_of_material_resources", vol_num)
             parts = [v for v in (zp, em, mr) if v is not None]
             cost = round(sum(parts), 2) if len(parts) == 3 else ""
+            if work.get('architecture_operation'):
+                work['export_quantity'] = vol_num
+                work['export_quantity_source'] = r.get('Источник объёма') or ''
             r["ЗП"] = zp if zp is not None else ""
             r["ЭМ"] = em if em is not None else ""
             r["МР"] = mr if mr is not None else ""
@@ -2458,6 +2515,10 @@ def build_final_works_xlsx(result_elements, xlsx_path):
         worksheet.column_dimensions["D"].width = 15
         for col in "EFGH":
             worksheet.column_dimensions[col].width = 15
+        for col in "IJK":
+            worksheet.column_dimensions[col].width = 65
+            for cell in worksheet[col]:
+                cell.alignment = Alignment(vertical='top', wrap_text=True)
         worksheet.auto_filter.ref = (
             f"A1:{chr(64 + len(df_for_excel.columns))}{len(df_for_excel) + 1}"
         )

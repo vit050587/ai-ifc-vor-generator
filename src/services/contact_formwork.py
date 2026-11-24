@@ -60,7 +60,9 @@ def _dimension_contact(row, kind=None):
     width = metric('RUS_Width', _raw_width_mm, group)
     height = metric('RUS_Height', _raw_height_mm, group)
     section = re.search(r'(\d+(?:[.,]\d+)?)\s*[xх×*]\s*(\d+(?:[.,]\d+)?)', name)
-    if section:
+    if row.get('_classification_section_mm'):
+        width, height = row['_classification_section_mm']
+    elif section:
         width, height = (float(v.replace(',', '.')) for v in section.groups())
     if kind == 'column':
         if length and width and height:

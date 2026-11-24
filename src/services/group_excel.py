@@ -613,6 +613,17 @@ def _element_formwork_measure(row: Dict[str, Any], perim_cols: List[str],
     from .construction_method import construction_method
     if construction_method(row) in ('precast', 'conflicting'):
         return 0.0, ''
+    from .structural_classification import assess, quantity_row
+    classification = assess(row)
+    if classification and classification['basis'] in ('geometry', 'mssk') and classification['effective_kind'] in ('wall', 'column'):
+        row = quantity_row(row, classification)
+        if classification['effective_kind'] == 'wall':
+            from .wall_formwork import wall_projection
+            value, source = wall_projection(row)
+        else:
+            from .contact_formwork import contact_area
+            value, source = contact_area(row, kind='column')
+        return (value, source) if value is not None else (0.0, '')
     if (str(row.get('Тип элемента') or '').startswith('IfcWall')
             and not re.search(r'пилон|колонн', name_lower)):
         from .wall_formwork import wall_projection

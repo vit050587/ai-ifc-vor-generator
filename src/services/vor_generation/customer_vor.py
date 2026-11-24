@@ -1012,7 +1012,11 @@ def _geometry_groups(rows: List[CustomerRow], param: str
     ungrouped: List[CustomerRow] = []
     for row in rows:
         label = _geometry_value(row, param) if row.volume > 0 else None
-        if label:
+        pit = row.kind == 'foundation_slab' and bool(re.search('приям',
+            ' '.join((row.section, row.block, row.name, row.source_context)), re.I))
+        if pit and row.volume > 0:
+            groups.setdefault('pit|' + (label or ''), []).append(row)
+        elif label:
             groups.setdefault(label, []).append(row)
         else:
             ungrouped.append(row)
@@ -1020,10 +1024,12 @@ def _geometry_groups(rows: List[CustomerRow], param: str
 
 
 def _geometry_sort(label: str):
+    pit = (label or '').startswith('pit|')
+    label = (label or '').removeprefix('pit|')
     m = re.match(r"\d+(?:[.,]\d+)?", label or "")
     if m:
-        return (0, float(m.group(0).replace(",", ".")), label)
-    return (0, 0.0, label)
+        return (pit, 0, float(m.group(0).replace(",", ".")), label)
+    return (pit, 0, 0.0, label)
 
 
 def _block_header(index, kind: Optional[str], part: Optional[str], label: Optional[str],
@@ -1034,11 +1040,18 @@ def _block_header(index, kind: Optional[str], part: Optional[str], label: Option
     группы элементов модели IFC (``Фундаментная плита:ADSK_Бетон В30_1000 мм``);
     если данных модели нет — текст шаблона с фактическим значением геометрии.
     """
+    pit = (label or '').startswith('pit|')
+    if pit:
+        kind = 'pit'
+        label = label.removeprefix('pit|')
+        fallback_text = 'Приямки толщиной … мм'
     if geometry == 'area':
         return _format_header(fallback_text, geometry, label)
     if index is not None and label:
         name = index.geometry_group_name(kind, part, label)
         if name:
+            if pit and 'приям' not in name.lower():
+                name = 'Приямки: ' + name
             from .thickness import parse
             named = parse(name,bare=True)
             if geometry == 'thickness' and (not named or named['mode']!='exact' or f"{named['values'][0]:g}" != label):
@@ -1049,6 +1062,7 @@ def _block_header(index, kind: Optional[str], part: Optional[str], label: Option
 
 def _geometry_int(label: Optional[str]) -> Optional[int]:
     """Числовое значение геометрической подписи («1400» → 1400)."""
+    label = (label or '').removeprefix('pit|')
     if not label or '/' in label:
         return None
     m = re.match(r"\d+", label)
@@ -1226,6 +1240,18 @@ def build_customer_vor(vor_path: str, output_path: str, template_path: str = Non
                     output.extend(_fill_rows(group,members,[],beam_ctx,'beam',part,1.0))
                 continue
             from .customer_scope import scoped_rebar
+            if group[0].element_kind == 'foundation_slab' and any(re.search('приям',
+                    ' '.join((r.section, r.block, r.name, r.source_context)), re.I) for r in scope):
+                groups, common = _geometry_groups(scope, None)
+                if common:
+                    groups[''] = common
+                for label, members in sorted(groups.items(), key=lambda item:_geometry_sort(item[0])):
+                    output.append(template.OutputRow(group[0].index,
+                        label=_block_header(index, 'foundation_slab', part, label, 'Фундаментная плита', None),
+                        name_override='', extra={c:None for c in range(3,9)}))
+                    group_ctx = _Context(scoped_rebar(rebar, members),ctx.ref_vor)
+                    output.extend(_fill_rows(group, members, [], group_ctx, 'foundation_slab', part, 1.0))
+                continue
             group_ctx = _Context(scoped_rebar(rebar, scope),ctx.ref_vor) if any(r.normalized_scope for r in scope) else ctx
             for out_row in _fill_rows(group, scope, [], group_ctx, group[0].element_kind, part, 1.0):
                 if out_row.volume is not None:

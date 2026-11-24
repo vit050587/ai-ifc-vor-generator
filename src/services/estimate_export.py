@@ -110,7 +110,27 @@ def _rows(path, metadata):
         part = ''
         group_id = 0
         rows = []
-        for source_row, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), 2):
+        source_rows = list(sheet.iter_rows(min_row=2, values_only=True))
+        # Repeated resource codes/titles can belong to different operations.
+        # Use metadata order only when the entire group's row identities agree.
+        metadata_groups = {}
+        for heading, work, facts in metadata:
+            metadata_groups.setdefault(_norm(heading), []).append((work, facts))
+        source_groups, current = {}, None
+        for source_row, row in enumerate(source_rows, 2):
+            code = str(row[header.index('Шифр ТСН')] or '').strip()
+            title = str(row[header.index('Наименование расценки/ресурса')] or '').strip()
+            if not code and title and not title.upper().startswith('ИТОГО'):
+                current = source_row
+                source_groups[current] = (_norm(title), [])
+            elif code and current is not None:
+                source_groups[current][1].append((code, _norm(title)))
+        aligned = {}
+        for key, (heading, signatures) in source_groups.items():
+            candidates = metadata_groups.get(heading, [])
+            if signatures == [(str(w.get('pressmark') or '').strip(), _norm(w.get('title'))) for w, _ in candidates]:
+                aligned[key] = iter(candidates)
+        for source_row, row in enumerate(source_rows, 2):
             d = {name: row[header.index(name)] for name in required}
             code, title = str(d['Шифр ТСН'] or '').strip(), str(d['Наименование расценки/ресурса'] or '').strip()
             if not code:
@@ -125,6 +145,13 @@ def _rows(path, metadata):
             if len(matches) > 1:
                 matches = [(w,f) for w,f in matches if _norm(w.get('title')) == _norm(title)]
             work, facts = matches[0] if len(matches) == 1 else ({}, {'name':group})
+            if group_id in aligned:
+                work, facts = next(aligned[group_id])
+            elif matches:
+                # An ambiguous resource still retains facts shared by all
+                # candidates, without assigning it an invented operation.
+                facts = {key: value for key, value in matches[0][1].items()
+                         if all(other.get(key) == value for _, other in matches)}
             work = dict(work)
             if 'Источник объёма' in header:
                 from .quantity_provenance import text
@@ -271,7 +298,7 @@ def _resource_matches_work(resource, work):
     return False
 
 
-def _position_groups(rows):
+def _position_groups(rows, *, resource_links=None):
     """Resolve catalog links first, then unambiguous material/operation pairs."""
     if any('estimate_id' in row for row in rows):
         children = {}
@@ -280,7 +307,7 @@ def _position_groups(rows):
                 children.setdefault(row['estimate_parent_id'], []).append(row)
         return [(row, children.get(row.get('estimate_id'), [])) for row in rows
                 if row.get('estimate_parent_id') is None]
-    links = _resource_links()
+    links = _resource_links() if resource_links is None else resource_links
     groups = []
     section = []
 
@@ -295,10 +322,13 @@ def _position_groups(rows):
             works = [(parent,children) for parent,children in entries
                      if not parent['code'].startswith('1.')
                      and parent.get('group_id',parent.get('group')) == resource.get('group_id',resource.get('group'))]
+            declared_parent = (resource.get('work') or {}).get('parent_work')
             candidates = [(parent,children) for parent,children in works
-                          if (parent['code'],resource['code']) in links]
-            basis = 'Связь работы и ресурса указана в справочнике.'
-            if not candidates:
+                          if _norm(parent['title']) == _norm(declared_parent)] if declared_parent else [
+                              (parent,children) for parent,children in works if (parent['code'],resource['code']) in links]
+            basis = ('Работа ресурса сохранена в исходном перечне.' if declared_parent else
+                     'Связь работы и ресурса указана в справочнике.')
+            if not candidates and not declared_parent:
                 candidates = [(parent,children) for parent,children in works
                               if _resource_matches_work(resource,parent)]
                 basis = 'Ресурс отнесён к единственной подходящей работе этой группы по назначению материала и виду операции.'

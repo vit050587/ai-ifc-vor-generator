@@ -44,6 +44,8 @@ class SectionCatalog:
         text = ' '.join(str(facts.get(k) or '') for k in ('Name', 'Имя', 'ObjectType', 'name', 'typeName'))
         text = text or title or ' '.join(source_path)
         context = ' '.join(source_path)
+        pit = bool(re.search(r'приям', norm(text)) or
+                   any(re.match(r'^приям', norm(value)) for value in source_path))
         part_text = str(facts.get('part') or facts.get('Тип_этажа') or facts.get('levelType') or '')
         part = mapping.detect_part(part_text) or mapping.detect_part(context)
         if not part:
@@ -55,7 +57,7 @@ class SectionCatalog:
         kind = mapping.detect_kind(text)
         if re.search(r'лестничн.*(?:площад|клетк)|(?:площад|клетк).*лестничн', norm(text)):
             kind = 'stair'
-        if re.search(r'приям', norm(text)):
+        if pit:
             kind = 'foundation_slab'
         if not kind:
             cls = facts.get('IfcClass') or facts.get('Тип элемента') or facts.get('ifc_class') or facts.get('ifcClass')
@@ -92,7 +94,7 @@ class SectionCatalog:
             path = (*selected.path[:-1], prefix + 'Фундаментная плита')
             if kind == 'crane_foundation':
                 path += ('Фундамент под башенный кран',)
-            elif re.search(r'приям', norm(text)):
+            elif pit:
                 path += ('Приямки',)
             return replace(selected, path=path)
         if kind in ('stair', 'precast'):

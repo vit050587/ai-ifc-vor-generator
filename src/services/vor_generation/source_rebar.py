@@ -42,6 +42,8 @@ def shared_heading(row):
     if kind == 'stair' and row.component:
         title = {'flight':'Лестничные марши', 'landing':'Лестничные площадки',
                  'combined':'Лестничные марши и площадки'}.get(row.component,title)
+    if kind == 'foundation_slab' and re.search('приям', row.source_context or row.section, re.I):
+        title = 'Приямки'
     geometry = ' толщиной '+label(spec)+' мм' if spec else ''
     if row.cross_section:
         geometry = ' сечением '+row.cross_section+' мм'

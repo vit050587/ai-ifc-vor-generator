@@ -218,10 +218,11 @@ def _to_float(value: Any) -> Optional[float]:
         return None
 
 
-def _extract_quantities(row: dict) -> Dict[str, Optional[float]]:
+def _extract_quantities(row: dict) -> Dict[str, Any]:
     """Шаг 8. Объёмы работ из QTO: NetVolume — бетон, площадь — полы/покрытия."""
     volume = None
     area = None
+    area_source = ''
 
     for key, value in row.items():
         kl = str(key).lower()
@@ -234,10 +235,35 @@ def _extract_quantities(row: dict) -> Dict[str, Optional[float]]:
             volume = _to_float(cleaned)
         elif area is None and ("площадь" in kl) and ("gross" in kl) and "м2" in kl:
             area = _to_float(cleaned)
+            area_source = str(key)
         elif area is None and kl == "площадь (gross), м2":
             area = _to_float(cleaned)
+            area_source = str(key)
 
-    return {"volume_m3": volume, "area_m2": area}
+    # Prefer net quantities where available; never multiply dimensions in the LLM.
+    from ..ifc_quantities import resolve_volume
+    resolved = resolve_volume(row)
+    if resolved.value is not None:
+        volume = resolved.value
+    for key, value in row.items():
+        normalized = str(key).lower().replace('²', '2')
+        if ('площадь' in normalized or 'area' in normalized) and 'net' in normalized:
+            candidate = _to_float(_clean(value))
+            if candidate is not None and candidate >= 0:
+                area = candidate
+                area_source = str(key)
+                break
+    if area is None:
+        for key in ('Площадь, м2', 'Площадь, м²', 'Area'):
+            if _to_float(_clean(row.get(key))) is not None:
+                area = _to_float(_clean(row[key]))
+                area_source = key
+                break
+    length = _to_float(_clean(row.get('Длина, мм')))
+    return {"volume_m3": volume, "area_m2": area,
+            "length_m": length / 1000 if length is not None else None, "count": 1,
+            "_sources": {'volume_m3': resolved.source, 'area_m2': area_source,
+                         'length_m': 'Длина, мм / 1000', 'count': 'Количество GUID IFC'}}
 
 
 def _element_from_row(row: dict, raw_by_gid: Dict[str, dict]) -> dict:
@@ -293,6 +319,8 @@ def _element_from_row(row: dict, raw_by_gid: Dict[str, dict]) -> dict:
             is_external_raw = _clean(merged.get(ek))
 
     quantities = _extract_quantities(merged)
+    from .quantity_fields import opening_area
+    quantities = opening_area(merged, ifc_class, quantities)
 
     return {
         "global_id": gid,
@@ -867,7 +895,7 @@ def _work_type_for_collection(collection_name: str, works: List[dict]) -> str:
 #  Главная функция подбора для одного элемента
 # --------------------------------------------------------------------------
 
-def select_works_for_element(el: dict, constants: Dict[str, Any]) -> dict:
+def _legacy_select_works_for_element(el: dict, constants: Dict[str, Any]) -> dict:
     """Подбор таблиц работ для одного элемента (шаги 1-8 алгоритма)."""
     resolved = _resolve_constants(el, constants)
 
@@ -957,6 +985,12 @@ def select_works_for_element(el: dict, constants: Dict[str, Any]) -> dict:
     }
 
 
+def select_works_for_element(el: dict, constants: Dict[str, Any]) -> dict:
+    """ARCH public entry point: deterministic mapping to real table codes."""
+    from .ai_selection import plan_element
+    return plan_element(el, constants, _table_index())
+
+
 def select_works_for_elements(
     elements: List[dict], global_constants: Dict[str, Any]
 ) -> List[dict]:
@@ -966,22 +1000,8 @@ def select_works_for_elements(
     # zero_step.detect_storeys_type_from_session). ВАЖНО: не определяем её по
     # элементам этого списка — в него попадает только подмножество выбранных
     # строк, этажность же свойство всего здания.
-    constants = dict(global_constants or {})
-    results = []
-    for el in elements:
-        try:
-            results.append(select_works_for_element(el, constants))
-        except Exception as exc:
-            logger.warning(
-                f"Ошибка подбора работ для элемента {el.get('global_id')}: {exc}",
-                exc_info=True,
-            )
-            results.append({
-                "element": {"global_id": el.get("global_id", ""), "name": el.get("name", "")},
-                "works": [],
-                "note": f"Ошибка подбора: {exc}",
-            })
-    return results
+    from .ai_selection import plan_elements
+    return plan_elements(elements, dict(global_constants or {}), _table_index())
 
 
 # --------------------------------------------------------------------------
@@ -1029,14 +1049,43 @@ def build_works_tables_json(
         except Exception as exc:
             logger.warning(f"Не удалось прочитать сырой дамп IFC: {exc}")
 
+    # Old sessions also need the native IFC length unit before using Overall*.
+    from .quantity_fields import source_length_scale
+    source_folder = os.path.dirname(raw_dump_json_path) if raw_dump_json_path else os.path.dirname(excel_path)
+    needs_scale = any((raw_by_gid.get(_clean(row.get('GlobalId'))) or row).get('OverallWidth')
+                      and not (raw_by_gid.get(_clean(row.get('GlobalId'))) or row).get('АР_Масштаб_длины_IFC_в_метры')
+                      for row in rows)
+    scale = None
+    if needs_scale:
+        try:
+            scale = source_length_scale(source_folder)
+        except Exception as exc:
+            logger.warning('АР: не удалось прочитать единицы длины IFC: %s', exc)
+    if scale:
+        for row in rows:
+            row['АР_Масштаб_длины_IFC_в_метры'] = scale
     elements = [_element_from_row(row, raw_by_gid) for row in rows]
+    # Read completed document facts as context before any AI table selection.
+    # File contents are source data; instructions inside them have no authority.
+    session_dir = os.path.dirname(raw_dump_json_path) if raw_dump_json_path else os.path.dirname(excel_path)
+    document_facts = {}
+    for filename in ('ПОС_глобальные_константы.json', 'ПЗ_глобальные_константы.json'):
+        path = os.path.join(session_dir, filename)
+        if os.path.isfile(path):
+            with open(path, encoding='utf-8') as fh:
+                document_facts[filename] = json.load(fh)
+    if document_facts:
+        constants['document_facts'] = document_facts
+    from .document_context import load as load_arch_documents, enrich as enrich_arch_element
+    document_records, project_conditions = load_arch_documents(session_dir)
+    elements = [enrich_arch_element(element, document_records, project_conditions) for element in elements]
     results = select_works_for_elements(elements, constants)
 
     total_works = sum(len(r.get("works", [])) for r in results)
     payload = {
         "generated_at": datetime.utcnow().isoformat() + "Z",
-        "algorithm": "data/algorithm.md",
-        "processing_type": "AR",
+        "algorithm": "architecture-ai-v1",
+        "processing_type": "ARCH",
         "global_constants": constants,
         "total_elements": len(results),
         "total_works": total_works,

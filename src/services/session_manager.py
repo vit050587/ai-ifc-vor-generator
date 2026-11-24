@@ -2301,6 +2301,30 @@ class SessionManager:
                     except Exception as exc:
                         logger.warning(f"Не удалось определить этажность здания: {exc}")
 
+                # Всё по очереди: подбор ждёт, пока ИИ дочитает документы (ВОР, ПД, ПОС/ПЗ)
+                import time as _wt
+                def _docs_busy():
+                    s_ = self._sessions.get(session_id, {})
+                    busy = [f"{lab} — {s_.get(k + '_progress_message') or 'чтение…'}"
+                            for k, lab in (("vor", "ВОР"), ("pd", "ПД"), ("pos", "ПОС"), ("pz", "ПЗ"))
+                            if str(s_.get(k + "_status") or "").endswith("processing")]
+                    try:
+                        from src import routes as _rt
+                        if session_id in getattr(_rt, "_PD_RUNNING", set()):
+                            busy.append("ПОС/ПЗ — полный разбор")
+                    except Exception:
+                        pass
+                    return busy
+                _w0 = _wt.time()
+                while _wt.time() - _w0 < 3600:
+                    _b = _docs_busy()
+                    if not _b:
+                        break
+                    self._update_progress(session_id, 74, f"Запуск {run_number}: Ждём, пока ИИ дочитает документы: " + "; ".join(_b))
+                    _wt.sleep(3)
+                if _docs_busy():
+                    raise TimeoutError("Документы не разобраны за час; повторите подбор после завершения чтения")
+
                 works_json_path = os.path.join(run_dir, WORKS_TABLES_JSON_FILENAME)
                 build_works_tables_json(
                     excel_path=filtered_path,
@@ -2372,30 +2396,7 @@ class SessionManager:
                         if os.path.isfile(stale_path):
                             os.remove(stale_path)
 
-                    # Всё по очереди: подбор ждёт, пока ИИ дочитает документы (ВОР, ПД, ПОС/ПЗ)
-                    import time as _wt
-                    def _docs_busy():
-                        s_ = self._sessions.get(session_id, {})
-                        busy = [f"{lab} — {s_.get(k + '_progress_message') or 'чтение…'}"
-                                for k, lab in (("vor", "ВОР"), ("pd", "ПД"), ("pos", "ПОС"), ("pz", "ПЗ"))
-                                if str(s_.get(k + "_status") or "").endswith("processing")]
-                        try:
-                            from src import routes as _rt
-                            if session_id in getattr(_rt, "_PD_RUNNING", set()):
-                                busy.append("ПОС/ПЗ — полный разбор")
-                        except Exception:
-                            pass
-                        return busy
-                    _w0 = _wt.time()
-                    while _wt.time() - _w0 < 3600:
-                        _b = _docs_busy()
-                        if not _b:
-                            break
-                        self._update_progress(session_id, 74, f"Запуск {run_number}: Ждём, пока ИИ дочитает документы: " + "; ".join(_b))
-                        _wt.sleep(3)
-                    if _docs_busy():
-                        raise TimeoutError("Документы не разобраны за час; повторите подбор после завершения чтения")
-                    if os.getenv("WORKS_SELECTOR", "llm").strip().lower() == "perechen":
+                    if processing_type != "ARCH" and os.getenv("WORKS_SELECTOR", "llm").strip().lower() == "perechen":
                         # Подбор по перечню сметчиков (data/perechen_kr.xlsx) +
                         # локальная LLM (perechen_kb) вместо works_final_selector:
                         # Финальный_перечень_работ.json/.xlsx + analytic.json.

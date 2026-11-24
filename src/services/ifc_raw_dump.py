@@ -1739,6 +1739,8 @@ def _collect_element_data(element, compute_bbox_qto=True, compute_dimensions=Fal
 
     # Материал (из IfcRelAssociatesMaterial).
     row["Материал"] = _get_material(element)
+    from .ifc_material_layers import layer_properties
+    row.update(layer_properties(element))
 
     # Этаж и отметка этажа (из IfcRelContainedInSpatialStructure).
     storey_name, storey_elev = _get_storey(element)

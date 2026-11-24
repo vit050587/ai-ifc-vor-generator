@@ -2307,6 +2307,9 @@ def _resolve_building_part(entry):
 # ======================================================================
 
 def _entry_work_volume(entry, work, origins):
+    if work.get('selection_method') == 'architecture-ai-v1':
+        from .architecture.ai_selection import work_volume
+        return work_volume(work)
     if work.get('quantityStatus') == 'missing_data':
         return '', work.get('reason', '')
     base_name = str(entry.get('group_base_name') or '')
