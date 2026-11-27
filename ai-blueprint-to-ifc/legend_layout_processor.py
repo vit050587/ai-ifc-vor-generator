@@ -10,7 +10,7 @@ import copy
 from shapely.geometry import Polygon, box
 
 from rectangle_utils import rectangles_to_yolo_obb, get_two_points_bbox
-from pdf_prcoessor import PdfProcessor
+from pdf_processor import PdfProcessor
 from yolo_service import YoloService
 from dino_service import DinoService
 from PIL import Image

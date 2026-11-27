@@ -1,6 +1,5 @@
 
-from pdf_prcoessor import PdfProcessor
-from config import WallDetectionProfile
+from pdf_processor import PdfProcessor
 from walls_processor import WallsProcessor
 from ollama_service import OllamaService
 from ollama_service_tg import OllamaServiceTg
@@ -14,6 +13,7 @@ from rectangle_utils import get_4p_bbox_area
 from polygon_converter import RegionPolygon
 from obb_converter import RegionOBB
 from matrix_utils import get_polygon_area, get_polygon_thickness
+from pdf_cleaner import PdfCleaner
 
 from rectangle_utils import get_obb_dimensions
 
@@ -35,7 +35,6 @@ class WallDetectionPipeline:
 
         debug_manager.delete_debug_folder()
 
-        self.wall_detection = WallDetectionProfile(tile_overlap=20)
         self.ollama_service = OllamaService("prompts")
         self.ollama_service_tg = OllamaServiceTg("prompts")
 
@@ -43,9 +42,12 @@ class WallDetectionPipeline:
         self.dino_service = DinoService(model_path=settings.DINO_HATCHING_MODEL)
         self.layout_processor = None
         self.legend_layout_processor = None
-        self.hatching_detector = HatchingDetector(self.wall_detection, self.pdf_processor)
+        self.hatching_detector = HatchingDetector(settings.HATCHING_DETECTION, self.pdf_processor)
         self.drawing_statistics = DrawingStatisticsAnalyzer(self.pdf_processor)
         self.hatching_processor = HatchingProcessor(self. ollama_service, self.drawing_statistics, self.dino_service, pdf_processor=self.pdf_processor, ollama_service_tg=self.ollama_service_tg)
+        self.walls_processor = WallsProcessor(self.pdf_path, settings.HATCHING_DETECTION, self.pdf_processor, dpi=settings.DPI)
+        self.pdf_cleaner = PdfCleaner(self.walls_processor, self.pdf_processor)
+        self.pdf_processor.specify_pdf_cleaner(self.pdf_cleaner)
 
         self.reference_scale = (1, 200)
 
@@ -57,6 +59,7 @@ class WallDetectionPipeline:
 
         if not self.layout_processor:
             self.layout_processor = LayoutProcessor(self.pdf_processor, self.ollama_service)
+            self.pdf_processor.specify_layout_processor(self.layout_processor)
             drawings = self.layout_processor.get_drawings()
             if drawings and len(drawings) > 1:
                 self.layout_processor.keep_only_buildings_drawings()
@@ -87,11 +90,11 @@ class WallDetectionPipeline:
         debug_matrixs = []
 
         drawings.sort(key=lambda drawing : get_4p_bbox_area(drawing["object"]["bbox"]) if drawing and drawing["object"]["bbox"] else 0, reverse=True)
+        
         for i, drawing in enumerate(drawings):
             blueprint_scale = self._choose_drawing_scale(global_blueprint_scale, (drawing or {}).get("scale", None))
 
-            walls_processor = WallsProcessor(self.pdf_path, self.wall_detection, self.pdf_processor, dpi=settings.DPI)
-            tiles = walls_processor.get_tiles(i, drawings, self.layout_processor)
+            tiles = self.walls_processor.get_tiles(i, drawings, self.layout_processor, True)
             walls_result = self.hatching_detector.get_walls(
                 tiles,
                 self.hatching_processor.legends,
@@ -119,7 +122,7 @@ class WallDetectionPipeline:
                 dpi=settings.MATRIX_COMPRESSION_DPI,
             )
 
-            walls_bboxes_mm = walls_processor.scale_pdf_walls_coords(
+            walls_bboxes_mm = self.walls_processor.scale_pdf_walls_coords(
                 walls_polygons_pdf,
                 blueprint_scale,
             )

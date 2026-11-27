@@ -4,7 +4,7 @@ from pathlib import Path
 from tqdm import tqdm
 import statistics
 
-from pdf_prcoessor import PdfProcessor
+from pdf_processor import PdfProcessor
 from yolo_service import YoloService
 from rectangle_utils import get_two_points_bbox
 from debug_manager import save_layouts

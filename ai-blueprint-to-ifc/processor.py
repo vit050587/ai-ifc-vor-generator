@@ -6,7 +6,7 @@ import json
 import statistics
 import time
 from utils import image_to_base64, find_intersecting_rectangles
-from pdf_prcoessor import PdfProcessor
+from pdf_processor import PdfProcessor
 from walls_processor import WallsProcessor
 from transformer_service import TransformerService
 from result_former import save_result
@@ -23,12 +23,14 @@ from layout_processor import LayoutProcessor
 from legend_layout_processor import LegendLayoutProcessor
 from drawing_statistics_analyzer import DrawingStatisticsAnalyzer
 from wall_detection_pipeline import WallDetectionPipeline
+from joblib import Memory
 
 from logger import setup_logger
 from config import settings
 
 logger = setup_logger(__name__)
 
+shared_cache = Memory("cache", verbose=0)
 class Processor:
     def __init__(self, pdf_path, params: dict[str, Any] | None = None):
         Image.MAX_IMAGE_PIXELS = settings.MAX_IMAGE_PIXELS
@@ -54,10 +56,15 @@ class Processor:
         self.current_wall_id = 0
 
     def process(self) -> Dict[str, Any]:
-        if self.manual_legend:
-            return self._process_with_hatchfinder()
-        else:
+        try:
+            if self.manual_legend:
+                return self._process_with_hatchfinder()
             return self._process_with_yolo()
+        finally:
+            try:
+                shared_cache.reduce_size(bytes_limit=settings.SHARED_CACHE_LIMIT)
+            except OSError:
+                logger.warning("Не удалось уменьшить дисковый кэш", exc_info=True)
         
     def _process_with_hatchfinder(self) -> Dict[str, Any]:
         wdp = WallDetectionPipeline(self.PDF_PATH)

@@ -1,7 +1,7 @@
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import json
-from pdf_prcoessor import PdfProcessor
+from pdf_processor import PdfProcessor
 import os
 import re
 import shutil
@@ -321,10 +321,9 @@ def save_probability_heatmaps_by_material(
     legends: list[dict],
     source_dpi: int,
     target_dpi: int,
-    threshold: float,
     max_opacity: float = 0.7,
 ) -> None:
-    """Save one fixed-scale probability heatmap overlay per matrix channel."""
+    """Save each channel as an overlay with a linear 0–1 probability scale."""
     if matrix.ndim != 3:
         raise ValueError(
             "Probability matrix must have shape [N, H, W], "
@@ -334,8 +333,6 @@ def save_probability_heatmaps_by_material(
         raise ValueError("target_dpi must be greater than zero")
     if source_dpi <= 0:
         raise ValueError("source_dpi must be greater than zero")
-    if not 0 <= threshold <= 1:
-        raise ValueError("threshold must be from 0 to 1")
     if not 0 <= max_opacity <= 1:
         raise ValueError("max_opacity must be from 0 to 1")
     if any(channel_id not in channel_id_2_entry_id for channel_id in range(matrix.shape[0])):
@@ -377,7 +374,7 @@ def save_probability_heatmaps_by_material(
         probability = (
             matrix[channel_id]
             .detach()
-            .to(device="cpu", dtype=torch.float32)
+            .to(device="cpu", dtype=torch.float32, copy=True)
             .clamp_(0, 1)
             .numpy()
         )
@@ -390,22 +387,8 @@ def save_probability_heatmaps_by_material(
         height = min(page_image.height, probability.shape[0])
         width = min(page_image.width, probability.shape[1])
         probability = probability[:height, :width]
-        visible = probability >= threshold
-        display_probability = _normalize_probability_for_heatmap(
-            probability,
-            threshold,
-        )
-        heatmap = _probability_to_heatmap(display_probability)
-
-        # Keep values at the threshold visible while leaving everything below
-        # it fully transparent. Higher confidence gradually increases opacity.
-        min_opacity = min(0.25, max_opacity)
-        alpha = np.where(
-            visible,
-            min_opacity + display_probability * (max_opacity - min_opacity),
-            0,
-        )
-        alpha = np.rint(alpha * 255).astype(np.uint8)
+        heatmap = _probability_to_heatmap(probability)
+        alpha = np.rint(probability * (255 * max_opacity)).astype(np.uint8)
 
         overlay = Image.fromarray(
             np.dstack((heatmap, alpha)),
@@ -414,22 +397,6 @@ def save_probability_heatmaps_by_material(
         result = page_image.copy()
         result.paste(overlay, (0, 0), overlay)
         result.save(output_dir / f"{file_stem}.png")
-
-
-def _normalize_probability_for_heatmap(
-    probability: np.ndarray,
-    threshold: float,
-) -> np.ndarray:
-    """Expand [threshold, 1] to [0, 1] and emphasize high-score differences."""
-    if threshold >= 1:
-        return (probability >= 1).astype(np.float32)
-
-    normalized = np.clip(
-        (probability - threshold) / (1 - threshold),
-        0,
-        1,
-    )
-    return np.square(normalized, dtype=np.float32)
 
 
 def _probability_to_heatmap(probability: np.ndarray) -> np.ndarray:

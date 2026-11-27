@@ -229,7 +229,7 @@ ai-ifc-vor-generator/
 ├── ai-blueprint-to-ifc/       # Пайплайн машинного зрения для PDF-чертежей
 │   ├── config.py              # Настройки (модели, параметры, пороги)
 │   ├── processor.py           # Оркестратор обработки чертежа
-│   ├── pdf_prcoessor.py       # Конвертация PDF → изображения, тайлы
+│   ├── pdf_processor.py       # Конвертация PDF → изображения, тайлы
 │   ├── walls_processor.py     # Детекция стен (YOLO OBB)
 │   ├── hatching_processor.py  # Анализ штриховок и расшифровка материалов
 │   ├── dino_service.py        # DINO-модель (сравнение символов легенды)

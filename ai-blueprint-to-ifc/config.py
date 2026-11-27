@@ -10,13 +10,15 @@ class BaseWallDetectionProfile(BaseModel):
     tile_overlap: float = Field(default=47, ge=0, lt=100)
     model_name: Path = Path("yolo_walls_obb.pt")
 
-
 class WallDetectionProfile(BaseWallDetectionProfile):
     image_size: int = Field(default=896, gt=0)
     tile_size: int = 896
     zoom: float = Field(default=6 * (tile_size / 720), gt=0)
     tiles_dir: Path = Path("blueprint_tiles")
 
+class HatchFinderProfile(WallDetectionProfile):
+    mask_offset: float = Field(default=20, ge=0, lt=100)
+    tile_overlap: float = Field(default=60, ge=0, lt=100)
 
 class UnhatchedWallDetectionProfile(BaseWallDetectionProfile):
     image_size: int = Field(default=896, gt=0)
@@ -50,7 +52,7 @@ class PolygonConversionSettings(BaseModel):
     deduplication_tolerance: float = Field(default=0.25, gt=0)
 
 class MatrixProcessorSettings(BaseModel):
-    error_threshold: float = 0.03
+    error_threshold: float = 0.1
     matrix_dpi: int = 600
     base_dpi: int = 450
 
@@ -129,6 +131,7 @@ class Settings(BaseSettings):
     RECORDS_MAX_RECORDS: int = 500
     LLM_REQUESTS_RECORDS_MAX_RECORDS: int = 3000
     LOG_RETENTION_DAYS: int = 30
+    SHARED_CACHE_LIMIT: str = "1G"
 
     MAX_RETRIES: int = 3
     RETRY_DELAY: float = 1.0
@@ -179,16 +182,18 @@ class Settings(BaseSettings):
     TRANSFORMERS_LOCALS_FILES_ONLY:bool = False
     TRANSFORMERS_CUDA_NUM:int = 0
 
-    HATCHING_PIXELS_CONFIDENCE: float = 0.5
+    HATCHING_PIXELS_CONFIDENCE: float = 0.7
     MIN_PIXELS_AREA_REMOVE: int = 100
     DPI: int = 900
     MATRIX_COMPRESSION_DPI: int = 600
     DEBUG_DPI: int = 450
     SAVE_PROBABILITY_HEATMAPS: bool = False
     PROBABILITY_HEATMAP_DEBUG_DPI: int = 350
-    HATCHINGS_SCALES: list[float] = [0.515, 0.725, 1]
+    HATCHINGS_SCALES: list[float] = [1]
     USE_TILES_CACHE: bool = True
     FALLBACK_THRESHOLD: float = 0.005
+
+    MIN_LAYER_SCORE: float = 0.41
 
     WALL_DETECTION: WallDetectionProfile = Field(default_factory=WallDetectionProfile)
     UNHATCHED_WALL_DETECTION: UnhatchedWallDetectionProfile = Field(default_factory=UnhatchedWallDetectionProfile)
@@ -202,6 +207,7 @@ class Settings(BaseSettings):
             matrix_dpi=data["MATRIX_COMPRESSION_DPI"]
         )
     )
+    HATCHING_DETECTION: HatchFinderProfile = Field(default_factory=HatchFinderProfile)
 
 
 settings = Settings()

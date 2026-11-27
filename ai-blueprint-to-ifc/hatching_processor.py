@@ -6,7 +6,7 @@ from typing import List, Dict
 import hashlib
 import copy
 from dino_service import DinoService
-from pdf_prcoessor import PdfProcessor
+from pdf_processor import PdfProcessor
 from ollama_service import OllamaService
 from ollama_service_tg import OllamaServiceTg
 from drawing_statistics_analyzer import DrawingStatisticsAnalyzer

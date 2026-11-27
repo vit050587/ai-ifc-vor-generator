@@ -9,6 +9,8 @@ import io
 import base64
 from PIL import Image
 from io import BytesIO
+from pathlib import Path
+import hashlib
 
 from logger import setup_logger
 
@@ -143,6 +145,9 @@ def base64_to_image(image_base64: str) -> Image.Image:
     return image
 
 def resize_image(image: Image.Image, scale: float) -> Image.Image:
+    if scale == 1:
+        return image
+    
     size = (
         max(1, round(image.width * scale)),
         max(1, round(image.height * scale)),
@@ -157,3 +162,7 @@ def resize_image(image: Image.Image, scale: float) -> Image.Image:
 def execute_llm_chain(chain, params = {}, stub = {}):
     response = invoke_with_retry(chain,params)
     return _get_json_from_response(response, stub=stub)
+
+def file_sha256(path: Path) -> str:
+    with Path(path).open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()

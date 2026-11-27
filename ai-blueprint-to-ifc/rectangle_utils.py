@@ -62,7 +62,7 @@ def rectangles_to_yolo_obb(
     return obb_rectangles
 
 
-def _get_obb_points(bbox: dict[str, Any]) -> list[tuple[float, float]]:
+def get_obb_points(bbox: dict[str, Any]) -> list[tuple[float, float]]:
     """Возвращает четыре точки OBB в порядке, заданном моделью."""
     try:
         return [
@@ -78,7 +78,7 @@ def get_obb_dimensions(
     bbox: dict[str, Any],
 ) -> tuple[float, float, float]:
     """Возвращает длину, толщину и угол длинной стороны OBB."""
-    points = _get_obb_points(bbox)
+    points = get_obb_points(bbox)
     edges = []
 
     for index in range(4):
@@ -362,8 +362,8 @@ def _get_trim_pair_candidate(
     second_index: int,
     overlap_threshold: float,
 ) -> dict[str, Any] | None:
-    first_polygon = _ordered_polygon(_get_obb_points(first["bbox"]))
-    second_polygon = _ordered_polygon(_get_obb_points(second["bbox"]))
+    first_polygon = _ordered_polygon(get_obb_points(first["bbox"]))
+    second_polygon = _ordered_polygon(get_obb_points(second["bbox"]))
     first_area = _polygon_area(first_polygon)
     second_area = _polygon_area(second_polygon)
 
@@ -422,8 +422,8 @@ def _get_best_trim_bbox(
     target_bbox: dict[str, Any],
     blocker_bbox: dict[str, Any],
 ) -> dict[str, float] | None:
-    target_points = _get_obb_points(target_bbox)
-    blocker_points = _get_obb_points(blocker_bbox)
+    target_points = get_obb_points(target_bbox)
+    blocker_points = get_obb_points(blocker_bbox)
     axis_x, axis_y = _get_obb_axes(target_bbox)
 
     target_x = [_dot(point, axis_x) for point in target_points]
@@ -466,7 +466,7 @@ def _get_best_trim_bbox(
 
     # Защита от численных и геометрических погрешностей.
     candidate_intersection = _clip_convex_polygon(
-        _ordered_polygon(_get_obb_points(candidate_bbox)),
+        _ordered_polygon(get_obb_points(candidate_bbox)),
         _ordered_polygon(blocker_points),
     )
     if _polygon_area(candidate_intersection) > 1e-7:
@@ -477,7 +477,7 @@ def _get_best_trim_bbox(
 def _get_obb_axes(
     bbox: dict[str, Any],
 ) -> tuple[tuple[float, float], tuple[float, float]]:
-    points = _get_obb_points(bbox)
+    points = get_obb_points(bbox)
     edges = []
 
     for index in range(4):
@@ -523,7 +523,7 @@ def _bbox_from_local_bounds(
 
 
 def _obb_area(bbox: dict[str, Any]) -> float:
-    return _polygon_area(_ordered_polygon(_get_obb_points(bbox)))
+    return _polygon_area(_ordered_polygon(get_obb_points(bbox)))
 
 
 def _get_merge_candidate_score(
@@ -558,8 +558,8 @@ def _get_merge_candidate_score(
     ):
         return None
 
-    first_polygon = _ordered_polygon(_get_obb_points(first_bbox))
-    second_polygon = _ordered_polygon(_get_obb_points(second_bbox))
+    first_polygon = _ordered_polygon(get_obb_points(first_bbox))
+    second_polygon = _ordered_polygon(get_obb_points(second_bbox))
     intersection = _clip_convex_polygon(first_polygon, second_polygon)
     intersection_area = _polygon_area(intersection)
 
@@ -594,8 +594,8 @@ def _merge_rectangle_pair(
     second_bbox = second["bbox"]
     _, _, first_angle = get_obb_dimensions(first_bbox)
     _, _, second_angle = get_obb_dimensions(second_bbox)
-    first_area = _polygon_area(_get_obb_points(first_bbox))
-    second_area = _polygon_area(_get_obb_points(second_bbox))
+    first_area = _polygon_area(get_obb_points(first_bbox))
+    second_area = _polygon_area(get_obb_points(second_bbox))
 
     angle = _mean_axis_angle(
         first_angle,
@@ -606,7 +606,7 @@ def _merge_rectangle_pair(
     angle_radians = math.radians(angle)
     axis_x = (math.cos(angle_radians), math.sin(angle_radians))
     axis_y = (-axis_x[1], axis_x[0])
-    points = _get_obb_points(first_bbox) + _get_obb_points(second_bbox)
+    points = get_obb_points(first_bbox) + get_obb_points(second_bbox)
 
     projected_x = [_dot(point, axis_x) for point in points]
     projected_y = [_dot(point, axis_y) for point in points]

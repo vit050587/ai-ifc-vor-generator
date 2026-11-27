@@ -13,8 +13,8 @@ from joblib import Memory
 import debug_manager
 
 from logger import setup_logger
-from config import settings, WallDetectionProfile
-from pdf_prcoessor import PdfProcessor
+from config import settings, HatchFinderProfile
+from pdf_processor import PdfProcessor
 from matrix_processor import MatrixProcessor
 from polygon_converter import RegionPolygon
 from obb_converter import RegionOBB
@@ -27,7 +27,7 @@ memory = Memory("cache/hatching_detector", verbose=0)
 class HatchingDetector:
     def __init__(
         self,
-        detection_settings: WallDetectionProfile,
+        detection_settings: HatchFinderProfile,
         pdf_processor: PdfProcessor,
     ) -> None:
         self.detection_settings = detection_settings
@@ -49,7 +49,7 @@ class HatchingDetector:
         """
         detection = self.detection_settings
         tile_size = self.detection_settings.image_size
-        overlap = self.detection_settings.tile_overlap / 2
+        overlap = self.detection_settings.mask_offset / 2
 
         width = max(tile["x1"] for tile in tiles)
         height = max(tile["y1"] for tile in tiles)
@@ -106,7 +106,6 @@ class HatchingDetector:
                 legends=legend_entries,
                 source_dpi=settings.MATRIX_COMPRESSION_DPI,
                 target_dpi=settings.PROBABILITY_HEATMAP_DEBUG_DPI,
-                threshold=settings.HATCHING_PIXELS_CONFIDENCE,
             )
 
         result_matrix = self._keep_channel_max(result_matrix)
@@ -236,14 +235,16 @@ class HatchingDetector:
         margin_y = int(h * margin_percent / 100)
         margin_x = int(w * margin_percent / 100)
 
-        matrix[
+        target = matrix[
             channel,
             y0 + margin_y:y0 + h - margin_y,
             x0 + margin_x:x0 + w - margin_x,
-        ] = patch[
+        ]
+        patch_center = patch[
             margin_y:h - margin_y,
             margin_x:w - margin_x,
         ]
+        torch.maximum(target, patch_center, out=target)
 
     def _keep_channel_max(
         self,

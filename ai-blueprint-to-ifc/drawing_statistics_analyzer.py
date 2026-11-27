@@ -1,4 +1,4 @@
-from pdf_prcoessor import PdfProcessor
+from pdf_processor import PdfProcessor
 
 import statistics
 

@@ -6,6 +6,7 @@ import base64
 import io
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from utils import file_sha256
 
 from rectangle_utils import rectangles_to_yolo_obb
 
@@ -31,6 +32,7 @@ class YoloService:
             if model_path is not None
             else Path(__file__).resolve().with_name("best.pt")
         )
+        self.model_sha256 = file_sha256(self.model_path)
         self.device = device
         self.model = YOLO(str(self.model_path))
 

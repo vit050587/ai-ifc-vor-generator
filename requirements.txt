@@ -92,7 +92,7 @@ ultralytics==8.4.75
 supervision==0.29.1
 transformers==5.5.4
 accelerate==1.14.0
-hatchfinder==0.2.1
+hatchfinder==0.3.0
 
 # Валидация данных
 pydantic==2.13.4

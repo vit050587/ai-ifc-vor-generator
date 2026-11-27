@@ -1,4 +1,4 @@
-from pdf_prcoessor import PdfProcessor
+from pdf_processor import PdfProcessor
 from layout_processor import LayoutProcessor
 from yolo_service import YoloService
 from pathlib import Path
@@ -31,7 +31,7 @@ class WallsProcessor:
 
         self.walls = None
 
-    def _get_blueprint_crops(self, drawing_index: int, drawing_bbox: dict | None, exclude_bboxes: list | None = None):
+    def _get_blueprint_crops(self, drawing_index: int, drawing_bbox: dict | None, exclude_bboxes: list | None = None, use_cleaned_pdf: bool = False):
         blueprint = self.detection_settings
         tiles = self.pdf_proc.split_image_to_tiles(
             drawing_bbox,
@@ -40,7 +40,8 @@ class WallsProcessor:
             blueprint.tile_overlap,
             self.zoom,
             exclude_bboxes,
-            self.dpi
+            self.dpi,
+            use_cleaned_pdf
         )
 
         for i, tile in enumerate(tiles):
@@ -49,7 +50,7 @@ class WallsProcessor:
 
         return tiles
 
-    def get_tiles(self, drawing_index: int, drawings: list, layout_processor: LayoutProcessor):
+    def get_tiles(self, drawing_index: int, drawings: list, layout_processor: LayoutProcessor, use_cleaned_pdf: bool = False):
         drawings_bboxes = [drawing["object"]["bbox"] if drawing else None for drawing in drawings]
 
         layouts_bboxes = []
@@ -62,7 +63,7 @@ class WallsProcessor:
                 layouts_bboxes.append(layout["object"]["bbox"])
 
         drawing_bbox_2points = get_two_points_bbox(drawings_bboxes[drawing_index])
-        tiles = self._get_blueprint_crops(drawing_index, drawing_bbox_2points, exclude_bboxes=(drawings_bboxes[:drawing_index] + drawings_bboxes[drawing_index + 1:] + layouts_bboxes))
+        tiles = self._get_blueprint_crops(drawing_index, drawing_bbox_2points, exclude_bboxes=(drawings_bboxes[:drawing_index] + drawings_bboxes[drawing_index + 1:] + layouts_bboxes), use_cleaned_pdf=use_cleaned_pdf)
         return tiles
 
     def get_walls_cords(self, drawing_index: int, drawings: list, layout_processor: LayoutProcessor):
